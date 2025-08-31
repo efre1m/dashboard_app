@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-
+import plotly.graph_objects as go
 # ---------------- Styling ----------------
 def auto_text_color(bg):
     bg = bg.lstrip("#")
@@ -91,12 +91,28 @@ def compute_kpis(enrollments_df, delivery_df):
 
 # ---------------- General Graph Rendering ----------------
 def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None, chart_type="line"):
-    if df.empty:
-        st.info(f"No data available for {title}.")
-        return
-
     if text_color is None:
         text_color = auto_text_color(bg_color)
+
+    # If dataframe is empty, create empty chart with proper layout
+    if df.empty:
+        # Create empty figure with proper layout
+        fig = go.Figure()
+        fig.update_layout(
+            title=title,
+            xaxis_title=period_col,
+            yaxis_title=value_col,
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font_color=text_color,
+            title_font_color=text_color,
+            height=400,
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.subheader(f"📋 {title} Summary Table")
+        st.info("No data available for this period.")
+        return
 
     if chart_type=="line":
         fig = px.line(df, x=period_col, y=value_col, markers=True, line_shape="linear", title=title, height=400)
@@ -124,18 +140,49 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
 
 # ---------------- Maternal Complications Chart ----------------
 def render_maternal_complications_chart(delivery_df, period_col, bg_color, text_color=None):
-    if delivery_df.empty:
-        st.info("No data available for Maternal Complications.")
-        return
-
     if text_color is None:
         text_color = auto_text_color(bg_color)
+
+    # Handle empty delivery dataframe
+    if delivery_df.empty:
+        # Create empty figure with proper layout
+        fig = go.Figure()
+        fig.update_layout(
+            title="Maternal Complications by Type",
+            xaxis_title="Period",
+            yaxis_title="Number of Cases",
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font_color=text_color,
+            title_font_color=text_color,
+            height=450,
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.subheader("📋 Maternal Complications Summary")
+        st.info("No maternal complication data found.")
+        return
 
     mc_df = delivery_df[delivery_df["dataElement_uid"]=="CJiTafFo0TS"].copy()
     mc_df["Complication"] = mc_df["value"].astype(str).map(COMPLICATION_MAP)
     mc_df = mc_df.dropna(subset=["Complication"])
-
+    
     if mc_df.empty:
+        # Create empty figure with proper layout
+        fig = go.Figure()
+        fig.update_layout(
+            title="Maternal Complications by Type",
+            xaxis_title="Period",
+            yaxis_title="Number of Cases",
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font_color=text_color,
+            title_font_color=text_color,
+            height=450,
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.subheader("📋 Maternal Complications Summary")
         st.info("No maternal complication data found.")
         return
 

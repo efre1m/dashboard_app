@@ -17,7 +17,12 @@ from utils.kpi_utils import (
 logging.basicConfig(level=logging.INFO)
 
 def render():
-    st.set_page_config(page_title="Facility Dashboard", page_icon="🏥", layout="wide")
+    st.set_page_config(
+        page_title="Maternal Health Dashboard", 
+        page_icon="🏥", 
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
 
     # ---------------- Import CSS ----------------
     try:
@@ -41,7 +46,7 @@ def render():
     """, unsafe_allow_html=True)
 
     # ---------------- Fetch Data ----------------
-    with st.spinner("Fetching complete hierarchical DHIS2 data..."):
+    with st.spinner("fetching maternal data..."):
         dfs = fetch_program_data_for_user(user)
 
     tei_df = dfs.get("tei", pd.DataFrame())
@@ -67,11 +72,12 @@ def render():
 
     # ---------------- Export Buttons ----------------
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.subheader("Export Data")
+    st.sidebar.markdown('<div class="section-header">Export Data</div>', unsafe_allow_html=True)
+    
     col_exp1, col_exp2 = st.sidebar.columns(2)
 
     with col_exp1:
-        if st.button("Raw JSON"):
+        if st.button("📥 Raw JSON", help="Download raw JSON data"):
             json_str = json.dumps(raw_json, indent=2)
             st.download_button(
                 label="Download Raw JSON",
@@ -81,7 +87,7 @@ def render():
             )
 
     with col_exp2:
-        if st.button("Export CSV"):
+        if st.button("📊 Export CSV", help="Export all data as CSV files"):
             buffer = BytesIO()
             with zipfile.ZipFile(buffer, "w") as zf:
                 zf.writestr("tei.csv", tei_df.to_csv(index=False).encode("utf-8"))
@@ -95,29 +101,46 @@ def render():
                 mime="application/zip"
             )
 
-    # ---------------- Layout ----------------
+    # ---------------- Main Content ----------------
+    st.markdown(f'<div class="main-header">🏥 Maternal Health Dashboard - {facility_name}</div>', unsafe_allow_html=True)
+    
     col1, col2 = st.columns([3, 1])
 
     # ---------------- Filters ----------------
     with col2:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-        st.markdown('<div class="kpi-selector">Select KPI</div>', unsafe_allow_html=True)
+        st.markdown('<div class="kpi-selector">⚙️ Dashboard Controls</div>', unsafe_allow_html=True)
 
         kpi_selection = st.selectbox(
-            "KPI",
-            ["Maternal Admissions", "Instrumental Delivery Rate", "Cesarean Section Rate", "Maternal Complications", "Maternal Deaths"]
+            "📊 Select KPI to Visualize",
+            ["Maternal Admissions", "Instrumental Delivery Rate", "Cesarean Section Rate", 
+             "Maternal Complications", "Maternal Deaths"],
+            help="Choose which metric to display in the trend chart"
         )
 
         _df_for_dates = enrollments_df if ("enrollmentDate" in enrollments_df.columns) else pd.DataFrame()
 
         quick_range = st.selectbox(
-            "Quick Period",
-            ["Custom Range","Today","This Week","Last Week","This Month","Last Month","This Year","Last Year"]
+            "📅 Time Period",
+            ["Custom Range", "Today", "This Week", "Last Week", "This Month", 
+             "Last Month", "This Year", "Last Year"],
+            help="Select a predefined time range or choose custom for specific dates"
         )
+        
         start_date, end_date = get_date_range(_df_for_dates, quick_range)
 
-        period_label = st.selectbox("Time Aggregation", ["Daily", "Monthly", "Quarterly", "Annual"])
-        bg_color = st.color_picker("Graph Background Color", "#C2C2CB")
+        period_label = st.selectbox(
+            "⏰ Aggregation Level", 
+            ["Daily", "Monthly", "Quarterly", "Annual"],
+            help="Choose how to group the data in time series charts"
+        )
+        
+        bg_color = st.color_picker(
+            "🎨 Chart Background", 
+            "#FFFFFF",
+            help="Select background color for the charts"
+        )
+        
         st.markdown('</div>', unsafe_allow_html=True)
 
     text_color = auto_text_color(bg_color)
@@ -151,56 +174,56 @@ def render():
     # ---------------- Compute Trend Symbol ----------------
     def compute_trend(current, previous):
         if previous is None or previous == 0:
-            return "▶"
+            return "▶", "trend-neutral"
         if current > previous:
-            return "▲"
+            return "▲", "trend-up"
         elif current < previous:
-            return "▼"
+            return "▼", "trend-down"
         else:
-            return "▶"
+            return "▶", "trend-neutral"
 
     # For simplicity, previous values can be extended to last period
-    trend_admissions = compute_trend(kpis["total_admissions"], 0)
-    trend_idr = compute_trend(kpis["idr"], 0)
-    trend_csr = compute_trend(kpis["csr"], 0)
-    trend_mc = compute_trend(kpis["maternal_complications_total"], 0)
-    trend_md = compute_trend(maternal_deaths, 0)
+    trend_admissions, trend_admissions_class = compute_trend(kpis["total_admissions"], 0)
+    trend_idr, trend_idr_class = compute_trend(kpis["idr"], 0)
+    trend_csr, trend_csr_class = compute_trend(kpis["csr"], 0)
+    trend_mc, trend_mc_class = compute_trend(kpis["maternal_complications_total"], 0)
+    trend_md, trend_md_class = compute_trend(maternal_deaths, 0)
 
     # ---------------- KPI Cards ----------------
     with col1:
-        st.subheader(f"📊 Facility KPIs - {facility_name}")
+        st.markdown('<div class="section-header">📊 Key Performance Indicators</div>', unsafe_allow_html=True)
         kpi_html = f"""
         <div class='kpi-row'>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis["total_admissions"]} {trend_admissions}</div>
+                <div class='kpi-value'>{kpis["total_admissions"]} <span class='{trend_admissions_class}'>{trend_admissions}</span></div>
                 <div class='kpi-name'>Maternal Admissions</div>
-                <div style='margin-top:5px; display:flex; justify-content:center; gap:10px;'>
-                    <span style='color:green'>● Active: {kpis["active_count"]}</span>
-                    <span style='color:blue'>● Completed: {kpis["completed_count"]}</span>
+                <div style='margin-top:10px; display:flex; justify-content:center; gap:8px; flex-wrap:wrap;'>
+                    <span class='metric-label metric-active'>Active: {kpis["active_count"]}</span>
+                    <span class='metric-label metric-completed'>Completed: {kpis["completed_count"]}</span>
                 </div>
             </div>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis["idr"]:.1f}% {trend_idr}</div>
+                <div class='kpi-value'>{kpis["idr"]:.1f}% <span class='{trend_idr_class}'>{trend_idr}</span></div>
                 <div class='kpi-name'>Instrumental Delivery Rate</div>
-                <div style='margin-top:5px; display:flex; justify-content:center; gap:10px;'>
-                    <span style='color:purple'>● Instrumental: {kpis["instrumental_deliveries"]}</span>
-                    <span style='color:orange'>● Total Deliveries: {kpis["total_deliveries"]}</span>
+                <div style='margin-top:10px; display:flex; justify-content:center; gap:8px; flex-wrap:wrap;'>
+                    <span class='metric-label metric-instrumental'>Instrumental: {kpis["instrumental_deliveries"]}</span>
+                    <span class='metric-label metric-total'>Total Deliveries: {kpis["total_deliveries"]}</span>
                 </div>
             </div>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis["csr"]:.1f}% {trend_csr}</div>
+                <div class='kpi-value'>{kpis["csr"]:.1f}% <span class='{trend_csr_class}'>{trend_csr}</span></div>
                 <div class='kpi-name'>Cesarean Section Rate</div>
-                <div style='margin-top:5px; display:flex; justify-content:center; gap:10px;'>
-                    <span style='color:red'>● C-section: {kpis["csection_deliveries"]}</span>
-                    <span style='color:orange'>● Total Deliveries: {kpis["total_deliveries"]}</span>
+                <div style='margin-top:10px; display:flex; justify-content:center; gap:8px; flex-wrap:wrap;'>
+                    <span class='metric-label metric-csection'>C-section: {kpis["csection_deliveries"]}</span>
+                    <span class='metric-label metric-total'>Total Deliveries: {kpis["total_deliveries"]}</span>
                 </div>
             </div>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis["maternal_complications_total"]} {trend_mc}</div>
+                <div class='kpi-value'>{kpis["maternal_complications_total"]} <span class='{trend_mc_class}'>{trend_mc}</span></div>
                 <div class='kpi-name'>Maternal Complications</div>
             </div>
             <div class='kpi-card'>
-                <div class='kpi-value'>{maternal_deaths} {trend_md}</div>
+                <div class='kpi-value'>{maternal_deaths} <span class='{trend_md_class}'>{trend_md}</span></div>
                 <div class='kpi-name'>Maternal Deaths</div>
             </div>
         </div>
@@ -209,10 +232,16 @@ def render():
 
     # ---------------- KPI Graphs ----------------
     with col1:
-        st.subheader(f"📈 {kpi_selection} Trend")
+        st.markdown(f'<div class="section-header">📈 {kpi_selection} Trend</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
         if kpi_selection == "Maternal Admissions":
-            status_filter = st.selectbox("Show Admissions by Status", ["ACTIVE","COMPLETED"], key="maternal_status")
+            status_filter = st.selectbox(
+                "Show Admissions by Status", 
+                ["ACTIVE", "COMPLETED"], 
+                key="maternal_status",
+                help="Filter admissions by enrollment status"
+            )
             filtered_df = enrollments_df[enrollments_df["status"] == status_filter] if "status" in enrollments_df.columns else pd.DataFrame()
             trend_group = (
                 filtered_df.groupby("period")["tei_id"].nunique().reset_index(name="value")
@@ -251,3 +280,5 @@ def render():
                 (delivery_df["dataElement_uid"]=="TjQOcW6tm8k") & (delivery_df["value"]=="4")
             ].groupby("period")["tei_id"].nunique().reset_index(name="value") if not delivery_df.empty else pd.DataFrame()
             render_trend_chart(md_group, "period", "value", "Maternal Deaths Trend", bg_color, text_color, chart_type="line")
+            
+        st.markdown('</div>', unsafe_allow_html=True)
