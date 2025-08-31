@@ -1,0 +1,87 @@
+.user-info {
+    background-color: #000000;
+    color: #ffffff;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 15px;
+    font-weight: 600;
+}
+
+.kpi-row {
+    display: flex;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.kpi-card {
+    flex: 1;
+    min-width: 120px;
+    max-width: 250px;
+    padding: 0.8rem;
+    border-radius: 10px;
+    background-color: #1f1f2e;
+    color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    text-align: center;
+}
+
+.kpi-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+}
+
+.kpi-name {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #bbbbbb;
+}
+
+.summary-table {
+    border-collapse: collapse;
+    margin-top: 10px;
+    width: 100%;
+}
+
+.summary-table th {
+    font-weight: 900;
+    font-size: 20px;
+    border: 3px solid #333;
+    padding: 12px;
+    text-align: center;
+    background-color: #444;
+    color: white;
+}
+
+.summary-table td {
+    border: 2px solid #666;
+    padding: 12px;
+    text-align: center;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.filter-box {
+    border: 2px solid #555;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 15px;
+    font-size: 16px;
+    font-weight: 600;
+    background-color: #1f1f2e;
+    color: white;
+}
+
+.filter-box select,
+.filter-box input {
+    font-size: 16px;
+    padding: 5px;
+    border-radius: 5px;
+}
+
+.kpi-selector {
+    font-size: 22px;
+    font-weight: 800;
+    margin-bottom: 10px;
+}

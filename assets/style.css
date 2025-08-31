@@ -1,0 +1,75 @@
+/* === Page Background === */
+.stApp {
+    background: linear-gradient(135deg, #e9efff, #f5f7fa);
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* === Login Container === */
+.login-container {
+    max-width: 360px;
+    margin: 80px auto;
+    text-align: center;
+}
+
+/* === Title === */
+.login-title {
+    font-size: 1.6rem !important;
+    font-weight: bold !important;
+    color: #1877f2 !important;
+    margin-bottom: 1.2rem !important;
+}
+
+/* === Force Slim Inputs === */
+div[data-testid="stTextInput"],
+div[data-testid="stPassword"] {
+    margin-bottom: 12px !important;       /* 👈 extra gap */
+}
+
+div[data-baseweb="input"] {
+    display: flex !important;
+    align-items: center !important;       /* centers text vertically */
+    min-height: 20px !important;          /* 👈 smaller wrapper */
+    height: 24px !important;
+    border: 1.5px solid #000 !important;  /* black border */
+    border-radius: 5px !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+}
+
+/* Input text field */
+div[data-baseweb="input"] input {
+    min-height: 20px !important;
+    height: 20px !important;
+    padding: 2px 6px !important;          /* tighter padding */
+    font-size: 0.8rem !important;
+    line-height: 18px !important;
+    border: none !important;
+    outline: none !important;
+}
+
+/* === Slim Sign In Button === */
+.stButton > button {
+    width: 100% !important;
+    min-height: 26px !important;
+    height: 26px !important;
+    padding: 0 !important;
+    line-height: 24px !important;
+    background-color: #1877f2 !important;
+    color: #fff !important;
+    border: 1.5px solid #000 !important;  /* black border */
+    border-radius: 6px !important;
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+}
+
+.stButton > button:hover {
+    background-color: #166fe5 !important;
+}
+
+/* === Error Message === */
+.login-error {
+    margin-top: 1rem !important;
+    color: red !important;
+    font-size: 0.9rem !important;
+}
