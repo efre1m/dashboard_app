@@ -24,7 +24,7 @@ def render():
         with open("utils/facility.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except Exception:
-        pass  # CSS optional
+        pass
 
     # ---------------- User Info ----------------
     user = st.session_state.get("user", {})
@@ -105,7 +105,7 @@ def render():
 
         kpi_selection = st.selectbox(
             "KPI",
-            ["Maternal Admissions", "Instrumental Delivery Rate", "Cesarean Section Rate", "Maternal Complications"]
+            ["Maternal Admissions", "Instrumental Delivery Rate", "Cesarean Section Rate", "Maternal Complications", "Maternal Deaths"]
         )
 
         _df_for_dates = enrollments_df if ("enrollmentDate" in enrollments_df.columns) else pd.DataFrame()
@@ -140,13 +140,39 @@ def render():
     # ---------------- Compute KPIs ----------------
     kpis = compute_kpis(enrollments_df, delivery_df)
 
+    # ---------------- Compute Maternal Deaths KPI ----------------
+    if not delivery_df.empty:
+        maternal_deaths = delivery_df[
+            (delivery_df["dataElement_uid"]=="TjQOcW6tm8k") & (delivery_df["value"]=="4")
+        ]["tei_id"].nunique()
+    else:
+        maternal_deaths = 0
+
+    # ---------------- Compute Trend Symbol ----------------
+    def compute_trend(current, previous):
+        if previous is None or previous == 0:
+            return "▶"
+        if current > previous:
+            return "▲"
+        elif current < previous:
+            return "▼"
+        else:
+            return "▶"
+
+    # For simplicity, previous values can be extended to last period
+    trend_admissions = compute_trend(kpis["total_admissions"], 0)
+    trend_idr = compute_trend(kpis["idr"], 0)
+    trend_csr = compute_trend(kpis["csr"], 0)
+    trend_mc = compute_trend(kpis["maternal_complications_total"], 0)
+    trend_md = compute_trend(maternal_deaths, 0)
+
     # ---------------- KPI Cards ----------------
     with col1:
         st.subheader(f"📊 Facility KPIs - {facility_name}")
         kpi_html = f"""
         <div class='kpi-row'>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis["total_admissions"]}</div>
+                <div class='kpi-value'>{kpis["total_admissions"]} {trend_admissions}</div>
                 <div class='kpi-name'>Maternal Admissions</div>
                 <div style='margin-top:5px; display:flex; justify-content:center; gap:10px;'>
                     <span style='color:green'>● Active: {kpis["active_count"]}</span>
@@ -154,7 +180,7 @@ def render():
                 </div>
             </div>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis["idr"]:.1f}%</div>
+                <div class='kpi-value'>{kpis["idr"]:.1f}% {trend_idr}</div>
                 <div class='kpi-name'>Instrumental Delivery Rate</div>
                 <div style='margin-top:5px; display:flex; justify-content:center; gap:10px;'>
                     <span style='color:purple'>● Instrumental: {kpis["instrumental_deliveries"]}</span>
@@ -162,7 +188,7 @@ def render():
                 </div>
             </div>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis["csr"]:.1f}%</div>
+                <div class='kpi-value'>{kpis["csr"]:.1f}% {trend_csr}</div>
                 <div class='kpi-name'>Cesarean Section Rate</div>
                 <div style='margin-top:5px; display:flex; justify-content:center; gap:10px;'>
                     <span style='color:red'>● C-section: {kpis["csection_deliveries"]}</span>
@@ -170,8 +196,12 @@ def render():
                 </div>
             </div>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis["maternal_complications_total"]}</div>
+                <div class='kpi-value'>{kpis["maternal_complications_total"]} {trend_mc}</div>
                 <div class='kpi-name'>Maternal Complications</div>
+            </div>
+            <div class='kpi-card'>
+                <div class='kpi-value'>{maternal_deaths} {trend_md}</div>
+                <div class='kpi-name'>Maternal Deaths</div>
             </div>
         </div>
         """
@@ -215,3 +245,9 @@ def render():
 
         elif kpi_selection == "Maternal Complications":
             render_maternal_complications_chart(delivery_df, "period", bg_color, text_color)
+
+        elif kpi_selection == "Maternal Deaths":
+            md_group = delivery_df[
+                (delivery_df["dataElement_uid"]=="TjQOcW6tm8k") & (delivery_df["value"]=="4")
+            ].groupby("period")["tei_id"].nunique().reset_index(name="value") if not delivery_df.empty else pd.DataFrame()
+            render_trend_chart(md_group, "period", "value", "Maternal Deaths Trend", bg_color, text_color, chart_type="line")

@@ -4,7 +4,6 @@ import plotly.express as px
 
 # ---------------- Styling ----------------
 def auto_text_color(bg):
-    """Automatically determine text color (black or white) based on background brightness."""
     bg = bg.lstrip("#")
     r, g, b = int(bg[0:2],16), int(bg[2:4],16), int(bg[4:6],16)
     brightness = (r*299 + g*587 + b*114)/1000
@@ -24,7 +23,7 @@ COMPLICATION_MAP = {
     "10": "Other maternal complication"
 }
 
-# ---------------- KPI Calculation ----------------
+# ---------------- KPI Calculations ----------------
 def compute_total_deliveries(delivery_df):
     if delivery_df.empty or "dataElement_uid" not in delivery_df.columns:
         return 0
@@ -43,6 +42,16 @@ def compute_maternal_complications(delivery_df):
                 counts[comp] += 1
     df = pd.DataFrame(list(counts.items()), columns=["Complication","Count"])
     return df["Count"].sum(), df
+
+def compute_maternal_deaths(delivery_df):
+    """Count maternal deaths based on Condition of Discharge = 'Dead' (code 4)"""
+    if delivery_df.empty:
+        return 0
+    deaths_df = delivery_df[
+        (delivery_df["dataElement_uid"]=="TjQOcW6tm8k") &
+        (delivery_df["value"]=="4")
+    ]
+    return deaths_df["tei_id"].nunique()
 
 def compute_kpis(enrollments_df, delivery_df):
     total_admissions = enrollments_df["tei_id"].nunique() if not enrollments_df.empty else 0
@@ -64,6 +73,8 @@ def compute_kpis(enrollments_df, delivery_df):
 
     maternal_complications_total, maternal_complications_df = compute_maternal_complications(delivery_df)
 
+    maternal_deaths = compute_maternal_deaths(delivery_df)
+
     return {
         "total_admissions": total_admissions,
         "active_count": active_count,
@@ -74,7 +85,8 @@ def compute_kpis(enrollments_df, delivery_df):
         "csection_deliveries": csection_deliveries,
         "csr": csr,
         "maternal_complications_total": maternal_complications_total,
-        "maternal_complications_df": maternal_complications_df
+        "maternal_complications_df": maternal_complications_df,
+        "maternal_deaths": maternal_deaths
     }
 
 # ---------------- General Graph Rendering ----------------
@@ -119,7 +131,6 @@ def render_maternal_complications_chart(delivery_df, period_col, bg_color, text_
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    # Filter maternal complications
     mc_df = delivery_df[delivery_df["dataElement_uid"]=="CJiTafFo0TS"].copy()
     mc_df["Complication"] = mc_df["value"].astype(str).map(COMPLICATION_MAP)
     mc_df = mc_df.dropna(subset=["Complication"])
