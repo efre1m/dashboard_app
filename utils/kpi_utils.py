@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import datetime as dt
 
 # ---------------- Styling Helpers ----------------
 def auto_text_color(bg):
@@ -120,6 +121,9 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         st.info("⚠️ No data available for the selected period.")
         return
 
+    # Determine if x-axis should be treated as categorical
+    is_categorical = not all(isinstance(x, (dt.date, dt.datetime)) for x in df[period_col]) if not df.empty else True
+    
     # Plot
     if chart_type == "line":
         fig = px.line(df, x=period_col, y=value_col, markers=True, line_shape="linear", title=title, height=400)
@@ -127,20 +131,41 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
     else:
         fig = px.bar(df, x=period_col, y=value_col, text=value_col, labels={value_col: title}, title=title, height=400)
 
+    # Update layout with improved axis configuration
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
         xaxis_title=period_col,
-        yaxis_title=value_col
+        yaxis_title=value_col,
+        xaxis=dict(
+            type='category' if is_categorical else None,
+            tickangle=-45 if is_categorical else 0,
+            showgrid=True,
+            gridcolor='rgba(128, 128, 128, 0.2)'
+        ),
+        yaxis=dict(
+            rangemode='tozero',
+            showgrid=True,
+            gridcolor='rgba(128, 128, 128, 0.2)',
+            zeroline=True,
+            zerolinecolor='rgba(128, 128, 128, 0.5)'
+        )
     )
 
-    for trace in fig.data:
-        try:
-            trace.textfont.color = text_color
-        except Exception:
-            pass
+    # Format y-axis for percentage charts
+    if "Rate" in title or "%" in title:
+        fig.update_layout(yaxis_tickformat=".1f")
+    
+    # Format y-axis for count charts
+    if any(keyword in title for keyword in ["Admissions", "Deaths", "Complications", "Deliveries"]):
+        fig.update_layout(yaxis_tickformat=",")
+
+    # Add hover information
+    fig.update_traces(
+        hovertemplate="<b>%{x}</b><br>Value: %{y}<extra></extra>"
+    )
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -188,6 +213,9 @@ def render_maternal_complications_chart(delivery_df, period_col, bg_color, text_
         height=450
     )
 
+    # Determine if x-axis should be treated as categorical
+    is_categorical = not all(isinstance(x, (dt.date, dt.datetime)) for x in pivot_df.reset_index()[period_col]) if not pivot_df.empty else True
+
     fig.update_layout(
         barmode='stack',
         paper_bgcolor=bg_color,
@@ -196,14 +224,27 @@ def render_maternal_complications_chart(delivery_df, period_col, bg_color, text_
         xaxis_title="Period",
         yaxis_title="Number of Cases",
         legend_title_text="Complication Type",
-        legend=dict(font=dict(color=text_color))
+        legend=dict(font=dict(color=text_color)),
+        xaxis=dict(
+            type='category' if is_categorical else None,
+            tickangle=-45 if is_categorical else 0,
+            showgrid=True,
+            gridcolor='rgba(128, 128, 128, 0.2)'
+        ),
+        yaxis=dict(
+            rangemode='tozero',
+            showgrid=True,
+            gridcolor='rgba(128, 128, 128, 0.2)',
+            zeroline=True,
+            zerolinecolor='rgba(128, 128, 128, 0.5)',
+            tickformat=","
+        )
     )
 
-    for trace in fig.data:
-        try:
-            trace.textfont.color = text_color
-        except Exception:
-            pass
+    # Add hover information
+    fig.update_traces(
+        hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y}<extra></extra>"
+    )
 
     st.plotly_chart(fig, use_container_width=True)
 
