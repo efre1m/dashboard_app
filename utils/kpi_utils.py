@@ -4,7 +4,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import datetime as dt
 
-# ---------------- Styling Helpers ----------------
 def auto_text_color(bg):
     """Return black or white text depending on background brightness"""
     bg = bg.lstrip("#")
@@ -15,7 +14,7 @@ def auto_text_color(bg):
     except Exception:
         return "#000000"
 
-# ---------------- KPI Calculations ----------------
+# KPI Constants
 FP_ACCEPTANCE_UID = "Q1p7CxWGUoi"
 FP_ACCEPTED_VALUES = {"sn2MGial4TT", "aB5By4ATx8M", "TAxj9iLvWQ0", "FyCtuLALNpY", "ejFYFZlmlwT"}
 BIRTH_OUTCOME_UID = "wZig9cek3Gv"
@@ -28,10 +27,10 @@ PNC_EARLY_VALUES = {"tbiEfEybERM", "JVO0gl1FuqK"}
 def compute_total_deliveries(df):
     if df is None or df.empty:
         return 0
-    deliveries = df[(df["dataElement_uid"]=="lphtwP2ViZU") & (df["value"].notna())]
-    if deliveries.empty:
-        deliveries = df[(df["dataElement_uid"]==DELIVERY_MODE_UID) & (df["value"].notna())]
-    return deliveries["tei_id"].nunique()
+    delivery_events = df[(df["dataElement_uid"]=="lphtwP2ViZU") & (df["value"].notna())]
+    if delivery_events.empty:
+        delivery_events = df[(df["dataElement_uid"]==DELIVERY_MODE_UID) & (df["value"].notna())]
+    return delivery_events["tei_id"].nunique()
 
 def compute_fp_acceptance(df):
     if df is None or df.empty:
@@ -48,10 +47,16 @@ def compute_stillbirth_rate(df):
     return rate, stillbirths, total_births
 
 def compute_early_pnc_coverage(df):
+    """Calculate Early PNC Coverage (PNC within 48 hours)"""
     if df is None or df.empty:
         return 0.0, 0, 0
+    
     total_deliveries = compute_total_deliveries(df)
-    early_pnc = df[(df["dataElement_uid"]==PNC_TIMING_UID) & (df["value"].isin(PNC_EARLY_VALUES))]["tei_id"].nunique()
+    early_pnc = df[
+        (df["dataElement_uid"] == PNC_TIMING_UID) & 
+        (df["value"].isin(PNC_EARLY_VALUES))
+    ]["tei_id"].nunique()
+    
     coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
     return coverage, early_pnc, total_deliveries
 
@@ -62,7 +67,7 @@ def compute_kpis(df):
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
     stillbirth_rate, stillbirths, total_births = compute_stillbirth_rate(df)
     pnc_coverage, early_pnc, total_deliveries_pnc = compute_early_pnc_coverage(df)
-
+    
     return {
         "total_deliveries": int(total_deliveries),
         "fp_acceptance": int(fp_acceptance),
@@ -75,20 +80,50 @@ def compute_kpis(df):
         "total_deliveries_pnc": int(total_deliveries_pnc)
     }
 
-# ---------------- Trend Symbol ----------------
-def compute_trend_symbol(values):
-    """Compute trend symbol and CSS class for a list of numeric values"""
-    if not values or len(values) < 2:
-        return "–", "trend-neutral"
-    last, prev = values[-1], values[-2]
-    if last > prev:
-        return "▲", "trend-up"
-    elif last < prev:
-        return "▼", "trend-down"
+def render_gauge_chart(value, title, bg_color, text_color):
+    """Render a gauge chart for the latest value"""
+    if "PNC Coverage" in title or "IPPCAR" in title:
+        min_val, max_val = 0, 100
+        threshold_vals = [50, 80]
+        colorscale = [[0, "red"], [0.5, "yellow"], [1.0, "green"]]
+    elif "Stillbirth Rate" in title:
+        min_val, max_val = 0, 50
+        threshold_vals = [15, 5]
+        colorscale = [[0, "green"], [0.3, "yellow"], [1.0, "red"]]
     else:
-        return "–", "trend-neutral"
+        min_val, max_val = 0, 100
+        threshold_vals = [50, 80]
+        colorscale = [[0, "red"], [0.5, "yellow"], [1.0, "green"]]
+    
+    fig = go.Figure(go.Indicator(
+        mode = "gauge+number+delta",
+        value = value,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': title, 'font': {'size': 20}},
+        delta = {'reference': 0, 'increasing': {'color': "green"}},
+        gauge = {
+            'axis': {'range': [min_val, max_val], 'tickwidth': 1, 'tickcolor': text_color},
+            'bar': {'color': "darkblue"},
+            'bgcolor': bg_color,
+            'borderwidth': 2,
+            'bordercolor': text_color,
+            'steps': [
+                {'range': [min_val, threshold_vals[0]], 'color': 'lightcoral'},
+                {'range': [threshold_vals[0], threshold_vals[1]], 'color': 'lightyellow'},
+                {'range': [threshold_vals[1], max_val], 'color': 'lightgreen'}],
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': value}}))
+    
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        font={'color': text_color, 'family': "Arial"},
+        height=400
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
-# ---------------- Chart Rendering ----------------
 def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None):
     """Render line or bar chart with trend symbols"""
     if text_color is None:
@@ -99,19 +134,26 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         st.info("⚠️ No data available for the selected period.")
         return
 
-    df = df.copy()
-    df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
-
-    is_categorical = not all(isinstance(x, (dt.date, dt.datetime)) for x in df[period_col]) if not df.empty else True
-
-    # Choose chart type
+    chart_options = get_chart_options(title)
     chart_type = st.radio(
         f"📊 Chart type for {title}",
-        options=["Line", "Bar"],
+        options=chart_options,
         index=0,
         horizontal=True,
         key=f"chart_type_{title}"
     ).lower()
+
+    df = df.copy()
+    if value_col in df.columns:
+        df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
+
+    if chart_type == "gauge":
+        if not df.empty:
+            latest_value = df[value_col].iloc[-1] if len(df) > 0 else 0
+            render_gauge_chart(latest_value, title, bg_color, text_color)
+        return
+
+    is_categorical = not all(isinstance(x, (dt.date, dt.datetime)) for x in df[period_col]) if not df.empty else True
 
     if chart_type == "line":
         fig = px.line(df, x=period_col, y=value_col, markers=True, line_shape="linear", title=title, height=400)
@@ -124,6 +166,8 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
+        xaxis_title=period_col,
+        yaxis_title=value_col,
         xaxis=dict(
             type='category' if is_categorical else None,
             tickangle=-45 if is_categorical else 0,
@@ -147,3 +191,35 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
     fig.update_traces(hovertemplate="<b>%{x}</b><br>Value: %{y}<extra></extra>")
 
     st.plotly_chart(fig, use_container_width=True)
+
+    if len(df) > 1:
+        last_value = df[value_col].iloc[-1]
+        prev_value = df[value_col].iloc[-2]
+        if last_value > prev_value:
+            trend_symbol = "▲"
+            trend_class = "trend-up"
+        elif last_value < prev_value:
+            trend_symbol = "▼"
+            trend_class = "trend-down"
+        else:
+            trend_symbol = "–"
+            trend_class = "trend-neutral"
+        st.markdown(
+            f'<p style="font-size:1.2rem; font-weight:600;">Latest Value: {last_value:.1f} <span class="{trend_class}">{trend_symbol}</span></p>',
+            unsafe_allow_html=True
+        )
+
+    st.subheader(f"📋 {title} Summary Table")
+    styled_table = df.rename(columns={value_col: "Value"}).style.set_table_attributes('class="summary-table"')
+    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+
+def get_chart_options(title):
+    """Get appropriate chart options based on metric type"""
+    if "IPPCAR" in title:
+        return ["Line", "Bar"]
+    elif "PNC Coverage" in title:
+        return ["Line", "Gauge"]
+    elif "Stillbirth Rate" in title:
+        return ["Line", "Bar"]
+    else:
+        return ["Line", "Bar", "Gauge"]

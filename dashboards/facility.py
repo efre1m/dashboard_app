@@ -13,14 +13,12 @@ from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
 
-# ---------------- Cache Data Fetch ----------------
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def fetch_cached_data(user):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future = executor.submit(fetch_program_data_for_user, user)
         return future.result(timeout=180)
 
-# ---------------- Render Dashboard ----------------
 def render():
     st.set_page_config(
         page_title="Maternal Health Dashboard",
@@ -29,26 +27,20 @@ def render():
         initial_sidebar_state="expanded"
     )
 
-    # ---------------- Session State ----------------
     if "refresh_trigger" not in st.session_state:
         st.session_state["refresh_trigger"] = False
 
-    st_autorefresh = getattr(st, "autorefresh", None)
-    if st_autorefresh:
-        st.autorefresh(interval=1800*1000, key="auto_refresh")
-
-    # ---------------- Import CSS ----------------
     try:
         with open("utils/facility.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except Exception:
         pass
 
-    # ---------------- User Info ----------------
     user = st.session_state.get("user", {})
     username = user.get("username", "Unknown User")
     role = user.get("role", "Unknown Role")
     facility_name = user.get("facility_name", "Unknown Facility")
+    
     st.sidebar.markdown(f"""
         <div class="user-info">
             <div>👤 Username: {username}</div>
@@ -57,12 +49,10 @@ def render():
         </div>
     """, unsafe_allow_html=True)
 
-    # ---------------- Refresh Button ----------------
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.session_state["refresh_trigger"] = not st.session_state["refresh_trigger"]
 
-    # ---------------- Fetch Data ----------------
     with st.spinner("Fetching maternal data..."):
         try:
             dfs = fetch_cached_data(user)
@@ -81,11 +71,9 @@ def render():
     events_df = dfs.get("events", pd.DataFrame())
     raw_json = dfs.get("raw_json", [])
 
-    # ---------------- Safety Patches ----------------
     if not enrollments_df.empty and "enrollmentDate" in enrollments_df.columns:
         enrollments_df["enrollmentDate"] = pd.to_datetime(enrollments_df["enrollmentDate"], errors="coerce")
 
-    # unified events dataframe
     copied_events_df = events_df.copy()
     if not copied_events_df.empty:
         if "event_date" not in copied_events_df.columns and "eventDate" in copied_events_df.columns:
@@ -93,9 +81,9 @@ def render():
         elif "event_date" not in copied_events_df.columns:
             copied_events_df["event_date"] = pd.to_datetime(pd.Series([], dtype="datetime64[ns]"))
 
-    # ---------------- Export Buttons ----------------
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
     st.sidebar.markdown('<div class="section-header">Export Data</div>', unsafe_allow_html=True)
+    
     col_exp1, col_exp2 = st.sidebar.columns(2)
     with col_exp1:
         if st.button("📥 Raw JSON"):
@@ -122,12 +110,10 @@ def render():
 
     st.markdown(f'<div class="main-header">🏥 Maternal Health Dashboard - {facility_name}</div>', unsafe_allow_html=True)
 
-    # ---------------- Check if any data exists ----------------
     if copied_events_df.empty:
         st.markdown('<div class="no-data-warning">⚠️ No data available for the selected period. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
-    # ---------------- Filters ----------------
     col1, col2 = st.columns([3, 1])
     with col2:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
@@ -139,6 +125,7 @@ def render():
                 "Early Postnatal Care (PNC) Coverage (%)"
             ]
         )
+        
         _df_for_dates = copied_events_df if "event_date" in copied_events_df.columns else pd.DataFrame()
         quick_range = st.selectbox(
             "📅 Time Period",
@@ -158,7 +145,6 @@ def render():
 
     text_color = auto_text_color(bg_color)
 
-    # ---------------- Apply Time Filters ----------------
     if not copied_events_df.empty:
         copied_events_df = copied_events_df[
             (copied_events_df["event_date"].dt.date >= start_date) &
@@ -166,79 +152,19 @@ def render():
         ]
         copied_events_df = assign_period(copied_events_df, "event_date", period_label)
 
-    # ---------------- Compute KPIs ----------------
     kpis = compute_kpis(copied_events_df)
     if not isinstance(kpis, dict):
         st.error("Error computing KPI. Please check data.")
         return
 
-    # ---------------- KPI Cards with Trend Symbols ----------------
     with col1:
         st.markdown('<div class="section-header">📊 Key Performance Indicators</div>', unsafe_allow_html=True)
         
         # Calculate trends for each KPI
-        # For IPPCAR
-        ippcar_trend = "–"
-        ippcar_trend_class = "trend-neutral"
-        if not copied_events_df.empty:
-            ippcar_group = copied_events_df.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({
-                    "value": (
-                        x[(x["dataElement_uid"]=="Q1p7CxWGUoi") & 
-                          (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
-                                            "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique()
-                        / max(1, x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
-                    ) * 100
-                })
-            ).reset_index(drop=True)
-            
-            if len(ippcar_group) > 1:
-                last_value = ippcar_group["value"].iloc[-1]
-                prev_value = ippcar_group["value"].iloc[-2]
-                if last_value > prev_value:
-                    ippcar_trend = "▲"
-                    ippcar_trend_class = "trend-up"
-                elif last_value < prev_value:
-                    ippcar_trend = "▼"
-                    ippcar_trend_class = "trend-down"
+        ippcar_trend, ippcar_trend_class = calculate_trend(copied_events_df, "ippcar")
+        stillbirth_trend, stillbirth_trend_class = calculate_trend(copied_events_df, "stillbirth")
+        pnc_trend, pnc_trend_class = calculate_trend(copied_events_df, "pnc")
         
-        # For Stillbirth Rate
-        stillbirth_trend = "–"
-        stillbirth_trend_class = "trend-neutral"
-        if not copied_events_df.empty:
-            stillbirth_group = copied_events_df.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({"value": compute_kpis(x)["stillbirth_rate"]})
-            ).reset_index(drop=True)
-            
-            if len(stillbirth_group) > 1:
-                last_value = stillbirth_group["value"].iloc[-1]
-                prev_value = stillbirth_group["value"].iloc[-2]
-                if last_value > prev_value:
-                    stillbirth_trend = "▲"
-                    stillbirth_trend_class = "trend-up"
-                elif last_value < prev_value:
-                    stillbirth_trend = "▼"
-                    stillbirth_trend_class = "trend-down"
-        
-        # For PNC Coverage
-        pnc_trend = "–"
-        pnc_trend_class = "trend-neutral"
-        if not copied_events_df.empty:
-            pnc_group = copied_events_df.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})
-            ).reset_index(drop=True)
-            
-            if len(pnc_group) > 1:
-                last_value = pnc_group["value"].iloc[-1]
-                prev_value = pnc_group["value"].iloc[-2]
-                if last_value > prev_value:
-                    pnc_trend = "▲"
-                    pnc_trend_class = "trend-up"
-                elif last_value < prev_value:
-                    pnc_trend = "▼"
-                    pnc_trend_class = "trend-down"
-        
-        # Create a grid layout for KPI cards with trend symbols
         kpi_html = f"""
         <div class='kpi-grid'>
             <div class='kpi-card'>
@@ -269,12 +195,10 @@ def render():
         """
         st.markdown(kpi_html, unsafe_allow_html=True)
 
-    # ---------------- KPI Trend Chart ----------------
     with col1:
         st.markdown(f'<div class="section-header">📈 {kpi_selection} Trend</div>', unsafe_allow_html=True)
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
-        # ---------------- Prepare Trend Data ----------------
         if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
             group = copied_events_df.groupby("period", as_index=False).apply(
                 lambda x: pd.Series({
@@ -298,22 +222,41 @@ def render():
             group = copied_events_df.groupby("period", as_index=False).apply(lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color)
         
-        # ---------------- Trend Symbol ----------------
-        if not group.empty and len(group) > 1:
-            last_value = group["value"].iloc[-1]
-            prev_value = group["value"].iloc[-2]
-            if last_value > prev_value:
-                trend_symbol = "▲"
-                trend_class = "trend-up"
-            elif last_value < prev_value:
-                trend_symbol = "▼"
-                trend_class = "trend-down"
-            else:
-                trend_symbol = "–"
-                trend_class = "trend-neutral"
-            st.markdown(
-                f'<p style="font-size:1.2rem; font-weight:600;">Latest Value: {last_value:.1f} <span class="{trend_class}">{trend_symbol}</span></p>',
-                unsafe_allow_html=True
-            )
-
         st.markdown('</div>', unsafe_allow_html=True)
+
+def calculate_trend(df, kpi_type):
+    """Calculate trend symbol and class for a given KPI type"""
+    if df.empty:
+        return "–", "trend-neutral"
+    
+    if kpi_type == "ippcar":
+        group = df.groupby("period", as_index=False).apply(
+            lambda x: pd.Series({
+                "value": (
+                    x[(x["dataElement_uid"]=="Q1p7CxWGUoi") & 
+                      (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
+                                        "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique()
+                    / max(1, x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
+                ) * 100
+            })
+        ).reset_index(drop=True)
+    elif kpi_type == "stillbirth":
+        group = df.groupby("period", as_index=False).apply(
+            lambda x: pd.Series({"value": compute_kpis(x)["stillbirth_rate"]})
+        ).reset_index(drop=True)
+    elif kpi_type == "pnc":
+        group = df.groupby("period", as_index=False).apply(
+            lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})
+        ).reset_index(drop=True)
+    else:
+        return "–", "trend-neutral"
+    
+    if len(group) > 1:
+        last_value = group["value"].iloc[-1]
+        prev_value = group["value"].iloc[-2]
+        if last_value > prev_value:
+            return "▲", "trend-up"
+        elif last_value < prev_value:
+            return "▼", "trend-down"
+    
+    return "–", "trend-neutral"
