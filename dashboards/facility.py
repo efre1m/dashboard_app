@@ -114,7 +114,70 @@ def render():
         st.markdown('<div class="no-data-warning">⚠️ No data available for the selected period. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
+    # Create a full-width container for the KPI cards
+    st.markdown('<div class="section-header">📊 Key Performance Indicators</div>', unsafe_allow_html=True)
+    
+    # Calculate trends for each KPI
+    ippcar_trend, ippcar_trend_class = calculate_trend(copied_events_df, "ippcar")
+    stillbirth_trend, stillbirth_trend_class = calculate_trend(copied_events_df, "stillbirth")
+    pnc_trend, pnc_trend_class = calculate_trend(copied_events_df, "pnc")
+    maternal_death_trend, maternal_death_trend_class = calculate_trend(copied_events_df, "maternal_death")
+    csection_trend, csection_trend_class = calculate_trend(copied_events_df, "csection")
+    
+    kpis = compute_kpis(copied_events_df)
+    if not isinstance(kpis, dict):
+        st.error("Error computing KPI. Please check data.")
+        return
+    
+    kpi_html = f"""
+    <div class='kpi-grid'>
+        <div class='kpi-card'>
+            <div class='kpi-value'>{kpis.get("ippcar",0):.1f}% <span class='{ippcar_trend_class}'>{ippcar_trend}</span></div>
+            <div class='kpi-name'>IPPCAR (Immediate Postpartum Contraceptive Acceptance Rate)</div>
+            <div class='kpi-metrics'>
+                <span class='metric-label metric-fp'>Accepted FP: {kpis.get("fp_acceptance",0)}</span>
+                <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries",0)}</span>
+            </div>
+        </div>
+        <div class='kpi-card'>
+            <div class='kpi-value'>{kpis.get("stillbirth_rate",0):.1f} <span class='{stillbirth_trend_class}'>{stillbirth_trend}</span></div>
+            <div class='kpi-name'>Stillbirth Rate (per 1000 births)</div>
+            <div class='kpi-metrics'>
+                <span class='metric-label metric-stillbirth'>Stillbirths: {kpis.get("stillbirths",0)}</span>
+                <span class='metric-label metric-total'>Total Births: {kpis.get("total_births",0)}</span>
+            </div>
+        </div>
+        <div class='kpi-card'>
+            <div class='kpi-value'>{kpis.get("pnc_coverage",0):.1f}% <span class='{pnc_trend_class}'>{pnc_trend}</span></div>
+            <div class='kpi-name'>Early PNC Coverage (within 48 hrs)</div>
+            <div class='kpi-metrics'>
+               <span class='metric-label metric-fp'>PNC ≤48 hrs: {kpis.get("early_pnc",0)}</span>
+              <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries_pnc",0)}</span>
+            </div>
+        </div>
+        <div class='kpi-card'>
+            <div class='kpi-value'>{kpis.get("maternal_death_rate",0):.1f} <span class='{maternal_death_trend_class}'>{maternal_death_trend}</span></div>
+            <div class='kpi-name'>Maternal Death Rate (per 100,000 births)</div>
+            <div class='kpi-metrics'>
+               <span class='metric-label metric-maternal-death'>Maternal Deaths: {kpis.get("maternal_deaths",0)}</span>
+              <span class='metric-label metric-total'>Live Births: {kpis.get("live_births",0)}</span>
+            </div>
+        </div>
+        <div class='kpi-card'>
+            <div class='kpi-value'>{kpis.get("csection_rate",0):.1f}% <span class='{csection_trend_class}'>{csection_trend}</span></div>
+            <div class='kpi-name'>C-Section Rate</div>
+            <div class='kpi-metrics'>
+               <span class='metric-label metric-csection'>C-Sections: {kpis.get("csection_deliveries",0)}</span>
+              <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries_cs",0)}</span>
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(kpi_html, unsafe_allow_html=True)
+
+    # Now create the filter and chart section
     col1, col2 = st.columns([3, 1])
+    
     with col2:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
         kpi_selection = st.selectbox(
@@ -122,7 +185,9 @@ def render():
             [
                 "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
                 "Stillbirth Rate (per 1000 births)",
-                "Early Postnatal Care (PNC) Coverage (%)"
+                "Early Postnatal Care (PNC) Coverage (%)",
+                "Institutional Maternal Death Rate (per 100,000 births)",
+                "C-Section Rate (%)"  # Added new KPI
             ]
         )
         
@@ -136,7 +201,10 @@ def render():
 
         KPI_AGGREGATION = {
             "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": ["Monthly", "Quarterly"],
-            "Stillbirth Rate (per 1000 births)": ["Monthly"]
+            "Stillbirth Rate (per 1000 births)": ["Monthly"],
+            "Early Postnatal Care (PNC) Coverage (%)": ["Monthly", "Quarterly"],
+            "Institutional Maternal Death Rate (per 100,000 births)": ["Monthly", "Quarterly"],
+            "C-Section Rate (%)": ["Monthly"]  # Only monthly for C-section rate
         }
         allowed_periods = KPI_AGGREGATION.get(kpi_selection, ["Monthly"])
         period_label = st.selectbox("⏰ Aggregation Level", allowed_periods)
@@ -151,49 +219,6 @@ def render():
             (copied_events_df["event_date"].dt.date <= end_date)
         ]
         copied_events_df = assign_period(copied_events_df, "event_date", period_label)
-
-    kpis = compute_kpis(copied_events_df)
-    if not isinstance(kpis, dict):
-        st.error("Error computing KPI. Please check data.")
-        return
-
-    with col1:
-        st.markdown('<div class="section-header">📊 Key Performance Indicators</div>', unsafe_allow_html=True)
-        
-        # Calculate trends for each KPI
-        ippcar_trend, ippcar_trend_class = calculate_trend(copied_events_df, "ippcar")
-        stillbirth_trend, stillbirth_trend_class = calculate_trend(copied_events_df, "stillbirth")
-        pnc_trend, pnc_trend_class = calculate_trend(copied_events_df, "pnc")
-        
-        kpi_html = f"""
-        <div class='kpi-grid'>
-            <div class='kpi-card'>
-                <div class='kpi-value'>{kpis.get("ippcar",0):.1f}% <span class='{ippcar_trend_class}'>{ippcar_trend}</span></div>
-                <div class='kpi-name'>IPPCAR (Immediate Postpartum Contraceptive Acceptance Rate)</div>
-                <div class='kpi-metrics'>
-                    <span class='metric-label metric-fp'>Accepted FP: {kpis.get("fp_acceptance",0)}</span>
-                    <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries",0)}</span>
-                </div>
-            </div>
-            <div class='kpi-card'>
-                <div class='kpi-value'>{kpis.get("stillbirth_rate",0):.1f} <span class='{stillbirth_trend_class}'>{stillbirth_trend}</span></div>
-                <div class='kpi-name'>Stillbirth Rate (per 1000 births)</div>
-                <div class='kpi-metrics'>
-                    <span class='metric-label metric-stillbirth'>Stillbirths: {kpis.get("stillbirths",0)}</span>
-                    <span class='metric-label metric-total'>Total Births: {kpis.get("total_births",0)}</span>
-                </div>
-            </div>
-            <div class='kpi-card'>
-                <div class='kpi-value'>{kpis.get("pnc_coverage",0):.1f}% <span class='{pnc_trend_class}'>{pnc_trend}</span></div>
-                <div class='kpi-name'>Early PNC Coverage (within 48 hrs)</div>
-                <div class='kpi-metrics'>
-                   <span class='metric-label metric-fp'>PNC ≤48 hrs: {kpis.get("early_pnc",0)}</span>
-                  <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries_pnc",0)}</span>
-                </div>
-            </div>
-        </div>
-        """
-        st.markdown(kpi_html, unsafe_allow_html=True)
 
     with col1:
         st.markdown(f'<div class="section-header">📈 {kpi_selection} Trend</div>', unsafe_allow_html=True)
@@ -219,8 +244,22 @@ def render():
             render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color)
         
         elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-            group = copied_events_df.groupby("period", as_index=False).apply(lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})).reset_index(drop=True)
+            group = copied_events_df.groupby("period", as_index=False).apply(
+                lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})
+            ).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color)
+        
+        elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
+            group = copied_events_df.groupby("period", as_index=False).apply(
+                lambda x: pd.Series({"value": compute_kpis(x)["maternal_death_rate"]})
+            ).reset_index(drop=True)
+            render_trend_chart(group, "period", "value", "Maternal Death Rate (per 100,000 births)", bg_color, text_color)
+        
+        elif kpi_selection == "C-Section Rate (%)":
+            group = copied_events_df.groupby("period", as_index=False).apply(
+                lambda x: pd.Series({"value": compute_kpis(x)["csection_rate"]})
+            ).reset_index(drop=True)
+            render_trend_chart(group, "period", "value", "C-Section Rate (%)", bg_color, text_color)
         
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -247,6 +286,14 @@ def calculate_trend(df, kpi_type):
     elif kpi_type == "pnc":
         group = df.groupby("period", as_index=False).apply(
             lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})
+        ).reset_index(drop=True)
+    elif kpi_type == "maternal_death":
+        group = df.groupby("period", as_index=False).apply(
+            lambda x: pd.Series({"value": compute_kpis(x)["maternal_death_rate"]})
+        ).reset_index(drop=True)
+    elif kpi_type == "csection":
+        group = df.groupby("period", as_index=False).apply(
+            lambda x: pd.Series({"value": compute_kpis(x)["csection_rate"]})
         ).reset_index(drop=True)
     else:
         return "–", "trend-neutral"

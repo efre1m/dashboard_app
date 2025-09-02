@@ -23,11 +23,16 @@ STILLBIRTH_CODE = "2"
 DELIVERY_MODE_UID = "z9wWxK7fw8W"
 PNC_TIMING_UID = "z7Eb2yFLOBI"
 PNC_EARLY_VALUES = {"tbiEfEybERM", "JVO0gl1FuqK"}
+CONDITION_OF_DISCHARGE_UID = "TjQOcW6tm8k"
+DEAD_CODE = "4"
+DELIVERY_TYPE_UID = "lphtwP2ViZU"  # For C-section rate
+CSECTION_CODE = "2"  # C-section delivery code
+SVD_CODE = "1"  # Spontaneous Vaginal Delivery code
 
 def compute_total_deliveries(df):
     if df is None or df.empty:
         return 0
-    delivery_events = df[(df["dataElement_uid"]=="lphtwP2ViZU") & (df["value"].notna())]
+    delivery_events = df[(df["dataElement_uid"]==DELIVERY_TYPE_UID) & (df["value"].notna())]
     if delivery_events.empty:
         delivery_events = df[(df["dataElement_uid"]==DELIVERY_MODE_UID) & (df["value"].notna())]
     return delivery_events["tei_id"].nunique()
@@ -60,6 +65,48 @@ def compute_early_pnc_coverage(df):
     coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
     return coverage, early_pnc, total_deliveries
 
+def compute_maternal_death_rate(df):
+    """Calculate Institutional Maternal Death Rate per 100,000 live births"""
+    if df is None or df.empty:
+        return 0.0, 0, 0
+    
+    # Numerator: Maternal deaths (Condition of Discharge = Dead)
+    maternal_deaths = df[
+        (df["dataElement_uid"] == CONDITION_OF_DISCHARGE_UID) & 
+        (df["value"] == DEAD_CODE)
+    ]["tei_id"].nunique()
+    
+    # Denominator: Live births (Birth Outcome = Alive)
+    live_births = df[
+        (df["dataElement_uid"] == BIRTH_OUTCOME_UID) & 
+        (df["value"] == ALIVE_CODE)
+    ]["tei_id"].nunique()
+    
+    # Calculate rate per 100,000 live births
+    rate = (maternal_deaths / live_births * 100000) if live_births > 0 else 0.0
+    return rate, maternal_deaths, live_births
+
+def compute_csection_rate(df):
+    """Calculate C-Section Rate (%)"""
+    if df is None or df.empty:
+        return 0.0, 0, 0
+    
+    # Numerator: C-section deliveries
+    csection_deliveries = df[
+        (df["dataElement_uid"] == DELIVERY_TYPE_UID) & 
+        (df["value"] == CSECTION_CODE)
+    ]["tei_id"].nunique()
+    
+    # Denominator: Total deliveries (SVD + C-section)
+    total_deliveries = df[
+        (df["dataElement_uid"] == DELIVERY_TYPE_UID) & 
+        (df["value"].isin([SVD_CODE, CSECTION_CODE]))
+    ]["tei_id"].nunique()
+    
+    # Calculate rate percentage
+    rate = (csection_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0.0
+    return rate, csection_deliveries, total_deliveries
+
 def compute_kpis(df):
     """Compute all KPIs using a single dataframe"""
     total_deliveries = compute_total_deliveries(df)
@@ -67,6 +114,8 @@ def compute_kpis(df):
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
     stillbirth_rate, stillbirths, total_births = compute_stillbirth_rate(df)
     pnc_coverage, early_pnc, total_deliveries_pnc = compute_early_pnc_coverage(df)
+    maternal_death_rate, maternal_deaths, live_births = compute_maternal_death_rate(df)
+    csection_rate, csection_deliveries, total_deliveries_cs = compute_csection_rate(df)
     
     return {
         "total_deliveries": int(total_deliveries),
@@ -77,51 +126,58 @@ def compute_kpis(df):
         "total_births": int(total_births),
         "pnc_coverage": float(pnc_coverage),
         "early_pnc": int(early_pnc),
-        "total_deliveries_pnc": int(total_deliveries_pnc)
+        "total_deliveries_pnc": int(total_deliveries_pnc),
+        "maternal_death_rate": float(maternal_death_rate),
+        "maternal_deaths": int(maternal_deaths),
+        "live_births": int(live_births),
+        "csection_rate": float(csection_rate),
+        "csection_deliveries": int(csection_deliveries),
+        "total_deliveries_cs": int(total_deliveries_cs)
     }
 
 def render_gauge_chart(value, title, bg_color, text_color):
-    """Render a gauge chart for the latest value"""
-    if "PNC Coverage" in title or "IPPCAR" in title:
+    """Render a gauge chart for Early PNC Coverage or Maternal Death Rate"""
+    if "PNC Coverage" in title:
         min_val, max_val = 0, 100
-        threshold_vals = [50, 80]
-        colorscale = [[0, "red"], [0.5, "yellow"], [1.0, "green"]]
-    elif "Stillbirth Rate" in title:
-        min_val, max_val = 0, 50
-        threshold_vals = [15, 5]
-        colorscale = [[0, "green"], [0.3, "yellow"], [1.0, "red"]]
+        steps = [
+            {'range': [min_val, 50], 'color': 'lightcoral'},   # Red
+            {'range': [50, 80], 'color': 'lightyellow'},       # Yellow
+            {'range': [80, max_val], 'color': 'lightgreen'}    # Green
+        ]
+    elif "Maternal Death Rate" in title:
+        min_val, max_val = 0, 500
+        steps = [
+            {'range': [min_val, 70], 'color': 'lightgreen'},   # Green
+            {'range': [70, 200], 'color': 'lightyellow'},      # Yellow
+            {'range': [200, max_val], 'color': 'lightcoral'}   # Red
+        ]
     else:
-        min_val, max_val = 0, 100
-        threshold_vals = [50, 80]
-        colorscale = [[0, "red"], [0.5, "yellow"], [1.0, "green"]]
-    
+        return  # only render gauges for selected indicators
+
     fig = go.Figure(go.Indicator(
-        mode = "gauge+number+delta",
-        value = value,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': title, 'font': {'size': 20}},
-        delta = {'reference': 0, 'increasing': {'color': "green"}},
-        gauge = {
+        mode="gauge+number",
+        value=value,
+        title={'text': title, 'font': {'size': 20}},
+        gauge={
             'axis': {'range': [min_val, max_val], 'tickwidth': 1, 'tickcolor': text_color},
             'bar': {'color': "darkblue"},
             'bgcolor': bg_color,
             'borderwidth': 2,
             'bordercolor': text_color,
-            'steps': [
-                {'range': [min_val, threshold_vals[0]], 'color': 'lightcoral'},
-                {'range': [threshold_vals[0], threshold_vals[1]], 'color': 'lightyellow'},
-                {'range': [threshold_vals[1], max_val], 'color': 'lightgreen'}],
+            'steps': steps,
             'threshold': {
                 'line': {'color': "red", 'width': 4},
                 'thickness': 0.75,
-                'value': value}}))
-    
+                'value': value
+            }
+        }
+    ))
+
     fig.update_layout(
         paper_bgcolor=bg_color,
         font={'color': text_color, 'family': "Arial"},
         height=400
     )
-    
     st.plotly_chart(fig, use_container_width=True)
 
 def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None):
@@ -215,11 +271,15 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
 
 def get_chart_options(title):
     """Get appropriate chart options based on metric type"""
-    if "IPPCAR" in title:
-        return ["Line", "Bar"]
-    elif "PNC Coverage" in title:
+    if "PNC Coverage" in title:
         return ["Line", "Gauge"]
+    elif "Maternal Death Rate" in title:
+        return ["Line", "Bar", "Gauge"]
     elif "Stillbirth Rate" in title:
         return ["Line", "Bar"]
+    elif "IPPCAR" in title:
+        return ["Line", "Bar"]
+    elif "C-Section Rate" in title:
+        return ["Line", "Bar"]  # Only line and bar for C-section rate
     else:
-        return ["Line", "Bar", "Gauge"]
+        return ["Line", "Bar"]
