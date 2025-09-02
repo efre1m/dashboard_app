@@ -135,7 +135,8 @@ def render():
             "📊 Select KPI to Visualize",
             [
                 "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-                "Stillbirth Rate (per 1000 births)"
+                "Stillbirth Rate (per 1000 births)",
+                "Early Postnatal Care (PNC) Coverage (%)"
             ]
         )
         _df_for_dates = copied_events_df if "event_date" in copied_events_df.columns else pd.DataFrame()
@@ -171,15 +172,77 @@ def render():
         st.error("Error computing KPI. Please check data.")
         return
 
-    # ---------------- KPI Cards ----------------
+    # ---------------- KPI Cards with Trend Symbols ----------------
     with col1:
         st.markdown('<div class="section-header">📊 Key Performance Indicators</div>', unsafe_allow_html=True)
         
-        # Create a grid layout for KPI cards
+        # Calculate trends for each KPI
+        # For IPPCAR
+        ippcar_trend = "–"
+        ippcar_trend_class = "trend-neutral"
+        if not copied_events_df.empty:
+            ippcar_group = copied_events_df.groupby("period", as_index=False).apply(
+                lambda x: pd.Series({
+                    "value": (
+                        x[(x["dataElement_uid"]=="Q1p7CxWGUoi") & 
+                          (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
+                                            "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique()
+                        / max(1, x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
+                    ) * 100
+                })
+            ).reset_index(drop=True)
+            
+            if len(ippcar_group) > 1:
+                last_value = ippcar_group["value"].iloc[-1]
+                prev_value = ippcar_group["value"].iloc[-2]
+                if last_value > prev_value:
+                    ippcar_trend = "▲"
+                    ippcar_trend_class = "trend-up"
+                elif last_value < prev_value:
+                    ippcar_trend = "▼"
+                    ippcar_trend_class = "trend-down"
+        
+        # For Stillbirth Rate
+        stillbirth_trend = "–"
+        stillbirth_trend_class = "trend-neutral"
+        if not copied_events_df.empty:
+            stillbirth_group = copied_events_df.groupby("period", as_index=False).apply(
+                lambda x: pd.Series({"value": compute_kpis(x)["stillbirth_rate"]})
+            ).reset_index(drop=True)
+            
+            if len(stillbirth_group) > 1:
+                last_value = stillbirth_group["value"].iloc[-1]
+                prev_value = stillbirth_group["value"].iloc[-2]
+                if last_value > prev_value:
+                    stillbirth_trend = "▲"
+                    stillbirth_trend_class = "trend-up"
+                elif last_value < prev_value:
+                    stillbirth_trend = "▼"
+                    stillbirth_trend_class = "trend-down"
+        
+        # For PNC Coverage
+        pnc_trend = "–"
+        pnc_trend_class = "trend-neutral"
+        if not copied_events_df.empty:
+            pnc_group = copied_events_df.groupby("period", as_index=False).apply(
+                lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})
+            ).reset_index(drop=True)
+            
+            if len(pnc_group) > 1:
+                last_value = pnc_group["value"].iloc[-1]
+                prev_value = pnc_group["value"].iloc[-2]
+                if last_value > prev_value:
+                    pnc_trend = "▲"
+                    pnc_trend_class = "trend-up"
+                elif last_value < prev_value:
+                    pnc_trend = "▼"
+                    pnc_trend_class = "trend-down"
+        
+        # Create a grid layout for KPI cards with trend symbols
         kpi_html = f"""
         <div class='kpi-grid'>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis.get("ippcar",0):.1f}%</div>
+                <div class='kpi-value'>{kpis.get("ippcar",0):.1f}% <span class='{ippcar_trend_class}'>{ippcar_trend}</span></div>
                 <div class='kpi-name'>IPPCAR (Immediate Postpartum Contraceptive Acceptance Rate)</div>
                 <div class='kpi-metrics'>
                     <span class='metric-label metric-fp'>Accepted FP: {kpis.get("fp_acceptance",0)}</span>
@@ -187,11 +250,19 @@ def render():
                 </div>
             </div>
             <div class='kpi-card'>
-                <div class='kpi-value'>{kpis.get("stillbirth_rate",0):.1f}</div>
+                <div class='kpi-value'>{kpis.get("stillbirth_rate",0):.1f} <span class='{stillbirth_trend_class}'>{stillbirth_trend}</span></div>
                 <div class='kpi-name'>Stillbirth Rate (per 1000 births)</div>
                 <div class='kpi-metrics'>
                     <span class='metric-label metric-stillbirth'>Stillbirths: {kpis.get("stillbirths",0)}</span>
                     <span class='metric-label metric-total'>Total Births: {kpis.get("total_births",0)}</span>
+                </div>
+            </div>
+            <div class='kpi-card'>
+                <div class='kpi-value'>{kpis.get("pnc_coverage",0):.1f}% <span class='{pnc_trend_class}'>{pnc_trend}</span></div>
+                <div class='kpi-name'>Early PNC Coverage (within 48 hrs)</div>
+                <div class='kpi-metrics'>
+                   <span class='metric-label metric-fp'>PNC ≤48 hrs: {kpis.get("early_pnc",0)}</span>
+                  <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries_pnc",0)}</span>
                 </div>
             </div>
         </div>
@@ -222,7 +293,11 @@ def render():
                 lambda x: pd.Series({"value": compute_kpis(x)["stillbirth_rate"]})
             ).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color)
-
+        
+        elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
+            group = copied_events_df.groupby("period", as_index=False).apply(lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})).reset_index(drop=True)
+            render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color)
+        
         # ---------------- Trend Symbol ----------------
         if not group.empty and len(group) > 1:
             last_value = group["value"].iloc[-1]
