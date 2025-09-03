@@ -10,7 +10,7 @@ def authenticate_user(username: str, password: str):
     """
     Authenticate user against DB.
     Supports bcrypt + legacy plain-text upgrade.
-    Returns user object with facility info if facility-level user.
+    Returns user object with facility or region info.
     """
     conn = get_db_connection()
     cur = conn.cursor()
@@ -25,10 +25,12 @@ def authenticate_user(username: str, password: str):
             u.region_id,
             u.country_id,
             f.facility_name,
-            f.dhis2_uid AS facility_dhis_uid
+            f.dhis2_uid AS facility_dhis_uid,
+            r.region_name,
+            r.dhis2_regional_uid
         FROM users u
-        LEFT JOIN facilities f
-            ON u.facility_id = f.facility_id
+        LEFT JOIN facilities f ON u.facility_id = f.facility_id
+        LEFT JOIN regions r ON u.region_id = r.region_id
         WHERE u.username = %s
     """, (username,))
     row = cur.fetchone()
@@ -38,7 +40,8 @@ def authenticate_user(username: str, password: str):
         conn.close()
         return None
 
-    user_id, uname, stored_pw, role, facility_id, region_id, country_id, facility_name, facility_dhis_uid = row
+    (user_id, uname, stored_pw, role, facility_id, region_id, country_id,
+     facility_name, facility_dhis_uid, region_name, region_dhis_uid) = row
 
     valid = False
     upgraded = False
@@ -68,12 +71,27 @@ def authenticate_user(username: str, password: str):
         "country_id": country_id,
         "facility_name": facility_name,
         "facility_dhis_uid": facility_dhis_uid,
+        "region_name": region_name,
+        "region_dhis_uid": region_dhis_uid,
         "upgraded": upgraded,
     }
 
+
 def logout():
+    """Clear session state and query parameters."""
     for k in ["authenticated", "user", "page"]:
         if k in st.session_state:
             del st.session_state[k]
-    st.query_params.clear()  # clear URL params
+    st.query_params.clear()
     st.rerun()
+
+
+def get_user_display_info(user: dict) -> str:
+    """Get formatted user information for display."""
+    if user["role"] == "facility":
+        return f"{user['username']} ({user['role']} - {user['facility_name']})"
+    elif user["role"] == "regional":
+        return f"{user['username']} ({user['role']} - {user['region_name']})"
+    elif user["role"] == "national":
+        return f"{user['username']} ({user['role']})"
+    return user["username"]

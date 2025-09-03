@@ -5,9 +5,10 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
+
 def get_orgunit_uids_for_user(user: dict) -> List[Tuple[str, str]]:
     """
-    Fetch DHIS2 OrgUnit UIDs and facility names accessible for a user.
+    Fetch DHIS2 OrgUnit UIDs and facility/region names accessible for a user.
     Works for facility, regional, and national roles.
     """
     conn = get_db_connection()
@@ -21,9 +22,12 @@ def get_orgunit_uids_for_user(user: dict) -> List[Tuple[str, str]]:
                     (user["facility_id"],))
         ous = cur.fetchall()
     elif role == "regional" and user.get("region_id"):
-        cur.execute("SELECT dhis2_uid, facility_name FROM facilities WHERE region_id=%s ORDER BY facility_name",
+        # Fetch regional UID from regions table
+        cur.execute("SELECT dhis2_regional_uid, region_name FROM regions WHERE region_id=%s",
                     (user["region_id"],))
-        ous = cur.fetchall()
+        row = cur.fetchone()
+        if row:
+            ous = [(row[0], row[1])]  # single entry: (DHIS2 UID, region name)
     elif role == "national" and user.get("country_id"):
         cur.execute("""SELECT f.dhis2_uid, f.facility_name
                        FROM facilities f
@@ -41,7 +45,7 @@ def get_orgunit_uids_for_user(user: dict) -> List[Tuple[str, str]]:
 
 def get_program_uid(program_name: str = "Maternal Inpatient Data") -> Optional[str]:
     """
-    Fetch DHIS2 program UID from the DB.
+    Fetch DHIS2 program UID from the database.
     """
     conn = get_db_connection()
     cur = conn.cursor()
@@ -57,7 +61,7 @@ def get_program_uid(program_name: str = "Maternal Inpatient Data") -> Optional[s
 
 def get_facility_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
     """
-    Utility to fetch facility_name from dhis2_uid.
+    Fetch facility_name from dhis2_uid.
     """
     if not dhis_uid:
         return None
@@ -65,6 +69,23 @@ def get_facility_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT facility_name FROM facilities WHERE dhis2_uid=%s", (dhis_uid,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    return row[0] if row else None
+
+
+def get_region_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
+    """
+    Fetch region_name from dhis2_regional_uid.
+    """
+    if not dhis_uid:
+        return None
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT region_name FROM regions WHERE dhis2_regional_uid=%s", (dhis_uid,))
     row = cur.fetchone()
     cur.close()
     conn.close()
