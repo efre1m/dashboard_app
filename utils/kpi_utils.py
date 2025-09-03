@@ -1,8 +1,8 @@
 import pandas as pd
-import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import datetime as dt
+import streamlit as st
 
 # ---------------- Utility ----------------
 def auto_text_color(bg):
@@ -35,63 +35,99 @@ CONDITION_OF_DISCHARGE_UID = "TjQOcW6tm8k"
 DEAD_CODE = "4"
 
 # ---------------- KPI Computation Functions ----------------
-def compute_total_deliveries(df):
+def compute_total_deliveries(df, facility_uid=None):
     if df is None or df.empty:
         return 0
+    
+    # Filter by facility if specified
+    if facility_uid:
+        df = df[df["orgUnit"] == facility_uid]
+    
     deliveries = df[(df["dataElement_uid"]==DELIVERY_TYPE_UID) & df["value"].notna()]
     if deliveries.empty:
         deliveries = df[(df["dataElement_uid"]==DELIVERY_MODE_UID) & df["value"].notna()]
     return deliveries["tei_id"].nunique()
 
-def compute_fp_acceptance(df):
+def compute_fp_acceptance(df, facility_uid=None):
     if df is None or df.empty:
         return 0
+    
+    # Filter by facility if specified
+    if facility_uid:
+        df = df[df["orgUnit"] == facility_uid]
+        
     return df[(df["dataElement_uid"]==FP_ACCEPTANCE_UID) & (df["value"].isin(FP_ACCEPTED_VALUES))]["tei_id"].nunique()
 
-def compute_stillbirth_rate(df):
+def compute_stillbirth_rate(df, facility_uid=None):
     if df is None or df.empty:
         return 0.0, 0, 0
+    
+    # Filter by facility if specified
+    if facility_uid:
+        df = df[df["orgUnit"] == facility_uid]
+        
     births = df[(df["dataElement_uid"]==BIRTH_OUTCOME_UID) & (df["value"].isin([ALIVE_CODE, STILLBIRTH_CODE]))]
     total_births = births["tei_id"].nunique()
     stillbirths = births[births["value"]==STILLBIRTH_CODE]["tei_id"].nunique()
     rate = (stillbirths / total_births * 1000) if total_births > 0 else 0.0
     return rate, stillbirths, total_births
 
-def compute_early_pnc_coverage(df):
+def compute_early_pnc_coverage(df, facility_uid=None):
     if df is None or df.empty:
         return 0.0, 0, 0
+    
+    # Filter by facility if specified
+    if facility_uid:
+        df = df[df["orgUnit"] == facility_uid]
+        
     total_deliveries = compute_total_deliveries(df)
     early_pnc = df[(df["dataElement_uid"]==PNC_TIMING_UID) & (df["value"].isin(PNC_EARLY_VALUES))]["tei_id"].nunique()
     coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
     return coverage, early_pnc, total_deliveries
 
-def compute_maternal_death_rate(df):
+def compute_maternal_death_rate(df, facility_uid=None):
     if df is None or df.empty:
         return 0.0, 0, 0
+    
+    # Filter by facility if specified
+    if facility_uid:
+        df = df[df["orgUnit"] == facility_uid]
+        
     dfx = df.copy()
     dfx["event_date"] = pd.to_datetime(dfx["event_date"], errors="coerce")
     dfx = dfx[dfx["event_date"].notna()]
 
+    # Maternal deaths
     deaths_df = dfx[(dfx["dataElement_uid"]==CONDITION_OF_DISCHARGE_UID) & (dfx["value"]==DEAD_CODE)]
     maternal_deaths = deaths_df["tei_id"].nunique()
-    if maternal_deaths == 0:
-        return 0.0, 0, 0
 
-    # Use all live births in the same filtered date range
+    # Live births (always compute)
     live_births = dfx[(dfx["dataElement_uid"]==BIRTH_OUTCOME_UID) & (dfx["value"]==ALIVE_CODE)]["tei_id"].nunique()
-    rate = (maternal_deaths / live_births * 100000) if live_births > 0 else 0.0
+
+    # Compute rate (0 if no deaths)
+    rate = (maternal_deaths / live_births * 100000) if live_births > 0 and maternal_deaths > 0 else 0.0
+    
     return rate, maternal_deaths, live_births
 
-def compute_csection_rate(df):
+def compute_csection_rate(df, facility_uid=None):
     if df is None or df.empty:
         return 0.0, 0, 0
+    
+    # Filter by facility if specified
+    if facility_uid:
+        df = df[df["orgUnit"] == facility_uid]
+        
     csection_deliveries = df[(df["dataElement_uid"]==DELIVERY_TYPE_UID) & (df["value"]==CSECTION_CODE)]["tei_id"].nunique()
     total_deliveries = df[(df["dataElement_uid"]==DELIVERY_TYPE_UID) & (df["value"].isin([SVD_CODE,CSECTION_CODE]))]["tei_id"].nunique()
     rate = (csection_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0.0
     return rate, csection_deliveries, total_deliveries
 
 # ---------------- Master KPI Function ----------------
-def compute_kpis(df):
+def compute_kpis(df, facility_uid=None):
+    # Filter by facility if specified
+    if facility_uid:
+        df = df[df["orgUnit"] == facility_uid]
+    
     total_deliveries = compute_total_deliveries(df)
     fp_acceptance = compute_fp_acceptance(df)
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
@@ -149,33 +185,47 @@ def get_chart_options(title):
     elif "C-Section Rate" in title: return ["Line","Bar"]
     else: return ["Line","Bar"]
 
-def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None):
-    if text_color is None: text_color = auto_text_color(bg_color)
+def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None, facility_name=None):
+    if text_color is None: 
+        text_color = auto_text_color(bg_color)
+    
+    # Add facility name to title if provided
+    if facility_name:
+        title = f"{title} - {facility_name}"
+    
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
         st.info("⚠️ No data available for the selected period.")
         return
+        
     chart_options = get_chart_options(title)
-    chart_type = st.radio(f"📊 Chart type for {title}", options=chart_options, index=0, horizontal=True, key=f"chart_type_{title}").lower()
+    chart_type = st.radio(f"📊 Chart type for {title}", options=chart_options, index=0, horizontal=True, key=f"chart_type_{title}_{facility_name}").lower()
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col],errors="coerce").fillna(0)
+    
     if chart_type=="gauge":
         render_gauge_chart(df[value_col].iloc[-1],title,bg_color,text_color)
         return
+        
     is_categorical = not all(isinstance(x,(dt.date,dt.datetime)) for x in df[period_col]) if not df.empty else True
     if chart_type=="line":
         fig = px.line(df,x=period_col,y=value_col,markers=True,line_shape="linear",title=title,height=400)
         fig.update_traces(line=dict(width=3),marker=dict(size=7))
     else:
         fig = px.bar(df,x=period_col,y=value_col,text=value_col,labels={value_col:title},title=title,height=400)
+        
     fig.update_layout(
         paper_bgcolor=bg_color,plot_bgcolor=bg_color,font_color=text_color,title_font_color=text_color,
         xaxis_title=period_col,yaxis_title=value_col,
         xaxis=dict(type='category' if is_categorical else None,tickangle=-45 if is_categorical else 0,showgrid=True,gridcolor='rgba(128,128,128,0.2)'),
         yaxis=dict(rangemode='tozero',showgrid=True,gridcolor='rgba(128,128,128,0.2)',zeroline=True,zerolinecolor='rgba(128,128,128,0.5)')
     )
-    if "Rate" in title or "%" in title: fig.update_layout(yaxis_tickformat=".1f")
-    if any(k in title for k in ["Deliveries","Acceptance"]): fig.update_layout(yaxis_tickformat=",")
+    
+    if "Rate" in title or "%" in title: 
+        fig.update_layout(yaxis_tickformat=".1f")
+    if any(k in title for k in ["Deliveries","Acceptance"]): 
+        fig.update_layout(yaxis_tickformat=",")
+        
     fig.update_traces(hovertemplate="<b>%{x}</b><br>Value: %{y}<extra></extra>")
     st.plotly_chart(fig,use_container_width=True)
 
