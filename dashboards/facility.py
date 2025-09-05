@@ -91,22 +91,30 @@ def calculate_trend(df: pd.DataFrame, kpi_type: str):
 
     elif kpi_type == "stillbirth":
         group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({"value": compute_kpis(x)["stillbirth_rate"]})
+            lambda x: pd.Series({
+                "value": compute_kpis(x)["stillbirth_rate"]
+            })
         ).reset_index(drop=True)
 
     elif kpi_type == "pnc":
         group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})
+            lambda x: pd.Series({
+                "value": compute_kpis(x)["pnc_coverage"]
+            })
         ).reset_index(drop=True)
 
     elif kpi_type == "maternal_death":
         group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({"value": compute_kpis(x)["maternal_death_rate"]})
+            lambda x: pd.Series({
+                "value": compute_kpis(x)["maternal_death_rate"]
+            })
         ).reset_index(drop=True)
 
     elif kpi_type == "csection":
         group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({"value": compute_kpis(x)["csection_rate"]})
+            lambda x: pd.Series({
+                "value": compute_kpis(x)["csection_rate"]
+            })
         ).reset_index(drop=True)
 
     else:
@@ -261,7 +269,7 @@ def render():
                <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries_pnc",0)}</span>
             </div>
         </div>
-        <div class='kpi-card'>
+        <div class = 'kpi-card'>
             <div class='kpi-value'>{kpis.get("maternal_death_rate",0):.1f} <span class='{maternal_death_trend_class}'>{maternal_death_trend}</span></div>
             <div class='kpi-name'>Maternal Death Rate (per 100,000 births)</div>
             <div class='kpi-metrics'>
@@ -364,33 +372,58 @@ def render():
                           (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
                                             "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique()
                         / max(1, x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
-                    ) * 100
+                    ) * 100,
+                    "FP Acceptances": x[(x["dataElement_uid"]=="Q1p7CxWGUoi") &
+                                      (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
+                                                        "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique(),
+                    "Total Deliveries": x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique()
                 })
             ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "IPPCAR (%)", bg_color, text_color)
+            render_trend_chart(group, "period", "value", "IPPCAR (%)", bg_color, text_color, 
+                              facility_name, "FP Acceptances", "Total Deliveries")
 
         elif kpi_selection == "Stillbirth Rate (per 1000 births)":
             group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({"value": compute_kpis(x)["stillbirth_rate"]})
+                lambda x: pd.Series({
+                    "value": compute_kpis(x)["stillbirth_rate"],
+                    "Stillbirths": compute_kpis(x)["stillbirths"],
+                    "Total Births": compute_kpis(x)["total_births"]
+                })
             ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color)
+            render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color,
+                              facility_name, "Stillbirths", "Total Births")
 
         elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
             group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({"value": compute_kpis(x)["pnc_coverage"]})
+                lambda x: pd.Series({
+                    "value": compute_kpis(x)["pnc_coverage"],
+                    "Early PNC (≤48 hrs)": compute_kpis(x)["early_pnc"],
+                    "Total Deliveries": compute_kpis(x)["total_deliveries_pnc"]
+                })
             ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color)
+            render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color,
+                              facility_name, "Early PNC (≤48 hrs)", "Total Deliveries")
 
         elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
             group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({"value": compute_kpis(x)["maternal_death_rate"]})
+                lambda x: pd.Series({
+                    "value": compute_kpis(x)["maternal_death_rate"],
+                    "Maternal Deaths": compute_kpis(x)["maternal_deaths"],
+                    "Live Births": compute_kpis(x)["live_births"]
+                })
             ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "Maternal Death Rate (per 100,000 births)", bg_color, text_color)
+            render_trend_chart(group, "period", "value", "Maternal Death Rate (per 100,000 births)", bg_color, text_color,
+                              facility_name, "Maternal Deaths", "Live Births")
 
         elif kpi_selection == "C-Section Rate (%)":
             group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({"value": compute_kpis(x)["csection_rate"]})
+                lambda x: pd.Series({
+                    "value": compute_kpis(x)["csection_rate"],
+                    "C-Sections": compute_kpis(x)["csection_deliveries"],
+                    "Total Deliveries": compute_kpis(x)["total_deliveries_cs"]
+                })
             ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "C-Section Rate (%)", bg_color, text_color)
+            render_trend_chart(group, "period", "value", "C-Section Rate (%)", bg_color, text_color,
+                              facility_name, "C-Sections", "Total Deliveries")
 
         st.markdown('</div>', unsafe_allow_html=True)

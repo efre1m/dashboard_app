@@ -155,14 +155,24 @@ def compute_kpis(df, facility_uid=None):
     }
 
 # ---------------- Chart Functions ----------------
-def render_gauge_chart(value, title, bg_color, text_color):
-    if "PNC Coverage" in title:
+def render_gauge_chart(value, title, bg_color, text_color, numerator=None, denominator=None, numerator_name="Numerator", denominator_name="Denominator"):
+    if "PNC Coverage" in title or "IPPCAR" in title or "C-Section Rate" in title:
         min_val, max_val = 0, 100
         steps = [{'range':[0,50],'color':'lightcoral'},{'range':[50,80],'color':'lightyellow'},{'range':[80,100],'color':'lightgreen'}]
     elif "Maternal Death Rate" in title:
         min_val,max_val = 0, max(500,value*1.2)
         steps = [{'range':[0,max_val*0.2],'color':'lightgreen'},{'range':[max_val*0.2,max_val*0.4],'color':'lightyellow'},{'range':[max_val*0.4,max_val],'color':'lightcoral'}]
-    else: return
+    elif "Stillbirth Rate" in title:
+        min_val,max_val = 0, max(50,value*1.2)
+        steps = [{'range':[0,max_val*0.2],'color':'lightgreen'},{'range':[max_val*0.2,max_val*0.4],'color':'lightyellow'},{'range':[max_val*0.4,max_val],'color':'lightcoral'}]
+    else: 
+        return
+    
+    # Create custom hover text with numerator and denominator
+    hover_text = f"Value: {value:.1f}"
+    if numerator is not None and denominator is not None:
+        hover_text += f"<br>{numerator_name}: {numerator}<br>{denominator_name}: {denominator}"
+    
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=value,
@@ -178,14 +188,18 @@ def render_gauge_chart(value, title, bg_color, text_color):
     st.plotly_chart(fig,use_container_width=True)
 
 def get_chart_options(title):
-    if "PNC Coverage" in title: return ["Line","Gauge"]
-    elif "Maternal Death Rate" in title: return ["Line","Bar","Gauge"]
-    elif "Stillbirth Rate" in title: return ["Line","Bar"]
-    elif "IPPCAR" in title: return ["Line","Bar"]
-    elif "C-Section Rate" in title: return ["Line","Bar"]
-    else: return ["Line","Bar"]
+    if "PNC Coverage" in title or "IPPCAR" in title: 
+        return ["Line","Gauge"]
+    elif "Maternal Death Rate" in title: 
+        return ["Line","Bar","Gauge"]
+    elif "Stillbirth Rate" in title: 
+        return ["Line","Bar"]
+    elif "C-Section Rate" in title: 
+        return ["Line","Bar","Gauge"]
+    else: 
+        return ["Line","Bar"]
 
-def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None, facility_name=None):
+def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None, facility_name=None, numerator_name="Numerator", denominator_name="Denominator"):
     if text_color is None: 
         text_color = auto_text_color(bg_color)
     
@@ -204,15 +218,29 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
     df[value_col] = pd.to_numeric(df[value_col],errors="coerce").fillna(0)
     
     if chart_type=="gauge":
-        render_gauge_chart(df[value_col].iloc[-1],title,bg_color,text_color)
+        # Get the latest values for numerator and denominator
+        latest_row = df.iloc[-1]
+        numerator = latest_row.get(numerator_name, None)
+        denominator = latest_row.get(denominator_name, None)
+        render_gauge_chart(df[value_col].iloc[-1], title, bg_color, text_color, numerator, denominator, numerator_name, denominator_name)
         return
         
     is_categorical = not all(isinstance(x,(dt.date,dt.datetime)) for x in df[period_col]) if not df.empty else True
+    
+    # Create custom hover text with numerator and denominator if available
+    hover_data = {}
+    if numerator_name in df.columns and denominator_name in df.columns:
+        hover_data = {numerator_name: True, denominator_name: True}
+    
     if chart_type=="line":
-        fig = px.line(df,x=period_col,y=value_col,markers=True,line_shape="linear",title=title,height=400)
-        fig.update_traces(line=dict(width=3),marker=dict(size=7))
+        fig = px.line(df, x=period_col, y=value_col, markers=True, line_shape="linear", 
+                     title=title, height=400, hover_data=hover_data)
+        fig.update_traces(line=dict(width=3), marker=dict(size=7),
+                         hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.1f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>")
     else:
-        fig = px.bar(df,x=period_col,y=value_col,text=value_col,labels={value_col:title},title=title,height=400)
+        fig = px.bar(df, x=period_col, y=value_col, text=value_col, labels={value_col:title}, 
+                    title=title, height=400, hover_data=hover_data)
+        fig.update_traces(hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.1f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>")
         
     fig.update_layout(
         paper_bgcolor=bg_color,plot_bgcolor=bg_color,font_color=text_color,title_font_color=text_color,
@@ -226,7 +254,6 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
     if any(k in title for k in ["Deliveries","Acceptance"]): 
         fig.update_layout(yaxis_tickformat=",")
         
-    fig.update_traces(hovertemplate="<b>%{x}</b><br>Value: %{y}<extra></extra>")
     st.plotly_chart(fig,use_container_width=True)
 
     if len(df)>1:
@@ -237,5 +264,63 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         st.markdown(f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.1f} <span class="{trend_class}">{trend_symbol}</span></p>',unsafe_allow_html=True)
 
     st.subheader(f"📋 {title} Summary Table")
-    styled_table = df.rename(columns={value_col:"Value"}).style.set_table_attributes('class="summary-table"')
-    st.markdown(styled_table.to_html(),unsafe_allow_html=True)
+    
+    # Create a summary table with proper column names
+    summary_df = df.copy().reset_index(drop=True)
+    
+    # Remove the index column and keep only relevant columns
+    if numerator_name in summary_df.columns and denominator_name in summary_df.columns:
+        summary_df = summary_df[[period_col, numerator_name, denominator_name, value_col]]
+    else:
+        summary_df = summary_df[[period_col, value_col]]
+    
+    # Calculate overall value using the same formula as individual periods
+    if numerator_name in summary_df.columns and denominator_name in summary_df.columns:
+        total_numerator = summary_df[numerator_name].sum()
+        total_denominator = summary_df[denominator_name].sum()
+        
+        # Calculate overall value based on the KPI type
+        if "IPPCAR" in title or "Coverage" in title or "C-Section Rate" in title:
+            # Percentage-based KPIs
+            overall_value = (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+        elif "Stillbirth Rate" in title:
+            # Rate per 1000 births
+            overall_value = (total_numerator / total_denominator * 1000) if total_denominator > 0 else 0
+        elif "Maternal Death Rate" in title:
+            # Rate per 100,000 births
+            overall_value = (total_numerator / total_denominator * 100000) if total_denominator > 0 else 0
+        else:
+            # Default to average if we don't recognize the KPI type
+            overall_value = summary_df[value_col].mean() if not summary_df.empty else 0
+        
+        # Create overall row
+        overall_row = pd.DataFrame({
+            period_col: [f"Overall {title}"],
+            numerator_name: [total_numerator],
+            denominator_name: [total_denominator],
+            value_col: [overall_value]
+        })
+        
+        # Combine with original dataframe
+        summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
+    else:
+        overall_value = summary_df[value_col].mean() if not summary_df.empty else 0
+        overall_row = pd.DataFrame({
+            period_col: [f"Overall {title}"],
+            value_col: [overall_value]
+        })
+        summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
+    
+    # Format the table for display
+    if numerator_name in summary_table.columns and denominator_name in summary_table.columns:
+        styled_table = summary_table.style.format({
+            value_col: "{:.1f}",
+            numerator_name: "{:,.0f}",
+            denominator_name: "{:,.0f}"
+        }).set_table_attributes('class="summary-table"')
+    else:
+        styled_table = summary_table.style.format({
+            value_col: "{:.1f}"
+        }).set_table_attributes('class="summary-table"')
+    
+    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
