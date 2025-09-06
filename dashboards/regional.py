@@ -66,7 +66,7 @@ def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def calculate_trend(df: pd.DataFrame, kpi_type: str, facility_uid=None):
+def calculate_trend(df: pd.DataFrame, kpi_type: str, facility_uids=None):
     """
     Compute ▲ ▼ – by comparing the last two period values.
     Assumes df already has a 'period' column.
@@ -74,9 +74,9 @@ def calculate_trend(df: pd.DataFrame, kpi_type: str, facility_uid=None):
     if df.empty or "period" not in df.columns:
         return "–", "trend-neutral"
 
-    # Filter by facility if specified
-    if facility_uid:
-        df = df[df["orgUnit"] == facility_uid]
+    # Filter by facilities if specified
+    if facility_uids and facility_uids != ["All Facilities"]:
+        df = df[df["orgUnit"].isin(facility_uids)]
 
     # Build a compact period-level dataframe with a single 'value' column
     if kpi_type == "ippcar":
@@ -201,27 +201,42 @@ def render():
     facilities = copied_events_df["orgUnit_name"].unique().tolist()
     facilities.sort()
     
-    # Add "All Facilities" option
-    facilities.insert(0, "All Facilities")
+    # Create facility mapping for UID lookup
+    facility_mapping = {}
+    if not copied_events_df.empty:
+        for _, row in copied_events_df.iterrows():
+            facility_mapping[row["orgUnit_name"]] = row["orgUnit"]
     
-    # Facility selector in sidebar with white label
+    # Multi-select facility selector in sidebar
     st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facility</p>', 
+        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities</p>', 
         unsafe_allow_html=True
     )
-    selected_facility = st.sidebar.selectbox(
+    
+    # Default to all facilities
+    default_facilities = ["All Facilities"]
+    
+    selected_facilities = st.sidebar.multiselect(
         " ",
-        facilities,
+        ["All Facilities"] + facilities,
+        default=default_facilities,
         key="facility_selector",
         label_visibility="collapsed"
     )
     
-    # Get the facility UID if a specific facility is selected
-    facility_uid = None
-    if selected_facility != "All Facilities":
-        facility_uid = copied_events_df[
-            copied_events_df["orgUnit_name"] == selected_facility
-        ]["orgUnit"].iloc[0] if not copied_events_df.empty else None
+    # Handle "All Facilities" selection logic
+    if "All Facilities" in selected_facilities:
+        if len(selected_facilities) > 1:
+            # If "All Facilities" is selected with others, remove "All Facilities"
+            selected_facilities = [f for f in selected_facilities if f != "All Facilities"]
+        else:
+            # Only "All Facilities" is selected
+            selected_facilities = ["All Facilities"]
+    
+    # Get the facility UIDs for selected facilities
+    facility_uids = None
+    if selected_facilities != ["All Facilities"]:
+        facility_uids = [facility_mapping[facility] for facility in selected_facilities if facility in facility_mapping]
 
     # ---------------- Export Buttons ----------------
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
@@ -251,29 +266,31 @@ def render():
                 mime="application/zip"
             )
 
-    # MAIN HEADING - Moved to the top
-    if selected_facility == "All Facilities":
+    # MAIN HEADING
+    if selected_facilities == ["All Facilities"]:
         st.markdown(f'<div class="main-header">🏥 Maternal Health Dashboard - {region_name}</div>', unsafe_allow_html=True)
+    elif len(selected_facilities) == 1:
+        st.markdown(f'<div class="main-header">🏥 Maternal Health Dashboard - {selected_facilities[0]}</div>', unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="main-header">🏥 Maternal Health Dashboard - {selected_facility}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="main-header">🏥 Maternal Health Dashboard - Multiple Facilities ({len(selected_facilities)})</div>', unsafe_allow_html=True)
 
-    # ---------------- KPI CARDS - Moved immediately after heading ----------------
+    # ---------------- KPI CARDS ----------------
     if copied_events_df.empty or "event_date" not in copied_events_df.columns:
         st.markdown('<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
-    # Compute KPIs on the full dataset for the cards
-    kpis = compute_kpis(copied_events_df, facility_uid)
+    # Compute KPIs for the selected facilities
+    kpis = compute_kpis(copied_events_df, facility_uids)
     if not isinstance(kpis, dict):
         st.error("Error computing KPI. Please check data.")
         return
 
     # Calculate trends for the cards
-    ippcar_trend, ippcar_trend_class = calculate_trend(copied_events_df, "ippcar", facility_uid)
-    stillbirth_trend, stillbirth_trend_class = calculate_trend(copied_events_df, "stillbirth", facility_uid)
-    pnc_trend, pnc_trend_class = calculate_trend(copied_events_df, "pnc", facility_uid)
-    maternal_death_trend, maternal_death_trend_class = calculate_trend(copied_events_df, "maternal_death", facility_uid)
-    csection_trend, csection_trend_class = calculate_trend(copied_events_df, "csection", facility_uid)
+    ippcar_trend, ippcar_trend_class = calculate_trend(copied_events_df, "ippcar", facility_uids)
+    stillbirth_trend, stillbirth_trend_class = calculate_trend(copied_events_df, "stillbirth", facility_uids)
+    pnc_trend, pnc_trend_class = calculate_trend(copied_events_df, "pnc", facility_uids)
+    maternal_death_trend, maternal_death_trend_class = calculate_trend(copied_events_df, "maternal_death", facility_uids)
+    csection_trend, csection_trend_class = calculate_trend(copied_events_df, "csection", facility_uids)
 
     # KPI Cards
     st.markdown('<div class="section-header">📊 Key Performance Indicators</div>', unsafe_allow_html=True)
@@ -323,8 +340,7 @@ def render():
     """
     st.markdown(kpi_html, unsafe_allow_html=True)
 
-    # ---------------- Controls & Time Filter (AFTER KPI cards) ----------------
-    # Filter controls sit in the small column
+    # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
@@ -365,7 +381,7 @@ def render():
         bg_color = st.color_picker("🎨 Chart Background", "#FFFFFF")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---------------- APPLY FILTER (this is the critical fix) ----------------
+    # ---------------- APPLY FILTER ----------------
     # Convert date objects to datetimes for comparison
     start_datetime = pd.to_datetime(start_date)
     end_datetime = pd.to_datetime(end_date)
@@ -384,13 +400,13 @@ def render():
         ]
 
     # Apply facility filter if selected
-    if facility_uid:
-        filtered_events = filtered_events[filtered_events["orgUnit"] == facility_uid]
+    if facility_uids:
+        filtered_events = filtered_events[filtered_events["orgUnit"].isin(facility_uids)]
 
     # Assign period AFTER filtering (so period aligns with the time window)
     filtered_events = assign_period(filtered_events, "event_date", period_label)
 
-    # ---------------- KPI Trend Charts (use the filtered df) ----------------
+    # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:
         st.markdown('<div class="no-data-warning">⚠️ No data available for the selected period. Charts are hidden.</div>', unsafe_allow_html=True)
         return
@@ -401,7 +417,7 @@ def render():
         st.markdown(f'<div class="section-header">📈 {kpi_selection} Trend</div>', unsafe_allow_html=True)
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
-        # Build a tiny df with 'period' and the chosen KPI value
+        # Build aggregated trend data
         if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
             group = filtered_events.groupby("period", as_index=False).apply(
                 lambda x: pd.Series({
@@ -418,8 +434,7 @@ def render():
                 })
             ).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "IPPCAR (%)", bg_color, text_color, 
-                              selected_facility if selected_facility != "All Facilities" else None,
-                              "FP Acceptances", "Total Deliveries")
+                              None, "FP Acceptances", "Total Deliveries")
 
         elif kpi_selection == "Stillbirth Rate (per 1000 births)":
             group = filtered_events.groupby("period", as_index=False).apply(
@@ -430,8 +445,7 @@ def render():
                 })
             ).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color,
-                              selected_facility if selected_facility != "All Facilities" else None,
-                              "Stillbirths", "Total Births")
+                              None, "Stillbirths", "Total Births")
 
         elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
             group = filtered_events.groupby("period", as_index=False).apply(
@@ -442,8 +456,7 @@ def render():
                 })
             ).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color,
-                              selected_facility if selected_facility != "All Facilities" else None,
-                              "Early PNC (≤48 hrs)", "Total Deliveries")
+                              None, "Early PNC (≤48 hrs)", "Total Deliveries")
 
         elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
             group = filtered_events.groupby("period", as_index=False).apply(
@@ -454,8 +467,7 @@ def render():
                 })
             ).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "Maternal Death Rate (per 100,000 births)", bg_color, text_color,
-                              selected_facility if selected_facility != "All Facilities" else None,
-                              "Maternal Deaths", "Live Births")
+                              None, "Maternal Deaths", "Live Births")
 
         elif kpi_selection == "C-Section Rate (%)":
             group = filtered_events.groupby("period", as_index=False).apply(
@@ -466,7 +478,6 @@ def render():
                 })
             ).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "C-Section Rate (%)", bg_color, text_color,
-                              selected_facility if selected_facility != "All Facilities" else None,
-                              "C-Sections", "Total Deliveries")
+                              None, "C-Sections", "Total Deliveries")
 
         st.markdown('</div>', unsafe_allow_html=True)

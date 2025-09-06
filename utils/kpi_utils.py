@@ -35,36 +35,36 @@ CONDITION_OF_DISCHARGE_UID = "TjQOcW6tm8k"
 DEAD_CODE = "4"
 
 # ---------------- KPI Computation Functions ----------------
-def compute_total_deliveries(df, facility_uid=None):
+def compute_total_deliveries(df, facility_uids=None):
     if df is None or df.empty:
         return 0
     
-    # Filter by facility if specified
-    if facility_uid:
-        df = df[df["orgUnit"] == facility_uid]
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
     
     deliveries = df[(df["dataElement_uid"]==DELIVERY_TYPE_UID) & df["value"].notna()]
     if deliveries.empty:
         deliveries = df[(df["dataElement_uid"]==DELIVERY_MODE_UID) & df["value"].notna()]
     return deliveries["tei_id"].nunique()
 
-def compute_fp_acceptance(df, facility_uid=None):
+def compute_fp_acceptance(df, facility_uids=None):
     if df is None or df.empty:
         return 0
     
-    # Filter by facility if specified
-    if facility_uid:
-        df = df[df["orgUnit"] == facility_uid]
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
         
     return df[(df["dataElement_uid"]==FP_ACCEPTANCE_UID) & (df["value"].isin(FP_ACCEPTED_VALUES))]["tei_id"].nunique()
 
-def compute_stillbirth_rate(df, facility_uid=None):
+def compute_stillbirth_rate(df, facility_uids=None):
     if df is None or df.empty:
         return 0.0, 0, 0
     
-    # Filter by facility if specified
-    if facility_uid:
-        df = df[df["orgUnit"] == facility_uid]
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
         
     births = df[(df["dataElement_uid"]==BIRTH_OUTCOME_UID) & (df["value"].isin([ALIVE_CODE, STILLBIRTH_CODE]))]
     total_births = births["tei_id"].nunique()
@@ -72,26 +72,26 @@ def compute_stillbirth_rate(df, facility_uid=None):
     rate = (stillbirths / total_births * 1000) if total_births > 0 else 0.0
     return rate, stillbirths, total_births
 
-def compute_early_pnc_coverage(df, facility_uid=None):
+def compute_early_pnc_coverage(df, facility_uids=None):
     if df is None or df.empty:
         return 0.0, 0, 0
     
-    # Filter by facility if specified
-    if facility_uid:
-        df = df[df["orgUnit"] == facility_uid]
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
         
-    total_deliveries = compute_total_deliveries(df)
+    total_deliveries = compute_total_deliveries(df, facility_uids)
     early_pnc = df[(df["dataElement_uid"]==PNC_TIMING_UID) & (df["value"].isin(PNC_EARLY_VALUES))]["tei_id"].nunique()
     coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
     return coverage, early_pnc, total_deliveries
 
-def compute_maternal_death_rate(df, facility_uid=None):
+def compute_maternal_death_rate(df, facility_uids=None):
     if df is None or df.empty:
         return 0.0, 0, 0
     
-    # Filter by facility if specified
-    if facility_uid:
-        df = df[df["orgUnit"] == facility_uid]
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
         
     dfx = df.copy()
     dfx["event_date"] = pd.to_datetime(dfx["event_date"], errors="coerce")
@@ -109,13 +109,13 @@ def compute_maternal_death_rate(df, facility_uid=None):
     
     return rate, maternal_deaths, live_births
 
-def compute_csection_rate(df, facility_uid=None):
+def compute_csection_rate(df, facility_uids=None):
     if df is None or df.empty:
         return 0.0, 0, 0
     
-    # Filter by facility if specified
-    if facility_uid:
-        df = df[df["orgUnit"] == facility_uid]
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
         
     csection_deliveries = df[(df["dataElement_uid"]==DELIVERY_TYPE_UID) & (df["value"]==CSECTION_CODE)]["tei_id"].nunique()
     total_deliveries = df[(df["dataElement_uid"]==DELIVERY_TYPE_UID) & (df["value"].isin([SVD_CODE,CSECTION_CODE]))]["tei_id"].nunique()
@@ -123,18 +123,18 @@ def compute_csection_rate(df, facility_uid=None):
     return rate, csection_deliveries, total_deliveries
 
 # ---------------- Master KPI Function ----------------
-def compute_kpis(df, facility_uid=None):
-    # Filter by facility if specified
-    if facility_uid:
-        df = df[df["orgUnit"] == facility_uid]
+def compute_kpis(df, facility_uids=None):
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
     
-    total_deliveries = compute_total_deliveries(df)
-    fp_acceptance = compute_fp_acceptance(df)
+    total_deliveries = compute_total_deliveries(df, facility_uids)
+    fp_acceptance = compute_fp_acceptance(df, facility_uids)
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
-    stillbirth_rate, stillbirths, total_births = compute_stillbirth_rate(df)
-    pnc_coverage, early_pnc, total_deliveries_pnc = compute_early_pnc_coverage(df)
-    maternal_death_rate, maternal_deaths, live_births = compute_maternal_death_rate(df)
-    csection_rate, csection_deliveries, total_deliveries_cs = compute_csection_rate(df)
+    stillbirth_rate, stillbirths, total_births = compute_stillbirth_rate(df, facility_uids)
+    pnc_coverage, early_pnc, total_deliveries_pnc = compute_early_pnc_coverage(df, facility_uids)
+    maternal_death_rate, maternal_deaths, live_births = compute_maternal_death_rate(df, facility_uids)
+    csection_rate, csection_deliveries, total_deliveries_cs = compute_csection_rate(df, facility_uids)
 
     return {
         "total_deliveries": int(total_deliveries),
@@ -187,8 +187,10 @@ def render_gauge_chart(value, title, bg_color, text_color, numerator=None, denom
     fig.update_layout(paper_bgcolor=bg_color,font={'color':text_color,'family':'Arial'},height=400)
     st.plotly_chart(fig,use_container_width=True)
 
-def get_chart_options(title):
-    if "PNC Coverage" in title or "IPPCAR" in title: 
+def get_chart_options(title, multiple_facilities=False):
+    if multiple_facilities:
+        return ["Line", "Bar", "Facility Comparison"]
+    elif "PNC Coverage" in title or "IPPCAR" in title: 
         return ["Line","Gauge"]
     elif "Maternal Death Rate" in title: 
         return ["Line","Bar","Gauge"]
@@ -199,21 +201,26 @@ def get_chart_options(title):
     else: 
         return ["Line","Bar"]
 
-def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None, facility_name=None, numerator_name="Numerator", denominator_name="Denominator"):
+def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=None, facility_names=None, numerator_name="Numerator", denominator_name="Denominator", facility_uids=None):
     if text_color is None: 
         text_color = auto_text_color(bg_color)
     
     # Add facility name to title if provided
-    if facility_name:
-        title = f"{title} - {facility_name}"
+    if facility_names and "All Facilities" not in facility_names:
+        if len(facility_names) == 1:
+            title = f"{title} - {facility_names[0]}"
+        else:
+            title = f"{title} - {len(facility_names)} Facilities"
     
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
         st.info("⚠️ No data available for the selected period.")
         return
         
-    chart_options = get_chart_options(title)
-    chart_type = st.radio(f"📊 Chart type for {title}", options=chart_options, index=0, horizontal=True, key=f"chart_type_{title}_{facility_name}").lower()
+    # Check if we have multiple facilities for comparison
+    multiple_facilities = facility_uids and len(facility_uids) > 1
+    chart_options = get_chart_options(title, multiple_facilities)
+    chart_type = st.radio(f"📊 Chart type for {title}", options=chart_options, index=0, horizontal=True, key=f"chart_type_{title}_{str(facility_uids)}").lower()
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col],errors="coerce").fillna(0)
     
@@ -223,6 +230,11 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         numerator = latest_row.get(numerator_name, None)
         denominator = latest_row.get(denominator_name, None)
         render_gauge_chart(df[value_col].iloc[-1], title, bg_color, text_color, numerator, denominator, numerator_name, denominator_name)
+        return
+    
+    # Facility comparison chart
+    if chart_type == "facility comparison" and multiple_facilities:
+        render_facility_comparison_chart(df, period_col, value_col, title, bg_color, text_color, facility_names, facility_uids, numerator_name, denominator_name)
         return
         
     is_categorical = not all(isinstance(x,(dt.date,dt.datetime)) for x in df[period_col]) if not df.empty else True
@@ -324,3 +336,99 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         }).set_table_attributes('class="summary-table"')
     
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+
+def render_facility_comparison_chart(df, period_col, value_col, title, bg_color, text_color, facility_names, facility_uids, numerator_name, denominator_name):
+    """Render a comparison chart showing each facility's performance over time"""
+    
+    # Group by period and facility to get values for each facility
+    facility_comparison_data = []
+    
+    for facility_name, facility_uid in zip(facility_names, facility_uids):
+        # Filter data for this specific facility
+        facility_df = df[df["orgUnit"] == facility_uid]
+        
+        if not facility_df.empty:
+            # Calculate KPI for this facility for each period
+            if "IPPCAR" in title:
+                facility_period_data = facility_df.groupby(period_col, as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": (
+                            x[(x["dataElement_uid"]=="Q1p7CxWGUoi") &
+                              (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
+                                                "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique()
+                            / max(1, x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
+                        ) * 100
+                    })
+                ).reset_index(drop=True)
+            elif "Stillbirth Rate" in title:
+                facility_period_data = facility_df.groupby(period_col, as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": compute_kpis(x, [facility_uid])["stillbirth_rate"]
+                    })
+                ).reset_index(drop=True)
+            elif "PNC Coverage" in title:
+                facility_period_data = facility_df.groupby(period_col, as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": compute_kpis(x, [facility_uid])["pnc_coverage"]
+                    })
+                ).reset_index(drop=True)
+            elif "Maternal Death Rate" in title:
+                facility_period_data = facility_df.groupby(period_col, as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": compute_kpis(x, [facility_uid])["maternal_death_rate"]
+                    })
+                ).reset_index(drop=True)
+            elif "C-Section Rate" in title:
+                facility_period_data = facility_df.groupby(period_col, as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": compute_kpis(x, [facility_uid])["csection_rate"]
+                    })
+                ).reset_index(drop=True)
+            else:
+                continue
+            
+            # Add facility name to the data
+            facility_period_data["Facility"] = facility_name
+            facility_comparison_data.append(facility_period_data)
+    
+    if not facility_comparison_data:
+        st.info("⚠️ No data available for facility comparison.")
+        return
+    
+    # Combine all facility data
+    comparison_df = pd.concat(facility_comparison_data, ignore_index=True)
+    
+    # Create line chart with different colors for each facility
+    fig = px.line(comparison_df, x=period_col, y="value", color="Facility", markers=True,
+                 title=f"{title} - Facility Comparison", height=500,
+                 hover_data={"Facility": True, "value": ":.1f"})
+    
+    fig.update_traces(line=dict(width=3), marker=dict(size=7),
+                     hovertemplate="<b>%{x}</b><br>Facility: %{customdata[0]}<br>Value: %{y:.1f}<extra></extra>")
+    
+    fig.update_layout(
+        paper_bgcolor=bg_color, plot_bgcolor=bg_color, font_color=text_color, title_font_color=text_color,
+        xaxis_title=period_col, yaxis_title=value_col,
+        xaxis=dict(tickangle=-45, showgrid=True, gridcolor='rgba(128,128,128,0.2)'),
+        yaxis=dict(rangemode='tozero', showgrid=True, gridcolor='rgba(128,128,128,0.2)', zeroline=True, zerolinecolor='rgba(128,128,128,0.5)'),
+        legend=dict(title="Facilities", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
+    if "Rate" in title or "%" in title: 
+        fig.update_layout(yaxis_tickformat=".1f")
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Show facility comparison table
+    st.subheader("📋 Facility Comparison Summary")
+    
+    # Pivot the data to show facilities as columns
+    pivot_df = comparison_df.pivot_table(index=period_col, columns="Facility", values="value", aggfunc="first")
+    
+    # Add overall average row
+    overall_avg = pivot_df.mean()
+    pivot_df.loc["Overall Average"] = overall_avg
+    
+    # Format the table
+    styled_pivot = pivot_df.style.format("{:.1f}").set_table_attributes('class="summary-table"')
+    st.markdown(styled_pivot.to_html(), unsafe_allow_html=True)
