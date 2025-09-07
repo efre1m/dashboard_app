@@ -4,13 +4,14 @@ import bcrypt
 from utils.db import get_db_connection
 
 def _is_bcrypt_hash(value: str) -> bool:
+    """Check if a string is a bcrypt hash."""
     return isinstance(value, str) and value.startswith("$2")
 
 def authenticate_user(username: str, password: str):
     """
-    Authenticate user against DB.
-    Supports bcrypt + legacy plain-text upgrade.
-    Returns user object with facility or region info.
+    Authenticate user against the database.
+    Supports bcrypt + legacy plain-text password upgrade.
+    Returns a user dictionary with facility, region, national, or admin info.
     """
     conn = get_db_connection()
     cur = conn.cursor()
@@ -51,6 +52,7 @@ def authenticate_user(username: str, password: str):
     else:
         valid = (password == stored_pw)
         if valid:
+            # Upgrade plain-text password to bcrypt
             new_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
             cur.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", (new_hash, user_id))
             conn.commit()
@@ -87,11 +89,15 @@ def logout():
 
 
 def get_user_display_info(user: dict) -> str:
-    """Get formatted user information for display."""
-    if user["role"] == "facility":
-        return f"{user['username']} ({user['role']} - {user['facility_name']})"
-    elif user["role"] == "regional":
-        return f"{user['username']} ({user['role']} - {user['region_name']})"
-    elif user["role"] == "national":
-        return f"{user['username']} ({user['role']})"
+    """Return formatted user information for display."""
+    role = user["role"]
+
+    if role == "facility":
+        return f"{user['username']} ({role} - {user['facility_name']})"
+    elif role == "regional":
+        return f"{user['username']} ({role} - {user['region_name']})"
+    elif role == "national":
+        return f"{user['username']} ({role})"
+    elif role == "admin":
+        return f"{user['username']} (admin)"
     return user["username"]

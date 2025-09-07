@@ -1,7 +1,7 @@
 import streamlit as st
 from components.login import login_component
-from dashboards import facility, regional, national
-from utils.auth import logout
+from dashboards import facility, regional, national, admin
+from utils.auth import logout, get_user_display_info
 
 # ---------------- Streamlit Page Config ----------------
 st.set_page_config(
@@ -18,9 +18,16 @@ with st.sidebar:
     # Check authentication
     if st.session_state.get("authenticated", False):
         user = st.session_state.get("user", {})
-        st.success(f"✅ Logged in as: **{user.get('username','')}**")
+        st.success(f"✅ Logged in as: **{get_user_display_info(user)}**")
         st.caption(f"Role: `{user.get('role','N/A')}`")
-        st.caption(f"Facility: `{user.get('facility_name','N/A')}`")
+
+        # Show facility info only if available
+        if user.get("facility_name"):
+            st.caption(f"Facility: `{user['facility_name']}`")
+        if user.get("region_name"):
+            st.caption(f"Region: `{user['region_name']}`")
+        if user.get("country_id"):
+            st.caption(f"Country ID: `{user['country_id']}`")
 
         # Logout button
         if st.button("Logout"):
@@ -36,13 +43,13 @@ else:
     role = st.session_state["user"].get("role", "")
 
     if role == "facility":
-        # Facility dashboard with KPI dropdown + styled graphs + Excel export
         facility.render()
     elif role == "regional":
-        # Regional dashboard (to be updated with similar KPI dropdown & export)
         regional.render()
     elif role == "national":
-        # National dashboard (to be updated similarly)
         national.render()
+    elif role == "admin":
+        # Admin dashboard with full CRUD for users, facilities, regions, countries
+        admin.render()
     else:
         st.error("❌ Unauthorized role")
