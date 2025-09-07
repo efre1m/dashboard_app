@@ -6,10 +6,13 @@ from io import BytesIO
 import zipfile
 import concurrent.futures
 import requests
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from utils.data_service import fetch_program_data_for_user
 from utils.time_filter import get_date_range, assign_period
-from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color
+from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color, render_facility_comparison_chart
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -235,8 +238,20 @@ def render():
     
     # Get the facility UIDs for selected facilities
     facility_uids = None
+    facility_names = None
     if selected_facilities != ["All Facilities"]:
         facility_uids = [facility_mapping[facility] for facility in selected_facilities if facility in facility_mapping]
+        facility_names = selected_facilities
+
+    # ---------------- View Mode Selection ----------------
+    view_mode = "Normal Trend"
+    if selected_facilities != ["All Facilities"] and len(selected_facilities) > 1:
+        view_mode = st.sidebar.radio(
+            "📊 View Mode",
+            ["Normal Trend", "Facility Comparison"],
+            index=0,
+            help="Compare trends across multiple facilities"
+        )
 
     # ---------------- Export Buttons ----------------
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
@@ -414,70 +429,120 @@ def render():
     text_color = auto_text_color(bg_color)
 
     with col_chart:
-        st.markdown(f'<div class="section-header">📈 {kpi_selection} Trend</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        if view_mode == "Facility Comparison" and len(selected_facilities) > 1:
+            st.markdown(f'<div class="section-header">📈 {kpi_selection} - Facility Comparison</div>', unsafe_allow_html=True)
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            
+            # Map KPI selection to the appropriate parameters for render_facility_comparison_chart
+            kpi_mapping = {
+                "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {
+                    "title": "IPPCAR (%)",
+                    "numerator_name": "FP Acceptances",
+                    "denominator_name": "Total Deliveries"
+                },
+                "Stillbirth Rate (per 1000 births)": {
+                    "title": "Stillbirth Rate (per 1000 births)",
+                    "numerator_name": "Stillbirths",
+                    "denominator_name": "Total Births"
+                },
+                "Early Postnatal Care (PNC) Coverage (%)": {
+                    "title": "Early PNC Coverage (%)",
+                    "numerator_name": "Early PNC (≤48 hrs)",
+                    "denominator_name": "Total Deliveries"
+                },
+                "Institutional Maternal Death Rate (per 100,000 births)": {
+                    "title": "Maternal Death Rate (per 100,000 births)",
+                    "numerator_name": "Maternal Deaths",
+                    "denominator_name": "Live Births"
+                },
+                "C-Section Rate (%)": {
+                    "title": "C-Section Rate (%)",
+                    "numerator_name": "C-Sections",
+                    "denominator_name": "Total Deliveries"
+                }
+            }
+            
+            kpi_config = kpi_mapping.get(kpi_selection, {})
+            
+            # Use the imported render_facility_comparison_chart function
+            render_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period",
+                value_col="value",
+                title=kpi_config.get("title", kpi_selection),
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=facility_names,
+                facility_uids=facility_uids,
+                numerator_name=kpi_config.get("numerator_name", "Numerator"),
+                denominator_name=kpi_config.get("denominator_name", "Denominator")
+            )
+            
+        else:
+            st.markdown(f'<div class="section-header">📈 {kpi_selection} Trend</div>', unsafe_allow_html=True)
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
-        # Build aggregated trend data
-        if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
-            group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({
-                    "value": (
-                        x[(x["dataElement_uid"]=="Q1p7CxWGUoi") &
-                          (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
-                                            "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique()
-                        / max(1, x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
-                    ) * 100,
-                    "FP Acceptances": x[(x["dataElement_uid"]=="Q1p7CxWGUoi") &
-                                      (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
-                                                        "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique(),
-                    "Total Deliveries": x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique()
-                })
-            ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "IPPCAR (%)", bg_color, text_color, 
-                              None, "FP Acceptances", "Total Deliveries")
+            # Build aggregated trend data
+            if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
+                group = filtered_events.groupby("period", as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": (
+                            x[(x["dataElement_uid"]=="Q1p7CxWGUoi") &
+                              (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
+                                                "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique()
+                            / max(1, x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
+                        ) * 100,
+                        "FP Acceptances": x[(x["dataElement_uid"]=="Q1p7CxWGUoi") &
+                                          (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
+                                                            "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique(),
+                        "Total Deliveries": x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique()
+                    })
+                ).reset_index(drop=True)
+                render_trend_chart(group, "period", "value", "IPPCAR (%)", bg_color, text_color, 
+                                  facility_names, "FP Acceptances", "Total Deliveries", facility_uids)
 
-        elif kpi_selection == "Stillbirth Rate (per 1000 births)":
-            group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({
-                    "value": compute_kpis(x)["stillbirth_rate"],
-                    "Stillbirths": compute_kpis(x)["stillbirths"],
-                    "Total Births": compute_kpis(x)["total_births"]
-                })
-            ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color,
-                              None, "Stillbirths", "Total Births")
+            elif kpi_selection == "Stillbirth Rate (per 1000 births)":
+                group = filtered_events.groupby("period", as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": compute_kpis(x)["stillbirth_rate"],
+                        "Stillbirths": compute_kpis(x)["stillbirths"],
+                        "Total Births": compute_kpis(x)["total_births"]
+                    })
+                ).reset_index(drop=True)
+                render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color,
+                                  facility_names, "Stillbirths", "Total Births", facility_uids)
 
-        elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-            group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({
-                    "value": compute_kpis(x)["pnc_coverage"],
-                    "Early PNC (≤48 hrs)": compute_kpis(x)["early_pnc"],
-                    "Total Deliveries": compute_kpis(x)["total_deliveries_pnc"]
-                })
-            ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color,
-                              None, "Early PNC (≤48 hrs)", "Total Deliveries")
+            elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
+                group = filtered_events.groupby("period", as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": compute_kpis(x)["pnc_coverage"],
+                        "Early PNC (≤48 hrs)": compute_kpis(x)["early_pnc"],
+                        "Total Deliveries": compute_kpis(x)["total_deliveries_pnc"]
+                    })
+                ).reset_index(drop=True)
+                render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color,
+                                  facility_names, "Early PNC (≤48 hrs)", "Total Deliveries", facility_uids)
 
-        elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
-            group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({
-                    "value": compute_kpis(x)["maternal_death_rate"],
-                    "Maternal Deaths": compute_kpis(x)["maternal_deaths"],
-                    "Live Births": compute_kpis(x)["live_births"]
-                })
-            ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "Maternal Death Rate (per 100,000 births)", bg_color, text_color,
-                              None, "Maternal Deaths", "Live Births")
+            elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
+                group = filtered_events.groupby("period", as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": compute_kpis(x)["maternal_death_rate"],
+                        "Maternal Deaths": compute_kpis(x)["maternal_deaths"],
+                        "Live Births": compute_kpis(x)["live_births"]
+                    })
+                ).reset_index(drop=True)
+                render_trend_chart(group, "period", "value", "Maternal Death Rate (per 100,000 births)", bg_color, text_color,
+                                  facility_names, "Maternal Deaths", "Live Births", facility_uids)
 
-        elif kpi_selection == "C-Section Rate (%)":
-            group = filtered_events.groupby("period", as_index=False).apply(
-                lambda x: pd.Series({
-                    "value": compute_kpis(x)["csection_rate"],
-                    "C-Sections": compute_kpis(x)["csection_deliveries"],
-                    "Total Deliveries": compute_kpis(x)["total_deliveries_cs"]
-                })
-            ).reset_index(drop=True)
-            render_trend_chart(group, "period", "value", "C-Section Rate (%)", bg_color, text_color,
-                              None, "C-Sections", "Total Deliveries")
+            elif kpi_selection == "C-Section Rate (%)":
+                group = filtered_events.groupby("period", as_index=False).apply(
+                    lambda x: pd.Series({
+                        "value": compute_kpis(x)["csection_rate"],
+                        "C-Sections": compute_kpis(x)["csection_deliveries"],
+                        "Total Deliveries": compute_kpis(x)["total_deliveries_cs"]
+                    })
+                ).reset_index(drop=True)
+                render_trend_chart(group, "period", "value", "C-Section Rate (%)", bg_color, text_color,
+                                  facility_names, "C-Sections", "Total Deliveries", facility_uids)
 
         st.markdown('</div>', unsafe_allow_html=True)

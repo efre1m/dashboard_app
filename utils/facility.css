@@ -554,3 +554,18 @@
 .loading {
     animation: pulse 1.5s ease-in-out infinite;
 }
+/* Style for radio buttons in sidebar */
+.stSidebar .stRadio > label {
+    color: white !important;
+    font-weight: 500;
+}
+
+/* Style for radio button options */
+.stSidebar .stRadio [data-testid="stMarkdownContainer"] > p {
+    color: white !important;
+}
+
+/* Style for the selected radio button */
+.stSidebar .stRadio > div > div:first-child {
+    background-color: rgba(255, 255, 255, 0.2) !important;
+}

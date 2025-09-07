@@ -220,7 +220,16 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
     # Check if we have multiple facilities for comparison
     multiple_facilities = facility_uids and len(facility_uids) > 1
     chart_options = get_chart_options(title, multiple_facilities)
-    chart_type = st.radio(f"📊 Chart type for {title}", options=chart_options, index=0, horizontal=True, key=f"chart_type_{title}_{str(facility_uids)}").lower()
+    
+    # Create radio button with black text for the header using a proper label
+    chart_type = st.radio(
+        f"📊 Chart type for {title}",
+        options=chart_options, 
+        index=0, 
+        horizontal=True, 
+        key=f"chart_type_{title}_{str(facility_uids)}"
+    ).lower()
+    
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col],errors="coerce").fillna(0)
     
@@ -323,19 +332,31 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         })
         summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
     
+    # Add row numbering starting from 1
+    summary_table.insert(0, 'No', range(1, len(summary_table) + 1))
+    
     # Format the table for display
     if numerator_name in summary_table.columns and denominator_name in summary_table.columns:
         styled_table = summary_table.style.format({
             value_col: "{:.1f}",
             numerator_name: "{:,.0f}",
             denominator_name: "{:,.0f}"
-        }).set_table_attributes('class="summary-table"')
+        }).set_table_attributes('class="summary-table"').hide(axis='index')
     else:
         styled_table = summary_table.style.format({
             value_col: "{:.1f}"
-        }).set_table_attributes('class="summary-table"')
+        }).set_table_attributes('class="summary-table"').hide(axis='index')
     
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+    
+    # Add download button for CSV
+    csv = summary_table.to_csv(index=False)
+    st.download_button(
+        label="Download CSV",
+        data=csv,
+        file_name=f"{title.lower().replace(' ', '_')}_summary.csv",
+        mime="text/csv"
+    )
 
 def render_facility_comparison_chart(df, period_col, value_col, title, bg_color, text_color, facility_names, facility_uids, numerator_name, denominator_name):
     """Render a comparison chart showing each facility's performance over time"""
@@ -422,13 +443,113 @@ def render_facility_comparison_chart(df, period_col, value_col, title, bg_color,
     # Show facility comparison table
     st.subheader("📋 Facility Comparison Summary")
     
-    # Pivot the data to show facilities as columns
-    pivot_df = comparison_df.pivot_table(index=period_col, columns="Facility", values="value", aggfunc="first")
+    # Create facility comparison table with numerator, denominator, and KPI value
+    facility_table_data = []
     
-    # Add overall average row
-    overall_avg = pivot_df.mean()
-    pivot_df.loc["Overall Average"] = overall_avg
+    for facility_name, facility_uid in zip(facility_names, facility_uids):
+        # Filter data for this specific facility
+        facility_df = df[df["orgUnit"] == facility_uid]
+        
+        if not facility_df.empty:
+            # Calculate KPI metrics for this facility
+            kpi_data = compute_kpis(facility_df, [facility_uid])
+            
+            if "IPPCAR" in title:
+                numerator = kpi_data["fp_acceptance"]
+                denominator = kpi_data["total_deliveries"]
+                kpi_value = kpi_data["ippcar"]
+                numerator_label = "FP Accepted Clients"
+                denominator_label = "Total Deliveries"
+            elif "Stillbirth Rate" in title:
+                numerator = kpi_data["stillbirths"]
+                denominator = kpi_data["total_births"]
+                kpi_value = kpi_data["stillbirth_rate"]
+                numerator_label = "Stillbirths"
+                denominator_label = "Total Births"
+            elif "PNC Coverage" in title:
+                numerator = kpi_data["early_pnc"]
+                denominator = kpi_data["total_deliveries_pnc"]
+                kpi_value = kpi_data["pnc_coverage"]
+                numerator_label = "Early PNC Clients"
+                denominator_label = "Total Deliveries"
+            elif "Maternal Death Rate" in title:
+                numerator = kpi_data["maternal_deaths"]
+                denominator = kpi_data["live_births"]
+                kpi_value = kpi_data["maternal_death_rate"]
+                numerator_label = "Maternal Deaths"
+                denominator_label = "Live Births"
+            elif "C-Section Rate" in title:
+                numerator = kpi_data["csection_deliveries"]
+                denominator = kpi_data["total_deliveries_cs"]
+                kpi_value = kpi_data["csection_rate"]
+                numerator_label = "C-Section Deliveries"
+                denominator_label = "Total Deliveries"
+            else:
+                continue
+            
+            facility_table_data.append({
+                "Facility Name": facility_name,
+                numerator_label: numerator,
+                denominator_label: denominator,
+                "KPI Value": kpi_value
+            })
+    
+    if not facility_table_data:
+        st.info("⚠️ No data available for facility comparison table.")
+        return
+    
+    # Create DataFrame for the table
+    facility_table_df = pd.DataFrame(facility_table_data)
+    
+    # Add overall row with aggregated values
+    if "IPPCAR" in title:
+        overall_numerator = sum(row[numerator_label] for row in facility_table_data)
+        overall_denominator = sum(row[denominator_label] for row in facility_table_data)
+        overall_value = (overall_numerator / overall_denominator * 100) if overall_denominator > 0 else 0
+    elif "Stillbirth Rate" in title:
+        overall_numerator = sum(row[numerator_label] for row in facility_table_data)
+        overall_denominator = sum(row[denominator_label] for row in facility_table_data)
+        overall_value = (overall_numerator / overall_denominator * 1000) if overall_denominator > 0 else 0
+    elif "PNC Coverage" in title or "C-Section Rate" in title:
+        overall_numerator = sum(row[numerator_label] for row in facility_table_data)
+        overall_denominator = sum(row[denominator_label] for row in facility_table_data)
+        overall_value = (overall_numerator / overall_denominator * 100) if overall_denominator > 0 else 0
+    elif "Maternal Death Rate" in title:
+        overall_numerator = sum(row[numerator_label] for row in facility_table_data)
+        overall_denominator = sum(row[denominator_label] for row in facility_table_data)
+        overall_value = (overall_numerator / overall_denominator * 100000) if overall_denominator > 0 else 0
+    else:
+        overall_numerator = sum(row[numerator_label] for row in facility_table_data)
+        overall_denominator = sum(row[denominator_label] for row in facility_table_data)
+        overall_value = sum(row["KPI Value"] for row in facility_table_data) / len(facility_table_data) if facility_table_data else 0
+    
+    # Add overall row
+    overall_row = pd.DataFrame({
+        "Facility Name": [f"Overall {title}"],
+        numerator_label: [overall_numerator],
+        denominator_label: [overall_denominator],
+        "KPI Value": [overall_value]
+    })
+    
+    facility_table_df = pd.concat([facility_table_df, overall_row], ignore_index=True)
+    
+    # Add row numbering starting from 1
+    facility_table_df.insert(0, 'No', range(1, len(facility_table_df) + 1))
     
     # Format the table
-    styled_pivot = pivot_df.style.format("{:.1f}").set_table_attributes('class="summary-table"')
-    st.markdown(styled_pivot.to_html(), unsafe_allow_html=True)
+    styled_table = facility_table_df.style.format({
+        numerator_label: "{:,.0f}",
+        denominator_label: "{:,.0f}",
+        "KPI Value": "{:.1f}"
+    }).set_table_attributes('class="summary-table"').hide(axis='index')
+    
+    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+    
+    # Add download button for CSV
+    csv = facility_table_df.to_csv(index=False)
+    st.download_button(
+        label="Download CSV",
+        data=csv,
+        file_name=f"{title.lower().replace(' ', '_')}_facility_comparison.csv",
+        mime="text/csv"
+    )
