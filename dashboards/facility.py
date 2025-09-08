@@ -255,7 +255,7 @@ def render():
             <div class='kpi-name'>IPPCAR (Immediate Postpartum Contraceptive Acceptance Rate)</div>
             <div class='kpi-metrics'>
                 <span class='metric-label metric-fp'>Accepted FP: {kpis.get("fp_acceptance",0)}</span>
-                <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliverings",0)}</span>
+                <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries",0)}</span>
             </div>
         </div>
         <div class='kpi-card'>

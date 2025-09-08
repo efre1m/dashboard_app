@@ -52,7 +52,7 @@ def fetch_orgunit_names() -> Dict[str, str]:
 def fetch_patient_data(program_uid: str, ou_uid: str, user_role: str) -> List[Dict[str, Any]]:
     """
     Fetch paginated TEIs for a program + orgUnit with proper hierarchical support.
-    For regional users, use DESCENDANTS mode to get all facilities in the region.
+    For regional and national users, use DESCENDANTS mode to get all child facilities.
     """
     url = f"{settings.DHIS2_BASE_URL}/api/trackedEntityInstances.json"
     all_patients: List[Dict[str, Any]] = []
@@ -76,9 +76,10 @@ def fetch_patient_data(program_uid: str, ou_uid: str, user_role: str) -> List[Di
             "paging": "true"
         }
         
-        if user_role == "regional":
+        # Use DESCENDANTS mode for regional and national users
+        if user_role in ["regional", "national"]:
             params["ouMode"] = "DESCENDANTS"
-            logging.info(f"Using DESCENDANTS mode for regional user with OU: {ou_uid}")
+            logging.info(f"Using DESCENDANTS mode for {user_role} user with OU: {ou_uid}")
 
         try:
             resp = _get_session().get(url, params=params, timeout=180)
@@ -150,7 +151,7 @@ def fetch_dhis2_data_for_ous(program_uid: str, ou_uids: List[str], user_role: st
         "patients": all_patients,
         "dataElements": de_dict,
         "programStages": ps_dict,
-        "orgUnitNames": orgunit_names,  # NEW: mapping UID -> displayName
+        "orgUnitNames": orgunit_names,
         "total_ous": len(ou_uids),
         "total_teis": len(all_patients)
     }
