@@ -187,10 +187,8 @@ def render_gauge_chart(value, title, bg_color, text_color, numerator=None, denom
     fig.update_layout(paper_bgcolor=bg_color,font={'color':text_color,'family':'Arial'},height=400)
     st.plotly_chart(fig,use_container_width=True)
 
-def get_chart_options(title, multiple_facilities=False):
-    if multiple_facilities:
-        return ["Line", "Bar", "Facility Comparison"]
-    elif "PNC Coverage" in title or "IPPCAR" in title: 
+def get_chart_options(title):
+    if "PNC Coverage" in title or "IPPCAR" in title: 
         return ["Line","Gauge"]
     elif "Maternal Death Rate" in title: 
         return ["Line","Bar","Gauge"]
@@ -217,9 +215,7 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         st.info("⚠️ No data available for the selected period.")
         return
         
-    # Check if we have multiple facilities for comparison
-    multiple_facilities = facility_uids and len(facility_uids) > 1
-    chart_options = get_chart_options(title, multiple_facilities)
+    chart_options = get_chart_options(title)
     
     # Create radio button with black text for the header using a proper label
     chart_type = st.radio(
@@ -240,12 +236,6 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
         denominator = latest_row.get(denominator_name, None)
         render_gauge_chart(df[value_col].iloc[-1], title, bg_color, text_color, numerator, denominator, numerator_name, denominator_name)
         return
-    
-    # Facility comparison chart
-    if chart_type == "facility comparison" and multiple_facilities:
-        render_facility_comparison_chart(df, period_col, value_col, title, bg_color, text_color, facility_names, facility_uids, numerator_name, denominator_name)
-        return
-        
     is_categorical = not all(isinstance(x,(dt.date,dt.datetime)) for x in df[period_col]) if not df.empty else True
     
     # Create custom hover text with numerator and denominator if available

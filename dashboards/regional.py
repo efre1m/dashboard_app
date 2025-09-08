@@ -9,7 +9,7 @@ import requests
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
+from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.time_filter import get_date_range, assign_period
 from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color, render_facility_comparison_chart
@@ -67,78 +67,6 @@ def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["enrollmentDate"] = pd.to_datetime(df["enrollmentDate"], format="%m/%d/%Y", errors="coerce")
     return df
-
-
-def calculate_trend(df: pd.DataFrame, kpi_type: str, facility_uids=None):
-    """
-    Compute ▲ ▼ – by comparing the last two period values.
-    Assumes df already has a 'period' column.
-    """
-    if df.empty or "period" not in df.columns:
-        return "–", "trend-neutral"
-
-    # Filter by facilities if specified
-    if facility_uids and facility_uids != ["All Facilities"]:
-        df = df[df["orgUnit"].isin(facility_uids)]
-
-    # Build a compact period-level dataframe with a single 'value' column
-    if kpi_type == "ippcar":
-        group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({
-                "value": (
-                    x[(x["dataElement_uid"] == "Q1p7CxWGUoi") &
-                      (x["value"].isin([
-                          "sn2MGial4TT", "aB5By4ATx8M", "TAxj9iLvWQ0",
-                          "FyCtuLALNpY", "ejFYFZlmlwT"
-                      ]))]["tei_id"].nunique()
-                    / max(1, x[(x["dataElement_uid"] == "lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
-                ) * 100
-            })
-        ).reset_index(drop=True)
-
-    elif kpi_type == "stillbirth":
-        group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({
-                "value": compute_kpis(x)["stillbirth_rate"]
-            })
-        ).reset_index(drop=True)
-
-    elif kpi_type == "pnc":
-        group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({
-                "value": compute_kpis(x)["pnc_coverage"]
-            })
-        ).reset_index(drop=True)
-
-    elif kpi_type == "maternal_death":
-        group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({
-                "value": compute_kpis(x)["maternal_death_rate"]
-            })
-        ).reset_index(drop=True)
-
-    elif kpi_type == "csection":
-        group = df.groupby("period", as_index=False).apply(
-            lambda x: pd.Series({
-                "value": compute_kpis(x)["csection_rate"]
-            })
-        ).reset_index(drop=True)
-
-    else:
-        return "–", "trend-neutral"
-
-    if len(group) > 1:
-        last_value = group["value"].iloc[-1]
-        prev_value = group["value"].iloc[-2]
-        if pd.notna(last_value) and pd.notna(prev_value):
-            if last_value > prev_value:
-                return "▲", "trend-up"
-            elif last_value < prev_value:
-                return "▼", "trend-down"
-
-    return "–", "trend-neutral"
-
-
 # ---------------- Page Rendering ----------------
 def render():
     st.set_page_config(
@@ -288,72 +216,21 @@ def render():
         st.markdown(f'<div class="main-header">🏥 Maternal Health Dashboard - {selected_facilities[0]}</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="main-header">🏥 Maternal Health Dashboard - Multiple Facilities ({len(selected_facilities)})</div>', unsafe_allow_html=True)
-
     # ---------------- KPI CARDS ----------------
     if copied_events_df.empty or "event_date" not in copied_events_df.columns:
         st.markdown('<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
-    # Compute KPIs for the selected facilities
-    kpis = compute_kpis(copied_events_df, facility_uids)
-    if not isinstance(kpis, dict):
-        st.error("Error computing KPI. Please check data.")
-        return
+    # Determine display name based on selection
+    if selected_facilities == ["All Facilities"]:
+        display_name = region_name
+    elif len(selected_facilities) == 1:
+        display_name = selected_facilities[0]
+    else:
+        display_name = f"Multiple Facilities ({len(selected_facilities)})"
 
-    # Calculate trends for the cards
-    ippcar_trend, ippcar_trend_class = calculate_trend(copied_events_df, "ippcar", facility_uids)
-    stillbirth_trend, stillbirth_trend_class = calculate_trend(copied_events_df, "stillbirth", facility_uids)
-    pnc_trend, pnc_trend_class = calculate_trend(copied_events_df, "pnc", facility_uids)
-    maternal_death_trend, maternal_death_trend_class = calculate_trend(copied_events_df, "maternal_death", facility_uids)
-    csection_trend, csection_trend_class = calculate_trend(copied_events_df, "csection", facility_uids)
-
-    # KPI Cards
-    st.markdown('<div class="section-header">📊 Key Performance Indicators</div>', unsafe_allow_html=True)
-    kpi_html = f"""
-    <div class='kpi-grid'>
-        <div class='kpi-card'>
-            <div class='kpi-value'>{kpis.get("ippcar",0):.1f}% <span class='{ippcar_trend_class}'>{ippcar_trend}</span></div>
-            <div class='kpi-name'>IPPCAR (Immediate Postpartum Contraceptive Acceptance Rate)</div>
-            <div class='kpi-metrics'>
-                <span class='metric-label metric-fp'>Accepted FP: {kpis.get("fp_acceptance",0)}</span>
-                <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries",0)}</span>
-            </div>
-        </div>
-        <div class='kpi-card'>
-            <div class='kpi-value'>{kpis.get("stillbirth_rate",0):.1f} <span class='{stillbirth_trend_class}'>{stillbirth_trend}</span></div>
-            <div class='kpi-name'>Stillbirth Rate (per 1000 births)</div>
-            <div class='kpi-metrics'>
-                <span class='metric-label metric-stillbirth'>Stillbirths: {kpis.get("stillbirths",0)}</span>
-                <span class='metric-label metric-total'>Total Births: {kpis.get("total_births",0)}</span>
-            </div>
-        </div>
-        <div class='kpi-card'>
-            <div class='kpi-value'>{kpis.get("pnc_coverage",0):.1f}% <span class='{pnc_trend_class}'>{pnc_trend}</span></div>
-            <div class='kpi-name'>Early PNC Coverage (within 48 hrs)</div>
-            <div class='kpi-metrics'>
-               <span class='metric-label metric-fp'>PNC ≤48 hrs: {kpis.get("early_pnc",0)}</span>
-               <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries_pnc",0)}</span>
-            </div>
-        </div>
-        <div class='kpi-card'>
-            <div class='kpi-value'>{kpis.get("maternal_death_rate",0):.1f} <span class='{maternal_death_trend_class}'>{maternal_death_trend}</span></div>
-            <div class='kpi-name'>Maternal Death Rate (per 100,000 births)</div>
-            <div class='kpi-metrics'>
-               <span class='metric-label metric-maternal-death'>Maternal Deaths: {kpis.get("maternal_deaths",0)}</span>
-               <span class='metric-label metric-total'>Live Births: {kpis.get("live_births",0)}</span>
-            </div>
-        </div>
-        <div class='kpi-card'>
-            <div class='kpi-value'>{kpis.get("csection_rate",0):.1f}% <span class='{csection_trend_class}'>{csection_trend}</span></div>
-            <div class='kpi-name'>C-Section Rate</div>
-            <div class='kpi-metrics'>
-               <span class='metric-label metric-csection'>C-Sections: {kpis.get("csection_deliveries",0)}</span>
-               <span class='metric-label metric-total'>Total Deliveries: {kpis.get("total_deliveries_cs",0)}</span>
-            </div>
-        </div>
-    </div>
-    """
-    st.markdown(kpi_html, unsafe_allow_html=True)
+    # Use the KPI card component (handles KPIs + trends internally)
+    render_kpi_cards(copied_events_df, facility_uids, display_name)
 
     # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])
