@@ -127,58 +127,58 @@ def render():
     enrollments_df = _normalize_enrollment_dates(enrollments_df)
     copied_events_df = _normalize_event_dates(events_df)
 
-    # ---------------- Region Filter ----------------
-    # Get unique regions from the events data
-    regions = copied_events_df["orgUnit_name"].unique().tolist()
-    regions.sort()
+    # ---------------- Facility Filter ----------------
+    # Get unique facilities from the events data
+    facilities = copied_events_df["orgUnit_name"].unique().tolist()
+    facilities.sort()
     
-    # Create region mapping for UID lookup
-    region_mapping = {}
+    # Create facility mapping for UID lookup
+    facility_mapping = {}
     if not copied_events_df.empty:
         for _, row in copied_events_df.iterrows():
-            region_mapping[row["orgUnit_name"]] = row["orgUnit"]
+            facility_mapping[row["orgUnit_name"]] = row["orgUnit"]
     
-    # Multi-select region selector in sidebar
+    # Multi-select facility selector in sidebar
     st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🗺️ Select Regions</p>', 
+        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities</p>', 
         unsafe_allow_html=True
     )
     
-    # Default to all regions
-    default_regions = ["All Regions"]
+    # Default to all facilities
+    default_facilities = ["All Facilities"]
     
-    selected_regions = st.sidebar.multiselect(
+    selected_facilities = st.sidebar.multiselect(
         " ",
-        ["All Regions"] + regions,
-        default=default_regions,
-        key="region_selector",
+        ["All Facilities"] + facilities,
+        default=default_facilities,
+        key="facility_selector",
         label_visibility="collapsed"
     )
     
-    # Handle "All Regions" selection logic
-    if "All Regions" in selected_regions:
-        if len(selected_regions) > 1:
-            # If "All Regions" is selected with others, remove "All Regions"
-            selected_regions = [f for f in selected_regions if f != "All Regions"]
+    # Handle "All Facilities" selection logic
+    if "All Facilities" in selected_facilities:
+        if len(selected_facilities) > 1:
+            # If "All Facilities" is selected with others, remove "All Facilities"
+            selected_facilities = [f for f in selected_facilities if f != "All Facilities"]
         else:
-            # Only "All Regions" is selected
-            selected_regions = ["All Regions"]
+            # Only "All Facilities" is selected
+            selected_facilities = ["All Facilities"]
     
-    # Get the region UIDs for selected regions
-    region_uids = None
-    region_names = None
-    if selected_regions != ["All Regions"]:
-        region_uids = [region_mapping[region] for region in selected_regions if region in region_mapping]
-        region_names = selected_regions
+    # Get the facility UIDs for selected facilities
+    facility_uids = None
+    facility_names = None
+    if selected_facilities != ["All Facilities"]:
+        facility_uids = [facility_mapping[facility] for facility in selected_facilities if facility in facility_mapping]
+        facility_names = selected_facilities
 
     # ---------------- View Mode Selection ----------------
     view_mode = "Normal Trend"
-    if selected_regions != ["All Regions"] and len(selected_regions) > 1:
+    if selected_facilities != ["All Facilities"] and len(selected_facilities) > 1:
         view_mode = st.sidebar.radio(
             "📊 View Mode",
-            ["Normal Trend", "Region Comparison"],
+            ["Normal Trend", "Facility Comparison"],
             index=0,
-            help="Compare trends across multiple regions"
+            help="Compare trends across multiple facilities"
         )
 
     # ---------------- Export Buttons ----------------
@@ -210,27 +210,27 @@ def render():
             )
 
     # MAIN HEADING
-    if selected_regions == ["All Regions"]:
+    if selected_facilities == ["All Facilities"]:
         st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {country_name}</div>', unsafe_allow_html=True)
-    elif len(selected_regions) == 1:
-        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {selected_regions[0]}</div>', unsafe_allow_html=True)
+    elif len(selected_facilities) == 1:
+        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {selected_facilities[0]}</div>', unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - Multiple Regions ({len(selected_regions)})</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - Multiple Facilities ({len(selected_facilities)})</div>', unsafe_allow_html=True)
     # ---------------- KPI CARDS ----------------
     if copied_events_df.empty or "event_date" not in copied_events_df.columns:
         st.markdown('<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
     # Decide the display name
-    if selected_regions == ["All Regions"]:
+    if selected_facilities == ["All Facilities"]:
         display_name = country_name
-    elif len(selected_regions) == 1:
-        display_name = selected_regions[0]
+    elif len(selected_facilities) == 1:
+        display_name = selected_facilities[0]
     else:
-        display_name = f"Multiple Regions ({len(selected_regions)})"
+        display_name = f"Multiple Facilities ({len(selected_facilities)})"
 
     # Render KPI cards (trends are handled inside the component)
-    render_kpi_cards(copied_events_df, region_uids, display_name)
+    render_kpi_cards(copied_events_df, facility_uids, display_name)
 
     # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])
@@ -291,9 +291,9 @@ def render():
             (filtered_enrollments["enrollmentDate"] <= end_datetime)
         ]
 
-    # Apply region filter if selected
-    if region_uids:
-        filtered_events = filtered_events[filtered_events["orgUnit"].isin(region_uids)]
+    # Apply facility filter if selected
+    if facility_uids:
+        filtered_events = filtered_events[filtered_events["orgUnit"].isin(facility_uids)]
 
     # Assign period AFTER filtering (so period aligns with the time window)
     filtered_events = assign_period(filtered_events, "event_date", period_label)
@@ -306,8 +306,8 @@ def render():
     text_color = auto_text_color(bg_color)
 
     with col_chart:
-        if view_mode == "Region Comparison" and len(selected_regions) > 1:
-            st.markdown(f'<div class="section-header">📈 {kpi_selection} - Region Comparison</div>', unsafe_allow_html=True)
+        if view_mode == "Facility Comparison" and len(selected_facilities) > 1:
+            st.markdown(f'<div class="section-header">📈 {kpi_selection} - Facility Comparison</div>', unsafe_allow_html=True)
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
             
             # Map KPI selection to the appropriate parameters for render_facility_comparison_chart
@@ -349,8 +349,8 @@ def render():
                 title=kpi_config.get("title", kpi_selection),
                 bg_color=bg_color,
                 text_color=text_color,
-                facility_names=region_names,
-                facility_uids=region_uids,
+                facility_names=facility_names,
+                facility_uids=facility_uids,
                 numerator_name=kpi_config.get("numerator_name", "Numerator"),
                 denominator_name=kpi_config.get("denominator_name", "Denominator")
             )
@@ -376,7 +376,7 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "IPPCAR (%)", bg_color, text_color, 
-                                  region_names, "FP Acceptances", "Total Deliveries", region_uids)
+                                  facility_names, "FP Acceptances", "Total Deliveries", facility_uids)
 
             elif kpi_selection == "Stillbirth Rate (per 1000 births)":
                 group = filtered_events.groupby("period", as_index=False).apply(
@@ -387,7 +387,7 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color,
-                                  region_names, "Stillbirths", "Total Births", region_uids)
+                                  facility_names, "Stillbirths", "Total Births", facility_uids)
 
             elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
                 group = filtered_events.groupby("period", as_index=False).apply(
@@ -398,7 +398,7 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color,
-                                  region_names, "Early PNC (≤48 hrs)", "Total Deliveries", region_uids)
+                                  facility_names, "Early PNC (≤48 hrs)", "Total Deliveries", facility_uids)
 
             elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
                 group = filtered_events.groupby("period", as_index=False).apply(
@@ -409,7 +409,7 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "Maternal Death Rate (per 100,000 births)", bg_color, text_color,
-                                  region_names, "Maternal Deaths", "Live Births", region_uids)
+                                  facility_names, "Maternal Deaths", "Live Births", facility_uids)
 
             elif kpi_selection == "C-Section Rate (%)":
                 group = filtered_events.groupby("period", as_index=False).apply(
@@ -420,6 +420,6 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "C-Section Rate (%)", bg_color, text_color,
-                                  region_names, "C-Sections", "Total Deliveries", region_uids)
+                                  facility_names, "C-Sections", "Total Deliveries", facility_uids)
 
         st.markdown('</div>', unsafe_allow_html=True)
