@@ -2,8 +2,8 @@
 import streamlit as st
 import pandas as pd
 import bcrypt
-import time  # Add this import for unique timestamp keys
-from utils.db import get_db_connection  # Uses config.py internally
+import time
+from utils.db import get_db_connection
 
 # ---------------- Apply CSS Styling ----------------
 def apply_css_styling():
@@ -345,19 +345,24 @@ def user_editable_table(df):
     
     # Add edit functionality for each row
     for idx, row in df.iterrows():
+        # Initialize session state for delete confirmation
+        delete_key = f"delete_confirm_{row['user_id']}"
+        if delete_key not in st.session_state:
+            st.session_state[delete_key] = False
+            
         with st.expander(f"Edit User: {row['username']}", expanded=False):
             st.markdown('<div class="form-container">', unsafe_allow_html=True)
             
             # Create form for editing
             col1, col2 = st.columns(2)
             with col1:
-                new_username = st.text_input("Username", value=row['username'], key=f"username_{row['user_id']}_{idx}_{int(time.time()*1000)}")
-                new_first_name = st.text_input("First Name", value=row['first_name'], key=f"first_name_{row['user_id']}_{idx}_{int(time.time()*1000)}")
+                new_username = st.text_input("Username", value=row['username'], key=f"username_{row['user_id']}_{idx}")
+                new_first_name = st.text_input("First Name", value=row['first_name'], key=f"first_name_{row['user_id']}_{idx}")
             with col2:
-                new_last_name = st.text_input("Last Name", value=row['last_name'], key=f"last_name_{row['user_id']}_{idx}_{int(time.time()*1000)}")
+                new_last_name = st.text_input("Last Name", value=row['last_name'], key=f"last_name_{row['user_id']}_{idx}")
                 new_role = st.selectbox("Role", ["facility","regional","national","admin"], 
                                        index=["facility","regional","national","admin"].index(row['role']), 
-                                       key=f"role_{row['user_id']}_{idx}_{int(time.time()*1000)}")
+                                       key=f"role_{row['user_id']}_{idx}")
             
             # Role-dependent associations
             new_facility_id = new_region_id = new_country_id = None
@@ -370,7 +375,7 @@ def user_editable_table(df):
                     new_facility_id = st.selectbox("Facility", options=[None] + list(facility_map.keys()),
                                                  format_func=lambda x: facility_map.get(x, "None"),
                                                  index=0 if current_facility is None else list(facility_map.keys()).index(current_facility) + 1,
-                                                 key=f"facility_{row['user_id']}_{idx}_{int(time.time()*1000)}")
+                                                 key=f"facility_{row['user_id']}_{idx}")
             
             elif new_role == "regional":
                 region_df = fetch_table("regions")
@@ -380,7 +385,7 @@ def user_editable_table(df):
                     new_region_id = st.selectbox("Region", options=[None] + list(region_map.keys()),
                                                format_func=lambda x: region_map.get(x, "None"),
                                                index=0 if current_region is None else list(region_map.keys()).index(current_region) + 1,
-                                               key=f"region_{row['user_id']}_{idx}_{int(time.time()*1000)}")
+                                               key=f"region_{row['user_id']}_{idx}")
             
             elif new_role == "national":
                 country_df = fetch_table("countries")
@@ -390,16 +395,16 @@ def user_editable_table(df):
                     new_country_id = st.selectbox("Country", options=[None] + list(country_map.keys()),
                                                 format_func=lambda x: country_map.get(x, "None"),
                                                 index=0 if current_country is None else list(country_map.keys()).index(current_country) + 1,
-                                                key=f"country_{row['user_id']}_{idx}_{int(time.time()*1000)}")
+                                                key=f"country_{row['user_id']}_{idx}")
             
             # Password update field
             new_password = st.text_input("New Password (leave blank to keep current)", type="password", 
-                                       key=f"password_{row['user_id']}_{idx}_{int(time.time()*1000)}")
+                                       key=f"password_{row['user_id']}_{idx}")
             
             # Action buttons
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Update", key=f"update_user_{row['user_id']}_{idx}_{int(time.time()*1000)}"):
+                if st.button("Update", key=f"update_user_{row['user_id']}_{idx}"):
                     # Prepare update query
                     update_fields = {
                         'username': new_username,
@@ -425,10 +430,21 @@ def user_editable_table(df):
                     st.rerun()
             
             with col2:
-                if st.button("Delete", key=f"delete_user_{row['user_id']}_{idx}_{int(time.time()*1000)}"):
-                    if st.confirm(f"Are you sure you want to delete user '{row['username']}'?"):
-                        delete_row("users", "user_id", row['user_id'])
-                        st.rerun()
+                if st.button("Delete", key=f"delete_user_{row['user_id']}_{idx}"):
+                    st.session_state[delete_key] = True
+                
+                if st.session_state[delete_key]:
+                    st.warning(f"Are you sure you want to delete user '{row['username']}'?")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Yes, Delete", key=f"confirm_delete_{row['user_id']}_{idx}"):
+                            delete_row("users", "user_id", row['user_id'])
+                            st.session_state[delete_key] = False
+                            st.rerun()
+                    with col2:
+                        if st.button("Cancel", key=f"cancel_delete_{row['user_id']}_{idx}"):
+                            st.session_state[delete_key] = False
+                            st.rerun()
             
             st.markdown('</div>', unsafe_allow_html=True)
     
@@ -463,6 +479,11 @@ def entity_editable_table(df, table_name, id_column, add_function):
     
     # Add edit functionality for each row
     for idx, row in df.iterrows():
+        # Initialize session state for delete confirmation
+        delete_key = f"delete_confirm_{table_name}_{row[id_column]}"
+        if delete_key not in st.session_state:
+            st.session_state[delete_key] = False
+            
         with st.expander(f"Edit {table_name.capitalize()}: {row.iloc[1]}", expanded=False):
             st.markdown('<div class="form-container">', unsafe_allow_html=True)
             
@@ -482,18 +503,18 @@ def entity_editable_table(df, table_name, id_column, add_function):
                                 options=[None] + list(ref_map.keys()),
                                 format_func=lambda x: ref_map.get(x, "None"),
                                 index=0 if current_val is None else list(ref_map.keys()).index(current_val) + 1,
-                                key=f"{table_name}_{row[id_column]}_{col}_{idx}_{int(time.time()*1000)}"  # Added timestamp for uniqueness
+                                key=f"{table_name}_{row[id_column]}_{col}_{idx}"
                             )
                         except:
                             # Fallback to text input if reference table doesn't exist
-                            updated_vals[col] = st.text_input(col, value=row[col], key=f"{table_name}_{row[id_column]}_{col}_{idx}_{int(time.time()*1000)}")
+                            updated_vals[col] = st.text_input(col, value=row[col], key=f"{table_name}_{row[id_column]}_{col}_{idx}")
                     else:
-                        updated_vals[col] = st.text_input(col, value=row[col], key=f"{table_name}_{row[id_column]}_{col}_{idx}_{int(time.time()*1000)}")
+                        updated_vals[col] = st.text_input(col, value=row[col], key=f"{table_name}_{row[id_column]}_{col}_{idx}")
             
             # Action buttons
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Update", key=f"update_{table_name}_{row[id_column]}_{idx}_{int(time.time()*1000)}"):
+                if st.button("Update", key=f"update_{table_name}_{row[id_column]}_{idx}"):
                     set_clause = ", ".join([f"{k}=%s" for k in updated_vals.keys()])
                     params = list(updated_vals.values()) + [row[id_column]]
                     execute_query(f"UPDATE {table_name} SET {set_clause} WHERE {id_column}=%s", params)
@@ -501,10 +522,21 @@ def entity_editable_table(df, table_name, id_column, add_function):
                     st.rerun()
             
             with col2:
-                if st.button("Delete", key=f"delete_{table_name}_{row[id_column]}_{idx}_{int(time.time()*1000)}"):
-                    if st.confirm(f"Are you sure you want to delete this {table_name[:-1]}?"):
-                        delete_row(table_name, id_column, row[id_column])
-                        st.rerun()
+                if st.button("Delete", key=f"delete_{table_name}_{row[id_column]}_{idx}"):
+                    st.session_state[delete_key] = True
+                
+                if st.session_state[delete_key]:
+                    st.warning(f"Are you sure you want to delete this {table_name[:-1]}?")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Yes, Delete", key=f"confirm_delete_{table_name}_{row[id_column]}_{idx}"):
+                            delete_row(table_name, id_column, row[id_column])
+                            st.session_state[delete_key] = False
+                            st.rerun()
+                    with col2:
+                        if st.button("Cancel", key=f"cancel_delete_{table_name}_{row[id_column]}_{idx}"):
+                            st.session_state[delete_key] = False
+                            st.rerun()
             
             st.markdown('</div>', unsafe_allow_html=True)
     
@@ -560,21 +592,20 @@ def get_search_config(table_name):
 def render():
     apply_css_styling()
     st.title("🛠️ Admin Dashboard")
-    tabs = st.tabs(["Users", "Facilities", "Regions", "Countries"])
-
-    # Initialize session state for each tab
-    tab_config = {
-        "users": {"search_term": "", "search_column": "username", "trigger": False},
-        "facilities": {"search_term": "", "search_column": "facility_name", "trigger": False},
-        "regions": {"search_term": "", "search_column": "region_name", "trigger": False},
-        "countries": {"search_term": "", "search_column": "country_name", "trigger": False}
-    }
     
-    for tab_name, config in tab_config.items():
-        for key, value in config.items():
-            full_key = f"{tab_name}_{key}"
-            if full_key not in st.session_state:
-                st.session_state[full_key] = value
+    # Initialize session state for search terms
+    if 'search_terms' not in st.session_state:
+        st.session_state.search_terms = {
+            "users": "", "facilities": "", "regions": "", "countries": ""
+        }
+    
+    if 'search_columns' not in st.session_state:
+        st.session_state.search_columns = {
+            "users": "username", "facilities": "facility_name", 
+            "regions": "region_name", "countries": "country_name"
+        }
+    
+    tabs = st.tabs(["Users", "Facilities", "Regions", "Countries"])
 
     # Users tab
     with tabs[0]:
@@ -592,33 +623,26 @@ def render():
         with col2:
             search_input = st.text_input(
                 "Search", 
-                value=st.session_state.users_search_term,
+                value=st.session_state.search_terms["users"],
                 key="users_search_input"
             )
         with col3:
             st.write("")  # Spacer for alignment
             st.write("")  # Spacer for alignment
             if st.button("Search", key="users_search_btn"):
-                st.session_state.users_search_term = search_input
-                st.session_state.users_search_column = filter_by
-                st.session_state.users_trigger = True
+                st.session_state.search_terms["users"] = search_input
+                st.session_state.search_columns["users"] = filter_by
             if st.button("Clear", key="users_clear_btn"):
-                st.session_state.users_search_term = ""
-                st.session_state.users_trigger = True
+                st.session_state.search_terms["users"] = ""
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Fetch data based on search trigger
-        if st.session_state.users_trigger:
-            if st.session_state.users_search_term:
-                if st.session_state.users_search_column == "all":
-                    df = fetch_table_multi_filter("users", search_config["columns"], st.session_state.users_search_term)
-                else:
-                    df = fetch_table("users", st.session_state.users_search_column, st.session_state.users_search_term)
+        # Fetch data based on search
+        if st.session_state.search_terms["users"]:
+            if st.session_state.search_columns["users"] == "all":
+                df = fetch_table_multi_filter("users", search_config["columns"], st.session_state.search_terms["users"])
             else:
-                df = fetch_table("users")
-            st.session_state.users_trigger = False
+                df = fetch_table("users", st.session_state.search_columns["users"], st.session_state.search_terms["users"])
         else:
-            # Default to showing all users on first load
             df = fetch_table("users")
         
         user_editable_table(df)
@@ -639,33 +663,26 @@ def render():
         with col2:
             search_input = st.text_input(
                 "Search", 
-                value=st.session_state.facilities_search_term,
+                value=st.session_state.search_terms["facilities"],
                 key="facilities_search_input"
             )
         with col3:
             st.write("")  # Spacer for alignment
             st.write("")  # Spacer for alignment
             if st.button("Search", key="facilities_search_btn"):
-                st.session_state.facilities_search_term = search_input
-                st.session_state.facilities_search_column = filter_by
-                st.session_state.facilities_trigger = True
+                st.session_state.search_terms["facilities"] = search_input
+                st.session_state.search_columns["facilities"] = filter_by
             if st.button("Clear", key="facilities_clear_btn"):
-                st.session_state.facilities_search_term = ""
-                st.session_state.facilities_trigger = True
+                st.session_state.search_terms["facilities"] = ""
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Fetch data based on search trigger
-        if st.session_state.facilities_trigger:
-            if st.session_state.facilities_search_term:
-                if st.session_state.facilities_search_column == "all":
-                    df = fetch_table_multi_filter("facilities", search_config["columns"], st.session_state.facilities_search_term)
-                else:
-                    df = fetch_table("facilities", st.session_state.facilities_search_column, st.session_state.facilities_search_term)
+        # Fetch data based on search
+        if st.session_state.search_terms["facilities"]:
+            if st.session_state.search_columns["facilities"] == "all":
+                df = fetch_table_multi_filter("facilities", search_config["columns"], st.session_state.search_terms["facilities"])
             else:
-                df = fetch_table("facilities")
-            st.session_state.facilities_trigger = False
+                df = fetch_table("facilities", st.session_state.search_columns["facilities"], st.session_state.search_terms["facilities"])
         else:
-            # Default to showing all facilities on first load
             df = fetch_table("facilities")
         
         entity_editable_table(df, "facilities", "facility_id", add_facility_form)
@@ -686,33 +703,26 @@ def render():
         with col2:
             search_input = st.text_input(
                 "Search", 
-                value=st.session_state.regions_search_term,
+                value=st.session_state.search_terms["regions"],
                 key="regions_search_input"
             )
         with col3:
             st.write("")  # Spacer for alignment
             st.write("")  # Spacer for alignment
             if st.button("Search", key="regions_search_btn"):
-                st.session_state.regions_search_term = search_input
-                st.session_state.regions_search_column = filter_by
-                st.session_state.regions_trigger = True
+                st.session_state.search_terms["regions"] = search_input
+                st.session_state.search_columns["regions"] = filter_by
             if st.button("Clear", key="regions_clear_btn"):
-                st.session_state.regions_search_term = ""
-                st.session_state.regions_trigger = True
+                st.session_state.search_terms["regions"] = ""
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Fetch data based on search trigger
-        if st.session_state.regions_trigger:
-            if st.session_state.regions_search_term:
-                if st.session_state.regions_search_column == "all":
-                    df = fetch_table_multi_filter("regions", search_config["columns"], st.session_state.regions_search_term)
-                else:
-                    df = fetch_table("regions", st.session_state.regions_search_column, st.session_state.regions_search_term)
+        # Fetch data based on search
+        if st.session_state.search_terms["regions"]:
+            if st.session_state.search_columns["regions"] == "all":
+                df = fetch_table_multi_filter("regions", search_config["columns"], st.session_state.search_terms["regions"])
             else:
-                df = fetch_table("regions")
-            st.session_state.regions_trigger = False
+                df = fetch_table("regions", st.session_state.search_columns["regions"], st.session_state.search_terms["regions"])
         else:
-            # Default to showing all regions on first load
             df = fetch_table("regions")
         
         entity_editable_table(df, "regions", "region_id", add_region_form)
@@ -733,33 +743,26 @@ def render():
         with col2:
             search_input = st.text_input(
                 "Search", 
-                value=st.session_state.countries_search_term,
+                value=st.session_state.search_terms["countries"],
                 key="countries_search_input"
             )
         with col3:
             st.write("")  # Spacer for alignment
             st.write("")  # Spacer for alignment
             if st.button("Search", key="countries_search_btn"):
-                st.session_state.countries_search_term = search_input
-                st.session_state.countries_search_column = filter_by
-                st.session_state.countries_trigger = True
+                st.session_state.search_terms["countries"] = search_input
+                st.session_state.search_columns["countries"] = filter_by
             if st.button("Clear", key="countries_clear_btn"):
-                st.session_state.countries_search_term = ""
-                st.session_state.countries_trigger = True
+                st.session_state.search_terms["countries"] = ""
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Fetch data based on search trigger
-        if st.session_state.countries_trigger:
-            if st.session_state.countries_search_term:
-                if st.session_state.countries_search_column == "all":
-                    df = fetch_table_multi_filter("countries", search_config["columns"], st.session_state.countries_search_term)
-                else:
-                    df = fetch_table("countries", st.session_state.countries_search_column, st.session_state.countries_search_term)
+        # Fetch data based on search
+        if st.session_state.search_terms["countries"]:
+            if st.session_state.search_columns["countries"] == "all":
+                df = fetch_table_multi_filter("countries", search_config["columns"], st.session_state.search_terms["countries"])
             else:
-                df = fetch_table("countries")
-            st.session_state.countries_trigger = False
+                df = fetch_table("countries", st.session_state.search_columns["countries"], st.session_state.search_terms["countries"])
         else:
-            # Default to showing all countries on first load
             df = fetch_table("countries")
         
         entity_editable_table(df, "countries", "country_id", add_country_form)

@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import pandas as pd
 import logging
 from utils.queries import get_orgunit_uids_for_user, get_program_uid
@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 def fetch_program_data_for_user(
     user: dict,
+    facility_uids: List[str] = None,
     period_label: str = "Monthly",
     program_name: str = "Maternal Inpatient Data"
 ) -> Dict[str, pd.DataFrame]:
@@ -22,8 +23,17 @@ def fetch_program_data_for_user(
         logging.warning("No program UID found.")
         return {}
 
-    ou_pairs = get_orgunit_uids_for_user(user)
-    ou_uids = [ou for ou, _ in ou_pairs]
+    # If facility_uids are provided, use them for filtering
+    if facility_uids:
+        ou_uids = facility_uids
+        # Get names for the selected facilities
+        all_ou_pairs = get_orgunit_uids_for_user(user)
+        ou_names = {uid: name for uid, name in all_ou_pairs if uid in facility_uids}
+    else:
+        # Get all orgUnits the user has access to
+        ou_pairs = get_orgunit_uids_for_user(user)
+        ou_uids = [ou for ou, _ in ou_pairs]
+        ou_names = {uid: name for uid, name in ou_pairs}
     
     if not ou_uids:
         logging.warning("No accessible orgUnits found.")
@@ -34,15 +44,18 @@ def fetch_program_data_for_user(
     patients = dhis2_data.get("patients", [])
     de_dict = dhis2_data.get("dataElements", {})
     ps_dict = dhis2_data.get("programStages", {})
-    ou_names = dhis2_data.get("orgUnitNames", {})  # <-- All orgUnit display names
+    dhis2_ou_names = dhis2_data.get("orgUnitNames", {})
+
+    # Merge DHIS2 names with our known names
+    final_ou_names = {**dhis2_ou_names, **ou_names}
 
     if not patients:
         logging.warning("No patient data found.")
         return {}
 
-    # Helper: map UID -> DHIS2 name
+    # Helper: map UID -> name
     def map_org_name(uid: str) -> str:
-        return ou_names.get(uid, "Unknown OrgUnit")
+        return final_ou_names.get(uid, "Unknown OrgUnit")
 
     # TEI DataFrame
     tei_df = pd.json_normalize(
@@ -85,7 +98,7 @@ def fetch_program_data_for_user(
                         "programStage_uid": event.get("programStage"),
                         "programStageName": event.get("programStageName", ps_dict.get(event.get("programStage"), event.get("programStage"))),
                         "orgUnit": event_orgUnit,
-                        "orgUnit_name": map_org_name(event_orgUnit),  # <-- DHIS2 name
+                        "orgUnit_name": map_org_name(event_orgUnit),
                         "eventDate": event.get("eventDate"),
                         "dataElement_uid": dv.get("dataElement"),
                         "dataElementName": dv.get("dataElementName", de_dict.get(dv.get("dataElement"), dv.get("dataElement"))),
@@ -102,9 +115,9 @@ def fetch_program_data_for_user(
         elif period_label == "Monthly":
             evt_df["period"] = evt_df["event_date"].dt.to_period("M").astype(str)
         elif period_label == "Quarterly":
-            evt_df["period"] = evt_df["event_date"].dt.to_period("Q").astype(str)
+            evt_df["period"] = evt_df["event_date"].dt.to_period("Q").astize(str)
         else:
-            evt_df["period"] = evt_df["event_date"].dt.to_period("Y").astype(str)
+            evt_df["period"] = evt_df["event_date"].dt.to_period("Y").astize(str)
 
     # Convert enrollmentDate
     if not enr_df.empty and "enrollmentDate" in enr_df.columns:

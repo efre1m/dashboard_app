@@ -13,6 +13,7 @@ from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.time_filter import get_date_range, assign_period
 from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color, render_facility_comparison_chart
+from utils.db import get_db_connection
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -20,9 +21,10 @@ CACHE_TTL = 1800  # 30 minutes
 
 # ---------------- Cache Wrapper ----------------
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def fetch_cached_data(user):
+def fetch_cached_data(user, facility_uids=None):
+    """Cache data for each facility combination separately"""
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(fetch_program_data_for_user, user)
+        future = executor.submit(fetch_program_data_for_user, user, facility_uids)
         return future.result(timeout=180)
 
 
@@ -40,7 +42,6 @@ def _normalize_event_dates(df: pd.DataFrame) -> pd.DataFrame:
 
     # Parse ISO 'eventDate' if present
     if "eventDate" in df.columns:
-        # pandas can parse ISO 8601 with milliseconds without explicit format
         iso_parsed = pd.to_datetime(df["eventDate"], errors="coerce")
     else:
         iso_parsed = pd.Series(pd.NaT, index=df.index)
@@ -67,6 +68,35 @@ def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["enrollmentDate"] = pd.to_datetime(df["enrollmentDate"], format="%m/%d/%Y", errors="coerce")
     return df
+
+
+def get_facilities_for_user(user: dict) -> list:
+    """Get facilities for the current user from database"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    facilities = []
+    
+    try:
+        role = user.get("role", "")
+        
+        if role == "national":
+            cur.execute("SELECT facility_name, dhis2_uid FROM facilities")
+            facilities = cur.fetchall()
+        elif role == "regional" and user.get("region_id"):
+            cur.execute("SELECT facility_name, dhis2_uid FROM facilities WHERE region_id = %s", (user["region_id"],))
+            facilities = cur.fetchall()
+        elif role == "facility" and user.get("facility_id"):
+            cur.execute("SELECT facility_name, dhis2_uid FROM facilities WHERE facility_id = %s", (user["facility_id"],))
+            facilities = cur.fetchall()
+    except Exception as e:
+        logging.error(f"Error fetching facilities from database: {e}")
+    finally:
+        cur.close()
+        conn.close()
+    
+    return facilities
+
+
 # ---------------- Page Rendering ----------------
 def render():
     st.set_page_config(
@@ -90,7 +120,7 @@ def render():
     user = st.session_state.get("user", {})
     username = user.get("username", "Unknown User")
     role = user.get("role", "Unknown Role")
-    country_name = user.get("country_name", "National Level")
+    country_name = user.get("country_name", "Ethiopia")
 
     st.sidebar.markdown(f"""
         <div class="user-info">
@@ -104,39 +134,13 @@ def render():
         st.cache_data.clear()
         st.session_state["refresh_trigger"] = not st.session_state["refresh_trigger"]
 
-    # Fetch DHIS2 data
-    with st.spinner("Fetching national maternal data..."):
-        try:
-            dfs = fetch_cached_data(user)
-        except concurrent.futures.TimeoutError:
-            st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
-            return
-        except requests.RequestException as e:
-            st.error(f"⚠️ DHIS2 request failed: {e}")
-            return
-        except Exception as e:
-            st.error(f"⚠️ Unexpected error: {e}")
-            return
-
-    tei_df = dfs.get("tei", pd.DataFrame())
-    enrollments_df = dfs.get("enrollments", pd.DataFrame())
-    events_df = dfs.get("events", pd.DataFrame())
-    raw_json = dfs.get("raw_json", [])
-
-    # Normalize dates
-    enrollments_df = _normalize_enrollment_dates(enrollments_df)
-    copied_events_df = _normalize_event_dates(events_df)
-
     # ---------------- Facility Filter ----------------
-    # Get unique facilities from the events data
-    facilities = copied_events_df["orgUnit_name"].unique().tolist()
-    facilities.sort()
+    # Get facilities from database instead of DHIS2 API
+    db_facilities = get_facilities_for_user(user)
+    facilities = [facility[0] for facility in db_facilities]
     
-    # Create facility mapping for UID lookup
-    facility_mapping = {}
-    if not copied_events_df.empty:
-        for _, row in copied_events_df.iterrows():
-            facility_mapping[row["orgUnit_name"]] = row["orgUnit"]
+    # Create facility mapping for UID lookup (from database)
+    facility_mapping = {facility[0]: facility[1] for facility in db_facilities}
     
     # Multi-select facility selector in sidebar
     st.sidebar.markdown(
@@ -158,18 +162,57 @@ def render():
     # Handle "All Facilities" selection logic
     if "All Facilities" in selected_facilities:
         if len(selected_facilities) > 1:
-            # If "All Facilities" is selected with others, remove "All Facilities"
             selected_facilities = [f for f in selected_facilities if f != "All Facilities"]
         else:
-            # Only "All Facilities" is selected
             selected_facilities = ["All Facilities"]
     
-    # Get the facility UIDs for selected facilities
+    # Get the facility UIDs for selected facilities (from database mapping)
     facility_uids = None
     facility_names = None
     if selected_facilities != ["All Facilities"]:
         facility_uids = [facility_mapping[facility] for facility in selected_facilities if facility in facility_mapping]
         facility_names = selected_facilities
+
+    # Create a cache key that includes the facility selection
+    cache_key = f"{user.get('username', 'unknown')}_{'-'.join(sorted(facility_uids)) if facility_uids else 'all-facilities'}"
+
+    # Fetch DHIS2 data WITH facility filtering - cached per facility selection
+    with st.spinner("Fetching national maternal data..."):
+        try:
+            # Use the cache key to ensure each facility combination is cached separately
+            dfs = fetch_cached_data(user, facility_uids)
+        except concurrent.futures.TimeoutError:
+            st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
+            return
+        except requests.RequestException as e:
+            st.error(f"⚠️ DHIS2 request failed: {e}")
+            return
+        except Exception as e:
+            st.error(f"⚠️ Unexpected error: {e}")
+            return
+
+    tei_df = dfs.get("tei", pd.DataFrame())
+    enrollments_df = dfs.get("enrollments", pd.DataFrame())
+    events_df = dfs.get("events", pd.DataFrame())
+    raw_json = dfs.get("raw_json", [])
+
+    # Debug information
+    st.sidebar.markdown("### Cache Info")
+    st.sidebar.write(f"Cache Key: {cache_key}")
+    st.sidebar.write(f"Selected Facilities: {selected_facilities}")
+    st.sidebar.write(f"Facility UIDs: {facility_uids}")
+    st.sidebar.write(f"Events shape: {events_df.shape}")
+    if not events_df.empty and 'orgUnit' in events_df.columns:
+        st.sidebar.write(f"Unique orgUnits in data: {events_df['orgUnit'].nunique()}")
+        if facility_uids:
+            # Check if the selected facilities are actually in the data
+            actual_org_units = set(events_df['orgUnit'].unique())
+            selected_in_data = set(facility_uids).intersection(actual_org_units)
+            st.sidebar.write(f"Selected UIDs in data: {len(selected_in_data)}/{len(facility_uids)}")
+
+    # Normalize dates
+    enrollments_df = _normalize_enrollment_dates(enrollments_df)
+    copied_events_df = _normalize_event_dates(events_df)
 
     # ---------------- View Mode Selection ----------------
     view_mode = "Normal Trend"
@@ -216,12 +259,13 @@ def render():
         st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {selected_facilities[0]}</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - Multiple Facilities ({len(selected_facilities)})</div>', unsafe_allow_html=True)
+    
     # ---------------- KPI CARDS ----------------
     if copied_events_df.empty or "event_date" not in copied_events_df.columns:
         st.markdown('<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
-    # Decide the display name
+    # Determine display name based on selection
     if selected_facilities == ["All Facilities"]:
         display_name = country_name
     elif len(selected_facilities) == 1:
@@ -229,7 +273,7 @@ def render():
     else:
         display_name = f"Multiple Facilities ({len(selected_facilities)})"
 
-    # Render KPI cards (trends are handled inside the component)
+    # Use the KPI card component
     render_kpi_cards(copied_events_df, facility_uids, display_name)
 
     # ---------------- Controls & Time Filter ----------------
@@ -291,10 +335,6 @@ def render():
             (filtered_enrollments["enrollmentDate"] <= end_datetime)
         ]
 
-    # Apply facility filter if selected
-    if facility_uids:
-        filtered_events = filtered_events[filtered_events["orgUnit"].isin(facility_uids)]
-
     # Assign period AFTER filtering (so period aligns with the time window)
     filtered_events = assign_period(filtered_events, "event_date", period_label)
 
@@ -310,7 +350,6 @@ def render():
             st.markdown(f'<div class="section-header">📈 {kpi_selection} - Facility Comparison</div>', unsafe_allow_html=True)
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
             
-            # Map KPI selection to the appropriate parameters for render_facility_comparison_chart
             kpi_mapping = {
                 "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {
                     "title": "IPPCAR (%)",
@@ -341,7 +380,6 @@ def render():
             
             kpi_config = kpi_mapping.get(kpi_selection, {})
             
-            # Use the imported render_facility_comparison_chart function
             render_facility_comparison_chart(
                 df=filtered_events,
                 period_col="period",
