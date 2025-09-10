@@ -97,6 +97,18 @@ def render_kpi_cards(events_df, facility_uids=None, location_name="Location"):
     maternal_death_trend, maternal_death_trend_class = calculate_trend(events_df, "maternal_death", facility_uids)
     csection_trend, csection_trend_class = calculate_trend(events_df, "csection", facility_uids)
 
+    # Add CSS for black text styling
+    st.markdown("""
+    <style>
+    .kpi-value, .kpi-name, .metric-label {
+        color: #000000 !important;
+    }
+    .section-header {
+        color: #000000 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     # KPI Cards HTML with proper CSS classes
     kpi_html = f"""
     <div class="kpi-grid">

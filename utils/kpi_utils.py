@@ -218,12 +218,14 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color=No
     chart_options = get_chart_options(title)
     
     # Create radio button with black text for the header using a proper label
+    st.markdown(f'<p style="color:#000000; font-weight:700; font-size:16px;">📊 Chart type for {title}</p>', unsafe_allow_html=True)
     chart_type = st.radio(
-        f"📊 Chart type for {title}",
+        "chart_type_selector",
         options=chart_options, 
         index=0, 
         horizontal=True, 
-        key=f"chart_type_{title}_{str(facility_uids)}"
+        key=f"chart_type_{title}_{str(facility_uids)}",
+        label_visibility="collapsed"
     ).lower()
     
     df = df.copy()

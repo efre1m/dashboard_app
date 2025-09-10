@@ -70,6 +70,47 @@ def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# Helper functions for facility selection
+def handle_all_facilities_change(all_facility_names):
+    """Handle when 'All Facilities' checkbox is toggled"""
+    if st.session_state.all_facilities_checkbox:
+        # Select all facilities
+        st.session_state.selected_facilities = ["All Facilities"] + all_facility_names
+    else:
+        # Deselect all facilities
+        st.session_state.selected_facilities = []
+
+def handle_region_change(region_name, facility_names):
+    """Handle when 'Select all in region' checkbox is toggled"""
+    if st.session_state[f"select_all_{region_name}"]:
+        # Add all facilities in this region
+        for facility_name in facility_names:
+            if facility_name not in st.session_state.selected_facilities:
+                st.session_state.selected_facilities.append(facility_name)
+        # Remove "All Facilities" if individual facilities are selected
+        if "All Facilities" in st.session_state.selected_facilities:
+            st.session_state.selected_facilities.remove("All Facilities")
+    else:
+        # Remove all facilities from this region
+        for facility_name in facility_names:
+            if facility_name in st.session_state.selected_facilities:
+                st.session_state.selected_facilities.remove(facility_name)
+
+def handle_facility_change(facility_name):
+    """Handle when individual facility checkbox is toggled"""
+    if st.session_state[f"facility_{facility_name}"]:
+        # Add this facility
+        if facility_name not in st.session_state.selected_facilities:
+            st.session_state.selected_facilities.append(facility_name)
+        # Remove "All Facilities" if individual facilities are selected
+        if "All Facilities" in st.session_state.selected_facilities:
+            st.session_state.selected_facilities.remove("All Facilities")
+    else:
+        # Remove this facility
+        if facility_name in st.session_state.selected_facilities:
+            st.session_state.selected_facilities.remove(facility_name)
+
+
 # ---------------- Page Rendering ----------------
 def render():
     st.set_page_config(
@@ -82,12 +123,60 @@ def render():
     if "refresh_trigger" not in st.session_state:
         st.session_state["refresh_trigger"] = False
 
-    # Load CSS if available
+    # Load both CSS files - facility.css first, then national.css for overrides
     try:
         with open("utils/facility.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-    except Exception:
-        pass
+    except Exception as e:
+        st.warning(f"Facility CSS file not found: {e}")
+    
+    try:
+        with open("utils/national.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except Exception as e:
+        st.warning(f"National CSS file not found: {e}")
+        # Fallback to basic national styling
+        st.markdown("""
+            <style>
+            /* National-specific fallback styles */
+            .sidebar .sidebar-content {
+                background: linear-gradient(135deg, #1a5fb4 0%, #1c71d8 100%);
+                color: white;
+            }
+            .user-info {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 15px;
+                border-radius: 10px;
+                margin-bottom: 20px;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }
+            .section-header {
+                color: white !important;
+                font-weight: 700;
+                font-size: 18px;
+                margin: 20px 0 15px 0;
+                padding-bottom: 8px;
+                border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+            }
+            .stCheckbox [data-baseweb="checkbox"]:checked {
+                background-color: #ffa348;
+                border-color: #ffa348;
+            }
+            .stExpander {
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                margin-bottom: 10px;
+            }
+            .stExpander summary {
+                color: white !important;
+                font-weight: 600;
+                padding: 12px 15px;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+            }
+            </style>
+        """, unsafe_allow_html=True)
 
     # Sidebar user info
     user = st.session_state.get("user", {})
@@ -106,6 +195,7 @@ def render():
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.session_state["refresh_trigger"] = not st.session_state["refresh_trigger"]
+        st.rerun()
 
     # Fetch DHIS2 data
     with st.spinner("Fetching national maternal data..."):
@@ -137,68 +227,108 @@ def render():
     # Create facility mapping for UID lookup (from database)
     facility_mapping = get_facility_mapping_for_user(user)
     
-    # Create options for multiselect with regions as optgroups
-    facility_options = ["All Facilities"]
+    # Get all facility names for "All Facilities" selection
+    all_facility_names = []
     for region_name, facilities in facilities_by_region.items():
-        # Add region as a disabled option (for grouping)
-        facility_options.append(f"--- {region_name} ---")
-        # Add facilities under this region
         for facility_name, _ in facilities:
-            facility_options.append(facility_name)
+            all_facility_names.append(facility_name)
     
-    # Multi-select facility selector in sidebar with grouped options
+    # Initialize session state for facility selection - DEFAULT TO ALL FACILITIES SELECTED
+    if "selected_facilities" not in st.session_state:
+        st.session_state.selected_facilities = ["All Facilities"] + all_facility_names
+    
+    if "expanded_regions" not in st.session_state:
+        # Default all regions to collapsed (not expanded)
+        st.session_state.expanded_regions = {region_name: False for region_name in facilities_by_region.keys()}
+    
+    # Facility selector in sidebar with expandable regions
     st.sidebar.markdown(
         '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities</p>', 
         unsafe_allow_html=True
     )
     
-    # Default to all facilities
-    default_facilities = ["All Facilities"]
+    # Create a container for the facility selector
+    facility_container = st.sidebar.container()
     
-    selected_facilities = st.sidebar.multiselect(
-        " ",
-        facility_options,
-        default=default_facilities,
-        key="facility_selector",
-        label_visibility="collapsed"
-    )
+    with facility_container:
+        # "All Facilities" checkbox - DEFAULT TO CHECKED
+        all_facilities_selected = st.checkbox(
+            "All Facilities", 
+            value="All Facilities" in st.session_state.selected_facilities,
+            key="all_facilities_checkbox",
+            on_change=lambda: handle_all_facilities_change(all_facility_names)
+        )
+        
+        # If "All Facilities" is selected, automatically select all individual facilities
+        if all_facilities_selected and "All Facilities" not in st.session_state.selected_facilities:
+            st.session_state.selected_facilities = ["All Facilities"] + all_facility_names
+        
+        # If "All Facilities" is deselected, remove it from selection
+        elif not all_facilities_selected and "All Facilities" in st.session_state.selected_facilities:
+            st.session_state.selected_facilities = [f for f in st.session_state.selected_facilities if f != "All Facilities"]
+        
+        # Region expanders for facility selection - DEFAULT COLLAPSED
+        for region_name, facilities in facilities_by_region.items():
+            # Create expander for each region - DEFAULT COLLAPSED
+            with st.expander(
+                f"{region_name} ({len(facilities)})",
+                expanded=st.session_state.expanded_regions[region_name]
+            ):
+                # Update expanded state when user expands
+                st.session_state.expanded_regions[region_name] = True
+                
+                # Select all facilities in this region - DEFAULT TO CHECKED IF ALL FACILITIES SELECTED
+                all_in_region_selected = all([facility_name in st.session_state.selected_facilities for facility_name, _ in facilities])
+                all_in_region = st.checkbox(
+                    f"Select all in {region_name}",
+                    value=all_in_region_selected,
+                    key=f"select_all_{region_name}",
+                    on_change=lambda r=region_name, f=[fac[0] for fac in facilities]: handle_region_change(r, f)
+                )
+                
+                # Individual facility checkboxes - ALL CHECKED BY DEFAULT (but hidden until expanded)
+                for facility_name, _ in facilities:
+                    facility_selected = st.checkbox(
+                        facility_name,
+                        value=facility_name in st.session_state.selected_facilities,
+                        key=f"facility_{facility_name}",
+                        on_change=lambda fn=facility_name: handle_facility_change(fn)
+                    )
     
-    # Filter out region headers from selected facilities
-    selected_facilities = [f for f in selected_facilities if not f.startswith("--- ")]
+    # Get the selected facilities (excluding "All Facilities" for processing)
+    selected_facilities = [f for f in st.session_state.selected_facilities if f != "All Facilities"]
+    all_facilities_mode = "All Facilities" in st.session_state.selected_facilities
     
     # Calculate total facilities count
     total_facilities = sum(len(facilities) for facilities in facilities_by_region.values())
     
-    # 👇 Dynamic count below the dropdown
-    if selected_facilities == ["All Facilities"]:
+    # Display selection count
+    if all_facilities_mode:
         display_text = f"Selected: All ({total_facilities})"
     else:
         display_text = f"Selected: {len(selected_facilities)} / {total_facilities}"
 
     st.sidebar.markdown(
-        f"<p style='color: white; font-size: 13px; margin-top: -10px;'>{display_text}</p>",
+        f"<p style='color: white; font-size: 13px; margin-top: 10px;'>{display_text}</p>",
         unsafe_allow_html=True
     )
-    
-    # Handle "All Facilities" selection logic
-    if "All Facilities" in selected_facilities:
-        if len(selected_facilities) > 1:
-            # If "All Facilities" is selected with others, remove "All Facilities"
-            selected_facilities = [f for f in selected_facilities if f != "All Facilities"]
-        else:
-            # Only "All Facilities" is selected
-            selected_facilities = ["All Facilities"]
     
     # Get the facility UIDs for selected facilities (from database mapping)
     facility_uids = None
     facility_names = None
-    if selected_facilities != ["All Facilities"]:
+    
+    if all_facilities_mode:
+        # Use all facilities
+        facility_uids = list(facility_mapping.values())
+        facility_names = ["All Facilities"]
+    elif selected_facilities:
+        # Use selected individual facilities
         facility_uids = [facility_mapping[facility] for facility in selected_facilities if facility in facility_mapping]
         facility_names = selected_facilities
 
     # ---------------- View Mode Selection ----------------
     view_mode = "Normal Trend"
-    if selected_facilities != ["All Facilities"] and len(selected_facilities) > 1:
+    if not all_facilities_mode and len(selected_facilities) > 1:
         view_mode = st.sidebar.radio(
             "📊 View Mode",
             ["Normal Trend", "Facility Comparison"],
@@ -235,7 +365,7 @@ def render():
             )
 
     # MAIN HEADING
-    if selected_facilities == ["All Facilities"]:
+    if all_facilities_mode:
         st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {country_name}</div>', unsafe_allow_html=True)
     elif len(selected_facilities) == 1:
         st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {selected_facilities[0]}</div>', unsafe_allow_html=True)
@@ -248,7 +378,7 @@ def render():
         return
 
     # Determine display name based on selection
-    if selected_facilities == ["All Facilities"]:
+    if all_facilities_mode:
         display_name = country_name
     elif len(selected_facilities) == 1:
         display_name = selected_facilities[0]
