@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.time_filter import get_date_range, assign_period
-from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color, render_facility_comparison_chart
+from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color, render_facility_comparison_chart, render_region_comparison_chart
 from utils.queries import get_facilities_grouped_by_region, get_facility_mapping_for_user
 
 logging.basicConfig(level=logging.INFO)
@@ -70,12 +70,14 @@ def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# Helper functions for facility selection
+# Helper functions for facility and region selection
 def handle_all_facilities_change(all_facility_names):
     """Handle when 'All Facilities' checkbox is toggled"""
     if st.session_state.all_facilities_checkbox:
         # Select all facilities
         st.session_state.selected_facilities = ["All Facilities"] + all_facility_names
+        # Deselect all regions
+        st.session_state.selected_regions = []
     else:
         # Deselect all facilities
         st.session_state.selected_facilities = []
@@ -109,6 +111,32 @@ def handle_facility_change(facility_name):
         # Remove this facility
         if facility_name in st.session_state.selected_facilities:
             st.session_state.selected_facilities.remove(facility_name)
+
+def handle_region_selection_change(region_name):
+    """Handle when region checkbox is toggled for region comparison"""
+    if st.session_state[f"region_{region_name}"]:
+        # Add this region to selected regions
+        if region_name not in st.session_state.selected_regions:
+            st.session_state.selected_regions.append(region_name)
+        # Clear facility selection when selecting regions
+        st.session_state.selected_facilities = []
+        st.session_state.all_facilities_checkbox = False
+    else:
+        # Remove this region
+        if region_name in st.session_state.selected_regions:
+            st.session_state.selected_regions.remove(region_name)
+
+def handle_all_regions_change(all_region_names):
+    """Handle when 'All Regions' checkbox is toggled"""
+    if st.session_state.all_regions_checkbox:
+        # Select all regions
+        st.session_state.selected_regions = all_region_names.copy()
+        # Clear facility selection
+        st.session_state.selected_facilities = []
+        st.session_state.all_facilities_checkbox = False
+    else:
+        # Deselect all regions
+        st.session_state.selected_regions = []
 
 
 # ---------------- Page Rendering ----------------
@@ -220,7 +248,7 @@ def render():
     enrollments_df = _normalize_enrollment_dates(enrollments_df)
     copied_events_df = _normalize_event_dates(events_df)
 
-    # ---------------- Facility Filter ----------------
+    # ---------------- Facility and Region Filter ----------------
     # Get facilities grouped by region from database
     facilities_by_region = get_facilities_grouped_by_region(user)
     
@@ -233,25 +261,31 @@ def render():
         for facility_name, _ in facilities:
             all_facility_names.append(facility_name)
     
-    # Initialize session state for facility selection - DEFAULT TO ALL FACILITIES SELECTED
+    # Get all region names
+    all_region_names = list(facilities_by_region.keys())
+    
+    # Initialize session state for facility and region selection
     if "selected_facilities" not in st.session_state:
         st.session_state.selected_facilities = ["All Facilities"] + all_facility_names
+    
+    if "selected_regions" not in st.session_state:
+        st.session_state.selected_regions = []
     
     if "expanded_regions" not in st.session_state:
         # Default all regions to collapsed (not expanded)
         st.session_state.expanded_regions = {region_name: False for region_name in facilities_by_region.keys()}
     
-    # Facility selector in sidebar with expandable regions
+    # Facility and region selector in sidebar with expandable regions
     st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities</p>', 
+        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities or Regions</p>', 
         unsafe_allow_html=True
     )
     
-    # Create a container for the facility selector
-    facility_container = st.sidebar.container()
+    # Create a container for the selector
+    selector_container = st.sidebar.container()
     
-    with facility_container:
-        # "All Facilities" checkbox - DEFAULT TO CHECKED
+    with selector_container:
+        # "All Facilities" checkbox
         all_facilities_selected = st.checkbox(
             "All Facilities", 
             value="All Facilities" in st.session_state.selected_facilities,
@@ -259,17 +293,30 @@ def render():
             on_change=lambda: handle_all_facilities_change(all_facility_names)
         )
         
-        # If "All Facilities" is selected, automatically select all individual facilities
-        if all_facilities_selected and "All Facilities" not in st.session_state.selected_facilities:
-            st.session_state.selected_facilities = ["All Facilities"] + all_facility_names
+        # "All Regions" checkbox
+        all_regions_selected = st.checkbox(
+            "All Regions", 
+            value=len(st.session_state.selected_regions) == len(all_region_names),
+            key="all_regions_checkbox",
+            on_change=lambda: handle_all_regions_change(all_region_names)
+        )
         
-        # If "All Facilities" is deselected, remove it from selection
-        elif not all_facilities_selected and "All Facilities" in st.session_state.selected_facilities:
-            st.session_state.selected_facilities = [f for f in st.session_state.selected_facilities if f != "All Facilities"]
+        # Individual region checkboxes for region comparison
+        st.markdown('<p style="color: white; font-weight: 600; margin: 15px 0 8px 0;">Select Regions for Comparison:</p>', unsafe_allow_html=True)
         
-        # Region expanders for facility selection - DEFAULT COLLAPSED
+        for region_name in all_region_names:
+            region_selected = st.checkbox(
+                region_name,
+                value=region_name in st.session_state.selected_regions,
+                key=f"region_{region_name}",
+                on_change=lambda rn=region_name: handle_region_selection_change(rn)
+            )
+        
+        # Region expanders for facility selection
+        st.markdown('<p style="color: white; font-weight: 600; margin: 15px 0 8px 0;">Select Individual Facilities:</p>', unsafe_allow_html=True)
+        
         for region_name, facilities in facilities_by_region.items():
-            # Create expander for each region - DEFAULT COLLAPSED
+            # Create expander for each region
             with st.expander(
                 f"{region_name} ({len(facilities)})",
                 expanded=st.session_state.expanded_regions[region_name]
@@ -277,7 +324,7 @@ def render():
                 # Update expanded state when user expands
                 st.session_state.expanded_regions[region_name] = True
                 
-                # Select all facilities in this region - DEFAULT TO CHECKED IF ALL FACILITIES SELECTED
+                # Select all facilities in this region
                 all_in_region_selected = all([facility_name in st.session_state.selected_facilities for facility_name, _ in facilities])
                 all_in_region = st.checkbox(
                     f"Select all in {region_name}",
@@ -286,7 +333,7 @@ def render():
                     on_change=lambda r=region_name, f=[fac[0] for fac in facilities]: handle_region_change(r, f)
                 )
                 
-                # Individual facility checkboxes - ALL CHECKED BY DEFAULT (but hidden until expanded)
+                # Individual facility checkboxes
                 for facility_name, _ in facilities:
                     facility_selected = st.checkbox(
                         facility_name,
@@ -295,45 +342,64 @@ def render():
                         on_change=lambda fn=facility_name: handle_facility_change(fn)
                     )
     
-    # Get the selected facilities (excluding "All Facilities" for processing)
+    # Get the selected facilities and regions
     selected_facilities = [f for f in st.session_state.selected_facilities if f != "All Facilities"]
-    all_facilities_mode = "All Facilities" in st.session_state.selected_facilities
+    selected_regions = st.session_state.selected_regions
     
     # Calculate total facilities count
     total_facilities = sum(len(facilities) for facilities in facilities_by_region.values())
     
     # Display selection count
-    if all_facilities_mode:
-        display_text = f"Selected: All ({total_facilities})"
+    if "All Facilities" in st.session_state.selected_facilities:
+        display_text = f"Selected: All Facilities ({total_facilities})"
+    elif selected_facilities:
+        display_text = f"Selected: {len(selected_facilities)} / {total_facilities} Facilities"
+    elif selected_regions:
+        if len(selected_regions) == len(all_region_names):
+            display_text = f"Selected: All Regions ({len(selected_regions)})"
+        else:
+            display_text = f"Selected: {len(selected_regions)} / {len(all_region_names)} Regions"
     else:
-        display_text = f"Selected: {len(selected_facilities)} / {total_facilities}"
+        display_text = "No selection"
 
     st.sidebar.markdown(
         f"<p style='color: white; font-size: 13px; margin-top: 10px;'>{display_text}</p>",
         unsafe_allow_html=True
     )
     
-    # Get the facility UIDs for selected facilities (from database mapping)
+    # Get the facility UIDs for selected facilities or regions
     facility_uids = None
-    facility_names = None
+    display_names = None
+    comparison_mode = None
     
-    if all_facilities_mode:
-        # Use all facilities
-        facility_uids = list(facility_mapping.values())
-        facility_names = ["All Facilities"]
-    elif selected_facilities:
+    if selected_facilities:
         # Use selected individual facilities
         facility_uids = [facility_mapping[facility] for facility in selected_facilities if facility in facility_mapping]
-        facility_names = selected_facilities
+        display_names = selected_facilities
+        comparison_mode = "facility"
+    elif selected_regions:
+        # Use all facilities in selected regions
+        facility_uids = []
+        for region_name in selected_regions:
+            if region_name in facilities_by_region:
+                for facility_name, facility_uid in facilities_by_region[region_name]:
+                    facility_uids.append(facility_uid)
+        display_names = selected_regions
+        comparison_mode = "region"
+    else:
+        # Default to all facilities
+        facility_uids = list(facility_mapping.values())
+        display_names = ["All Facilities"]
+        comparison_mode = "facility"
 
     # ---------------- View Mode Selection ----------------
     view_mode = "Normal Trend"
-    if not all_facilities_mode and len(selected_facilities) > 1:
+    if (comparison_mode == "facility" and len(display_names) > 1) or (comparison_mode == "region" and len(display_names) > 1):
         view_mode = st.sidebar.radio(
             "📊 View Mode",
-            ["Normal Trend", "Facility Comparison"],
+            ["Normal Trend", "Comparison View"],
             index=0,
-            help="Compare trends across multiple facilities"
+            help="Compare trends across multiple facilities or regions"
         )
 
     # ---------------- Export Buttons ----------------
@@ -365,12 +431,16 @@ def render():
             )
 
     # MAIN HEADING
-    if all_facilities_mode:
+    if comparison_mode == "facility" and "All Facilities" in st.session_state.selected_facilities:
         st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {country_name}</div>', unsafe_allow_html=True)
-    elif len(selected_facilities) == 1:
-        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {selected_facilities[0]}</div>', unsafe_allow_html=True)
+    elif comparison_mode == "facility" and len(display_names) == 1:
+        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {display_names[0]}</div>', unsafe_allow_html=True)
+    elif comparison_mode == "facility":
+        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - Multiple Facilities ({len(display_names)})</div>', unsafe_allow_html=True)
+    elif comparison_mode == "region" and len(display_names) == 1:
+        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - {display_names[0]} Region</div>', unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - Multiple Facilities ({len(selected_facilities)})</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="main-header">🌍 National Maternal Health Dashboard - Multiple Regions ({len(display_names)})</div>', unsafe_allow_html=True)
     
     # ---------------- KPI CARDS ----------------
     if copied_events_df.empty or "event_date" not in copied_events_df.columns:
@@ -378,12 +448,16 @@ def render():
         return
 
     # Determine display name based on selection
-    if all_facilities_mode:
+    if comparison_mode == "facility" and "All Facilities" in st.session_state.selected_facilities:
         display_name = country_name
-    elif len(selected_facilities) == 1:
-        display_name = selected_facilities[0]
+    elif comparison_mode == "facility" and len(display_names) == 1:
+        display_name = display_names[0]
+    elif comparison_mode == "facility":
+        display_name = f"Multiple Facilities ({len(display_names)})"
+    elif comparison_mode == "region" and len(display_names) == 1:
+        display_name = display_names[0]
     else:
-        display_name = f"Multiple Facilities ({len(selected_facilities)})"
+        display_name = f"Multiple Regions ({len(display_names)})"
 
     # Use the KPI card component (handles KPIs + trends internally)
     render_kpi_cards(copied_events_df, facility_uids, display_name)
@@ -462,11 +536,11 @@ def render():
     text_color = auto_text_color(bg_color)
 
     with col_chart:
-        if view_mode == "Facility Comparison" and len(selected_facilities) > 1:
-            st.markdown(f'<div class="section-header">📈 {kpi_selection} - Facility Comparison</div>', unsafe_allow_html=True)
+        if view_mode == "Comparison View" and len(display_names) > 1:
+            st.markdown(f'<div class="section-header">📈 {kpi_selection} - {comparison_mode.title()} Comparison</div>', unsafe_allow_html=True)
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
             
-            # Map KPI selection to the appropriate parameters for render_facility_comparison_chart
+            # Map KPI selection to the appropriate parameters
             kpi_mapping = {
                 "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {
                     "title": "IPPCAR (%)",
@@ -497,19 +571,35 @@ def render():
             
             kpi_config = kpi_mapping.get(kpi_selection, {})
             
-            # Use the imported render_facility_comparison_chart function
-            render_facility_comparison_chart(
-                df=filtered_events,
-                period_col="period",
-                value_col="value",
-                title=kpi_config.get("title", kpi_selection),
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=facility_names,
-                facility_uids=facility_uids,
-                numerator_name=kpi_config.get("numerator_name", "Numerator"),
-                denominator_name=kpi_config.get("denominator_name", "Denominator")
-            )
+            if comparison_mode == "facility":
+                # Use the imported render_facility_comparison_chart function
+                render_facility_comparison_chart(
+                    df=filtered_events,
+                    period_col="period",
+                    value_col="value",
+                    title=kpi_config.get("title", kpi_selection),
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                    numerator_name=kpi_config.get("numerator_name", "Numerator"),
+                    denominator_name=kpi_config.get("denominator_name", "Denominator")
+                )
+            else:  # comparison_mode == "region"
+                # Use the imported render_region_comparison_chart function
+                render_region_comparison_chart(
+                    df=filtered_events,
+                    period_col="period",
+                    value_col="value",
+                    title=kpi_config.get("title", kpi_selection),
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    region_names=display_names,
+                    region_mapping={},  # Empty mapping for now, can be populated from your database
+                    facilities_by_region=facilities_by_region,
+                    numerator_name=kpi_config.get("numerator_name", "Numerator"),
+                    denominator_name=kpi_config.get("denominator_name", "Denominator")
+                )
             
         else:
             st.markdown(f'<div class="section-header">📈 {kpi_selection} Trend</div>', unsafe_allow_html=True)
@@ -525,7 +615,7 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "IPPCAR (%)", bg_color, text_color, 
-                                  facility_names, "FP Acceptances", "Total Deliveries", facility_uids)
+                                  display_names, "FP Acceptances", "Total Deliveries", facility_uids)
 
             elif kpi_selection == "Stillbirth Rate (per 1000 births)":
                 group = filtered_events.groupby("period", as_index=False).apply(
@@ -536,7 +626,7 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "Stillbirth Rate (per 1000 births)", bg_color, text_color,
-                                  facility_names, "Stillbirths", "Total Births", facility_uids)
+                                  display_names, "Stillbirths", "Total Births", facility_uids)
 
             elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
                 group = filtered_events.groupby("period", as_index=False).apply(
@@ -547,7 +637,7 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "Early PNC Coverage (%)", bg_color, text_color,
-                                  facility_names, "Early PNC (≤48 hrs)", "Total Deliveries", facility_uids)
+                                  display_names, "Early PNC (≤48 hrs)", "Total Deliveries", facility_uids)
 
             elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
                 group = filtered_events.groupby("period", as_index=False).apply(
@@ -558,7 +648,7 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "Maternal Death Rate (per 100,000 births)", bg_color, text_color,
-                                  facility_names, "Maternal Deaths", "Live Births", facility_uids)
+                                  display_names, "Maternal Deaths", "Live Births", facility_uids)
 
             elif kpi_selection == "C-Section Rate (%)":
                 group = filtered_events.groupby("period", as_index=False).apply(
@@ -569,6 +659,6 @@ def render():
                     })
                 ).reset_index(drop=True)
                 render_trend_chart(group, "period", "value", "C-Section Rate (%)", bg_color, text_color,
-                                  facility_names, "C-Sections", "Total Deliveries", facility_uids)
+                                  display_names, "C-Sections", "Total Deliveries", facility_uids)
 
         st.markdown('</div>', unsafe_allow_html=True)
