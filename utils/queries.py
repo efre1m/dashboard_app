@@ -1,5 +1,5 @@
 # utils/queries.py
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from utils.db import get_db_connection
 import logging
 
@@ -140,3 +140,45 @@ def get_country_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
         conn.close()
 
     return country_name
+
+
+def get_facilities_for_user(user: dict) -> List[Tuple[str, str]]:
+    """
+    Get facilities for the current user from database.
+    Returns list of tuples: (facility_name, dhis2_uid)
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    facilities = []
+    
+    try:
+        role = user.get("role", "")
+        
+        if role == "national":
+            # National users can see all facilities
+            cur.execute("SELECT facility_name, dhis2_uid FROM facilities")
+            facilities = cur.fetchall()
+        elif role == "regional" and user.get("region_id"):
+            # Get all facilities in the user's region
+            cur.execute("SELECT facility_name, dhis2_uid FROM facilities WHERE region_id = %s", (user["region_id"],))
+            facilities = cur.fetchall()
+        elif role == "facility" and user.get("facility_id"):
+            # Get the specific facility for facility users
+            cur.execute("SELECT facility_name, dhis2_uid FROM facilities WHERE facility_id = %s", (user["facility_id"],))
+            facilities = cur.fetchall()
+    except Exception as e:
+        logging.error(f"Error fetching facilities from database: {e}")
+    finally:
+        cur.close()
+        conn.close()
+    
+    return facilities
+
+
+def get_facility_mapping_for_user(user: dict) -> Dict[str, str]:
+    """
+    Get facility name to UID mapping for the current user.
+    Returns dict: {facility_name: dhis2_uid}
+    """
+    facilities = get_facilities_for_user(user)
+    return {facility[0]: facility[1] for facility in facilities}

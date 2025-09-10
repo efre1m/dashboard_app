@@ -13,7 +13,7 @@ from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.time_filter import get_date_range, assign_period
 from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color, render_facility_comparison_chart
-from utils.db import get_db_connection
+from utils.queries import get_facilities_for_user, get_facility_mapping_for_user  # Updated import
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -68,36 +68,6 @@ def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["enrollmentDate"] = pd.to_datetime(df["enrollmentDate"], format="%m/%d/%Y", errors="coerce")
     return df
-
-
-def get_facilities_for_user(user: dict) -> list:
-    """Get facilities for the current user from database"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    facilities = []
-    
-    try:
-        role = user.get("role", "")
-        
-        if role == "national":
-            # National users can see all facilities
-            cur.execute("SELECT facility_name, dhis2_uid FROM facilities")
-            facilities = cur.fetchall()
-        elif role == "regional" and user.get("region_id"):
-            # Get all facilities in the user's region
-            cur.execute("SELECT facility_name, dhis2_uid FROM facilities WHERE region_id = %s", (user["region_id"],))
-            facilities = cur.fetchall()
-        elif role == "facility" and user.get("facility_id"):
-            # Get the specific facility for facility users
-            cur.execute("SELECT facility_name, dhis2_uid FROM facilities WHERE facility_id = %s", (user["facility_id"],))
-            facilities = cur.fetchall()
-    except Exception as e:
-        logging.error(f"Error fetching facilities from database: {e}")
-    finally:
-        cur.close()
-        conn.close()
-    
-    return facilities
 
 
 # ---------------- Page Rendering ----------------
@@ -161,12 +131,12 @@ def render():
     copied_events_df = _normalize_event_dates(events_df)
 
     # ---------------- Facility Filter ----------------
-    # Get facilities from database instead of DHIS2 API
+    # Get facilities from database using queries.py
     db_facilities = get_facilities_for_user(user)
     facilities = [facility[0] for facility in db_facilities]  # Extract facility names
     
     # Create facility mapping for UID lookup (from database)
-    facility_mapping = {facility[0]: facility[1] for facility in db_facilities}  # name: dhis2_uid
+    facility_mapping = get_facility_mapping_for_user(user)  # Use the new function
     
     # Multi-select facility selector in sidebar
     st.sidebar.markdown(
