@@ -182,3 +182,75 @@ def get_facility_mapping_for_user(user: dict) -> Dict[str, str]:
     """
     facilities = get_facilities_for_user(user)
     return {facility[0]: facility[1] for facility in facilities}
+
+
+def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, str]]]:
+    """
+    Get facilities grouped by region for the current user.
+    Returns dict: {region_name: [(facility_name, dhis2_uid), ...]}
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    facilities_by_region = {}
+    
+    try:
+        role = user.get("role", "")
+        
+        if role == "national":
+            # National users can see all facilities grouped by region
+            cur.execute("""
+                SELECT r.region_name, f.facility_name, f.dhis2_uid 
+                FROM facilities f
+                JOIN regions r ON f.region_id = r.region_id
+                ORDER BY r.region_name, f.facility_name
+            """)
+            facilities = cur.fetchall()
+            
+        elif role == "regional" and user.get("region_id"):
+            # Regional users see facilities only in their region
+            cur.execute("""
+                SELECT r.region_name, f.facility_name, f.dhis2_uid 
+                FROM facilities f
+                JOIN regions r ON f.region_id = r.region_id
+                WHERE r.region_id = %s
+                ORDER BY f.facility_name
+            """, (user["region_id"],))
+            facilities = cur.fetchall()
+            
+        elif role == "facility" and user.get("facility_id"):
+            # Facility users see only their facility
+            cur.execute("""
+                SELECT r.region_name, f.facility_name, f.dhis2_uid 
+                FROM facilities f
+                JOIN regions r ON f.region_id = r.region_id
+                WHERE f.facility_id = %s
+            """, (user["facility_id"],))
+            facilities = cur.fetchall()
+        
+        # Group facilities by region
+        for region_name, facility_name, dhis2_uid in facilities:
+            if region_name not in facilities_by_region:
+                facilities_by_region[region_name] = []
+            facilities_by_region[region_name].append((facility_name, dhis2_uid))
+            
+    except Exception as e:
+        logging.error(f"Error fetching facilities grouped by region: {e}")
+    finally:
+        cur.close()
+        conn.close()
+    
+    return facilities_by_region
+
+
+def get_all_facilities_flat(user: dict) -> List[Tuple[str, str]]:
+    """
+    Get all facilities as a flat list for the current user.
+    Returns list of tuples: (facility_name, dhis2_uid)
+    """
+    facilities_by_region = get_facilities_grouped_by_region(user)
+    all_facilities = []
+    
+    for region_facilities in facilities_by_region.values():
+        all_facilities.extend(region_facilities)
+    
+    return all_facilities
