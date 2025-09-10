@@ -23,18 +23,16 @@ def fetch_program_data_for_user(
         logging.warning("No program UID found.")
         return {}
 
-    # If facility_uids are provided, use them for filtering
+    # Get OU access based on role
     if facility_uids:
         ou_uids = facility_uids
-        # Get names for the selected facilities
         all_ou_pairs = get_orgunit_uids_for_user(user)
         ou_names = {uid: name for uid, name in all_ou_pairs if uid in facility_uids}
     else:
-        # Get all orgUnits the user has access to
         ou_pairs = get_orgunit_uids_for_user(user)
         ou_uids = [ou for ou, _ in ou_pairs]
         ou_names = {uid: name for uid, name in ou_pairs}
-    
+
     if not ou_uids:
         logging.warning("No accessible orgUnits found.")
         return {}
@@ -46,7 +44,7 @@ def fetch_program_data_for_user(
     ps_dict = dhis2_data.get("programStages", {})
     dhis2_ou_names = dhis2_data.get("orgUnitNames", {})
 
-    # Merge DHIS2 names with our known names
+    # Merge local OU names with DHIS2 OU names
     final_ou_names = {**dhis2_ou_names, **ou_names}
 
     if not patients:
@@ -57,7 +55,7 @@ def fetch_program_data_for_user(
     def map_org_name(uid: str) -> str:
         return final_ou_names.get(uid, "Unknown OrgUnit")
 
-    # TEI DataFrame
+    # --- TEI DataFrame ---
     tei_df = pd.json_normalize(
         patients,
         record_path=["attributes"],
@@ -70,7 +68,7 @@ def fetch_program_data_for_user(
     })
     tei_df["orgUnit_name"] = tei_df["tei_orgUnit"].apply(map_org_name)
 
-    # Enrollment DataFrame
+    # --- Enrollment DataFrame ---
     enr_df = pd.json_normalize(
         patients,
         record_path=["enrollments"],
@@ -83,7 +81,7 @@ def fetch_program_data_for_user(
     })
     enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
 
-    # Events DataFrame
+    # --- Events DataFrame ---
     events_list = []
     for tei in patients:
         tei_id = tei.get("trackedEntityInstance")
@@ -96,18 +94,25 @@ def fetch_program_data_for_user(
                         "tei_id": tei_id,
                         "event": event.get("event"),
                         "programStage_uid": event.get("programStage"),
-                        "programStageName": event.get("programStageName", ps_dict.get(event.get("programStage"), event.get("programStage"))),
+                        "programStageName": event.get(
+                            "programStageName",
+                            ps_dict.get(event.get("programStage"), event.get("programStage"))
+                        ),
                         "orgUnit": event_orgUnit,
                         "orgUnit_name": map_org_name(event_orgUnit),
                         "eventDate": event.get("eventDate"),
                         "dataElement_uid": dv.get("dataElement"),
-                        "dataElementName": dv.get("dataElementName", de_dict.get(dv.get("dataElement"), dv.get("dataElement"))),
+                        "dataElementName": dv.get(
+                            "dataElementName",
+                            de_dict.get(dv.get("dataElement"), dv.get("dataElement"))
+                        ),
                         "value": dv.get("value")
                     }
                     events_list.append(event_data)
 
     evt_df = pd.DataFrame(events_list)
 
+    # --- Handle period labeling ---
     if not evt_df.empty and "eventDate" in evt_df.columns:
         evt_df["event_date"] = pd.to_datetime(evt_df["eventDate"], errors="coerce")
         if period_label == "Daily":
@@ -115,11 +120,11 @@ def fetch_program_data_for_user(
         elif period_label == "Monthly":
             evt_df["period"] = evt_df["event_date"].dt.to_period("M").astype(str)
         elif period_label == "Quarterly":
-            evt_df["period"] = evt_df["event_date"].dt.to_period("Q").astize(str)
+            evt_df["period"] = evt_df["event_date"].dt.to_period("Q").astype(str)
         else:
-            evt_df["period"] = evt_df["event_date"].dt.to_period("Y").astize(str)
+            evt_df["period"] = evt_df["event_date"].dt.to_period("Y").astype(str)
 
-    # Convert enrollmentDate
+    # --- Convert enrollment dates ---
     if not enr_df.empty and "enrollmentDate" in enr_df.columns:
         enr_df["enrollmentDate"] = pd.to_datetime(enr_df["enrollmentDate"], errors="coerce")
 

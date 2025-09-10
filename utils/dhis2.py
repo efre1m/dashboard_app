@@ -52,7 +52,9 @@ def fetch_orgunit_names() -> Dict[str, str]:
 def fetch_patient_data(program_uid: str, ou_uid: str, user_role: str) -> List[Dict[str, Any]]:
     """
     Fetch paginated TEIs for a program + orgUnit with proper hierarchical support.
-    For regional and national users, use DESCENDANTS mode to get all child facilities.
+    - Facility: fetch only from that facility
+    - Regional: fetch all descendants of the region
+    - National: fetch all descendants of the national OU
     """
     url = f"{settings.DHIS2_BASE_URL}/api/trackedEntityInstances.json"
     all_patients: List[Dict[str, Any]] = []
@@ -71,18 +73,18 @@ def fetch_patient_data(program_uid: str, ou_uid: str, user_role: str) -> List[Di
                 "events[event,programStage,status,eventDate,orgUnit,"
                 "dataValues[dataElement,value]]]"
             ),
-            "pageSize": 100,
+            "pageSize": 5000,  # large enough to capture all data per page
             "page": page,
             "paging": "true"
         }
-        
-        # Use DESCENDANTS mode for regional and national users
+
+        # Apply hierarchy rules
         if user_role in ["regional", "national"]:
             params["ouMode"] = "DESCENDANTS"
-            logging.info(f"Using DESCENDANTS mode for {user_role} user with OU: {ou_uid}")
+            logging.info(f"Using DESCENDANTS mode for {user_role} with OU {ou_uid}")
 
         try:
-            resp = _get_session().get(url, params=params, timeout=180)
+            resp = _get_session().get(url, params=params, timeout=300)
             resp.raise_for_status()
             data = resp.json()
             teis = data.get("trackedEntityInstances", [])
@@ -92,7 +94,7 @@ def fetch_patient_data(program_uid: str, ou_uid: str, user_role: str) -> List[Di
             if page >= pager.get("pageCount", 0) or not teis:
                 break
             page += 1
-            time.sleep(0.3)
+            time.sleep(0.3)  # avoid hammering DHIS2
         except requests.RequestException as e:
             logging.error(f"Patient data fetch failed for OU {ou_uid}: {e}")
             break
@@ -107,7 +109,7 @@ def fetch_dhis2_data_for_ous(program_uid: str, ou_uids: List[str], user_role: st
     and include orgUnit names for each UID.
     """
     all_patients: List[Dict[str, Any]] = []
-    logging.info(f"Fetching hierarchical DHIS2 data for {len(ou_uids)} OUs, role: {user_role}")
+    logging.info(f"Fetching DHIS2 data for {len(ou_uids)} OUs, role: {user_role}")
 
     # Fetch all orgUnit names once
     orgunit_names = fetch_orgunit_names()
@@ -156,5 +158,5 @@ def fetch_dhis2_data_for_ous(program_uid: str, ou_uids: List[str], user_role: st
         "total_teis": len(all_patients)
     }
 
-    logging.info(f"Completed fetching hierarchical data. Total TEIs: {len(all_patients)}")
+    logging.info(f"Completed fetching data. Total TEIs: {len(all_patients)}")
     return result

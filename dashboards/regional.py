@@ -185,7 +185,17 @@ def render():
         key="facility_selector",
         label_visibility="collapsed"
     )
-    
+     # 👇 Dynamic count below the dropdown
+    total_facilities = len(facilities)
+    if selected_facilities == ["All Facilities"]:
+        display_text = f"Selected: All ({total_facilities})"
+    else:
+        display_text = f"Selected: {len(selected_facilities)} / {total_facilities}"
+
+    st.sidebar.markdown(
+        f"<p style='color: white; font-size: 13px; margin-top: -10px;'>{display_text}</p>",
+        unsafe_allow_html=True
+    )
     # Handle "All Facilities" selection logic
     if "All Facilities" in selected_facilities:
         if len(selected_facilities) > 1:
