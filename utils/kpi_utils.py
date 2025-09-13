@@ -54,7 +54,7 @@ def render_gauge_chart(value, title, bg_color, text_color, min_val=0, max_val=10
 
 # ---------------- KPI Constants ----------------
 FP_ACCEPTANCE_UID = "Q1p7CxWGUoi"
-FP_ACCEPTED_VALUES = {"sn2MGial4TT", "aB5By4ATx8M", "TAxj9iLvWQ0", "FyCtuLALNpY", "ejFYFZlmlwT"}
+FP_ACCEPTED_CODES = {"1", "2", "3", "4", "5"}  # Pills, Injectables, Implants, IUCD, Condom
 
 BIRTH_OUTCOME_UID = "wZig9cek3Gv"
 ALIVE_CODE = "1"
@@ -93,7 +93,8 @@ def compute_fp_acceptance(df, facility_uids=None):
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
         
-    return df[(df["dataElement_uid"]==FP_ACCEPTANCE_UID) & (df["value"].isin(FP_ACCEPTED_VALUES))]["tei_id"].nunique()
+    # Use CODE values instead of IDs
+    return df[(df["dataElement_uid"]==FP_ACCEPTANCE_UID) & (df["value"].isin(FP_ACCEPTED_CODES))]["tei_id"].nunique()
 
 def compute_stillbirth_rate(df, facility_uids=None):
     if df is None or df.empty:

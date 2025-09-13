@@ -3,9 +3,11 @@ import streamlit as st
 import bcrypt
 from utils.db import get_db_connection
 
+
 def _is_bcrypt_hash(value: str) -> bool:
     """Check if a string is a bcrypt hash."""
     return isinstance(value, str) and value.startswith("$2")
+
 
 def authenticate_user(username: str, password: str):
     """
@@ -28,10 +30,13 @@ def authenticate_user(username: str, password: str):
             f.facility_name,
             f.dhis2_uid AS facility_dhis_uid,
             r.region_name,
-            r.dhis2_regional_uid
+            r.dhis2_regional_uid,
+            c.country_name,
+            c.dhis2_uid AS country_dhis_uid
         FROM users u
         LEFT JOIN facilities f ON u.facility_id = f.facility_id
         LEFT JOIN regions r ON u.region_id = r.region_id
+        LEFT JOIN countries c ON u.country_id = c.country_id
         WHERE u.username = %s
     """, (username,))
     row = cur.fetchone()
@@ -42,7 +47,8 @@ def authenticate_user(username: str, password: str):
         return None
 
     (user_id, uname, stored_pw, role, facility_id, region_id, country_id,
-     facility_name, facility_dhis_uid, region_name, region_dhis_uid) = row
+     facility_name, facility_dhis_uid, region_name, region_dhis_uid,
+     country_name, country_dhis_uid) = row
 
     valid = False
     upgraded = False
@@ -75,6 +81,8 @@ def authenticate_user(username: str, password: str):
         "facility_dhis_uid": facility_dhis_uid,
         "region_name": region_name,
         "region_dhis_uid": region_dhis_uid,
+        "country_name": country_name,
+        "country_dhis_uid": country_dhis_uid,
         "upgraded": upgraded,
     }
 
@@ -90,14 +98,14 @@ def logout():
 
 def get_user_display_info(user: dict) -> str:
     """Return formatted user information for display."""
-    role = user["role"]
+    role = user.get("role", "")
 
     if role == "facility":
-        return f"{user['username']} ({role} - {user['facility_name']})"
+        return f"{user['username']} ({role} - {user.get('facility_name', 'N/A')})"
     elif role == "regional":
-        return f"{user['username']} ({role} - {user['region_name']})"
+        return f"{user['username']} ({role} - {user.get('region_name', 'N/A')})"
     elif role == "national":
-        return f"{user['username']} ({role})"
+        return f"{user['username']} ({role} - {user.get('country_name', 'N/A')})"
     elif role == "admin":
         return f"{user['username']} (admin)"
-    return user["username"]
+    return user.get("username", "Unknown User")

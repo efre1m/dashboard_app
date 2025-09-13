@@ -210,7 +210,7 @@ def render():
     user = st.session_state.get("user", {})
     username = user.get("username", "Unknown User")
     role = user.get("role", "Unknown Role")
-    country_name = user.get("country_name", "Ethiopia")
+    country_name = user.get("country_name", "Unknown country")
 
     st.sidebar.markdown(f"""
         <div class="user-info">

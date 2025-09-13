@@ -235,25 +235,17 @@ def render():
         st.markdown(f'<div class="section-header">📈 {kpi_selection} Trend</div>', unsafe_allow_html=True)
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
-        # Build aggregated trend data
+        #Build aggregated trend data using standardized compute_kpis function
         if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
             group = filtered_events.groupby("period", as_index=False).apply(
                 lambda x: pd.Series({
-                    "value": (
-                        x[(x["dataElement_uid"]=="Q1p7CxWGUoi") &
-                          (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
-                                            "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique()
-                        / max(1, x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique())
-                    ) * 100,
-                    "FP Acceptances": x[(x["dataElement_uid"]=="Q1p7CxWGUoi") &
-                                      (x["value"].isin(["sn2MGial4TT","aB5By4ATx8M","TAxj9iLvWQ0",
-                                                        "FyCtuLALNpY","ejFYFZlmlwT"]))]["tei_id"].nunique(),
-                    "Total Deliveries": x[(x["dataElement_uid"]=="lphtwP2ViZU") & (x["value"].notna())]["tei_id"].nunique()
+                    "value": compute_kpis(x, facility_uid)["ippcar"],
+                    "FP Acceptances": compute_kpis(x, facility_uid)["fp_acceptance"],
+                    "Total Deliveries": compute_kpis(x, facility_uid)["total_deliveries"]
                 })
             ).reset_index(drop=True)
             render_trend_chart(group, "period", "value", "IPPCAR (%)", bg_color, text_color, 
-                              [facility_name], "FP Acceptances", "Total Deliveries", [facility_uid] if facility_uid else None)
-
+                                facility_name, "FP Acceptances", "Total Deliveries", facility_uid)
         elif kpi_selection == "Stillbirth Rate (per 1000 births)":
             group = filtered_events.groupby("period", as_index=False).apply(
                 lambda x: pd.Series({
