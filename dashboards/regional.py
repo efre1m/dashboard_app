@@ -234,24 +234,23 @@ def render():
         st.markdown('<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
-    # Determine display name based on selection
-    if selected_facilities == ["All Facilities"]:
-        display_name = region_name
-    elif len(selected_facilities) == 1:
-        display_name = selected_facilities[0]
-    else:
-        display_name = f"Multiple Facilities ({len(selected_facilities)})"
+    # 🔒 Always show REGIONAL KPI values (ignore facility filters)
+    all_facility_uids = list(facility_mapping.values())  # all facilities in this region
+
+    # Use the REGION name for display (not country)
+    display_name = region_name  
 
     # Pass user_id into KPI card renderer so it can save/load previous values
     user_id = str(user.get("id", user.get("username", "default_user")))  # Prefer numeric ID, fallback to username
 
-    # Render KPI cards with new trend features
+    # Render KPI cards (locked to regional level)
     render_kpi_cards(
-        copied_events_df,
-        facility_uids,
-        display_name,
+        copied_events_df,       # full dataset (already unfiltered copy)
+        all_facility_uids,      # force ALL facilities in region
+        display_name,           # always show region name
         user_id=user_id
     )
+
 
 
     # ---------------- Controls & Time Filter ----------------

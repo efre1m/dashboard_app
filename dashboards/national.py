@@ -447,28 +447,20 @@ def render():
         st.markdown('<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
-    # Determine display name based on selection
-    if comparison_mode == "facility" and "All Facilities" in st.session_state.selected_facilities:
-        display_name = country_name
-    elif comparison_mode == "facility" and len(display_names) == 1:
-        display_name = display_names[0]
-    elif comparison_mode == "facility":
-        display_name = f"Multiple Facilities ({len(display_names)})"
-    elif comparison_mode == "region" and len(display_names) == 1:
-        display_name = display_names[0]
-    else:
-        display_name = f"Multiple Regions ({len(display_names)})"
+    # 🔒 Always national view
+    display_name = country_name  
 
     # Pass user_id into KPI card renderer so it can save/load previous values
     user_id = str(user.get("id", user.get("username", "default_user")))
 
-    # Render KPI cards with new trend features
+    all_facility_uids = list(facility_mapping.values())  # all facilities in the DB
     render_kpi_cards(
-        copied_events_df,
-        facility_uids,
-        display_name,
+        copied_events_df,       # full dataset
+        all_facility_uids,      # force ALL facilities
+        display_name,           # ✅ fixed to national label
         user_id=user_id
     )
+
 
 
     # ---------------- Controls & Time Filter ----------------
