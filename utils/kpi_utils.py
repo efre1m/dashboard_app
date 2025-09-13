@@ -16,7 +16,7 @@ def auto_text_color(bg):
         return "#000000"
 
 def render_gauge_chart(value, title, bg_color, text_color, min_val=0, max_val=100, reverse_colors=False):
-    """Render a gauge chart for the given value"""
+    """Render a gauge chart for the given value with 2 decimal places"""
     if reverse_colors:
         steps_colors = ["red", "yellow", "green"]  # high value is bad
     else:
@@ -25,6 +25,7 @@ def render_gauge_chart(value, title, bg_color, text_color, min_val=0, max_val=10
     fig = go.Figure(go.Indicator(
         mode = "gauge+number",
         value = value,
+        number = {"valueformat": ".2f"},  # <-- This ensures 2 decimal places
         title = {'text': title},
         domain = {'x': [0, 1], 'y': [0, 1]},
         gauge = {
@@ -50,6 +51,7 @@ def render_gauge_chart(value, title, bg_color, text_color, min_val=0, max_val=10
     )
     
     st.plotly_chart(fig, use_container_width=True)
+
 
 
 # ---------------- KPI Constants ----------------
@@ -285,9 +287,9 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color, f
     
     if chart_type in ["line", "area"]:
         fig.update_traces(line=dict(width=3), marker=dict(size=7),
-                         hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.1f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>")
+                         hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.2f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>")
     elif chart_type == "bar":
-        fig.update_traces(hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.1f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>")
+        fig.update_traces(hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.2f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>")
         
     fig.update_layout(
         paper_bgcolor=bg_color, plot_bgcolor=bg_color, font_color=text_color, title_font_color=text_color,
@@ -297,7 +299,7 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color, f
     )
     
     if "Rate" in title or "%" in title: 
-        fig.update_layout(yaxis_tickformat=".1f")
+        fig.update_layout(yaxis_tickformat=".2f")
     if any(k in title for k in ["Deliveries","Acceptance"]): 
         fig.update_layout(yaxis_tickformat=",")
         
@@ -308,7 +310,7 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color, f
         prev_value = df[value_col].iloc[-2]
         trend_symbol = "▲" if last_value > prev_value else ("▼" if last_value < prev_value else "–")
         trend_class = "trend-up" if last_value > prev_value else ("trend-down" if last_value < prev_value else "trend-neutral")
-        st.markdown(f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.1f} <span class="{trend_class}">{trend_symbol}</span></p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.2f} <span class="{trend_class}">{trend_symbol}</span></p>', unsafe_allow_html=True)
 
     st.subheader(f"📋 {title} Summary Table")
     
@@ -364,13 +366,13 @@ def render_trend_chart(df, period_col, value_col, title, bg_color, text_color, f
     # Format the table for display
     if numerator_name in summary_table.columns and denominator_name in summary_table.columns:
         styled_table = summary_table.style.format({
-            value_col: "{:.1f}",
+            value_col: "{:.2f}",
             numerator_name: "{:,.0f}",
             denominator_name: "{:,.0f}"
         }).set_table_attributes('class="summary-table"').hide(axis='index')
     else:
         styled_table = summary_table.style.format({
-            value_col: "{:.1f}"
+            value_col: "{:.2f}"
         }).set_table_attributes('class="summary-table"').hide(axis='index')
     
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
@@ -434,7 +436,7 @@ def render_facility_comparison_chart(df, period_col, value_col, title, bg_color,
     fig = px.line(
         comparison_df, x=period_col, y="value", color="Facility", markers=True,
         title=f"{title} - Facility Comparison", height=500,
-        hover_data={"Facility": True, "value": ":.1f"}
+        hover_data={"Facility": True, "value": ":.2f"}
     )
     fig.update_traces(line=dict(width=3), marker=dict(size=7))
     fig.update_layout(
@@ -445,7 +447,7 @@ def render_facility_comparison_chart(df, period_col, value_col, title, bg_color,
         legend=dict(title="Facilities", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     if "Rate" in title or "%" in title:
-        fig.update_layout(yaxis_tickformat=".1f")
+        fig.update_layout(yaxis_tickformat=".2f")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -551,7 +553,7 @@ def render_facility_comparison_chart(df, period_col, value_col, title, bg_color,
     styled_table = facility_table_df.style.format({
         facility_table_df.columns[2]: "{:,.0f}" if len(facility_table_df.columns) > 2 else "{:,.0f}",
         facility_table_df.columns[3]: "{:,.0f}" if len(facility_table_df.columns) > 3 else "{:,.0f}",
-        "KPI Value": "{:.1f}"
+        "KPI Value": "{:.2f}"
     }).set_table_attributes('class="summary-table"').hide(axis='index')
 
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
@@ -614,7 +616,7 @@ def render_region_comparison_chart(df, period_col, value_col, title, bg_color, t
     fig = px.line(
         comparison_df, x=period_col, y="value", color="Region", markers=True,
         title=f"{title} - Region Comparison", height=500,
-        hover_data={"Region": True, "value": ":.1f"}
+        hover_data={"Region": True, "value": ":.2f"}
     )
     fig.update_traces(line=dict(width=3), marker=dict(size=7))
     fig.update_layout(
@@ -625,7 +627,7 @@ def render_region_comparison_chart(df, period_col, value_col, title, bg_color, t
         legend=dict(title="Regions", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     if "Rate" in title or "%" in title:
-        fig.update_layout(yaxis_tickformat=".1f")
+        fig.update_layout(yaxis_tickformat=".2f")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -725,7 +727,7 @@ def render_region_comparison_chart(df, period_col, value_col, title, bg_color, t
     styled_table = region_table_df.style.format({
         region_table_df.columns[2]: "{:,.0f}" if len(region_table_df.columns) > 2 else "{:,.0f}",
         region_table_df.columns[3]: "{:,.0f}" if len(region_table_df.columns) > 3 else "{:,.0f}",
-        "KPI Value": "{:.1f}"
+        "KPI Value": "{:.2f}"
     }).set_table_attributes('class="summary-table"').hide(axis='index')
 
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)

@@ -242,8 +242,17 @@ def render():
     else:
         display_name = f"Multiple Facilities ({len(selected_facilities)})"
 
-    # Use the KPI card component (handles KPIs + trends internally)
-    render_kpi_cards(copied_events_df, facility_uids, display_name)
+    # Pass user_id into KPI card renderer so it can save/load previous values
+    user_id = str(user.get("id", user.get("username", "default_user")))  # Prefer numeric ID, fallback to username
+
+    # Render KPI cards with new trend features
+    render_kpi_cards(
+        copied_events_df,
+        facility_uids,
+        display_name,
+        user_id=user_id
+    )
+
 
     # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])

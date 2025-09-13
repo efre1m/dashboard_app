@@ -166,8 +166,15 @@ def render():
         st.markdown('<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>', unsafe_allow_html=True)
         return
 
-    # Use the KPI card component (this handles KPIs + trends)
-    render_kpi_cards(copied_events_df, [facility_uid] if facility_uid else None, facility_name)
+    # Pass user_id into KPI card renderer so it can save/load previous values
+    user_id = str(user.get("id", username))  # Prefer numeric ID if available, fallback to username
+    render_kpi_cards(
+        copied_events_df,
+        [facility_uid] if facility_uid else None,
+        facility_name,
+        user_id=user_id
+    )
+
 
     # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])
