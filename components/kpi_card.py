@@ -17,13 +17,20 @@ def save_current_kpis(user_id: str, kpis: dict):
     with open(filepath, "w") as f:
         json.dump(kpis, f)
 
-def compare_overall_trend(current_value, prev_value):
+# ---------------- Trend Comparison with Context ----------------
+def compare_trend(current_value, prev_value, higher_is_better=True):
+    """
+    Compare KPI trends with contextual coloring.
+    - higher_is_better=True  -> increase is good (green), decrease is bad (red)
+    - higher_is_better=False -> increase is bad (red), decrease is good (green)
+    """
     if prev_value is None:
         return "–", "trend-neutral"
+
     if current_value > prev_value:
-        return "▲", "trend-up"
+        return ("▲", "trend-good") if higher_is_better else ("▲", "trend-bad")
     elif current_value < prev_value:
-        return "▼", "trend-down"
+        return ("▼", "trend-bad") if higher_is_better else ("▼", "trend-good")
     else:
         return "–", "trend-neutral"
 
@@ -32,8 +39,8 @@ def render_kpi_cards(events_df, facility_uids=None, location_name="Location", us
     """
     Render KPI cards component with persistent previous-value comparison.
     - Loads previous KPIs from JSON
-    - Compares with current KPIs
-    - Displays ▲ ▼ –
+    - Compares with current KPIs (context-aware coloring)
+    - Displays ▲ ▼ – with colors
     - Saves current KPIs back to JSON
     """
     if events_df.empty or "event_date" not in events_df.columns:
@@ -49,29 +56,28 @@ def render_kpi_cards(events_df, facility_uids=None, location_name="Location", us
     # Load last KPI values for this user
     previous_kpis = load_previous_kpis(user_id)
 
-    # Compare current vs previous session
-    ippcar_trend, ippcar_trend_class = compare_overall_trend(kpis.get("ippcar", 0), previous_kpis.get("ippcar"))
-    stillbirth_trend, stillbirth_trend_class = compare_overall_trend(kpis.get("stillbirth_rate", 0), previous_kpis.get("stillbirth_rate"))
-    pnc_trend, pnc_trend_class = compare_overall_trend(kpis.get("pnc_coverage", 0), previous_kpis.get("pnc_coverage"))
-    maternal_death_trend, maternal_death_trend_class = compare_overall_trend(kpis.get("maternal_death_rate", 0), previous_kpis.get("maternal_death_rate"))
-    csection_trend, csection_trend_class = compare_overall_trend(kpis.get("csection_rate", 0), previous_kpis.get("csection_rate"))
+    # Compare current vs previous session (context-aware)
+    ippcar_trend, ippcar_trend_class = compare_trend(kpis.get("ippcar", 0), previous_kpis.get("ippcar"), higher_is_better=True)
+    pnc_trend, pnc_trend_class = compare_trend(kpis.get("pnc_coverage", 0), previous_kpis.get("pnc_coverage"), higher_is_better=True)
+    stillbirth_trend, stillbirth_trend_class = compare_trend(kpis.get("stillbirth_rate", 0), previous_kpis.get("stillbirth_rate"), higher_is_better=False)
+    maternal_death_trend, maternal_death_trend_class = compare_trend(kpis.get("maternal_death_rate", 0), previous_kpis.get("maternal_death_rate"), higher_is_better=False)
+    csection_trend, csection_trend_class = compare_trend(kpis.get("csection_rate", 0), previous_kpis.get("csection_rate"), higher_is_better=False)
 
     # Save new KPI values for the next login/session
     save_current_kpis(user_id, kpis)
 
-    # Add CSS for black text styling
+    # Add CSS for black text + trend colors
     st.markdown("""
     <style>
-    .kpi-value, .kpi-name, .metric-label {
-        color: #000000 !important;
-    }
-    .section-header {
-        color: #000000 !important;
-    }
+    .kpi-value, .kpi-name, .metric-label { color: #000000 !important; }
+    .section-header { color: #000000 !important; }
+    .trend-good { color: green !important; font-weight: bold; }
+    .trend-bad { color: red !important; font-weight: bold; }
+    .trend-neutral { color: gray !important; }
     </style>
     """, unsafe_allow_html=True)
 
-    # KPI Cards HTML with proper CSS classes
+    # KPI Cards HTML
     kpi_html = f"""
     <div class="kpi-grid">
         <div class="kpi-card">
