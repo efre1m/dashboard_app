@@ -66,7 +66,7 @@ SVD_CODE = "1"
 CSECTION_CODE = "2"
 
 PNC_TIMING_UID = "z7Eb2yFLOBI"
-PNC_EARLY_VALUES = {"tbiEfEybERM", "JVO0gl1FuqK"}
+PNC_EARLY_CODES = {"1", "2"}  # 1 = 24 hrs stay, 2 = 25-48 hrs
 
 CONDITION_OF_DISCHARGE_UID = "TjQOcW6tm8k"
 DEAD_CODE = "4"
@@ -114,14 +114,19 @@ def compute_early_pnc_coverage(df, facility_uids=None):
     if df is None or df.empty:
         return 0.0, 0, 0
     
-    # Filter by facilities if specified
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
         
     total_deliveries = compute_total_deliveries(df, facility_uids)
-    early_pnc = df[(df["dataElement_uid"]==PNC_TIMING_UID) & (df["value"].isin(PNC_EARLY_VALUES))]["tei_id"].nunique()
+    
+    early_pnc = df[
+        (df["dataElement_uid"]==PNC_TIMING_UID) & 
+        (df["value"].isin(PNC_EARLY_CODES))
+    ]["tei_id"].nunique()
+    
     coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
     return coverage, early_pnc, total_deliveries
+
 
 def compute_maternal_death_rate(df, facility_uids=None):
     if df is None or df.empty:
