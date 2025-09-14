@@ -281,6 +281,20 @@ def render_trend_chart(
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
+    # Sort by period to ensure correct ordering
+    try:
+        # Try to convert to datetime for proper sorting
+        df["sort_key"] = pd.to_datetime(df[period_col], errors="coerce")
+        if df["sort_key"].notna().all():
+            df = df.sort_values("sort_key")
+        else:
+            # Fallback: try to sort as strings
+            df = df.sort_values(period_col)
+        df = df.drop("sort_key", axis=1)
+    except:
+        # Final fallback: sort by the period column as-is
+        df = df.sort_values(period_col)
+
     # Determine chart options based on KPI title
     if "IPPCAR" in title or "FP Acceptance" in title:
         chart_options = ["Line", "Gauge"]
@@ -580,6 +594,7 @@ def render_facility_comparison_chart(
     facility_uids,
     numerator_name,
     denominator_name,
+    region_name="Unknown Region",
 ):
     """Render a comparison chart showing each facility's performance over time (LINE chart only)."""
     if text_color is None:
@@ -663,6 +678,22 @@ def render_facility_comparison_chart(
         return
 
     comparison_df = pd.concat(facility_comparison_data, ignore_index=True)
+
+    # Sort by period to ensure correct ordering
+    try:
+        # Try to convert to datetime for proper sorting
+        comparison_df["sort_key"] = pd.to_datetime(
+            comparison_df[period_col], errors="coerce"
+        )
+        if comparison_df["sort_key"].notna().all():
+            comparison_df = comparison_df.sort_values(["Facility", "sort_key"])
+        else:
+            # Fallback: try to sort as strings
+            comparison_df = comparison_df.sort_values(["Facility", period_col])
+        comparison_df = comparison_df.drop("sort_key", axis=1)
+    except:
+        # Final fallback: sort by the period column as-is
+        comparison_df = comparison_df.sort_values(["Facility", period_col])
 
     # Always render a LINE chart for facility comparison
     fig = px.line(
@@ -757,6 +788,7 @@ def render_facility_comparison_chart(
         facility_table_data.append(
             {
                 "Facility Name": facility_name,
+                "Region": region_name,  # Add region column
                 numerator_label: numerator,
                 denominator_label: denominator,
                 "KPI Value": kpi_value,
@@ -770,9 +802,11 @@ def render_facility_comparison_chart(
     facility_table_df = pd.DataFrame(facility_table_data)
 
     # Compute overall aggregated KPI using table columns (robust to labels)
-    # find numerator and denominator column names (exclude Facility Name and KPI Value)
+    # find numerator and denominator column names (exclude Facility Name, Region and KPI Value)
     other_cols = [
-        c for c in facility_table_df.columns if c not in ("Facility Name", "KPI Value")
+        c
+        for c in facility_table_df.columns
+        if c not in ("Facility Name", "Region", "KPI Value")
     ]
     if len(other_cols) >= 2:
         num_col, den_col = other_cols[0], other_cols[1]
@@ -820,6 +854,7 @@ def render_facility_comparison_chart(
 
     overall_row = {
         "Facility Name": f"Overall {title}",
+        "Region": "All Regions",
         num_col: overall_numerator,
         den_col: overall_denominator,
         "KPI Value": overall_value,
@@ -835,11 +870,11 @@ def render_facility_comparison_chart(
     styled_table = (
         facility_table_df.style.format(
             {
-                facility_table_df.columns[2]: (
-                    "{:,.0f}" if len(facility_table_df.columns) > 2 else "{:,.0f}"
-                ),
                 facility_table_df.columns[3]: (
                     "{:,.0f}" if len(facility_table_df.columns) > 3 else "{:,.0f}"
+                ),
+                facility_table_df.columns[4]: (
+                    "{:,.0f}" if len(facility_table_df.columns) > 4 else "{:,.0f}"
                 ),
                 "KPI Value": "{:.2f}",
             }
@@ -949,6 +984,22 @@ def render_region_comparison_chart(
         return
 
     comparison_df = pd.concat(region_comparison_data, ignore_index=True)
+
+    # Sort by period to ensure correct ordering
+    try:
+        # Try to convert to datetime for proper sorting
+        comparison_df["sort_key"] = pd.to_datetime(
+            comparison_df[period_col], errors="coerce"
+        )
+        if comparison_df["sort_key"].notna().all():
+            comparison_df = comparison_df.sort_values(["Region", "sort_key"])
+        else:
+            # Fallback: try to sort as strings
+            comparison_df = comparison_df.sort_values(["Region", period_col])
+        comparison_df = comparison_df.drop("sort_key", axis=1)
+    except:
+        # Final fallback: sort by the period column as-is
+        comparison_df = comparison_df.sort_values(["Region", period_col])
 
     # Always render a LINE chart for region comparison
     fig = px.line(

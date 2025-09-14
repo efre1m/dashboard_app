@@ -442,6 +442,7 @@ def render():
                 facility_uids=facility_uids,
                 numerator_name=kpi_config.get("numerator_name", "Numerator"),
                 denominator_name=kpi_config.get("denominator_name", "Denominator"),
+                region_name=region_name,
             )
 
         else:
