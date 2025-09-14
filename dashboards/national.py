@@ -612,6 +612,9 @@ def render():
         & (copied_events_df["event_date"] <= end_datetime)
     ].copy()
 
+    # Gauge
+    st.session_state["filtered_events"] = filtered_events.copy()
+
     filtered_enrollments = enrollments_df.copy()
     if (
         not filtered_enrollments.empty

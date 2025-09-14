@@ -274,6 +274,9 @@ def render():
         & (copied_events_df["event_date"] <= end_datetime)
     ].copy()
 
+    # STORE FILTERED EVENTS FOR GAUGE CHART - ADD THIS LINE
+    st.session_state["filtered_events"] = filtered_events.copy()
+
     # Assign period AFTER filtering (so period aligns with the time window)
     filtered_events = assign_period(filtered_events, "event_date", period_label)
 
