@@ -20,7 +20,7 @@ def auto_text_color(bg):
 def render_gauge_chart(
     value, title, bg_color, text_color, min_val=0, max_val=100, reverse_colors=False
 ):
-    """Render a gauge chart for the given value with 2 decimal places"""
+    """Render a gauge chart for the given value"""
     if reverse_colors:
         steps_colors = ["red", "yellow", "green"]  # high value is bad
     else:
@@ -30,7 +30,6 @@ def render_gauge_chart(
         go.Indicator(
             mode="gauge+number",
             value=value,
-            number={"valueformat": ".2f"},  # <-- This ensures 2 decimal places
             title={"text": title},
             domain={"x": [0, 1], "y": [0, 1]},
             gauge={
@@ -281,20 +280,6 @@ def render_trend_chart(
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
-    # Sort by period to ensure correct ordering
-    try:
-        # Try to convert to datetime for proper sorting
-        df["sort_key"] = pd.to_datetime(df[period_col], errors="coerce")
-        if df["sort_key"].notna().all():
-            df = df.sort_values("sort_key")
-        else:
-            # Fallback: try to sort as strings
-            df = df.sort_values(period_col)
-        df = df.drop("sort_key", axis=1)
-    except:
-        # Final fallback: sort by the period column as-is
-        df = df.sort_values(period_col)
-
     # Determine chart options based on KPI title
     if "IPPCAR" in title or "FP Acceptance" in title:
         chart_options = ["Line", "Gauge"]
@@ -320,48 +305,25 @@ def render_trend_chart(
 
     # Handle gauge chart type
     if chart_type == "gauge":
-        # Compute overall KPI value from the original filtered data, not the trend data
-        original_filtered_events = st.session_state.get(
-            "filtered_events", pd.DataFrame()
-        )
-
-        if not original_filtered_events.empty:
-            # Compute the KPI for the entire date range
-            kpi_data = compute_kpis(original_filtered_events, facility_uids)
-
-            # Map the KPI title to the correct metric
-            if "IPPCAR" in title or "FP Acceptance" in title:
-                gauge_value = kpi_data["ippcar"]
-            elif "Stillbirth Rate" in title:
-                gauge_value = kpi_data["stillbirth_rate"]
-            elif "PNC Coverage" in title:
-                gauge_value = kpi_data["pnc_coverage"]
-            elif "Maternal Death Rate" in title:
-                gauge_value = kpi_data["maternal_death_rate"]
-            elif "C-Section Rate" in title:
-                gauge_value = kpi_data["csection_rate"]
-            else:
-                # Fallback: use the average of trend values
-                gauge_value = df[value_col].mean() if not df.empty else 0
-        else:
-            # Fallback if original data is not available
-            gauge_value = df[value_col].mean() if not df.empty else 0
+        # Get the latest values for gauge
+        latest_row = df.iloc[-1]
+        latest_value = latest_row[value_col]
 
         # Set appropriate min/max values for different KPIs
         if "Rate" in title and "Death" in title:
-            max_val = max(1000, gauge_value * 1.5)  # For maternal death rate
+            max_val = max(1000, latest_value * 1.5)  # For maternal death rate
         elif "Rate" in title:
             max_val = 100  # For percentage rates
         else:
-            max_val = max(100, gauge_value * 1.5)  # Default
+            max_val = max(100, latest_value * 1.5)  # Default
 
         # Determine if lower value is better
         lower_better_kpis = ["Maternal Death Rate", "Stillbirth Rate"]
         reverse_colors = any(kpi in title for kpi in lower_better_kpis)
 
         render_gauge_chart(
-            gauge_value,
-            f"{title} (Overall)",
+            latest_value,
+            title,
             bg_color,
             text_color,
             min_val=0,
@@ -428,11 +390,11 @@ def render_trend_chart(
         fig.update_traces(
             line=dict(width=3),
             marker=dict(size=7),
-            hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.2f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>",
+            hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.1f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>",
         )
     elif chart_type == "bar":
         fig.update_traces(
-            hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.2f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>"
+            hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.1f}}<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>"
         )
 
     fig.update_layout(
@@ -458,7 +420,7 @@ def render_trend_chart(
     )
 
     if "Rate" in title or "%" in title:
-        fig.update_layout(yaxis_tickformat=".2f")
+        fig.update_layout(yaxis_tickformat=".1f")
     if any(k in title for k in ["Deliveries", "Acceptance"]):
         fig.update_layout(yaxis_tickformat=",")
 
@@ -478,7 +440,7 @@ def render_trend_chart(
             else ("trend-down" if last_value < prev_value else "trend-neutral")
         )
         st.markdown(
-            f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.2f} <span class="{trend_class}">{trend_symbol}</span></p>',
+            f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.1f} <span class="{trend_class}">{trend_symbol}</span></p>',
             unsafe_allow_html=True,
         )
 
@@ -556,7 +518,7 @@ def render_trend_chart(
         styled_table = (
             summary_table.style.format(
                 {
-                    value_col: "{:.2f}",
+                    value_col: "{:.1f}",
                     numerator_name: "{:,.0f}",
                     denominator_name: "{:,.0f}",
                 }
@@ -566,7 +528,7 @@ def render_trend_chart(
         )
     else:
         styled_table = (
-            summary_table.style.format({value_col: "{:.2f}"})
+            summary_table.style.format({value_col: "{:.1f}"})
             .set_table_attributes('class="summary-table"')
             .hide(axis="index")
         )
@@ -594,7 +556,6 @@ def render_facility_comparison_chart(
     facility_uids,
     numerator_name,
     denominator_name,
-    region_name="Unknown Region",
 ):
     """Render a comparison chart showing each facility's performance over time (LINE chart only)."""
     if text_color is None:
@@ -679,22 +640,6 @@ def render_facility_comparison_chart(
 
     comparison_df = pd.concat(facility_comparison_data, ignore_index=True)
 
-    # Sort by period to ensure correct ordering
-    try:
-        # Try to convert to datetime for proper sorting
-        comparison_df["sort_key"] = pd.to_datetime(
-            comparison_df[period_col], errors="coerce"
-        )
-        if comparison_df["sort_key"].notna().all():
-            comparison_df = comparison_df.sort_values(["Facility", "sort_key"])
-        else:
-            # Fallback: try to sort as strings
-            comparison_df = comparison_df.sort_values(["Facility", period_col])
-        comparison_df = comparison_df.drop("sort_key", axis=1)
-    except:
-        # Final fallback: sort by the period column as-is
-        comparison_df = comparison_df.sort_values(["Facility", period_col])
-
     # Always render a LINE chart for facility comparison
     fig = px.line(
         comparison_df,
@@ -704,7 +649,7 @@ def render_facility_comparison_chart(
         markers=True,
         title=f"{title} - Facility Comparison",
         height=500,
-        hover_data={"Facility": True, "value": ":.2f"},
+        hover_data={"Facility": True, "value": ":.1f"},
     )
     fig.update_traces(line=dict(width=3), marker=dict(size=7))
     fig.update_layout(
@@ -732,7 +677,7 @@ def render_facility_comparison_chart(
         ),
     )
     if "Rate" in title or "%" in title:
-        fig.update_layout(yaxis_tickformat=".2f")
+        fig.update_layout(yaxis_tickformat=".1f")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -788,7 +733,6 @@ def render_facility_comparison_chart(
         facility_table_data.append(
             {
                 "Facility Name": facility_name,
-                "Region": region_name,  # Add region column
                 numerator_label: numerator,
                 denominator_label: denominator,
                 "KPI Value": kpi_value,
@@ -802,11 +746,9 @@ def render_facility_comparison_chart(
     facility_table_df = pd.DataFrame(facility_table_data)
 
     # Compute overall aggregated KPI using table columns (robust to labels)
-    # find numerator and denominator column names (exclude Facility Name, Region and KPI Value)
+    # find numerator and denominator column names (exclude Facility Name and KPI Value)
     other_cols = [
-        c
-        for c in facility_table_df.columns
-        if c not in ("Facility Name", "Region", "KPI Value")
+        c for c in facility_table_df.columns if c not in ("Facility Name", "KPI Value")
     ]
     if len(other_cols) >= 2:
         num_col, den_col = other_cols[0], other_cols[1]
@@ -854,7 +796,6 @@ def render_facility_comparison_chart(
 
     overall_row = {
         "Facility Name": f"Overall {title}",
-        "Region": "All Regions",
         num_col: overall_numerator,
         den_col: overall_denominator,
         "KPI Value": overall_value,
@@ -870,13 +811,13 @@ def render_facility_comparison_chart(
     styled_table = (
         facility_table_df.style.format(
             {
+                facility_table_df.columns[2]: (
+                    "{:,.0f}" if len(facility_table_df.columns) > 2 else "{:,.0f}"
+                ),
                 facility_table_df.columns[3]: (
                     "{:,.0f}" if len(facility_table_df.columns) > 3 else "{:,.0f}"
                 ),
-                facility_table_df.columns[4]: (
-                    "{:,.0f}" if len(facility_table_df.columns) > 4 else "{:,.0f}"
-                ),
-                "KPI Value": "{:.2f}",
+                "KPI Value": "{:.1f}",
             }
         )
         .set_table_attributes('class="summary-table"')
@@ -985,22 +926,6 @@ def render_region_comparison_chart(
 
     comparison_df = pd.concat(region_comparison_data, ignore_index=True)
 
-    # Sort by period to ensure correct ordering
-    try:
-        # Try to convert to datetime for proper sorting
-        comparison_df["sort_key"] = pd.to_datetime(
-            comparison_df[period_col], errors="coerce"
-        )
-        if comparison_df["sort_key"].notna().all():
-            comparison_df = comparison_df.sort_values(["Region", "sort_key"])
-        else:
-            # Fallback: try to sort as strings
-            comparison_df = comparison_df.sort_values(["Region", period_col])
-        comparison_df = comparison_df.drop("sort_key", axis=1)
-    except:
-        # Final fallback: sort by the period column as-is
-        comparison_df = comparison_df.sort_values(["Region", period_col])
-
     # Always render a LINE chart for region comparison
     fig = px.line(
         comparison_df,
@@ -1010,7 +935,7 @@ def render_region_comparison_chart(
         markers=True,
         title=f"{title} - Region Comparison",
         height=500,
-        hover_data={"Region": True, "value": ":.2f"},
+        hover_data={"Region": True, "value": ":.1f"},
     )
     fig.update_traces(line=dict(width=3), marker=dict(size=7))
     fig.update_layout(
@@ -1038,7 +963,7 @@ def render_region_comparison_chart(
         ),
     )
     if "Rate" in title or "%" in title:
-        fig.update_layout(yaxis_tickformat=".2f")
+        fig.update_layout(yaxis_tickformat=".1f")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1170,7 +1095,7 @@ def render_region_comparison_chart(
                 region_table_df.columns[3]: (
                     "{:,.0f}" if len(region_table_df.columns) > 3 else "{:,.0f}"
                 ),
-                "KPI Value": "{:.2f}",
+                "KPI Value": "{:.1f}",
             }
         )
         .set_table_attributes('class="summary-table"')
