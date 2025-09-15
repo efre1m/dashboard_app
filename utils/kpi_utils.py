@@ -278,6 +278,8 @@ def render_trend_chart(
         st.info("⚠️ No data available for the selected period.")
         return
 
+    x_axis_col = period_col
+
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
@@ -366,7 +368,7 @@ def render_trend_chart(
     if chart_type == "line":
         fig = px.line(
             df,
-            x=period_col,
+            x=x_axis_col,
             y=value_col,
             markers=True,
             line_shape="linear",
@@ -377,7 +379,7 @@ def render_trend_chart(
     elif chart_type == "bar":
         fig = px.bar(
             df,
-            x=period_col,
+            x=x_axis_col,
             y=value_col,
             title=title,
             height=400,
@@ -386,7 +388,7 @@ def render_trend_chart(
     elif chart_type == "area":
         fig = px.area(
             df,
-            x=period_col,
+            x=x_axis_col,
             y=value_col,
             title=title,
             height=400,
@@ -395,7 +397,7 @@ def render_trend_chart(
     else:
         fig = px.line(
             df,
-            x=period_col,
+            x=x_axis_col,
             y=value_col,
             markers=True,
             line_shape="linear",
@@ -476,10 +478,10 @@ def render_trend_chart(
     # Remove the index column and keep only relevant columns
     if numerator_name in summary_df.columns and denominator_name in summary_df.columns:
         summary_df = summary_df[
-            [period_col, numerator_name, denominator_name, value_col]
+            [x_axis_col, numerator_name, denominator_name, value_col]
         ]
     else:
-        summary_df = summary_df[[period_col, value_col]]
+        summary_df = summary_df[[x_axis_col, value_col]]
 
     # Calculate overall value using the same formula as individual periods
     if numerator_name in summary_df.columns and denominator_name in summary_df.columns:
@@ -585,6 +587,8 @@ def render_facility_comparison_chart(
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
+    x_axis_col = period_col
+
     # Group by period and facility to get values for each facility
     facility_comparison_data = []
     for facility_name, facility_uid in zip(facility_names, facility_uids):
@@ -667,7 +671,7 @@ def render_facility_comparison_chart(
     # Always render a LINE chart for facility comparison
     fig = px.line(
         comparison_df,
-        x=period_col,
+        x=x_axis_col,
         y="value",
         color="Facility",
         markers=True,
@@ -876,6 +880,8 @@ def render_region_comparison_chart(
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
+    x_axis_col = period_col
+
     region_comparison_data = []
     for region_name in region_names:
         facility_uids = [uid for _, uid in facilities_by_region.get(region_name, [])]
@@ -953,7 +959,7 @@ def render_region_comparison_chart(
     # Always render a LINE chart for region comparison
     fig = px.line(
         comparison_df,
-        x=period_col,
+        x=x_axis_col,
         y="value",
         color="Region",
         markers=True,

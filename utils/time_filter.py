@@ -85,25 +85,31 @@ def get_available_aggregations(start_date, end_date):
 
 def format_weekly_label(period_start):
     """
-    Format weekly period as human-readable range (e.g., "2025 Jan 1-7")
+    Format weekly period as human-readable with week number and range (e.g., "W1 (Jan 1-7, 2025)")
     """
     period_end = period_start + dt.timedelta(days=6)
 
-    if period_start.month == period_end.month:
-        return f"{period_start.year} {period_start.strftime('%b')} {period_start.day}-{period_end.day}"
+    # Calculate week number within the year
+    week_number = period_start.isocalendar()[1]
+
+    if period_start.year == period_end.year:
+        if period_start.month == period_end.month:
+            return f"W{week_number} ({period_start.strftime('%b')} {period_start.day}-{period_end.day}, {period_start.year})"
+        else:
+            return f"W{week_number} ({period_start.strftime('%b')} {period_start.day}-{period_end.strftime('%b')} {period_end.day}, {period_start.year})"
     else:
-        return f"{period_start.year} {period_start.strftime('%b')} {period_start.day}-{period_end.strftime('%b')} {period_end.day}"
+        return f"W{week_number} ({period_start.strftime('%b %d, %Y')}-{period_end.strftime('%b %d, %Y')})"
 
 
 def format_quarterly_label(quarter_str):
     """
-    Format quarterly period as human-readable (e.g., "2025 Q1 (Jan-Mar)")
+    Format quarterly period as human-readable with quarter number (e.g., "Q1 (Jan-Mar 2025)")
     """
     year, quarter = quarter_str.split("Q")
     quarter = int(quarter)
 
     month_ranges = {1: "Jan-Mar", 2: "Apr-Jun", 3: "Jul-Sep", 4: "Oct-Dec"}
-    return f"{year} Q{quarter} ({month_ranges[quarter]})"
+    return f"Q{quarter} ({month_ranges[quarter]} {year})"
 
 
 def assign_period(df: pd.DataFrame, date_col: str, period_label: str):
@@ -117,33 +123,38 @@ def assign_period(df: pd.DataFrame, date_col: str, period_label: str):
         return df
 
     if period_label == "Daily":
-        df["period"] = df[date_col].dt.strftime("%b %d, %Y")  # "Sep 15, 2025"
-        df["period_sort"] = df[date_col].dt.normalize()  # datetime (00:00:00)
+        df["period"] = df[date_col].dt.strftime(
+            "%Y-%m-%d"
+        )  # Sortable format: 2025-09-15
+        df["period_display"] = df[date_col].dt.strftime(
+            "%b %d, %Y"
+        )  # Display: Sep 15, 2025
+        df["period_sort"] = df[date_col].dt.normalize()
 
     elif period_label == "Weekly":
         df["week_start"] = df[date_col] - pd.to_timedelta(
             df[date_col].dt.weekday, unit="D"
         )
-        df["period"] = df["week_start"].apply(format_weekly_label)
-        df["period_sort"] = df["week_start"]  # datetime
+        df["period"] = df["week_start"].dt.strftime("%Y-%m-%d")  # Sortable format
+        df["period_display"] = df["week_start"].apply(format_weekly_label)
+        df["period_sort"] = df["week_start"]
 
     elif period_label == "Monthly":
-        df["period"] = df[date_col].dt.strftime("%Y %b")  # "2025 Sep"
-        df["period_sort"] = (
-            df[date_col].dt.to_period("M").dt.start_time
-        )  # month start datetime
+        df["period"] = df[date_col].dt.strftime("%Y-%m")  # Sortable format: 2025-09
+        df["period_display"] = df[date_col].dt.strftime("%Y %b")  # Display: 2025 Sep
+        df["period_sort"] = df[date_col].dt.to_period("M").dt.start_time
 
     elif period_label == "Quarterly":
-        quarter_codes = df[date_col].dt.to_period("Q").astype(str)  # e.g. "2025Q1"
-        df["period"] = quarter_codes.apply(format_quarterly_label)
-        df["period_sort"] = (
-            df[date_col].dt.to_period("Q").dt.start_time
-        )  # quarter start datetime
+        df["period"] = df[date_col].dt.to_period("Q").astype(str)  # Sortable: 2025Q1
+        df["period_display"] = df["period"].apply(format_quarterly_label)
+        df["period_sort"] = df[date_col].dt.to_period("Q").dt.start_time
 
     else:  # Yearly
-        df["period"] = df[date_col].dt.to_period("Y").astype(str)  # "2025"
-        df["period_sort"] = (
-            df[date_col].dt.to_period("Y").dt.start_time
-        )  # year start datetime
+        df["period"] = df[date_col].dt.strftime("%Y")  # Sortable: 2025
+        df["period_display"] = df["period"]  # Display: 2025
+        df["period_sort"] = df[date_col].dt.to_period("Y").dt.start_time
+
+    # Sort the dataframe by period_sort to ensure chronological order
+    df = df.sort_values("period_sort")
 
     return df
