@@ -303,7 +303,7 @@ def render():
             == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
         ):
             group = (
-                filtered_events.groupby("period", as_index=False)
+                filtered_events.groupby(["period", "period_display"], as_index=False)
                 .apply(
                     lambda x: pd.Series(
                         {
@@ -321,7 +321,7 @@ def render():
             )
             render_trend_chart(
                 group,
-                "period",
+                "period_display",
                 "value",
                 "IPPCAR (%)",
                 bg_color,
@@ -333,7 +333,7 @@ def render():
             )
         elif kpi_selection == "Stillbirth Rate (per 1000 births)":
             group = (
-                filtered_events.groupby("period", as_index=False)
+                filtered_events.groupby(["period", "period_display"], as_index=False)
                 .apply(
                     lambda x: pd.Series(
                         {
@@ -353,7 +353,7 @@ def render():
             )
             render_trend_chart(
                 group,
-                "period",
+                "period_display",
                 "value",
                 "Stillbirth Rate (per 1000 births)",
                 bg_color,
@@ -366,7 +366,7 @@ def render():
 
         elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
             group = (
-                filtered_events.groupby("period", as_index=False)
+                filtered_events.groupby(["period", "period_display"], as_index=False)
                 .apply(
                     lambda x: pd.Series(
                         {
@@ -386,7 +386,7 @@ def render():
             )
             render_trend_chart(
                 group,
-                "period",
+                "period_display",
                 "value",
                 "Early PNC Coverage (%)",
                 bg_color,
@@ -399,7 +399,7 @@ def render():
 
         elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
             group = (
-                filtered_events.groupby("period", as_index=False)
+                filtered_events.groupby(["period", "period_display"], as_index=False)
                 .apply(
                     lambda x: pd.Series(
                         {
@@ -419,7 +419,7 @@ def render():
             )
             render_trend_chart(
                 group,
-                "period",
+                "period_display",
                 "value",
                 "Maternal Death Rate (per 100,000 births)",
                 bg_color,
@@ -432,7 +432,7 @@ def render():
 
         elif kpi_selection == "C-Section Rate (%)":
             group = (
-                filtered_events.groupby("period", as_index=False)
+                filtered_events.groupby(["period", "period_display"], as_index=False)
                 .apply(
                     lambda x: pd.Series(
                         {
@@ -452,7 +452,7 @@ def render():
             )
             render_trend_chart(
                 group,
-                "period",
+                "period_display",
                 "value",
                 "C-Section Rate (%)",
                 bg_color,

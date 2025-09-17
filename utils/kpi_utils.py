@@ -256,6 +256,25 @@ def compute_kpis(df, facility_uids=None):
     }
 
 
+def aggregate_by_period_with_sorting(
+    df, period_col, period_sort_col, facility_uids, kpi_function
+):
+    """
+    Aggregate data by period while preserving chronological sorting
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    # Group by both display and sort columns to preserve order
+    result = (
+        df.groupby([period_col, period_sort_col], as_index=False)
+        .apply(lambda x: pd.Series({"value": kpi_function(x, facility_uids)}))
+        .reset_index(drop=True)
+    )
+
+    return result
+
+
 # ---------------- Chart Functions ----------------
 def render_trend_chart(
     df,
@@ -278,7 +297,7 @@ def render_trend_chart(
         st.info("⚠️ No data available for the selected period.")
         return
 
-    x_axis_col = period_col
+    x_axis_col = "period_display"
 
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
@@ -583,111 +602,95 @@ def render_facility_comparison_chart(
     numerator_name,
     denominator_name,
 ):
-    """Render a comparison chart showing each facility's performance over time (LINE chart only)."""
+    """Render a comparison chart showing each facility's performance over time"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    x_axis_col = period_col
+    # Create a mapping from facility UID to name
+    facility_uid_to_name = dict(zip(facility_uids, facility_names))
 
-    # Group by period and facility to get values for each facility
-    facility_comparison_data = []
-    for facility_name, facility_uid in zip(facility_names, facility_uids):
-        facility_df = df[df["orgUnit"] == facility_uid]
-        if facility_df.empty:
-            continue
+    # Filter to only include selected facilities
+    filtered_df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-        # Calculate KPI for this facility for each period
-        if "IPPCAR" in title:
-            facility_period_data = (
-                facility_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, [facility_uid])["ippcar"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        elif "Stillbirth Rate" in title:
-            facility_period_data = (
-                facility_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, [facility_uid])["stillbirth_rate"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        elif "PNC Coverage" in title:
-            facility_period_data = (
-                facility_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, [facility_uid])["pnc_coverage"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        elif "Maternal Death Rate" in title:
-            facility_period_data = (
-                facility_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {
-                            "value": compute_kpis(x, [facility_uid])[
-                                "maternal_death_rate"
-                            ]
-                        }
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        elif "C-Section Rate" in title:
-            facility_period_data = (
-                facility_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, [facility_uid])["csection_rate"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        else:
-            # fallback - try to use the passed value_col aggregated by period
-            facility_period_data = (
-                facility_df.groupby(period_col, as_index=False)
-                .agg({value_col: "mean"})
-                .rename(columns={value_col: "value"})
-            )
-
-        facility_period_data["Facility"] = facility_name
-        facility_comparison_data.append(facility_period_data)
-
-    if not facility_comparison_data:
+    if filtered_df.empty:
         st.info("⚠️ No data available for facility comparison.")
         return
 
-    comparison_df = pd.concat(facility_comparison_data, ignore_index=True)
+    # Group by period AND facility, then compute the KPI
+    comparison_data = []
 
-    # Always render a LINE chart for facility comparison
+    # Get all unique periods in chronological order
+    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
+    all_periods = all_periods.sort_values("period_sort")
+    period_order = all_periods["period_display"].tolist()
+
+    for period_display in period_order:
+        period_data = all_periods[all_periods["period_display"] == period_display]
+        if period_data.empty:
+            continue
+
+        period_sort = period_data["period_sort"].iloc[0]
+        period_df = filtered_df[filtered_df["period_display"] == period_display]
+
+        for facility_uid in facility_uids:
+            facility_df = period_df[period_df["orgUnit"] == facility_uid]
+            if not facility_df.empty:
+                kpi_value = compute_kpis(facility_df, [facility_uid])
+
+                if "IPPCAR" in title:
+                    value = kpi_value["ippcar"]
+                elif "Stillbirth Rate" in title:
+                    value = kpi_value["stillbirth_rate"]
+                elif "PNC Coverage" in title:
+                    value = kpi_value["pnc_coverage"]
+                elif "Maternal Death Rate" in title:
+                    value = kpi_value["maternal_death_rate"]
+                elif "C-Section Rate" in title:
+                    value = kpi_value["csection_rate"]
+                else:
+                    value = 0
+
+                comparison_data.append(
+                    {
+                        "period_display": period_display,
+                        "period_sort": period_sort,
+                        "Facility": facility_uid_to_name[facility_uid],
+                        "value": value,
+                    }
+                )
+
+    if not comparison_data:
+        st.info("⚠️ No data available for facility comparison.")
+        return
+
+    comparison_df = pd.DataFrame(comparison_data)
+
+    # Create the chart - FORCE the x-axis order
     fig = px.line(
         comparison_df,
-        x=x_axis_col,
+        x="period_display",
         y="value",
         color="Facility",
         markers=True,
         title=f"{title} - Facility Comparison",
         height=500,
-        hover_data={"Facility": True, "value": ":.2f"},
+        category_orders={"period_display": period_order},  # This forces the order
     )
+
     fig.update_traces(line=dict(width=3), marker=dict(size=7))
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title=period_col,
-        yaxis_title=value_col,
-        xaxis=dict(tickangle=-45, showgrid=True, gridcolor="rgba(128,128,128,0.2)"),
+        xaxis_title="Period",
+        yaxis_title=title,
+        xaxis=dict(
+            type="category",
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
         yaxis=dict(
             rangemode="tozero",
             showgrid=True,
@@ -704,6 +707,7 @@ def render_facility_comparison_chart(
             x=1,
         ),
     )
+
     if "Rate" in title or "%" in title:
         fig.update_layout(yaxis_tickformat=".2f")
 
@@ -876,106 +880,103 @@ def render_region_comparison_chart(
     numerator_name,
     denominator_name,
 ):
-    """Render a comparison chart showing each region's performance over time (LINE chart only)."""
+    """Render a comparison chart showing each region's performance over time"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    x_axis_col = period_col
-
-    region_comparison_data = []
+    # Get all facility UIDs for selected regions
+    all_facility_uids = []
     for region_name in region_names:
         facility_uids = [uid for _, uid in facilities_by_region.get(region_name, [])]
-        region_df = df[df["orgUnit"].isin(facility_uids)]
-        if region_df.empty:
-            continue
+        all_facility_uids.extend(facility_uids)
 
-        if "IPPCAR" in title:
-            region_period_data = (
-                region_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, facility_uids)["ippcar"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        elif "Stillbirth Rate" in title:
-            region_period_data = (
-                region_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, facility_uids)["stillbirth_rate"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        elif "PNC Coverage" in title:
-            region_period_data = (
-                region_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, facility_uids)["pnc_coverage"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        elif "Maternal Death Rate" in title:
-            region_period_data = (
-                region_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, facility_uids)["maternal_death_rate"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        elif "C-Section Rate" in title:
-            region_period_data = (
-                region_df.groupby(period_col, as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {"value": compute_kpis(x, facility_uids)["csection_rate"]}
-                    )
-                )
-                .reset_index(drop=True)
-            )
-        else:
-            # fallback aggregate
-            region_period_data = (
-                region_df.groupby(period_col, as_index=False)
-                .agg({value_col: "mean"})
-                .rename(columns={value_col: "value"})
-            )
+    # Filter to only include facilities in selected regions
+    filtered_df = df[df["orgUnit"].isin(all_facility_uids)].copy()
 
-        region_period_data["Region"] = region_name
-        region_comparison_data.append(region_period_data)
-
-    if not region_comparison_data:
+    if filtered_df.empty:
         st.info("⚠️ No data available for region comparison.")
         return
 
-    comparison_df = pd.concat(region_comparison_data, ignore_index=True)
+    # Group by period AND region, then compute the KPI
+    comparison_data = []
 
-    # Always render a LINE chart for region comparison
+    # Get all unique periods in chronological order
+    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
+    all_periods = all_periods.sort_values("period_sort")
+    period_order = all_periods["period_display"].tolist()
+
+    for period_display in period_order:
+        period_data = all_periods[all_periods["period_display"] == period_display]
+        if period_data.empty:
+            continue
+
+        period_sort = period_data["period_sort"].iloc[0]
+        period_df = filtered_df[filtered_df["period_display"] == period_display]
+
+        for region_name in region_names:
+            # Get all facility UIDs for this region
+            region_facility_uids = [
+                uid for _, uid in facilities_by_region.get(region_name, [])
+            ]
+            region_df = period_df[period_df["orgUnit"].isin(region_facility_uids)]
+
+            if not region_df.empty:
+                kpi_value = compute_kpis(region_df, region_facility_uids)
+
+                if "IPPCAR" in title:
+                    value = kpi_value["ippcar"]
+                elif "Stillbirth Rate" in title:
+                    value = kpi_value["stillbirth_rate"]
+                elif "PNC Coverage" in title:
+                    value = kpi_value["pnc_coverage"]
+                elif "Maternal Death Rate" in title:
+                    value = kpi_value["maternal_death_rate"]
+                elif "C-Section Rate" in title:
+                    value = kpi_value["csection_rate"]
+                else:
+                    value = 0
+
+                comparison_data.append(
+                    {
+                        "period_display": period_display,
+                        "period_sort": period_sort,
+                        "Region": region_name,
+                        "value": value,
+                    }
+                )
+
+    if not comparison_data:
+        st.info("⚠️ No data available for region comparison.")
+        return
+
+    comparison_df = pd.DataFrame(comparison_data)
+
+    # Create the chart - FORCE the x-axis order
     fig = px.line(
         comparison_df,
-        x=x_axis_col,
+        x="period_display",
         y="value",
         color="Region",
         markers=True,
         title=f"{title} - Region Comparison",
         height=500,
-        hover_data={"Region": True, "value": ":.2f"},
+        category_orders={"period_display": period_order},  # This forces the order
     )
+
     fig.update_traces(line=dict(width=3), marker=dict(size=7))
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title=period_col,
-        yaxis_title=value_col,
-        xaxis=dict(tickangle=-45, showgrid=True, gridcolor="rgba(128,128,128,0.2)"),
+        xaxis_title="Period",
+        yaxis_title=title,
+        xaxis=dict(
+            type="category",
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
         yaxis=dict(
             rangemode="tozero",
             showgrid=True,
@@ -992,6 +993,7 @@ def render_region_comparison_chart(
             x=1,
         ),
     )
+
     if "Rate" in title or "%" in title:
         fig.update_layout(yaxis_tickformat=".2f")
 
