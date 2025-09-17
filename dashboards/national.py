@@ -21,7 +21,7 @@ from utils.kpi_utils import (
 )
 
 from utils.kpi_pph import (
-    compute_pph_kpis,
+    compute_pph_kpi,
     compute_pph_trend_data,
     render_pph_trend_chart,
     render_pph_facility_comparison_chart,
@@ -951,25 +951,40 @@ def render():
                 )
 
             elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                # Use PPH-specific function instead of compute_kpis
-                pph_trend_data = compute_pph_trend_data(filtered_events, facility_uids)
-
-                if not pph_trend_data.empty:
-                    render_pph_trend_chart(
-                        pph_trend_data,
-                        "period_display",
-                        "pph_rate",
-                        "PPH Rate (%)",
-                        bg_color,
-                        text_color,
-                        display_names,
-                        "PPH Cases",
-                        "Total Deliveries",
-                        facility_uids,
+                # Use the same structure as other indicators
+                group = (
+                    filtered_events.groupby(
+                        ["period", "period_display"], as_index=False
                     )
-                else:
-                    st.info("⚠️ No PPH data available for the selected period.")
-
+                    .apply(
+                        lambda x: pd.Series(
+                            {
+                                "value": compute_pph_kpi(x, facility_uids)[
+                                    "pph_rate"
+                                ],  # Changed to compute_pph_kpi
+                                "PPH Cases": compute_pph_kpi(x, facility_uids)[
+                                    "pph_count"
+                                ],  # Changed to compute_pph_kpi
+                                "Total Deliveries": compute_pph_kpi(x, facility_uids)[
+                                    "total_deliveries"
+                                ],  # Changed to compute_pph_kpi
+                            }
+                        )
+                    )
+                    .reset_index(drop=True)
+                )
+                render_pph_trend_chart(  # Keep using PPH-specific render function
+                    group,
+                    "period_display",
+                    "value",
+                    "PPH Rate (%)",
+                    bg_color,
+                    text_color,
+                    display_names,
+                    "PPH Cases",
+                    "Total Deliveries",
+                    facility_uids,
+                )
         st.markdown("</div>", unsafe_allow_html=True)
 
         # Optional: Add additional PPH visualizations

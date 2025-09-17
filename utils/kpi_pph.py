@@ -5,17 +5,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-# ---------------- Utility ----------------
-def auto_text_color(bg):
-    """Return black or white text depending on background brightness"""
-    bg = bg.lstrip("#")
-    try:
-        r, g, b = int(bg[0:2], 16), int(bg[2:4], 16), int(bg[4:6], 16)
-        brightness = (r * 299 + g * 587 + b * 114) / 1000
-        return "#000000" if brightness > 150 else "#ffffff"
-    except Exception:
-        return "#000000"
+# Import the same function used by other KPIs
+from utils.kpi_utils import compute_total_deliveries, auto_text_color
 
 
 # ---------------- PPH KPI Constants ----------------
@@ -37,51 +28,49 @@ PPH_CODE = "3"  # Postpartum Hemorrhage (PPH) option code
 
 
 # ---------------- PPH KPI Computation Functions ----------------
-def compute_pph_rate(df, facility_uids=None):
+def compute_pph_kpi(df, facility_uids=None):
     """
-    Compute PPH rate for the given dataframe
+    Compute PPH KPI for the given dataframe
 
     Formula: PPH Rate (%) = (Count of deliveries where condition = "PPH") ÷ (Total Deliveries) × 100
 
     Returns:
-        pph_rate (float): PPH rate percentage
-        pph_count (int): Number of PPH cases
-        total_deliveries (int): Total number of deliveries
+        Dictionary with PPH metrics
     """
     if df is None or df.empty:
-        return 0.0, 0, 0
+        return {"pph_rate": 0.0, "pph_count": 0, "total_deliveries": 0}
 
     # Filter by facilities if specified
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter for delivery summary events with obstetric condition data
-    delivery_events = df[
-        (df["dataElement_uid"] == PPH_CONDITION_UID) & df["value"].notna()
+    # Use the EXACT SAME total deliveries calculation as other KPIs
+    total_deliveries = compute_total_deliveries(df, facility_uids)
+
+    # Filter for PPH cases specifically (where obstetric condition = PPH)
+    pph_cases = df[
+        (df["dataElement_uid"] == PPH_CONDITION_UID)
+        & (df["value"] == PPH_CODE)
+        & df["value"].notna()
     ]
-
-    if delivery_events.empty:
-        return 0.0, 0, 0
-
-    # Count total deliveries (unique TEIs with obstetric condition data)
-    total_deliveries = delivery_events["tei_id"].nunique()
-
-    # Count PPH cases (where value = "3")
-    pph_cases = delivery_events[delivery_events["value"] == PPH_CODE]
     pph_count = pph_cases["tei_id"].nunique()
 
     # Calculate PPH rate
     pph_rate = (pph_count / total_deliveries * 100) if total_deliveries > 0 else 0.0
 
-    return pph_rate, pph_count, total_deliveries
+    return {
+        "pph_rate": float(pph_rate),
+        "pph_count": int(pph_count),
+        "total_deliveries": int(total_deliveries),
+    }
 
 
-def compute_pph_trend_data(df, facility_uids=None):
+def compute_pph_trend_data(df, period_col="period_display", facility_uids=None):
     """
     Compute PPH trend data by period
 
     Returns:
-        DataFrame with columns: period, period_display, total_deliveries, pph_count, pph_rate
+        DataFrame with columns: period_display, total_deliveries, pph_count, pph_rate
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -90,30 +79,22 @@ def compute_pph_trend_data(df, facility_uids=None):
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Ensure period columns exist
-    if "period" not in df.columns or "period_display" not in df.columns:
+    # Ensure period column exists
+    if period_col not in df.columns:
         return pd.DataFrame()
 
-    # Group by period and compute PPH metrics
     trend_data = []
 
-    for period in df["period"].unique():
-        period_df = df[df["period"] == period]
-        period_display = (
-            period_df["period_display"].iloc[0] if not period_df.empty else period
-        )
-
-        pph_rate, pph_count, total_deliveries = compute_pph_rate(
-            period_df, facility_uids
-        )
+    for period in df[period_col].unique():
+        period_df = df[df[period_col] == period]
+        pph_data = compute_pph_kpi(period_df, facility_uids)
 
         trend_data.append(
             {
-                "period": period,
-                "period_display": period_display,
-                "total_deliveries": total_deliveries,
-                "pph_count": pph_count,
-                "pph_rate": pph_rate,
+                period_col: period,
+                "total_deliveries": pph_data["total_deliveries"],
+                "pph_count": pph_data["pph_count"],
+                "pph_rate": pph_data["pph_rate"],
             }
         )
 
@@ -174,60 +155,20 @@ def compute_obstetric_condition_distribution(df, facility_uids=None):
     return condition_counts[["condition", "count", "percentage"]]
 
 
-# ---------------- Master PPH KPI Function ----------------
-def compute_pph_kpis(df, facility_uids=None):
-    """
-    Compute all PPH-related KPIs
-
-    Returns:
-        Dictionary with PPH metrics
-    """
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
-
-    pph_rate, pph_count, total_deliveries = compute_pph_rate(df, facility_uids)
-
-    return {
-        "pph_rate": float(pph_rate),
-        "pph_count": int(pph_count),
-        "total_deliveries": int(total_deliveries),
-    }
-
-
-def aggregate_pph_by_period_with_sorting(
-    df, period_col, period_sort_col, facility_uids
-):
-    """
-    Aggregate PPH data by period while preserving chronological sorting
-    """
-    if df.empty:
-        return pd.DataFrame()
-
-    # Group by both display and sort columns to preserve order
-    result = (
-        df.groupby([period_col, period_sort_col], as_index=False)
-        .apply(lambda x: pd.Series(compute_pph_kpis(x, facility_uids)))
-        .reset_index(drop=True)
-    )
-
-    return result
-
-
 # ---------------- PPH Chart Functions ----------------
 def render_pph_trend_chart(
     df,
-    period_col,
-    value_col,
-    title,
-    bg_color,
-    text_color,
+    period_col="period_display",
+    value_col="pph_rate",
+    title="PPH Rate Trend",
+    bg_color="#FFFFFF",
+    text_color=None,
     facility_names=None,
-    numerator_name="PPH Cases",
-    denominator_name="Total Deliveries",
+    numerator_name="pph_count",
+    denominator_name="total_deliveries",
     facility_uids=None,
 ):
-    """Render a trend chart for PPH rate with numerator/denominator data"""
+    """Render a trend chart for PPH rate"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -236,15 +177,11 @@ def render_pph_trend_chart(
         st.info("⚠️ No data available for the selected period.")
         return
 
-    x_axis_col = "period_display"
-
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
-    # Chart options for PPH (gauge removed)
+    # Chart options
     chart_options = ["Line", "Bar"]
-
-    # Add radio button for chart type selection
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -253,16 +190,16 @@ def render_pph_trend_chart(
         key=f"chart_type_{title}_{str(facility_uids)}",
     ).lower()
 
-    # Create custom hover text with numerator and denominator if available
+    # Create hover data
     hover_data = {}
     if numerator_name in df.columns and denominator_name in df.columns:
         hover_data = {numerator_name: True, denominator_name: True}
 
-    # Create chart based on selected type
+    # Create chart
     if chart_type == "line":
         fig = px.line(
             df,
-            x=x_axis_col,
+            x=period_col,
             y=value_col,
             markers=True,
             line_shape="linear",
@@ -273,7 +210,7 @@ def render_pph_trend_chart(
     elif chart_type == "bar":
         fig = px.bar(
             df,
-            x=x_axis_col,
+            x=period_col,
             y=value_col,
             title=title,
             height=400,
@@ -282,7 +219,7 @@ def render_pph_trend_chart(
     else:
         fig = px.line(
             df,
-            x=x_axis_col,
+            x=period_col,
             y=value_col,
             markers=True,
             line_shape="linear",
@@ -291,12 +228,7 @@ def render_pph_trend_chart(
             hover_data=hover_data,
         )
 
-    is_categorical = (
-        not all(isinstance(x, (pd.Timestamp, pd.DatetimeIndex)) for x in df[period_col])
-        if not df.empty
-        else True
-    )
-
+    # Update traces
     if chart_type in ["line"]:
         fig.update_traces(
             line=dict(width=3),
@@ -313,11 +245,11 @@ def render_pph_trend_chart(
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title=period_col,
-        yaxis_title=value_col,
+        xaxis_title="Period",
+        yaxis_title="PPH Rate (%)",
         xaxis=dict(
-            type="category" if is_categorical else None,
-            tickangle=-45 if is_categorical else 0,
+            type="category",
+            tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
@@ -331,9 +263,9 @@ def render_pph_trend_chart(
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
-
     st.plotly_chart(fig, use_container_width=True)
 
+    # Show trend indicator
     if len(df) > 1:
         last_value = df[value_col].iloc[-1]
         prev_value = df[value_col].iloc[-2]
@@ -348,34 +280,29 @@ def render_pph_trend_chart(
             else ("trend-down" if last_value < prev_value else "trend-neutral")
         )
         st.markdown(
-            f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.2f} <span class="{trend_class}">{trend_symbol}</span></p>',
+            f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.2f}% <span class="{trend_class}">{trend_symbol}</span></p>',
             unsafe_allow_html=True,
         )
 
+    # Summary table
     st.subheader(f"📋 {title} Summary Table")
-
-    # Create a summary table with proper column names
     summary_df = df.copy().reset_index(drop=True)
 
-    # Remove the index column and keep only relevant columns
     if numerator_name in summary_df.columns and denominator_name in summary_df.columns:
         summary_df = summary_df[
-            [x_axis_col, numerator_name, denominator_name, value_col]
+            [period_col, numerator_name, denominator_name, value_col]
         ]
     else:
-        summary_df = summary_df[[x_axis_col, value_col]]
+        summary_df = summary_df[[period_col, value_col]]
 
-    # Calculate overall value using the same formula as individual periods
+    # Calculate overall value
     if numerator_name in summary_df.columns and denominator_name in summary_df.columns:
         total_numerator = summary_df[numerator_name].sum()
         total_denominator = summary_df[denominator_name].sum()
-
-        # Calculate overall PPH rate
         overall_value = (
             (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
         )
 
-        # Create overall row
         overall_row = pd.DataFrame(
             {
                 period_col: [f"Overall {title}"],
@@ -384,8 +311,6 @@ def render_pph_trend_chart(
                 value_col: [overall_value],
             }
         )
-
-        # Combine with original dataframe
         summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
     else:
         overall_value = summary_df[value_col].mean() if not summary_df.empty else 0
@@ -394,10 +319,10 @@ def render_pph_trend_chart(
         )
         summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
 
-    # Add row numbering starting from 1
+    # Add row numbering
     summary_table.insert(0, "No", range(1, len(summary_table) + 1))
 
-    # Format the table for display
+    # Format table
     if (
         numerator_name in summary_table.columns
         and denominator_name in summary_table.columns
@@ -405,7 +330,7 @@ def render_pph_trend_chart(
         styled_table = (
             summary_table.style.format(
                 {
-                    value_col: "{:.2f}",
+                    value_col: "{:.2f}%",
                     numerator_name: "{:,.0f}",
                     denominator_name: "{:,.0f}",
                 }
@@ -415,14 +340,14 @@ def render_pph_trend_chart(
         )
     else:
         styled_table = (
-            summary_table.style.format({value_col: "{:.2f}"})
+            summary_table.style.format({value_col: "{:.2f}%"})
             .set_table_attributes('class="summary-table"')
             .hide(axis="index")
         )
 
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
 
-    # Add download button for CSV
+    # Download button
     csv = summary_table.to_csv(index=False)
     st.download_button(
         label="Download CSV",
@@ -434,58 +359,54 @@ def render_pph_trend_chart(
 
 def render_pph_facility_comparison_chart(
     df,
-    period_col,
-    value_col,
-    title,
-    bg_color,
-    text_color,
-    facility_names,
-    facility_uids,
+    period_col="period_display",
+    value_col="pph_rate",
+    title="PPH Rate - Facility Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    facility_names=None,
+    facility_uids=None,
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each facility's PPH performance over time"""
+    """Render a comparison chart showing each facility's PPH performance"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    # Create a mapping from facility UID to name
-    facility_uid_to_name = dict(zip(facility_uids, facility_names))
+    if (
+        not facility_names
+        or not facility_uids
+        or len(facility_names) != len(facility_uids)
+    ):
+        st.info("⚠️ No facilities selected for comparison.")
+        return
 
-    # Filter to only include selected facilities
+    # Create mapping
+    facility_uid_to_name = dict(zip(facility_uids, facility_names))
     filtered_df = df[df["orgUnit"].isin(facility_uids)].copy()
 
     if filtered_df.empty:
         st.info("⚠️ No data available for facility comparison.")
         return
 
-    # Group by period AND facility, then compute the PPH KPI
+    # Prepare comparison data
     comparison_data = []
-
-    # Get all unique periods in chronological order
     all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
     all_periods = all_periods.sort_values("period_sort")
     period_order = all_periods["period_display"].tolist()
 
     for period_display in period_order:
-        period_data = all_periods[all_periods["period_display"] == period_display]
-        if period_data.empty:
-            continue
-
-        period_sort = period_data["period_sort"].iloc[0]
         period_df = filtered_df[filtered_df["period_display"] == period_display]
 
         for facility_uid in facility_uids:
             facility_df = period_df[period_df["orgUnit"] == facility_uid]
             if not facility_df.empty:
-                pph_data = compute_pph_kpis(facility_df, [facility_uid])
-                value = pph_data["pph_rate"]
-
+                pph_data = compute_pph_kpi(facility_df, [facility_uid])
                 comparison_data.append(
                     {
                         "period_display": period_display,
-                        "period_sort": period_sort,
                         "Facility": facility_uid_to_name[facility_uid],
-                        "value": value,
+                        "value": pph_data["pph_rate"],
                     }
                 )
 
@@ -495,16 +416,16 @@ def render_pph_facility_comparison_chart(
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Create the chart - FORCE the x-axis order
+    # Create chart
     fig = px.line(
         comparison_df,
         x="period_display",
         y="value",
         color="Facility",
         markers=True,
-        title=f"{title} - Facility Comparison",
+        title=title,
         height=500,
-        category_orders={"period_display": period_order},  # This forces the order
+        category_orders={"period_display": period_order},
     )
 
     fig.update_traces(line=dict(width=3), marker=dict(size=7))
@@ -514,7 +435,7 @@ def render_pph_facility_comparison_chart(
         font_color=text_color,
         title_font_color=text_color,
         xaxis_title="Period",
-        yaxis_title=title,
+        yaxis_title="PPH Rate (%)",
         xaxis=dict(
             type="category",
             tickangle=-45,
@@ -539,34 +460,24 @@ def render_pph_facility_comparison_chart(
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
-
     st.plotly_chart(fig, use_container_width=True)
 
-    # Show facility comparison table (summary)
+    # Facility comparison table
     st.subheader("📋 Facility Comparison Summary")
     facility_table_data = []
 
     for facility_name, facility_uid in zip(facility_names, facility_uids):
         facility_df = df[df["orgUnit"] == facility_uid]
-        if facility_df.empty:
-            continue
-
-        pph_data = compute_pph_kpis(facility_df, [facility_uid])
-
-        numerator = pph_data["pph_count"]
-        denominator = pph_data["total_deliveries"]
-        kpi_value = pph_data["pph_rate"]
-        numerator_label = "PPH Cases"
-        denominator_label = "Total Deliveries"
-
-        facility_table_data.append(
-            {
-                "Facility Name": facility_name,
-                numerator_label: numerator,
-                denominator_label: denominator,
-                "PPH Rate (%)": kpi_value,
-            }
-        )
+        if not facility_df.empty:
+            pph_data = compute_pph_kpi(facility_df, [facility_uid])
+            facility_table_data.append(
+                {
+                    "Facility Name": facility_name,
+                    "PPH Cases": pph_data["pph_count"],
+                    "Total Deliveries": pph_data["total_deliveries"],
+                    "PPH Rate (%)": pph_data["pph_rate"],
+                }
+            )
 
     if not facility_table_data:
         st.info("⚠️ No data available for facility comparison table.")
@@ -574,33 +485,32 @@ def render_pph_facility_comparison_chart(
 
     facility_table_df = pd.DataFrame(facility_table_data)
 
-    # Compute overall aggregated PPH rate
-    total_numerator = facility_table_df[numerator_label].sum()
-    total_denominator = facility_table_df[denominator_label].sum()
+    # Calculate overall
+    total_numerator = facility_table_df["PPH Cases"].sum()
+    total_denominator = facility_table_df["Total Deliveries"].sum()
     overall_value = (
         (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
     )
 
     overall_row = {
-        "Facility Name": f"Overall {title}",
-        numerator_label: total_numerator,
-        denominator_label: total_denominator,
+        "Facility Name": "Overall",
+        "PPH Cases": total_numerator,
+        "Total Deliveries": total_denominator,
         "PPH Rate (%)": overall_value,
     }
 
     facility_table_df = pd.concat(
         [facility_table_df, pd.DataFrame([overall_row])], ignore_index=True
     )
-    # Add row numbering
     facility_table_df.insert(0, "No", range(1, len(facility_table_df) + 1))
 
-    # Format & display
+    # Format table
     styled_table = (
         facility_table_df.style.format(
             {
-                numerator_label: "{:,.0f}",
-                denominator_label: "{:,.0f}",
-                "PPH Rate (%)": "{:.2f}",
+                "PPH Cases": "{:,.0f}",
+                "Total Deliveries": "{:,.0f}",
+                "PPH Rate (%)": "{:.2f}%",
             }
         )
         .set_table_attributes('class="summary-table"')
@@ -609,31 +519,36 @@ def render_pph_facility_comparison_chart(
 
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
 
+    # Download button
     csv = facility_table_df.to_csv(index=False)
     st.download_button(
         label="Download CSV",
         data=csv,
-        file_name=f"{title.lower().replace(' ', '_')}_facility_comparison.csv",
+        file_name="pph_rate_facility_comparison.csv",
         mime="text/csv",
     )
 
 
 def render_pph_region_comparison_chart(
     df,
-    period_col,
-    value_col,
-    title,
-    bg_color,
-    text_color,
-    region_names,
-    region_mapping,
-    facilities_by_region,
+    period_col="period_display",
+    value_col="pph_rate",
+    title="PPH Rate - Region Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    region_names=None,
+    region_mapping=None,
+    facilities_by_region=None,
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each region's PPH performance over time"""
+    """Render a comparison chart showing each region's PPH performance"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
+
+    if not region_names or not facilities_by_region:
+        st.info("⚠️ No regions selected for comparison.")
+        return
 
     # Get all facility UIDs for selected regions
     all_facility_uids = []
@@ -641,46 +556,34 @@ def render_pph_region_comparison_chart(
         facility_uids = [uid for _, uid in facilities_by_region.get(region_name, [])]
         all_facility_uids.extend(facility_uids)
 
-    # Filter to only include facilities in selected regions
     filtered_df = df[df["orgUnit"].isin(all_facility_uids)].copy()
 
     if filtered_df.empty:
         st.info("⚠️ No data available for region comparison.")
         return
 
-    # Group by period AND region, then compute the PPH KPI
+    # Prepare comparison data
     comparison_data = []
-
-    # Get all unique periods in chronological order
     all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
     all_periods = all_periods.sort_values("period_sort")
     period_order = all_periods["period_display"].tolist()
 
     for period_display in period_order:
-        period_data = all_periods[all_periods["period_display"] == period_display]
-        if period_data.empty:
-            continue
-
-        period_sort = period_data["period_sort"].iloc[0]
         period_df = filtered_df[filtered_df["period_display"] == period_display]
 
         for region_name in region_names:
-            # Get all facility UIDs for this region
             region_facility_uids = [
                 uid for _, uid in facilities_by_region.get(region_name, [])
             ]
             region_df = period_df[period_df["orgUnit"].isin(region_facility_uids)]
 
             if not region_df.empty:
-                pph_data = compute_pph_kpis(region_df, region_facility_uids)
-                value = pph_data["pph_rate"]
-
+                pph_data = compute_pph_kpi(region_df, region_facility_uids)
                 comparison_data.append(
                     {
                         "period_display": period_display,
-                        "period_sort": period_sort,
                         "Region": region_name,
-                        "value": value,
+                        "value": pph_data["pph_rate"],
                     }
                 )
 
@@ -690,16 +593,16 @@ def render_pph_region_comparison_chart(
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Create the chart - FORCE the x-axis order
+    # Create chart
     fig = px.line(
         comparison_df,
         x="period_display",
         y="value",
         color="Region",
         markers=True,
-        title=f"{title} - Region Comparison",
+        title=title,
         height=500,
-        category_orders={"period_display": period_order},  # This forces the order
+        category_orders={"period_display": period_order},
     )
 
     fig.update_traces(line=dict(width=3), marker=dict(size=7))
@@ -709,7 +612,7 @@ def render_pph_region_comparison_chart(
         font_color=text_color,
         title_font_color=text_color,
         xaxis_title="Period",
-        yaxis_title=title,
+        yaxis_title="PPH Rate (%)",
         xaxis=dict(
             type="category",
             tickangle=-45,
@@ -734,33 +637,28 @@ def render_pph_region_comparison_chart(
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
-
     st.plotly_chart(fig, use_container_width=True)
 
-    # Region comparison summary table
+    # Region comparison table
     st.subheader("📋 Region Comparison Summary")
     region_table_data = []
+
     for region_name in region_names:
-        facility_uids = [uid for _, uid in facilities_by_region.get(region_name, [])]
-        region_df = df[df["orgUnit"].isin(facility_uids)]
-        if region_df.empty:
-            continue
+        region_facility_uids = [
+            uid for _, uid in facilities_by_region.get(region_name, [])
+        ]
+        region_df = df[df["orgUnit"].isin(region_facility_uids)]
 
-        pph_data = compute_pph_kpis(region_df, facility_uids)
-        numerator = pph_data["pph_count"]
-        denominator = pph_data["total_deliveries"]
-        kpi_value = pph_data["pph_rate"]
-        numerator_label = "PPH Cases"
-        denominator_label = "Total Deliveries"
-
-        region_table_data.append(
-            {
-                "Region Name": region_name,
-                numerator_label: numerator,
-                denominator_label: denominator,
-                "PPH Rate (%)": kpi_value,
-            }
-        )
+        if not region_df.empty:
+            pph_data = compute_pph_kpi(region_df, region_facility_uids)
+            region_table_data.append(
+                {
+                    "Region Name": region_name,
+                    "PPH Cases": pph_data["pph_count"],
+                    "Total Deliveries": pph_data["total_deliveries"],
+                    "PPH Rate (%)": pph_data["pph_rate"],
+                }
+            )
 
     if not region_table_data:
         st.info("⚠️ No data available for region comparison table.")
@@ -768,17 +666,17 @@ def render_pph_region_comparison_chart(
 
     region_table_df = pd.DataFrame(region_table_data)
 
-    # Compute overall aggregated PPH rate
-    total_numerator = region_table_df[numerator_label].sum()
-    total_denominator = region_table_df[denominator_label].sum()
+    # Calculate overall
+    total_numerator = region_table_df["PPH Cases"].sum()
+    total_denominator = region_table_df["Total Deliveries"].sum()
     overall_value = (
         (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
     )
 
     overall_row = {
-        "Region Name": f"Overall {title}",
-        numerator_label: total_numerator,
-        denominator_label: total_denominator,
+        "Region Name": "Overall",
+        "PPH Cases": total_numerator,
+        "Total Deliveries": total_denominator,
         "PPH Rate (%)": overall_value,
     }
 
@@ -787,12 +685,13 @@ def render_pph_region_comparison_chart(
     )
     region_table_df.insert(0, "No", range(1, len(region_table_df) + 1))
 
+    # Format table
     styled_table = (
         region_table_df.style.format(
             {
-                numerator_label: "{:,.0f}",
-                denominator_label: "{:,.0f}",
-                "PPH Rate (%)": "{:.2f}",
+                "PPH Cases": "{:,.0f}",
+                "Total Deliveries": "{:,.0f}",
+                "PPH Rate (%)": "{:.2f}%",
             }
         )
         .set_table_attributes('class="summary-table"')
@@ -801,11 +700,12 @@ def render_pph_region_comparison_chart(
 
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
 
+    # Download button
     csv = region_table_df.to_csv(index=False)
     st.download_button(
         label="Download CSV",
         data=csv,
-        file_name=f"{title.lower().replace(' ', '_')}_region_comparison.csv",
+        file_name="pph_rate_region_comparison.csv",
         mime="text/csv",
     )
 
@@ -827,7 +727,7 @@ def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
         for period in period_order:
             period_df = facility_df[facility_df["period_display"] == period]
             if not period_df.empty:
-                pph_data = compute_pph_kpis(period_df, [facility_name])
+                pph_data = compute_pph_kpi(period_df, [facility_name])
                 heatmap_data.append(
                     {
                         "Facility": facility_name,
@@ -917,18 +817,18 @@ def render_obstetric_condition_pie_chart(
         title="",
         hover_data=["percentage"],
         labels={"count": "Count", "percentage": "Percentage"},
-        height=650,  # Increased height for better visibility
+        height=650,
     )
 
     fig.update_traces(
         textinfo="percent+label",
-        textposition="outside",  # Move text outside to prevent overlap
+        textposition="outside",
         hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
-        textfont=dict(size=10),  # Smaller text for better fit
+        textfont=dict(size=10),
         pull=[
             0.05 if cond == "Postpartum Hemorrhage (PPH)" else 0
             for cond in condition_df["condition"]
-        ],  # Pull out PPH slice
+        ],
     )
 
     fig.update_layout(
@@ -947,7 +847,7 @@ def render_obstetric_condition_pie_chart(
             font=dict(size=10),
             itemwidth=30,
         ),
-        margin=dict(l=0, r=150, t=0, b=0),  # Increased right margin for legend
+        margin=dict(l=0, r=150, t=0, b=0),
         uniformtext_minsize=8,
         uniformtext_mode="hide",
     )

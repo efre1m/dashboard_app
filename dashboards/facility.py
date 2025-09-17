@@ -12,6 +12,11 @@ from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
 from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color
+from utils.kpi_pph import (  # ADD THIS IMPORT
+    compute_pph_kpi,
+    render_pph_trend_chart,
+    render_obstetric_condition_pie_chart,
+)
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -211,6 +216,7 @@ def render():
                 "Early Postnatal Care (PNC) Coverage (%)",
                 "Institutional Maternal Death Rate (per 100,000 births)",
                 "C-Section Rate (%)",
+                "Postpartum Hemorrhage (PPH) Rate (%)",
             ],
         )
 
@@ -463,4 +469,53 @@ def render():
                 [facility_uid] if facility_uid else None,
             )
 
+        elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+            # Use the same structure as other indicators
+            group = (
+                filtered_events.groupby(["period", "period_display"], as_index=False)
+                .apply(
+                    lambda x: pd.Series(
+                        {
+                            "value": compute_pph_kpi(x, facility_uid)[
+                                "pph_rate"
+                            ],  # Changed to compute_pph_kpi
+                            "PPH Cases": compute_pph_kpi(x, facility_uid)[
+                                "pph_count"
+                            ],  # Changed to compute_pph_kpi
+                            "Total Deliveries": compute_pph_kpi(x, facility_uid)[
+                                "total_deliveries"
+                            ],  # Changed to compute_pph_kpi
+                        }
+                    )
+                )
+                .reset_index(drop=True)
+            )
+            render_pph_trend_chart(  # Keep using PPH-specific render function
+                group,
+                "period_display",
+                "value",
+                "PPH Rate (%)",
+                bg_color,
+                text_color,
+                facility_name,
+                "PPH Cases",
+                "Total Deliveries",
+                facility_uid,
+            )
+
         st.markdown("</div>", unsafe_allow_html=True)
+
+        # Optional: Add additional PPH visualizations
+        if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+            st.markdown("---")
+            st.markdown(
+                f'<div class="section-header">📊 Additional PPH Analytics</div>',
+                unsafe_allow_html=True,
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                render_obstetric_condition_pie_chart(
+                    filtered_events, facility_uid, bg_color, text_color
+                )
