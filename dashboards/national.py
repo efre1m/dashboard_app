@@ -19,6 +19,17 @@ from utils.kpi_utils import (
     render_facility_comparison_chart,
     render_region_comparison_chart,
 )
+
+from utils.kpi_pph import (
+    compute_pph_kpis,
+    compute_pph_trend_data,
+    render_pph_trend_chart,
+    render_pph_facility_comparison_chart,
+    render_pph_region_comparison_chart,
+    render_pph_heatmap,
+    render_obstetric_condition_pie_chart,
+)
+
 from utils.queries import (
     get_facilities_grouped_by_region,
     get_facility_mapping_for_user,
@@ -552,6 +563,7 @@ def render():
                 "Early Postnatal Care (PNC) Coverage (%)",
                 "Institutional Maternal Death Rate (per 100,000 births)",
                 "C-Section Rate (%)",
+                "Postpartum Hemorrhage (PPH) Rate (%)",
             ],
         )
 
@@ -679,39 +691,79 @@ def render():
                     "numerator_name": "C-Sections",
                     "denominator_name": "Total Deliveries",
                 },
+                "Postpartum Hemorrhage (PPH) Rate (%)": {
+                    "title": "PPH Rate (%)",
+                    "numerator_name": "PPH Cases",
+                    "denominator_name": "Total Deliveries",
+                },
             }
 
             kpi_config = kpi_mapping.get(kpi_selection, {})
 
             if comparison_mode == "facility":
-                # Use the imported render_facility_comparison_chart function
-                render_facility_comparison_chart(
-                    df=filtered_events,
-                    period_col="period_display",
-                    value_col="value",
-                    title=kpi_config.get("title", kpi_selection),
-                    bg_color=bg_color,
-                    text_color=text_color,
-                    facility_names=display_names,
-                    facility_uids=facility_uids,
-                    numerator_name=kpi_config.get("numerator_name", "Numerator"),
-                    denominator_name=kpi_config.get("denominator_name", "Denominator"),
-                )
+                if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+                    # Use PPH-specific facility comparison
+                    render_pph_facility_comparison_chart(
+                        df=filtered_events,
+                        period_col="period_display",
+                        value_col="value",
+                        title="PPH Rate (%)",
+                        bg_color=bg_color,
+                        text_color=text_color,
+                        facility_names=display_names,
+                        facility_uids=facility_uids,
+                        numerator_name="PPH Cases",
+                        denominator_name="Total Deliveries",
+                    )
+                else:
+                    # Use generic facility comparison for other KPIs
+                    render_facility_comparison_chart(
+                        df=filtered_events,
+                        period_col="period_display",
+                        value_col="value",
+                        title=kpi_config.get("title", kpi_selection),
+                        bg_color=bg_color,
+                        text_color=text_color,
+                        facility_names=display_names,
+                        facility_uids=facility_uids,
+                        numerator_name=kpi_config.get("numerator_name", "Numerator"),
+                        denominator_name=kpi_config.get(
+                            "denominator_name", "Denominator"
+                        ),
+                    )
             else:  # comparison_mode == "region"
-                # Use the imported render_region_comparison_chart function
-                render_region_comparison_chart(
-                    df=filtered_events,
-                    period_col="period_display",
-                    value_col="value",
-                    title=kpi_config.get("title", kpi_selection),
-                    bg_color=bg_color,
-                    text_color=text_color,
-                    region_names=display_names,
-                    region_mapping={},  # Empty mapping for now, can be populated from your database
-                    facilities_by_region=facilities_by_region,
-                    numerator_name=kpi_config.get("numerator_name", "Numerator"),
-                    denominator_name=kpi_config.get("denominator_name", "Denominator"),
-                )
+                if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+                    # Use PPH-specific region comparison
+                    render_pph_region_comparison_chart(
+                        df=filtered_events,
+                        period_col="period_display",
+                        value_col="value",
+                        title="PPH Rate (%)",
+                        bg_color=bg_color,
+                        text_color=text_color,
+                        region_names=display_names,
+                        region_mapping={},
+                        facilities_by_region=facilities_by_region,
+                        numerator_name="PPH Cases",
+                        denominator_name="Total Deliveries",
+                    )
+                else:
+                    # Use generic region comparison for other KPIs
+                    render_region_comparison_chart(
+                        df=filtered_events,
+                        period_col="period_display",
+                        value_col="value",
+                        title=kpi_config.get("title", kpi_selection),
+                        bg_color=bg_color,
+                        text_color=text_color,
+                        region_names=display_names,
+                        region_mapping={},
+                        facilities_by_region=facilities_by_region,
+                        numerator_name=kpi_config.get("numerator_name", "Numerator"),
+                        denominator_name=kpi_config.get(
+                            "denominator_name", "Denominator"
+                        ),
+                    )
 
         else:
             st.markdown(
@@ -898,4 +950,54 @@ def render():
                     facility_uids,
                 )
 
+            elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+                # Use PPH-specific function instead of compute_kpis
+                pph_trend_data = compute_pph_trend_data(filtered_events, facility_uids)
+
+                if not pph_trend_data.empty:
+                    render_pph_trend_chart(
+                        pph_trend_data,
+                        "period_display",
+                        "pph_rate",
+                        "PPH Rate (%)",
+                        bg_color,
+                        text_color,
+                        display_names,
+                        "PPH Cases",
+                        "Total Deliveries",
+                        facility_uids,
+                    )
+                else:
+                    st.info("⚠️ No PPH data available for the selected period.")
+
         st.markdown("</div>", unsafe_allow_html=True)
+
+        # Optional: Add additional PPH visualizations
+        if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+            st.markdown("---")
+            st.markdown(
+                f'<div class="section-header">📊 Additional PPH Analytics</div>',
+                unsafe_allow_html=True,
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                render_obstetric_condition_pie_chart(
+                    filtered_events, facility_uids, bg_color, text_color
+                )
+
+            # Heatmap if multiple facilities/periods
+            if (
+                len(display_names) > 1
+                and len(filtered_events["period_display"].unique()) > 1
+            ):
+                with col2:
+                    period_order = filtered_events["period_display"].unique().tolist()
+                    render_pph_heatmap(
+                        filtered_events,
+                        display_names,
+                        period_order,
+                        bg_color,
+                        text_color,
+                    )
