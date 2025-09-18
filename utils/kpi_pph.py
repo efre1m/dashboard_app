@@ -1151,7 +1151,7 @@ def render_obstetric_condition_pie_chart(
         key="obstetric_chart_type",
     )
 
-    # Create chart with reduced size (450px instead of 650px)
+    # Create chart with reduced size
     if chart_type == "Pie Chart":
         fig = px.pie(
             condition_df,
@@ -1160,9 +1160,9 @@ def render_obstetric_condition_pie_chart(
             title="",
             hover_data=["percentage"],
             labels={"count": "Count", "percentage": "Percentage"},
-            height=450,  # REDUCED SIZE
+            height=500,  # Slightly increased height
         )
-    else:  # Donut Chart - PROFESSIONAL ALTERNATIVE
+    else:  # Donut Chart
         fig = px.pie(
             condition_df,
             values="count",
@@ -1170,27 +1170,47 @@ def render_obstetric_condition_pie_chart(
             title="",
             hover_data=["percentage"],
             labels={"count": "Count", "percentage": "Percentage"},
-            height=450,  # REDUCED SIZE
-            hole=0.4,  # Donut hole for professional look
+            height=500,
+            hole=0.4,
         )
 
-    fig.update_traces(
-        textinfo="percent+label",
-        textposition="outside",
-        hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
-        textfont=dict(size=10),
-        pull=[
-            0.05 if cond == "Postpartum Hemorrhage (PPH)" else 0
-            for cond in condition_df["condition"]
-        ],
-    )
+    # Calculate if we should use inside text for small slices
+    total_count = condition_df["count"].sum()
+    use_inside_text = any((condition_df["count"] / total_count) < 0.05)
+
+    if use_inside_text:
+        # For small slices, put text inside with white background
+        fig.update_traces(
+            textinfo="percent+label",
+            textposition="inside",
+            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
+            textfont=dict(size=10),
+            insidetextfont=dict(color="white", size=9),
+            outsidetextfont=dict(size=9),
+            pull=[
+                0.05 if cond == "Postpartum Hemorrhage (PPH)" else 0
+                for cond in condition_df["condition"]
+            ],
+        )
+    else:
+        # For normal slices, use outside text
+        fig.update_traces(
+            textinfo="percent+label",
+            textposition="outside",
+            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
+            textfont=dict(size=10),
+            pull=[
+                0.05 if cond == "Postpartum Hemorrhage (PPH)" else 0
+                for cond in condition_df["condition"]
+            ],
+        )
 
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        height=450,  # REDUCED SIZE TO MATCH
+        height=500,  # Increased height
         showlegend=True,
         legend=dict(
             orientation="v",
@@ -1201,12 +1221,12 @@ def render_obstetric_condition_pie_chart(
             font=dict(size=10),
             itemwidth=30,
         ),
-        margin=dict(l=0, r=150, t=0, b=0),
+        margin=dict(l=0, r=150, t=20, b=20),  # Increased top and bottom margins
         uniformtext_minsize=8,
         uniformtext_mode="hide",
     )
 
-    # Use container to control layout (CONTAINER REMAINS UNCHANGED)
+    # Use container to control layout
     with st.container():
         st.markdown(
             '<div class="pie-chart-title">Distribution of Obstetric Conditions at Delivery</div>',
@@ -1216,8 +1236,6 @@ def render_obstetric_condition_pie_chart(
 
     # Show summary table
     st.subheader("📋 Obstetric Condition Summary")
-
-    # Add row numbering
     condition_df = condition_df.copy()
     condition_df.insert(0, "No", range(1, len(condition_df) + 1))
 

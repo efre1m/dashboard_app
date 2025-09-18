@@ -92,6 +92,11 @@ def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# Initialize session state keys at the very top
+if "all_facilities_checkbox" not in st.session_state:
+    st.session_state.all_facilities_checkbox = False
+
+
 # Helper functions for facility and region selection
 def handle_all_facilities_change(all_facility_names):
     """Handle when 'All Facilities' checkbox is toggled"""
