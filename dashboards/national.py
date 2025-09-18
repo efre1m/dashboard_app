@@ -1002,9 +1002,10 @@ def render():
                     filtered_events, facility_uids, bg_color, text_color
                 )
 
-            # Heatmap if multiple facilities/periods
+            # Heatmap if multiple facilities/periods - ONLY in Comparison View
             if (
-                len(display_names) > 1
+                view_mode == "Comparison View"
+                and len(display_names) > 1
                 and len(filtered_events["period_display"].unique()) > 1
             ):
                 with col2:

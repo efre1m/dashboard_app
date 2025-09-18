@@ -4,6 +4,7 @@ import streamlit as st
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 
 # Import the same function used by other KPIs
 from utils.kpi_utils import compute_total_deliveries, auto_text_color
@@ -711,30 +712,45 @@ def render_pph_region_comparison_chart(
 
 
 def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
-    """Render a heatmap of PPH rates by facility and period"""
+    """Render a professionally styled heatmap of PPH rates by facility and period"""
     if df is None or df.empty:
         st.info("⚠️ No data available for heatmap.")
         return
 
-    # Prepare data for heatmap
+    # Prepare data for heatmap - include ALL facilities and periods, even with zero values
     heatmap_data = []
 
     for facility_name in facility_names:
         facility_df = df[df["orgUnit"] == facility_name]
-        if facility_df.empty:
-            continue
 
         for period in period_order:
-            period_df = facility_df[facility_df["period_display"] == period]
-            if not period_df.empty:
-                pph_data = compute_pph_kpi(period_df, [facility_name])
-                heatmap_data.append(
-                    {
-                        "Facility": facility_name,
-                        "Period": period,
-                        "PPH Rate": pph_data["pph_rate"],
-                    }
-                )
+            if not facility_df.empty:
+                period_df = facility_df[facility_df["period_display"] == period]
+                if not period_df.empty:
+                    pph_data = compute_pph_kpi(period_df, [facility_name])
+                    pph_rate = pph_data["pph_rate"]
+                    pph_count = pph_data["pph_count"]
+                    total_deliveries = pph_data["total_deliveries"]
+                else:
+                    # No data for this facility in this period
+                    pph_rate = 0.0
+                    pph_count = 0
+                    total_deliveries = 0
+            else:
+                # No data for this facility at all
+                pph_rate = 0.0
+                pph_count = 0
+                total_deliveries = 0
+
+            heatmap_data.append(
+                {
+                    "Facility": facility_name,
+                    "Period": period,
+                    "PPH Rate": pph_rate,
+                    "PPH Cases": pph_count,
+                    "Total Deliveries": total_deliveries,
+                }
+            )
 
     if not heatmap_data:
         st.info("⚠️ No data available for heatmap.")
@@ -745,35 +761,178 @@ def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
     # Pivot for heatmap format
     pivot_df = heatmap_df.pivot(index="Facility", columns="Period", values="PPH Rate")
 
-    # Create heatmap using seaborn
-    fig, ax = plt.subplots(figsize=(12, 8))
+    # Fill any remaining NaN values with 0
+    pivot_df = pivot_df.fillna(0)
+
+    # Create heatmap with enhanced styling and larger font sizes
+    fig, ax = plt.subplots(figsize=(24, 18))  # Increased size for better visibility
+
+    # Use a custom color palette for good/medium/bad performance
+    # Good (green): 0-2%, Medium (yellow): 2-5%, Bad (red): 5%+
+    colors = ["#2ecc71", "#f1c40f", "#e74c3c"]  # Green, Yellow, Red
+    cmap = LinearSegmentedColormap.from_list("pph_cmap", colors, N=100)
+
+    # Create the heatmap with enhanced styling and larger fonts
     sns.heatmap(
         pivot_df,
         annot=True,
         fmt=".2f",
-        cmap="YlOrRd",
+        cmap=cmap,
         ax=ax,
-        cbar_kws={"label": "PPH Rate (%)"},
+        cbar_kws={"label": "PPH Rate (%)", "shrink": 0.8, "pad": 0.02, "aspect": 30},
+        linewidths=2,  # Thicker cell borders for better separation
+        linecolor="white",  # White border lines
+        annot_kws={
+            "size": 30,  # Increased from 10 to 30 for PPH values
+            "weight": "bold",
+            "color": "white" if np.mean(pivot_df.values) > 2.0 else "black",
+        },
+        square=False,  # Rectangular cells for better readability
     )
 
-    ax.set_title("PPH Rate Heatmap by Facility and Period")
-    ax.set_xlabel("Period")
-    ax.set_ylabel("Facility")
+    # Enhanced title and labels with larger fonts
+    ax.set_title(
+        "PPH RATE HEATMAP - FACILITY PERFORMANCE OVERVIEW",
+        fontsize=42,  # Increased from 38 to 42
+        fontweight="bold",
+        pad=30,  # Increased padding
+        color=text_color,
+    )
+    ax.set_xlabel(
+        "PERIOD",
+        fontsize=36,  # Increased from 38 to 36 (slightly smaller than title)
+        fontweight="bold",
+        color=text_color,
+        labelpad=25,  # Increased padding
+    )
+    ax.set_ylabel(
+        "FACILITY",
+        fontsize=36,  # Increased from 38 to 36
+        fontweight="bold",
+        color=text_color,
+        labelpad=25,  # Increased padding
+    )
 
-    # Set background color
+    # Rotate x-axis and y-axis labels with larger fonts
+    plt.xticks(
+        rotation=45,
+        ha="right",
+        color=text_color,
+        fontsize=30,  # Increased from 15 to 20 for period labels
+    )
+    plt.yticks(
+        rotation=0,
+        color=text_color,
+        fontsize=30,  # Increased from 30 to 22 (more balanced size)
+    )
+
+    # Set background and text colors
     fig.patch.set_facecolor(bg_color)
-    ax.set_facecolor(bg_color)
+    ax.set_facecolor("#f8f9fa")  # Light gray background for the heatmap area
 
-    # Set text color
-    for text in ax.texts:
-        text.set_color(text_color)
+    # Colorbar styling with larger fonts
+    cbar = ax.collections[0].colorbar
+    cbar.set_label(
+        "PPH Rate (%)",
+        fontweight="bold",
+        color=text_color,
+        fontsize=24,  # Increased from 20 to 24
+    )
+    cbar.ax.tick_params(
+        colors=text_color, labelsize=16  # Increased colorbar tick labels
+    )
+    cbar.outline.set_edgecolor(text_color)
 
-    ax.title.set_color(text_color)
-    ax.xaxis.label.set_color(text_color)
-    ax.yaxis.label.set_color(text_color)
-    ax.tick_params(colors=text_color)
+    # Add grid-like appearance with thicker borders
+    ax.grid(False)  # Disable default grid
+    for spine in ax.spines.values():
+        spine.set_color(text_color)
+        spine.set_linewidth(3)  # Thicker border around the entire heatmap
 
+    # Adjust layout to prevent cutting off
+    plt.tight_layout()
+
+    # Display the heatmap
     st.pyplot(fig)
+
+    # Filtering options
+    st.markdown("### 🔍 Filter Data")
+
+    threshold = st.slider(
+        "Show facilities with PPH Rate above:",
+        min_value=0.0,
+        max_value=float(max(10.0, heatmap_df["PPH Rate"].max() * 1.2)),
+        value=2.0,
+        step=0.1,
+        help="Filter to show only facilities with PPH rates above this threshold",
+    )
+
+    # Display filtered data with increased width
+    filtered_data = heatmap_df[heatmap_df["PPH Rate"] >= threshold]
+    if not filtered_data.empty:
+        st.info(f"📋 Showing {len(filtered_data)} entries with PPH Rate ≥ {threshold}%")
+
+        # Create a styled table for filtered results with increased width
+        display_df = filtered_data.pivot(
+            index="Facility", columns="Period", values="PPH Rate"
+        )
+
+        # Use st.dataframe with custom width
+        st.dataframe(
+            display_df.style.background_gradient(cmap=cmap, axis=None)
+            .format("{:.2f}%")
+            .set_properties(
+                **{
+                    "border": "2px solid #ddd",
+                    "text-align": "center",
+                    "font-weight": "bold",
+                    "min-width": "100px",
+                    "font-size": "14px",  # Added larger font for table
+                }
+            )
+            .set_table_styles(
+                [
+                    {
+                        "selector": "th",
+                        "props": [
+                            ("background-color", "#2c3e50"),
+                            ("color", "white"),
+                            ("font-weight", "bold"),
+                            ("min-width", "120px"),
+                            ("font-size", "16px"),  # Increased from 12px
+                        ],
+                    },
+                    {
+                        "selector": "td",
+                        "props": [
+                            ("min-width", "100px"),
+                            ("font-size", "14px"),  # Increased from 11px
+                        ],
+                    },
+                ]
+            ),
+            width=1200,
+            height=400,
+        )
+    else:
+        st.warning(f"No facilities found with PPH Rate ≥ {threshold}%")
+
+    # Additional insights
+    st.markdown("### 💡 Insights")
+
+    high_pph_facilities = heatmap_df[heatmap_df["PPH Rate"] > 5.0]["Facility"].unique()
+    if len(high_pph_facilities) > 0:
+        st.warning(
+            f"🚨 **Attention Needed**: {len(high_pph_facilities)} facilities have PPH rates above 5%: "
+            f"{', '.join(high_pph_facilities[:5])}{'...' if len(high_pph_facilities) > 5 else ''}"
+        )
+
+    zero_pph_facilities = heatmap_df[heatmap_df["PPH Rate"] == 0.0]["Facility"].unique()
+    if len(zero_pph_facilities) > 0:
+        st.success(
+            f"✅ **Excellent Performance**: {len(zero_pph_facilities)} facilities have 0% PPH rates: "
+            f"{', '.join(zero_pph_facilities[:5])}{'...' if len(zero_pph_facilities) > 5 else ''}"
+        )
 
 
 def render_obstetric_condition_pie_chart(
