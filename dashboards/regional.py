@@ -703,9 +703,6 @@ def render():
                 unsafe_allow_html=True,
             )
 
-            col1, col2 = st.columns(2)
-
-            with col1:
-                render_obstetric_condition_pie_chart(
-                    filtered_events, facility_uids, bg_color, text_color
-                )
+            render_obstetric_condition_pie_chart(
+                filtered_events, facility_uids, bg_color, text_color
+            )

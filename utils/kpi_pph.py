@@ -1143,16 +1143,36 @@ def render_obstetric_condition_pie_chart(
         unsafe_allow_html=True,
     )
 
-    # Create pie chart with improved layout
-    fig = px.pie(
-        condition_df,
-        values="count",
-        names="condition",
-        title="",
-        hover_data=["percentage"],
-        labels={"count": "Count", "percentage": "Percentage"},
-        height=650,
+    # Add chart type selection
+    chart_type = st.selectbox(
+        "Select Chart Type",
+        options=["Pie Chart", "Donut Chart"],
+        index=0,
+        key="obstetric_chart_type",
     )
+
+    # Create chart with reduced size (450px instead of 650px)
+    if chart_type == "Pie Chart":
+        fig = px.pie(
+            condition_df,
+            values="count",
+            names="condition",
+            title="",
+            hover_data=["percentage"],
+            labels={"count": "Count", "percentage": "Percentage"},
+            height=450,  # REDUCED SIZE
+        )
+    else:  # Donut Chart - PROFESSIONAL ALTERNATIVE
+        fig = px.pie(
+            condition_df,
+            values="count",
+            names="condition",
+            title="",
+            hover_data=["percentage"],
+            labels={"count": "Count", "percentage": "Percentage"},
+            height=450,  # REDUCED SIZE
+            hole=0.4,  # Donut hole for professional look
+        )
 
     fig.update_traces(
         textinfo="percent+label",
@@ -1170,7 +1190,7 @@ def render_obstetric_condition_pie_chart(
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        height=650,
+        height=450,  # REDUCED SIZE TO MATCH
         showlegend=True,
         legend=dict(
             orientation="v",
@@ -1186,7 +1206,7 @@ def render_obstetric_condition_pie_chart(
         uniformtext_mode="hide",
     )
 
-    # Use container to control layout
+    # Use container to control layout (CONTAINER REMAINS UNCHANGED)
     with st.container():
         st.markdown(
             '<div class="pie-chart-title">Distribution of Obstetric Conditions at Delivery</div>',
