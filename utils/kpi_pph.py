@@ -370,7 +370,7 @@ def render_pph_facility_comparison_chart(
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each facility's PPH performance"""
+    """Render a comparison chart showing each facility's PPH performance with heatmap option"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -408,6 +408,8 @@ def render_pph_facility_comparison_chart(
                         "period_display": period_display,
                         "Facility": facility_uid_to_name[facility_uid],
                         "value": pph_data["pph_rate"],
+                        "pph_count": pph_data["pph_count"],
+                        "total_deliveries": pph_data["total_deliveries"],
                     }
                 )
 
@@ -417,7 +419,72 @@ def render_pph_facility_comparison_chart(
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Create chart
+    # Chart options - Line Chart vs Heatmap
+    chart_options = ["Line Chart", "Heatmap"]
+    chart_type = st.radio(
+        f"📊 Chart type for {title}",
+        options=chart_options,
+        index=0,
+        horizontal=True,
+        key=f"chart_type_facility_comparison_{str(facility_uids)}",
+    )
+
+    if chart_type == "Heatmap":
+        # Call the heatmap function with facility label
+        render_pph_heatmap(
+            df,
+            facility_names,
+            period_order,
+            bg_color,
+            text_color,
+            entity_label="Facility",
+        )
+
+        # Generate heatmap CSV for download
+        heatmap_data = []
+        for facility_name in facility_names:
+            for period in period_order:
+                period_data = comparison_df[
+                    (comparison_df["Facility"] == facility_name)
+                    & (comparison_df["period_display"] == period)
+                ]
+                if not period_data.empty:
+                    pph_rate = period_data["value"].iloc[0]
+                    pph_count = period_data["pph_count"].iloc[0]
+                    total_deliveries = period_data["total_deliveries"].iloc[0]
+                else:
+                    pph_rate = 0.0
+                    pph_count = 0
+                    total_deliveries = 0
+
+                heatmap_data.append(
+                    {
+                        "Facility": facility_name,
+                        "Period": period,
+                        "PPH Rate": pph_rate,
+                        "PPH Cases": pph_count,
+                        "Total Deliveries": total_deliveries,
+                    }
+                )
+
+        heatmap_df = pd.DataFrame(heatmap_data)
+        pivot_df = heatmap_df.pivot(
+            index="Facility", columns="Period", values="PPH Rate"
+        )
+
+        # Download button for heatmap CSV
+        csv = pivot_df.to_csv()
+        st.download_button(
+            label="Download Heatmap CSV",
+            data=csv,
+            file_name="pph_rate_facility_heatmap.csv",
+            mime="text/csv",
+            key="facility_heatmap_download",
+        )
+
+        return  # Exit early for heatmap view
+
+    # Line chart view (original functionality)
     fig = px.line(
         comparison_df,
         x="period_display",
@@ -543,7 +610,7 @@ def render_pph_region_comparison_chart(
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each region's PPH performance"""
+    """Render a comparison chart showing each region's PPH performance with heatmap option"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -585,6 +652,8 @@ def render_pph_region_comparison_chart(
                         "period_display": period_display,
                         "Region": region_name,
                         "value": pph_data["pph_rate"],
+                        "pph_count": pph_data["pph_count"],
+                        "total_deliveries": pph_data["total_deliveries"],
                     }
                 )
 
@@ -594,7 +663,65 @@ def render_pph_region_comparison_chart(
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Create chart
+    # Chart options - Line Chart vs Heatmap
+    chart_options = ["Line Chart", "Heatmap"]
+    chart_type = st.radio(
+        f"📊 Chart type for {title}",
+        options=chart_options,
+        index=0,
+        horizontal=True,
+        key=f"chart_type_region_comparison_{str(region_names)}",
+    )
+
+    if chart_type == "Heatmap":
+        # Call the heatmap function with region label
+        render_pph_heatmap(
+            df, region_names, period_order, bg_color, text_color, entity_label="Region"
+        )
+
+        # Generate heatmap CSV for download
+        heatmap_data = []
+        for region_name in region_names:
+            for period in period_order:
+                period_data = comparison_df[
+                    (comparison_df["Region"] == region_name)
+                    & (comparison_df["period_display"] == period)
+                ]
+                if not period_data.empty:
+                    pph_rate = period_data["value"].iloc[0]
+                    pph_count = period_data["pph_count"].iloc[0]
+                    total_deliveries = period_data["total_deliveries"].iloc[0]
+                else:
+                    pph_rate = 0.0
+                    pph_count = 0
+                    total_deliveries = 0
+
+                heatmap_data.append(
+                    {
+                        "Region": region_name,
+                        "Period": period,
+                        "PPH Rate": pph_rate,
+                        "PPH Cases": pph_count,
+                        "Total Deliveries": total_deliveries,
+                    }
+                )
+
+        heatmap_df = pd.DataFrame(heatmap_data)
+        pivot_df = heatmap_df.pivot(index="Region", columns="Period", values="PPH Rate")
+
+        # Download button for heatmap CSV
+        csv = pivot_df.to_csv()
+        st.download_button(
+            label="Download Heatmap CSV",
+            data=csv,
+            file_name="pph_rate_region_heatmap.csv",
+            mime="text/csv",
+            key="region_heatmap_download",
+        )
+
+        return  # Exit early for heatmap view
+
+    # Line chart view (original functionality)
     fig = px.line(
         comparison_df,
         x="period_display",
@@ -711,40 +838,82 @@ def render_pph_region_comparison_chart(
     )
 
 
-def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
-    """Render a professionally styled heatmap of PPH rates by facility and period"""
+def render_pph_heatmap(
+    df, entity_names, period_order, bg_color, text_color, entity_label="Facility"
+):
+    """Render a professionally styled heatmap of PPH rates by entity (facility/region) and period"""
     if df is None or df.empty:
         st.info("⚠️ No data available for heatmap.")
         return
 
-    # Prepare data for heatmap - include ALL facilities and periods, even with zero values
+    # Extract and sort periods chronologically using the same mechanism as other graphs
+    if "period_sort" in df.columns:
+        # Use the period_sort column for proper chronological ordering
+        period_df = df[["period_display", "period_sort"]].drop_duplicates()
+        period_df = period_df.sort_values("period_sort")
+        chronological_periods = period_df["period_display"].tolist()
+    else:
+        # Fallback: try to parse periods as dates for sorting
+        try:
+            chronological_periods = sorted(
+                period_order,
+                key=lambda x: pd.to_datetime(
+                    x.split()[0] + " " + x.split()[1] if len(x.split()) == 2 else x
+                ),
+            )
+        except:
+            # Final fallback: use the original order
+            chronological_periods = period_order
+
+    # Prepare data for heatmap - include ALL entities and periods, even with zero values
     heatmap_data = []
 
-    for facility_name in facility_names:
-        facility_df = df[df["orgUnit"] == facility_name]
+    for entity_name in entity_names:
+        # For regions, we need to filter by all facilities in that region
+        if entity_label == "Region":
+            # This would need access to the facilities_by_region mapping
+            # For simplicity, we'll assume the data is already filtered by region
+            entity_df = (
+                df[df["region"] == entity_name]
+                if "region" in df.columns
+                else pd.DataFrame()
+            )
+        else:
+            # For facilities, filter by facility UID
+            entity_df = df[df["orgUnit"] == entity_name]
 
-        for period in period_order:
-            if not facility_df.empty:
-                period_df = facility_df[facility_df["period_display"] == period]
+        for period in chronological_periods:
+            if not entity_df.empty:
+                period_df = entity_df[entity_df["period_display"] == period]
                 if not period_df.empty:
-                    pph_data = compute_pph_kpi(period_df, [facility_name])
+                    if entity_label == "Region":
+                        # For regions, we need to compute the KPI for all facilities in the region
+                        region_facility_uids = [
+                            facility_uid
+                            for facility_uid in period_df["orgUnit"].unique()
+                        ]
+                        pph_data = compute_pph_kpi(period_df, region_facility_uids)
+                    else:
+                        # For facilities, compute KPI for the single facility
+                        pph_data = compute_pph_kpi(period_df, [entity_name])
+
                     pph_rate = pph_data["pph_rate"]
                     pph_count = pph_data["pph_count"]
                     total_deliveries = pph_data["total_deliveries"]
                 else:
-                    # No data for this facility in this period
+                    # No data for this entity in this period
                     pph_rate = 0.0
                     pph_count = 0
                     total_deliveries = 0
             else:
-                # No data for this facility at all
+                # No data for this entity at all
                 pph_rate = 0.0
                 pph_count = 0
                 total_deliveries = 0
 
             heatmap_data.append(
                 {
-                    "Facility": facility_name,
+                    entity_label: entity_name,
                     "Period": period,
                     "PPH Rate": pph_rate,
                     "PPH Cases": pph_count,
@@ -758,8 +927,11 @@ def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
 
     heatmap_df = pd.DataFrame(heatmap_data)
 
-    # Pivot for heatmap format
-    pivot_df = heatmap_df.pivot(index="Facility", columns="Period", values="PPH Rate")
+    # Pivot for heatmap format with chronological ordering
+    pivot_df = heatmap_df.pivot(index=entity_label, columns="Period", values="PPH Rate")
+
+    # Ensure columns are in chronological order
+    pivot_df = pivot_df[chronological_periods]
 
     # Fill any remaining NaN values with 0
     pivot_df = pivot_df.fillna(0)
@@ -792,7 +964,7 @@ def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
 
     # Enhanced title and labels with larger fonts
     ax.set_title(
-        "PPH RATE HEATMAP - FACILITY PERFORMANCE OVERVIEW",
+        f"PPH RATE HEATMAP - {entity_label.upper()} PERFORMANCE OVERVIEW",
         fontsize=42,  # Increased from 38 to 42
         fontweight="bold",
         pad=30,  # Increased padding
@@ -806,7 +978,7 @@ def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
         labelpad=25,  # Increased padding
     )
     ax.set_ylabel(
-        "FACILITY",
+        entity_label.upper(),
         fontsize=36,  # Increased from 38 to 36
         fontweight="bold",
         color=text_color,
@@ -859,12 +1031,12 @@ def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
     st.markdown("### 🔍 Filter Data")
 
     threshold = st.slider(
-        "Show facilities with PPH Rate above:",
+        f"Show {entity_label.lower()}s with PPH Rate above:",
         min_value=0.0,
         max_value=float(max(10.0, heatmap_df["PPH Rate"].max() * 1.2)),
         value=2.0,
         step=0.1,
-        help="Filter to show only facilities with PPH rates above this threshold",
+        help=f"Filter to show only {entity_label.lower()}s with PPH rates above this threshold",
     )
 
     # Display filtered data with increased width
@@ -874,8 +1046,11 @@ def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
 
         # Create a styled table for filtered results with increased width
         display_df = filtered_data.pivot(
-            index="Facility", columns="Period", values="PPH Rate"
+            index=entity_label, columns="Period", values="PPH Rate"
         )
+
+        # Ensure chronological ordering in the display table too
+        display_df = display_df[chronological_periods]
 
         # Use st.dataframe with custom width
         st.dataframe(
@@ -915,23 +1090,23 @@ def render_pph_heatmap(df, facility_names, period_order, bg_color, text_color):
             height=400,
         )
     else:
-        st.warning(f"No facilities found with PPH Rate ≥ {threshold}%")
+        st.warning(f"No {entity_label.lower()}s found with PPH Rate ≥ {threshold}%")
 
     # Additional insights
     st.markdown("### 💡 Insights")
 
-    high_pph_facilities = heatmap_df[heatmap_df["PPH Rate"] > 5.0]["Facility"].unique()
-    if len(high_pph_facilities) > 0:
+    high_pph_entities = heatmap_df[heatmap_df["PPH Rate"] > 5.0][entity_label].unique()
+    if len(high_pph_entities) > 0:
         st.warning(
-            f"🚨 **Attention Needed**: {len(high_pph_facilities)} facilities have PPH rates above 5%: "
-            f"{', '.join(high_pph_facilities[:5])}{'...' if len(high_pph_facilities) > 5 else ''}"
+            f"🚨 **Attention Needed**: {len(high_pph_entities)} {entity_label.lower()}s have PPH rates above 5%: "
+            f"{', '.join(high_pph_entities[:5])}{'...' if len(high_pph_entities) > 5 else ''}"
         )
 
-    zero_pph_facilities = heatmap_df[heatmap_df["PPH Rate"] == 0.0]["Facility"].unique()
-    if len(zero_pph_facilities) > 0:
+    zero_pph_entities = heatmap_df[heatmap_df["PPH Rate"] == 0.0][entity_label].unique()
+    if len(zero_pph_entities) > 0:
         st.success(
-            f"✅ **Excellent Performance**: {len(zero_pph_facilities)} facilities have 0% PPH rates: "
-            f"{', '.join(zero_pph_facilities[:5])}{'...' if len(zero_pph_facilities) > 5 else ''}"
+            f"✅ **Excellent Performance**: {len(zero_pph_entities)} {entity_label.lower()}s have 0% PPH rates: "
+            f"{', '.join(zero_pph_entities[:5])}{'...' if len(zero_pph_entities) > 5 else ''}"
         )
 
 

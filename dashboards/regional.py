@@ -709,19 +709,3 @@ def render():
                 render_obstetric_condition_pie_chart(
                     filtered_events, facility_uids, bg_color, text_color
                 )
-
-            # Heatmap if multiple facilities/periods - ONLY in Comparison View
-            if (
-                view_mode == "Facility Comparison"
-                and len(display_name) > 1
-                and len(filtered_events["period_display"].unique()) > 1
-            ):
-                with col2:
-                    period_order = filtered_events["period_display"].unique().tolist()
-                    render_pph_heatmap(
-                        filtered_events,
-                        facility_names,
-                        period_order,
-                        bg_color,
-                        text_color,
-                    )
