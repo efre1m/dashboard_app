@@ -1157,7 +1157,6 @@ def render_obstetric_condition_pie_chart(
             condition_df,
             values="count",
             names="condition",
-            title="",
             hover_data=["percentage"],
             labels={"count": "Count", "percentage": "Percentage"},
             height=500,  # Slightly increased height
@@ -1167,7 +1166,6 @@ def render_obstetric_condition_pie_chart(
             condition_df,
             values="count",
             names="condition",
-            title="",
             hover_data=["percentage"],
             labels={"count": "Count", "percentage": "Percentage"},
             height=500,
@@ -1225,6 +1223,10 @@ def render_obstetric_condition_pie_chart(
         uniformtext_minsize=8,
         uniformtext_mode="hide",
     )
+
+    # Ensure no "undefined" placeholder
+    fig.update_layout(title=None)
+    fig.layout.pop("title", None)
 
     # Use container to control layout
     with st.container():
