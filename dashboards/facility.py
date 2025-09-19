@@ -512,25 +512,70 @@ def render():
 
         # Build aggregated trend data using standardized compute_kpis function
         elif kpi_selection == "Delivered women who received uterotonic (%)":
-            group = (
-                filtered_events.groupby(["period", "period_display"], as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {
-                            "value": compute_uterotonic_kpi(x, facility_uid)[
-                                "uterotonic_rate"
-                            ],
-                            "Uterotonic Cases": compute_uterotonic_kpi(x, facility_uid)[
-                                "uterotonic_count"
-                            ],
-                            "Total Deliveries": compute_uterotonic_kpi(x, facility_uid)[
-                                "total_deliveries"
-                            ],
-                        }
-                    )
+            # First, let's compute the data for each period
+            period_data = []
+            for period in filtered_events["period"].unique():
+                period_df = filtered_events[filtered_events["period"] == period]
+                period_display = (
+                    period_df["period_display"].iloc[0]
+                    if not period_df.empty
+                    else period
                 )
-                .reset_index(drop=True)
-            )
+
+                # Compute the KPI for this period
+                kpi_data = compute_uterotonic_kpi(period_df, facility_uid)
+
+                # Calculate percentage rates for each drug type
+                total_deliveries = kpi_data["total_deliveries"]
+                ergometrine_rate = (
+                    (
+                        kpi_data["uterotonic_types"]["Ergometrine"]
+                        / total_deliveries
+                        * 100
+                    )
+                    if total_deliveries > 0
+                    else 0
+                )
+                oxytocin_rate = (
+                    (kpi_data["uterotonic_types"]["Oxytocin"] / total_deliveries * 100)
+                    if total_deliveries > 0
+                    else 0
+                )
+                misoprostol_rate = (
+                    (
+                        kpi_data["uterotonic_types"]["Misoprostol"]
+                        / total_deliveries
+                        * 100
+                    )
+                    if total_deliveries > 0
+                    else 0
+                )
+
+                period_data.append(
+                    {
+                        "period": period,
+                        "period_display": period_display,
+                        "value": kpi_data["uterotonic_rate"],
+                        "Uterotonic Cases": kpi_data["uterotonic_count"],
+                        "Total Deliveries": total_deliveries,
+                        "ergometrine_rate": ergometrine_rate,
+                        "oxytocin_rate": oxytocin_rate,
+                        "misoprostol_rate": misoprostol_rate,
+                        # Keep the counts as well for reference
+                        "ergometrine_count": kpi_data["uterotonic_types"][
+                            "Ergometrine"
+                        ],
+                        "oxytocin_count": kpi_data["uterotonic_types"]["Oxytocin"],
+                        "misoprostol_count": kpi_data["uterotonic_types"][
+                            "Misoprostol"
+                        ],
+                    }
+                )
+
+                # Convert to DataFrame
+                group = pd.DataFrame(period_data)
+
+            # Render the chart
             render_uterotonic_trend_chart(
                 group,
                 "period_display",
@@ -543,7 +588,6 @@ def render():
                 "Total Deliveries",
                 facility_uid,
             )
-
         st.markdown("</div>", unsafe_allow_html=True)
 
         # Optional: Add additional PPH visualizations
