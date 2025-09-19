@@ -12,10 +12,16 @@ from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
 from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color
-from utils.kpi_pph import (  # ADD THIS IMPORT
+from utils.kpi_pph import (
     compute_pph_kpi,
     render_pph_trend_chart,
     render_obstetric_condition_pie_chart,
+)
+
+from utils.kpi_uterotonic import (
+    compute_uterotonic_kpi,
+    render_uterotonic_trend_chart,
+    render_uterotonic_type_pie_chart,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -217,6 +223,7 @@ def render():
                 "Institutional Maternal Death Rate (per 100,000 births)",
                 "C-Section Rate (%)",
                 "Postpartum Hemorrhage (PPH) Rate (%)",
+                "Delivered women who received uterotonic (%)",
             ],
         )
 
@@ -503,6 +510,40 @@ def render():
                 facility_uid,
             )
 
+        # Build aggregated trend data using standardized compute_kpis function
+        elif kpi_selection == "Delivered women who received uterotonic (%)":
+            group = (
+                filtered_events.groupby(["period", "period_display"], as_index=False)
+                .apply(
+                    lambda x: pd.Series(
+                        {
+                            "value": compute_uterotonic_kpi(x, facility_uid)[
+                                "uterotonic_rate"
+                            ],
+                            "Uterotonic Cases": compute_uterotonic_kpi(x, facility_uid)[
+                                "uterotonic_count"
+                            ],
+                            "Total Deliveries": compute_uterotonic_kpi(x, facility_uid)[
+                                "total_deliveries"
+                            ],
+                        }
+                    )
+                )
+                .reset_index(drop=True)
+            )
+            render_uterotonic_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "Uterotonic Administration Rate (%)",
+                bg_color,
+                text_color,
+                facility_name,
+                "Uterotonic Cases",
+                "Total Deliveries",
+                facility_uid,
+            )
+
         st.markdown("</div>", unsafe_allow_html=True)
 
         # Optional: Add additional PPH visualizations
@@ -514,5 +555,14 @@ def render():
             )
 
             render_obstetric_condition_pie_chart(
+                filtered_events, facility_uid, bg_color, text_color
+            )
+        elif kpi_selection == "Delivered women who received uterotonic (%)":
+            st.markdown("---")
+            st.markdown(
+                f'<div class="section-header">📊 Additional Uterotonic Analytics</div>',
+                unsafe_allow_html=True,
+            )
+            render_uterotonic_type_pie_chart(
                 filtered_events, facility_uid, bg_color, text_color
             )
