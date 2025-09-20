@@ -34,6 +34,14 @@ from utils.kpi_uterotonic import (
     render_uterotonic_region_comparison_chart,
     render_uterotonic_type_pie_chart,
 )
+
+# Add this import with the other KPI imports
+from utils.kpi_arv import (
+    compute_arv_kpi,
+    render_arv_trend_chart,
+    render_arv_facility_comparison_chart,
+    render_arv_region_comparison_chart,
+)
 from utils.queries import (
     get_facilities_grouped_by_region,
     get_facility_mapping_for_user,
@@ -574,6 +582,7 @@ def render():
                 "C-Section Rate (%)",
                 "Postpartum Hemorrhage (PPH) Rate (%)",
                 "Delivered women who received uterotonic (%)",
+                "ARV Prophylaxis Rate (%)",
             ],
         )
 
@@ -711,6 +720,11 @@ def render():
                     "numerator_name": "Women given uterotonic",
                     "denominator_name": "Deliveries",
                 },
+                "ARV Prophylaxis Rate (%)": {
+                    "title": "ARV Prophylaxis Rate (%)",
+                    "numerator_name": "ARV Cases",
+                    "denominator_name": "HIV-Exposed Infants",
+                },
             }
 
             kpi_config = kpi_mapping.get(kpi_selection, {})
@@ -743,6 +757,21 @@ def render():
                         facility_uids=facility_uids,
                         numerator_name="Uterotonic Cases",
                         denominator_name="Total Deliveries",
+                    )
+
+                elif kpi_selection == "ARV Prophylaxis Rate (%)":
+                    # Use ARV-specific facility comparison
+                    render_arv_facility_comparison_chart(
+                        df=filtered_events,
+                        period_col="period_display",
+                        value_col="value",
+                        title="ARV Prophylaxis Rate (%)",
+                        bg_color=bg_color,
+                        text_color=text_color,
+                        facility_names=display_names,
+                        facility_uids=facility_uids,
+                        numerator_name="ARV Cases",
+                        denominator_name="HIV-Exposed Infants",
                     )
                 else:
                     # Use generic facility comparison for other KPIs
@@ -790,6 +819,22 @@ def render():
                         facilities_by_region=facilities_by_region,
                         numerator_name="Uterotonic Cases",
                         denominator_name="Total Deliveries",
+                    )
+
+                elif kpi_selection == "ARV Prophylaxis Rate (%)":
+                    # Use ARV-specific region comparison
+                    render_arv_region_comparison_chart(
+                        df=filtered_events,
+                        period_col="period_display",
+                        value_col="value",
+                        title="ARV Prophylaxis Rate (%)",
+                        bg_color=bg_color,
+                        text_color=text_color,
+                        region_names=display_names,
+                        region_mapping={},
+                        facilities_by_region=facilities_by_region,
+                        numerator_name="ARV Cases",
+                        denominator_name="HIV-Exposed Infants",
                     )
                 else:
                     # Use generic region comparison for other KPIs
@@ -1112,6 +1157,46 @@ def render():
                     facility_uids,
                 )
 
+            elif kpi_selection == "ARV Prophylaxis Rate (%)":
+                # First, let's compute the data for each period
+                period_data = []
+                for period in filtered_events["period"].unique():
+                    period_df = filtered_events[filtered_events["period"] == period]
+                    period_display = (
+                        period_df["period_display"].iloc[0]
+                        if not period_df.empty
+                        else period
+                    )
+
+                    # Compute the ARV KPI for this period
+                    arv_data = compute_arv_kpi(period_df, facility_uids)
+
+                    period_data.append(
+                        {
+                            "period": period,
+                            "period_display": period_display,
+                            "value": arv_data["arv_rate"],
+                            "ARV Cases": arv_data["arv_count"],
+                            "HIV-Exposed Infants": arv_data["hiv_exposed_infants"],
+                        }
+                    )
+
+                # Convert to DataFrame
+                group = pd.DataFrame(period_data)
+
+                # Render the ARV trend chart
+                render_arv_trend_chart(
+                    group,
+                    "period_display",
+                    "value",
+                    "ARV Prophylaxis Rate (%)",
+                    bg_color,
+                    text_color,
+                    display_names,
+                    "ARV Cases",
+                    "HIV-Exposed Infants",
+                    facility_uids,
+                )
             st.markdown("</div>", unsafe_allow_html=True)
 
         # Optional: Add additional PPH visualizations

@@ -92,6 +92,111 @@ PNC_EARLY_CODES = {"1", "2"}  # 1 = 24 hrs stay, 2 = 25-48 hrs
 CONDITION_OF_DISCHARGE_UID = "TjQOcW6tm8k"
 DEAD_CODE = "4"
 
+NUMBER_OF_NEWBORNS_UID = "VzwnSBROvUm"  # Number of Newborns
+OTHER_NUMBER_OF_NEWBORNS_UID = "tIa0WvbPGLk"  # Other Number of Newborns
+
+
+def compute_birth_counts(df, facility_uids=None):
+    """
+    Compute birth counts accounting for multiple births (twins, triplets, etc.)
+    Returns: total_births, live_births, stillbirths
+    """
+    if df is None or df.empty:
+        return 0, 0, 0
+
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # Initialize counts
+    total_births = 0
+    live_births = 0
+    stillbirths = 0
+
+    # Process each mother (tracked by tei_id)
+    for tei_id in df["tei_id"].unique():
+        mother_df = df[df["tei_id"] == tei_id]
+
+        # Get number of newborns - this should represent the total babies born
+        newborns_records = mother_df[
+            mother_df["dataElement_uid"] == NUMBER_OF_NEWBORNS_UID
+        ]
+        other_newborns_records = mother_df[
+            mother_df["dataElement_uid"] == OTHER_NUMBER_OF_NEWBORNS_UID
+        ]
+
+        # Calculate total babies for this mother - only count what's actually recorded
+        num_newborns = 0
+        if not newborns_records.empty:
+            try:
+                num_newborns = int(float(newborns_records["value"].iloc[0]))
+            except (ValueError, TypeError):
+                num_newborns = 0  # If invalid, count as 0
+
+        num_other_newborns = 0
+        if not other_newborns_records.empty:
+            try:
+                num_other_newborns = int(float(other_newborns_records["value"].iloc[0]))
+            except (ValueError, TypeError):
+                num_other_newborns = 0  # If invalid, count as 0
+
+        total_babies = num_newborns + num_other_newborns
+
+        # If no newborn count records exist, we cannot assume any births occurred
+        # Only count births if we have actual data
+        if total_babies == 0:
+            # Check if we have birth outcome records as evidence of births
+            birth_outcome_records = mother_df[
+                mother_df["dataElement_uid"] == BIRTH_OUTCOME_UID
+            ]
+            if not birth_outcome_records.empty:
+                # Use the number of birth outcome records as the total babies
+                total_babies = len(birth_outcome_records)
+            else:
+                # No evidence of any births for this mother, skip
+                continue
+
+        # Get birth outcome records
+        birth_outcome_records = mother_df[
+            mother_df["dataElement_uid"] == BIRTH_OUTCOME_UID
+        ]
+
+        # Count outcomes based on actual records
+        alive_count = 0
+        stillbirth_count = 0
+
+        for _, record in birth_outcome_records.iterrows():
+            if record["value"] == ALIVE_CODE:
+                alive_count += 1
+            elif record["value"] == STILLBIRTH_CODE:
+                stillbirth_count += 1
+
+        # Handle cases where outcome counts don't match total babies
+        if alive_count + stillbirth_count == total_babies:
+            # Perfect match - use exact counts
+            live_births += alive_count
+            stillbirths += stillbirth_count
+        elif alive_count + stillbirth_count > total_babies:
+            # More outcomes than total babies - data inconsistency, use proportion
+            proportion_alive = alive_count / (alive_count + stillbirth_count)
+            estimated_live = round(total_babies * proportion_alive)
+            live_births += estimated_live
+            stillbirths += total_babies - estimated_live
+        elif alive_count + stillbirth_count < total_babies:
+            # Fewer outcomes than total babies - assume missing outcomes are live births
+            live_births += alive_count + (
+                total_babies - (alive_count + stillbirth_count)
+            )
+            stillbirths += stillbirth_count
+        else:
+            # No outcome records - cannot determine outcomes, skip counting outcomes
+            # But still count the total births
+            pass
+
+        total_births += total_babies
+
+    return total_births, live_births, stillbirths
+
 
 # ---------------- KPI Computation Functions ----------------
 def compute_total_deliveries(df, facility_uids=None):
@@ -133,13 +238,12 @@ def compute_stillbirth_rate(df, facility_uids=None):
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
 
-    births = df[
-        (df["dataElement_uid"] == BIRTH_OUTCOME_UID)
-        & (df["value"].isin([ALIVE_CODE, STILLBIRTH_CODE]))
-    ]
-    total_births = births["tei_id"].nunique()
-    stillbirths = births[births["value"] == STILLBIRTH_CODE]["tei_id"].nunique()
+    # Use the new helper function that accounts for multiple births
+    total_births, live_births, stillbirths = compute_birth_counts(df, facility_uids)
+
+    # Calculate stillbirth rate per 1000 births
     rate = (stillbirths / total_births * 1000) if total_births > 0 else 0.0
+
     return rate, stillbirths, total_births
 
 
@@ -179,10 +283,8 @@ def compute_maternal_death_rate(df, facility_uids=None):
     ]
     maternal_deaths = deaths_df["tei_id"].nunique()
 
-    # Live births (always compute)
-    live_births = dfx[
-        (dfx["dataElement_uid"] == BIRTH_OUTCOME_UID) & (dfx["value"] == ALIVE_CODE)
-    ]["tei_id"].nunique()
+    # Use the new helper function to get live births (accounts for multiple births)
+    total_births, live_births, stillbirths = compute_birth_counts(dfx, facility_uids)
 
     # Compute rate (0 if no deaths)
     rate = (
@@ -224,15 +326,21 @@ def compute_kpis(df, facility_uids=None):
     total_deliveries = compute_total_deliveries(df, facility_uids)
     fp_acceptance = compute_fp_acceptance(df, facility_uids)
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
+
+    # Use updated functions that account for multiple births
     stillbirth_rate, stillbirths, total_births = compute_stillbirth_rate(
         df, facility_uids
     )
+
     pnc_coverage, early_pnc, total_deliveries_pnc = compute_early_pnc_coverage(
         df, facility_uids
     )
+
+    # Use updated maternal death rate function
     maternal_death_rate, maternal_deaths, live_births = compute_maternal_death_rate(
         df, facility_uids
     )
+
     csection_rate, csection_deliveries, total_deliveries_cs = compute_csection_rate(
         df, facility_uids
     )

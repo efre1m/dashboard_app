@@ -23,6 +23,10 @@ from utils.kpi_uterotonic import (
     render_uterotonic_trend_chart,
     render_uterotonic_type_pie_chart,
 )
+from utils.kpi_arv import (
+    compute_arv_kpi,
+    render_arv_trend_chart,
+)
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -224,6 +228,7 @@ def render():
                 "C-Section Rate (%)",
                 "Postpartum Hemorrhage (PPH) Rate (%)",
                 "Delivered women who received uterotonic (%)",
+                "ARV Prophylaxis Rate (%)",
             ],
         )
 
@@ -586,6 +591,47 @@ def render():
                 facility_name,
                 "Uterotonic Cases",
                 "Total Deliveries",
+                facility_uid,
+            )
+
+        elif kpi_selection == "ARV Prophylaxis Rate (%)":
+            # First, let's compute the data for each period
+            period_data = []
+            for period in filtered_events["period"].unique():
+                period_df = filtered_events[filtered_events["period"] == period]
+                period_display = (
+                    period_df["period_display"].iloc[0]
+                    if not period_df.empty
+                    else period
+                )
+
+                # Compute the ARV KPI for this period
+                arv_data = compute_arv_kpi(period_df, facility_uid)
+
+                period_data.append(
+                    {
+                        "period": period,
+                        "period_display": period_display,
+                        "value": arv_data["arv_rate"],
+                        "ARV Cases": arv_data["arv_count"],
+                        "HIV-Exposed Infants": arv_data["hiv_exposed_infants"],
+                    }
+                )
+
+            # Convert to DataFrame
+            group = pd.DataFrame(period_data)
+
+            # Render the ARV trend chart
+            render_arv_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "ARV Prophylaxis Rate (%)",
+                bg_color,
+                text_color,
+                facility_name,
+                "ARV Cases",
+                "HIV-Exposed Infants",
                 facility_uid,
             )
         st.markdown("</div>", unsafe_allow_html=True)

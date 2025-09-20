@@ -138,45 +138,6 @@ def compute_uterotonic_kpi(df, facility_uids=None):
     }
 
 
-def compute_uterotonic_trend_data(df, period_col="period_display", facility_uids=None):
-    """
-    Compute uterotonic trend data by period
-
-    Returns:
-        DataFrame with columns: period_display, total_deliveries, uterotonic_count, uterotonic_rate
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
-
-    # Ensure period column exists
-    if period_col not in df.columns:
-        return pd.DataFrame()
-
-    trend_data = []
-
-    for period in df[period_col].unique():
-        period_df = df[df[period_col] == period]
-        uterotonic_data = compute_uterotonic_kpi(period_df, facility_uids)
-
-        trend_data.append(
-            {
-                period_col: period,
-                "total_deliveries": uterotonic_data["total_deliveries"],
-                "uterotonic_count": uterotonic_data["uterotonic_count"],
-                "uterotonic_rate": uterotonic_data["uterotonic_rate"],
-                "ergometrine_count": uterotonic_data["uterotonic_types"]["Ergometrine"],
-                "oxytocin_count": uterotonic_data["uterotonic_types"]["Oxytocin"],
-                "misoprostol_count": uterotonic_data["uterotonic_types"]["Misoprostol"],
-            }
-        )
-
-    return pd.DataFrame(trend_data)
-
-
 # ---------------- Uterotonic Chart Functions ----------------
 import pandas as pd
 import plotly.express as px
@@ -316,45 +277,6 @@ def compute_uterotonic_kpi(df, facility_uids=None):
         "total_deliveries": int(total_deliveries),
         "uterotonic_types": uterotonic_types,
     }
-
-
-def compute_uterotonic_trend_data(df, period_col="period_display", facility_uids=None):
-    """
-    Compute uterotonic trend data by period
-
-    Returns:
-        DataFrame with columns: period_display, total_deliveries, uterotonic_count, uterotonic_rate
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
-
-    # Ensure period column exists
-    if period_col not in df.columns:
-        return pd.DataFrame()
-
-    trend_data = []
-
-    for period in df[period_col].unique():
-        period_df = df[df[period_col] == period]
-        uterotonic_data = compute_uterotonic_kpi(period_df, facility_uids)
-
-        trend_data.append(
-            {
-                period_col: period,
-                "total_deliveries": uterotonic_data["total_deliveries"],
-                "uterotonic_count": uterotonic_data["uterotonic_count"],
-                "uterotonic_rate": uterotonic_data["uterotonic_rate"],
-                "ergometrine_count": uterotonic_data["uterotonic_types"]["Ergometrine"],
-                "oxytocin_count": uterotonic_data["uterotonic_types"]["Oxytocin"],
-                "misoprostol_count": uterotonic_data["uterotonic_types"]["Misoprostol"],
-            }
-        )
-
-    return pd.DataFrame(trend_data)
 
 
 # ---------------- Uterotonic Chart Functions ----------------

@@ -66,42 +66,6 @@ def compute_pph_kpi(df, facility_uids=None):
     }
 
 
-def compute_pph_trend_data(df, period_col="period_display", facility_uids=None):
-    """
-    Compute PPH trend data by period
-
-    Returns:
-        DataFrame with columns: period_display, total_deliveries, pph_count, pph_rate
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
-
-    # Ensure period column exists
-    if period_col not in df.columns:
-        return pd.DataFrame()
-
-    trend_data = []
-
-    for period in df[period_col].unique():
-        period_df = df[df[period_col] == period]
-        pph_data = compute_pph_kpi(period_df, facility_uids)
-
-        trend_data.append(
-            {
-                period_col: period,
-                "total_deliveries": pph_data["total_deliveries"],
-                "pph_count": pph_data["pph_count"],
-                "pph_rate": pph_data["pph_rate"],
-            }
-        )
-
-    return pd.DataFrame(trend_data)
-
-
 def compute_obstetric_condition_distribution(df, facility_uids=None):
     """
     Compute distribution of all obstetric conditions
