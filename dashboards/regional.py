@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import json
 import logging
-from io import BytesIO
-import zipfile
 import concurrent.futures
 import requests
 import plotly.express as px
@@ -31,7 +29,6 @@ from utils.kpi_uterotonic import (
     render_uterotonic_type_pie_chart,
 )
 
-# Add this import with the other KPI imports
 from utils.kpi_arv import (
     compute_arv_kpi,
     render_arv_trend_chart,
@@ -227,41 +224,6 @@ def render():
             index=0,
             help="Compare trends across multiple facilities",
         )
-
-    # ---------------- Export Buttons ----------------
-    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.markdown(
-        '<div class="section-header">Export Data</div>', unsafe_allow_html=True
-    )
-
-    col_exp1, col_exp2 = st.sidebar.columns(2)
-    with col_exp1:
-        if st.button("📥 Raw JSON"):
-            st.download_button(
-                "Download Raw JSON",
-                data=json.dumps(raw_json, indent=2),
-                file_name=f"{region_name}_raw.json",
-                mime="application/json",
-            )
-    with col_exp2:
-        if st.button("📊 Export CSV"):
-            buffer = BytesIO()
-            with zipfile.ZipFile(buffer, "w") as zf:
-                zf.writestr("tei.csv", tei_df.to_csv(index=False).encode("utf-8"))
-                zf.writestr(
-                    "enrollments.csv",
-                    enrollments_df.to_csv(index=False).encode("utf-8"),
-                )
-                zf.writestr(
-                    "events.csv", copied_events_df.to_csv(index=False).encode("utf-8")
-                )
-            buffer.seek(0)
-            st.download_button(
-                "Download All DataFrames (ZIP)",
-                data=buffer,
-                file_name=f"{region_name}_dataframes.zip",
-                mime="application/zip",
-            )
 
     # MAIN HEADING
     if selected_facilities == ["All Facilities"]:
