@@ -34,6 +34,12 @@ from utils.kpi_arv import (
     render_arv_trend_chart,
     render_arv_facility_comparison_chart,
 )
+from utils.kpi_lbw import (
+    compute_lbw_kpi,
+    render_lbw_trend_chart,
+    render_lbw_facility_comparison_chart,
+    render_lbw_category_pie_chart,
+)
 from utils.queries import get_facilities_for_user, get_facility_mapping_for_user
 
 logging.basicConfig(level=logging.INFO)
@@ -285,6 +291,7 @@ def render():
                 "Postpartum Hemorrhage (PPH) Rate (%)",
                 "Delivered women who received uterotonic (%)",
                 "ARV Prophylaxis Rate (%)",
+                "Low Birth Weight (LBW) Rate (%)",
             ],
         )
 
@@ -425,6 +432,11 @@ def render():
                     "numerator_name": "ARV Cases",
                     "denominator_name": "HIV-Exposed Infants",
                 },
+                "Low Birth Weight (LBW) Rate (%)": {
+                    "title": "Low Birth Weight Rate (%)",
+                    "numerator_name": "LBW Cases (<2500g)",
+                    "denominator_name": "Total Weighed Births",
+                },
             }
 
             kpi_config = kpi_mapping.get(kpi_selection, {})
@@ -470,6 +482,19 @@ def render():
                     facility_uids=facility_uids,
                     numerator_name="ARV Cases",
                     denominator_name="HIV-Exposed Infants",
+                )
+            elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
+                render_lbw_facility_comparison_chart(
+                    df=filtered_events,
+                    period_col="period_display",
+                    value_col="value",
+                    title="Low Birth Weight Rate (%)",
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=facility_names,
+                    facility_uids=facility_uids,
+                    numerator_name="LBW Cases (<2500g)",
+                    denominator_name="Total Weighed Births",
                 )
             else:
                 # Use the imported render_facility_comparison_chart function
@@ -829,6 +854,54 @@ def render():
                     facility_uids,
                 )
 
+            elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
+                # Compute data for each period
+                period_data = []
+                for period in filtered_events["period"].unique():
+                    period_df = filtered_events[filtered_events["period"] == period]
+                    period_display = (
+                        period_df["period_display"].iloc[0]
+                        if not period_df.empty
+                        else period
+                    )
+
+                    # Compute LBW KPI for this period
+                    lbw_data = compute_lbw_kpi(period_df, facility_uids)
+
+                    # Prepare category data
+                    period_row = {
+                        "period": period,
+                        "period_display": period_display,
+                        "value": lbw_data["lbw_rate"],
+                        "LBW Cases (<2500g)": lbw_data["lbw_count"],
+                        "Total Weighed Births": lbw_data["total_weighed"],
+                    }
+
+                    # Add category rates and counts
+                    for category_key in lbw_data["category_rates"].keys():
+                        period_row[f"{category_key}_rate"] = lbw_data["category_rates"][
+                            category_key
+                        ]
+                        period_row[f"{category_key}_count"] = lbw_data[
+                            "lbw_categories"
+                        ][category_key]
+
+                    period_data.append(period_row)
+
+                # Create DataFrame and render chart
+                group = pd.DataFrame(period_data)
+                render_lbw_trend_chart(
+                    group,
+                    "period_display",
+                    "value",
+                    "Low Birth Weight Rate (%)",
+                    bg_color,
+                    text_color,
+                    facility_names,
+                    "LBW Cases (<2500g)",
+                    "Total Weighed Births",
+                    facility_uids,
+                )
         st.markdown("</div>", unsafe_allow_html=True)
 
         # Optional: Add additional PPH visualizations
@@ -850,5 +923,14 @@ def render():
                 unsafe_allow_html=True,
             )
             render_uterotonic_type_pie_chart(
+                filtered_events, facility_uids, bg_color, text_color
+            )
+        elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":  # ADD THIS SECTION
+            st.markdown("---")
+            st.markdown(
+                '<div class="section-header">📊 Additional LBW Analytics</div>',
+                unsafe_allow_html=True,
+            )
+            render_lbw_category_pie_chart(
                 filtered_events, facility_uids, bg_color, text_color
             )
