@@ -46,6 +46,7 @@ from utils.kpi_lbw import (
     render_lbw_facility_comparison_chart,
     render_lbw_region_comparison_chart,
     render_lbw_category_pie_chart,
+    LBW_CATEGORIES,
 )
 from utils.queries import (
     get_facilities_grouped_by_region,
@@ -1201,7 +1202,7 @@ def render():
                     facility_uids,
                 )
             elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-                # Compute data for each period
+                # Compute data for each period - FIX: Match uterotonic structure
                 period_data = []
                 for period in filtered_events["period"].unique():
                     period_df = filtered_events[filtered_events["period"] == period]
@@ -1214,23 +1215,25 @@ def render():
                     # Compute LBW KPI for this period
                     lbw_data = compute_lbw_kpi(period_df, facility_uids)
 
-                    # Prepare category data
+                    # Calculate percentage rates for each LBW category
+                    total_weighed = lbw_data["total_weighed"]
+
+                    # FIX: Create individual rate columns like uterotonic does
                     period_row = {
                         "period": period,
                         "period_display": period_display,
                         "value": lbw_data["lbw_rate"],
                         "LBW Cases (<2500g)": lbw_data["lbw_count"],
-                        "Total Weighed Births": lbw_data["total_weighed"],
+                        "Total Weighed Births": total_weighed,
                     }
 
-                    # Add category rates and counts
-                    for category_key in lbw_data["category_rates"].keys():
-                        period_row[f"{category_key}_rate"] = lbw_data["category_rates"][
-                            category_key
-                        ]
-                        period_row[f"{category_key}_count"] = lbw_data[
-                            "lbw_categories"
-                        ][category_key]
+                    # Add individual rate columns for each LBW category
+                    for category_key, category_info in LBW_CATEGORIES.items():
+                        rate_key = f"{category_key}_rate"
+                        count_key = f"{category_key}_count"
+
+                        period_row[rate_key] = lbw_data["category_rates"][category_key]
+                        period_row[count_key] = lbw_data["lbw_categories"][category_key]
 
                     period_data.append(period_row)
 

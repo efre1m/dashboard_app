@@ -208,9 +208,21 @@ def render_lbw_trend_chart(
         key=f"chart_type_{title}_{str(facility_uids)}",
     ).lower()
 
+    # FIX: Ensure all required category columns exist
+    required_category_columns = []
+    for category_key in LBW_CATEGORIES.keys():
+        rate_col = f"{category_key}_rate"
+        count_col = f"{category_key}_count"
+        required_category_columns.extend([rate_col, count_col])
+
+        # Add missing columns with default values
+        if rate_col not in df.columns:
+            df[rate_col] = 0.0
+        if count_col not in df.columns:
+            df[count_col] = 0
+
     # Create chart based on selected type
     if chart_type == "line chart":
-        # FIX 1: Show five lines - one for each LBW category and one for overall
         fig = go.Figure()
 
         # Colors for each line
@@ -260,85 +272,125 @@ def render_lbw_trend_chart(
         )
 
     elif chart_type == "stacked horizontal bar chart":
-        # FIX 2: Stacked bar chart showing LBW rate contribution by category
-        lbw_category_cols = [f"{category}_rate" for category in LBW_CATEGORIES.keys()]
+        # FIXED: Stacked bar chart where total bar length matches overall LBW rate
+        fig = go.Figure()
 
-        if all(col in df.columns for col in lbw_category_cols):
-            fig = go.Figure()
+        # Colors for LBW categories
+        colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71"]
 
-            # Colors for LBW categories
-            colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71"]
+        # Calculate proportional contributions of each category to the overall LBW rate
+        # This ensures the total bar length equals the overall LBW rate
+        for period_idx, period_row in df.iterrows():
+            overall_lbw_rate = period_row[value_col]
+            total_category_rates = sum(
+                [
+                    period_row.get(f"{category_key}_rate", 0)
+                    for category_key in LBW_CATEGORIES.keys()
+                ]
+            )
 
-            for i, (category_key, category_info) in enumerate(LBW_CATEGORIES.items()):
-                fig.add_trace(
-                    go.Bar(
-                        name=f"{category_info['name']} LBW Rate",
-                        y=df[period_col],
-                        x=df[f"{category_key}_rate"],
-                        orientation="h",
-                        marker_color=colors[i % len(colors)],
-                        hovertemplate=f"<b>%{{y}}</b><br>{category_info['name']} LBW Rate: %{{x:.2f}}%<br>Count: %{{customdata[0]}}<br>Total Weighed: %{{customdata[1]}}<extra></extra>",
-                        customdata=np.column_stack(
-                            (df[f"{category_key}_count"], df[denominator_name])
-                        ),
+            # If there are no LBW cases or overall rate is 0, all segments should be 0
+            if overall_lbw_rate == 0 or total_category_rates == 0:
+                # Add zero-width bars for all categories
+                for category_key in LBW_CATEGORIES.keys():
+                    fig.add_trace(
+                        go.Bar(
+                            name=LBW_CATEGORIES[category_key]["name"],
+                            y=[period_row[period_col]],
+                            x=[0],
+                            orientation="h",
+                            marker_color=colors[
+                                list(LBW_CATEGORIES.keys()).index(category_key)
+                                % len(colors)
+                            ],
+                            showlegend=(
+                                period_idx == 0
+                            ),  # Only show legend for first period
+                            hovertemplate=f"<b>{period_row[period_col]}</b><br>{LBW_CATEGORIES[category_key]['name']}: 0.00%<br>Count: 0<br>Total Weighed: {period_row[denominator_name]}<extra></extra>",
+                            customdata=[[0, period_row[denominator_name]]],
+                        )
                     )
-                )
+            else:
+                # Calculate proportional contributions
+                cumulative_width = 0
+                for i, (category_key, category_info) in enumerate(
+                    LBW_CATEGORIES.items()
+                ):
+                    category_rate = period_row.get(f"{category_key}_rate", 0)
+                    category_count = period_row.get(f"{category_key}_count", 0)
 
-            # Calculate total LBW rate for each period
-            total_lbw_rates = df[lbw_category_cols].sum(axis=1)
+                    # Calculate proportional width of this category segment
+                    if total_category_rates > 0:
+                        proportional_width = (
+                            category_rate / total_category_rates
+                        ) * overall_lbw_rate
+                    else:
+                        proportional_width = 0
 
-            # Set x-axis range to 0-100% with proper intervals
-            max_rate = 100
+                    fig.add_trace(
+                        go.Bar(
+                            name=category_info["name"],
+                            y=[period_row[period_col]],
+                            x=[proportional_width],
+                            orientation="h",
+                            marker_color=colors[i % len(colors)],
+                            showlegend=(
+                                period_idx == 0
+                            ),  # Only show legend for first period
+                            hovertemplate=f"<b>{period_row[period_col]}</b><br>{category_info['name']}: %{{x:.2f}}%<br>Count: %{{customdata[0]}}<br>Total Weighed: %{{customdata[1]}}<extra></extra>",
+                            customdata=[[category_count, period_row[denominator_name]]],
+                            base=[cumulative_width],  # Stack on previous segments
+                        )
+                    )
+                    cumulative_width += proportional_width
 
-            fig.update_layout(
-                barmode="stack",
-                title="LBW Rate by Weight Category (%)",
-                height=400,
-                xaxis_title="LBW Rate (%)",
-                yaxis_title="Period",
-                xaxis=dict(
-                    range=[0, 100],
-                    tickmode="array",
-                    tickvals=[0, 25, 50, 75, 100],
-                    ticktext=["0%", "25%", "50%", "75%", "100%"],
-                    tickformat=".0f",
-                    showgrid=True,
-                    gridcolor="rgba(128,128,128,0.2)",
-                ),
-                bargap=0.3,
-            )
+        # Set x-axis range to 0-100% with proper intervals
+        fig.update_layout(
+            barmode="stack",
+            title="LBW Rate by Weight Category (%) - Proportional to Overall Rate",
+            height=400,
+            xaxis_title="LBW Rate (%)",
+            yaxis_title="Period",
+            xaxis=dict(
+                range=[0, 100],
+                tickmode="array",
+                tickvals=[0, 25, 50, 75, 100],
+                ticktext=["0%", "25%", "50%", "75%", "100%"],
+                showgrid=True,
+                gridcolor="rgba(128,128,128,0.2)",
+            ),
+            bargap=0.3,
+            showlegend=True,
+        )
 
-            fig.update_traces(width=0.6)
-        else:
-            # Fall back to simple bar chart
-            fig = px.bar(
-                df,
-                x=period_col,
-                y=value_col,
-                title=title,
-                height=400,
-            )
-            fig.update_traces(
-                hovertemplate=f"<b>%{{x}}</b><br>LBW Rate: %{{y:.2f}}%<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>",
-                customdata=np.column_stack((df[numerator_name], df[denominator_name])),
-            )
+        fig.update_traces(width=0.6)
 
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
+        title=dict(
+            text=(
+                title
+                if chart_type == "line chart"
+                else "LBW Rate by Weight Category (%) - Proportional to Overall Rate"
+            ),
+            x=0.5,
+            xanchor="center",
+        ),
         xaxis=dict(
-            type="category",
-            tickangle=-45,
+            type="category" if chart_type == "line chart" else "linear",
+            tickangle=-45 if chart_type == "line chart" else 0,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
         yaxis=dict(
-            rangemode="tozero",
+            type="linear" if chart_type == "line chart" else "category",
+            rangemode="tozero" if chart_type == "line chart" else None,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
-            zeroline=True,
+            zeroline=True if chart_type == "line chart" else False,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
     )
@@ -367,15 +419,20 @@ def render_lbw_trend_chart(
             unsafe_allow_html=True,
         )
 
-    # Summary table
+    # Summary table - FIX: Ensure all required columns exist
     st.subheader(f"📋 {title} Summary Table")
 
     # Main KPI Overview
     st.markdown("**Main KPI Overview**")
     main_summary_df = df.copy().reset_index(drop=True)
-    main_summary_df = main_summary_df[
-        [period_col, numerator_name, denominator_name, value_col]
-    ]
+
+    # Ensure all required columns exist
+    table_columns = [period_col, numerator_name, denominator_name, value_col]
+    for col in table_columns:
+        if col not in main_summary_df.columns:
+            main_summary_df[col] = 0  # Add missing column with default value
+
+    main_summary_df = main_summary_df[table_columns]
 
     # Calculate overall value
     total_numerator = main_summary_df[numerator_name].sum()
@@ -411,90 +468,77 @@ def render_lbw_trend_chart(
 
     st.markdown(styled_main_table.to_html(), unsafe_allow_html=True)
 
-    # FIX 3: Category Breakdown Table - Show LBW rates for each category
-    lbw_category_rate_cols = [f"{category}_rate" for category in LBW_CATEGORIES.keys()]
-    lbw_category_count_cols = [
-        f"{category}_count" for category in LBW_CATEGORIES.keys()
-    ]
+    # Category Breakdown Table - FIX: Show LBW rates for each category
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("**LBW Rate by Weight Category**")
 
-    if all(
-        col in df.columns for col in lbw_category_rate_cols + lbw_category_count_cols
-    ):
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("**LBW Rate by Weight Category**")
-
-        category_summary_df = df.copy().reset_index(drop=True)
-        category_columns = (
-            [period_col, denominator_name]
-            + lbw_category_rate_cols
-            + lbw_category_count_cols
-        )
-        category_summary_df = category_summary_df[category_columns]
-
-        # Calculate overall values for category table
-        total_counts = {}
-        for category in LBW_CATEGORIES.keys():
-            total_counts[category] = category_summary_df[f"{category}_count"].sum()
-
-        overall_category_row = {
-            period_col: f"Overall {title}",
-            denominator_name: total_denominator,
+    category_summary_data = []
+    for period_idx, period_row in df.iterrows():
+        period_data = {
+            "Period": period_row[period_col],
+            "Total Weighed": period_row[denominator_name],
+            "Overall LBW Rate (%)": period_row[value_col],
         }
 
-        for category in LBW_CATEGORIES.keys():
-            # Calculate average LBW rate for overall
-            avg_rate = (
-                (total_counts[category] / total_denominator * 100)
-                if total_denominator > 0
-                else 0
-            )
-            overall_category_row[f"{category}_rate"] = avg_rate
-            overall_category_row[f"{category}_count"] = total_counts[category]
-
-        overall_category_df = pd.DataFrame([overall_category_row])
-        category_summary_table = pd.concat(
-            [category_summary_df, overall_category_df], ignore_index=True
-        )
-        category_summary_table.insert(
-            0, "No", range(1, len(category_summary_table) + 1)
-        )
-
-        # Rename columns for display
-        display_columns = {
-            "period_display": "Period",
-            "Total Weighed Births": "Total<br>Weighed",
-        }
-
+        # Add each category's rate and count
         for category_key, category_info in LBW_CATEGORIES.items():
-            display_columns[f"{category_key}_rate"] = (
-                f"{category_info['name']}<br>LBW Rate (%)"
+            rate_col = f"{category_key}_rate"
+            count_col = f"{category_key}_count"
+
+            period_data[f"{category_info['name']} Rate (%)"] = period_row.get(
+                rate_col, 0
             )
-            display_columns[f"{category_key}_count"] = (
-                f"{category_info['name']}<br>Count"
-            )
+            period_data[f"{category_info['name']} Count"] = period_row.get(count_col, 0)
 
-        category_summary_table = category_summary_table.rename(columns=display_columns)
+        category_summary_data.append(period_data)
 
-        # Format category table
-        format_dict = {"Total<br>Weighed": "{:,.0f}"}
+    category_summary_df = pd.DataFrame(category_summary_data)
 
-        for category_info in LBW_CATEGORIES.values():
-            format_dict[f"{category_info['name']}<br>LBW Rate (%)"] = "{:.2f}%"
-            format_dict[f"{category_info['name']}<br>Count"] = "{:,.0f}"
-
-        styled_category_table = (
-            category_summary_table.style.format(format_dict)
-            .set_table_attributes('class="summary-table"')
-            .hide(axis="index")
+    # Add overall row
+    overall_category_row = {
+        "Period": f"Overall {title}",
+        "Total Weighed": total_denominator,
+        "Overall LBW Rate (%)": overall_value,
+    }
+    for category_key, category_info in LBW_CATEGORIES.items():
+        total_category_count = category_summary_df[
+            f"{category_info['name']} Count"
+        ].sum()
+        overall_category_rate = (
+            (total_category_count / total_denominator * 100)
+            if total_denominator > 0
+            else 0
         )
 
-        st.markdown(styled_category_table.to_html(), unsafe_allow_html=True)
+        overall_category_row[f"{category_info['name']} Rate (%)"] = (
+            overall_category_rate
+        )
+        overall_category_row[f"{category_info['name']} Count"] = total_category_count
+
+    overall_category_df = pd.DataFrame([overall_category_row])
+    category_summary_table = pd.concat(
+        [category_summary_df, overall_category_df], ignore_index=True
+    )
+    category_summary_table.insert(0, "No", range(1, len(category_summary_table) + 1))
+
+    # Format category table
+    format_dict = {"Total Weighed": "{:,.0f}", "Overall LBW Rate (%)": "{:.2f}%"}
+    for category_info in LBW_CATEGORIES.values():
+        format_dict[f"{category_info['name']} Rate (%)"] = "{:.2f}%"
+        format_dict[f"{category_info['name']} Count"] = "{:,.0f}"
+
+    styled_category_table = (
+        category_summary_table.style.format(format_dict)
+        .set_table_attributes('class="summary-table"')
+        .hide(axis="index")
+    )
+
+    st.markdown(styled_category_table.to_html(), unsafe_allow_html=True)
 
     # Download button
-    combined_table = main_summary_table
-    if "category_summary_table" in locals():
-        combined_table = pd.concat([main_summary_table, category_summary_table], axis=1)
-
+    combined_table = pd.concat(
+        [main_summary_table, category_summary_table.iloc[:, 2:]], axis=1
+    )
     csv = combined_table.to_csv(index=False)
     st.download_button(
         label="Download CSV",
