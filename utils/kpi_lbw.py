@@ -272,11 +272,16 @@ def render_lbw_trend_chart(
         )
 
     elif chart_type == "stacked horizontal bar chart":
-        # FIXED: Stacked bar chart where total bar length matches overall LBW rate
+        # FIXED: Stacked bar chart with corrected hover template and dynamic x-axis
         fig = go.Figure()
 
         # Colors for LBW categories
         colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71"]
+
+        # Calculate the maximum overall LBW rate for dynamic x-axis range
+        max_overall_rate = df[value_col].max()
+        # Set x-axis range with some padding, capped at 100%
+        xaxis_max = min(max_overall_rate * 1.1, 100)
 
         # Calculate proportional contributions of each category to the overall LBW rate
         # This ensures the total bar length equals the overall LBW rate
@@ -293,9 +298,13 @@ def render_lbw_trend_chart(
             if overall_lbw_rate == 0 or total_category_rates == 0:
                 # Add zero-width bars for all categories
                 for category_key in LBW_CATEGORIES.keys():
+                    category_info = LBW_CATEGORIES[category_key]
+                    category_rate = period_row.get(f"{category_key}_rate", 0)
+                    category_count = period_row.get(f"{category_key}_count", 0)
+
                     fig.add_trace(
                         go.Bar(
-                            name=LBW_CATEGORIES[category_key]["name"],
+                            name=category_info["name"],
                             y=[period_row[period_col]],
                             x=[0],
                             orientation="h",
@@ -306,8 +315,14 @@ def render_lbw_trend_chart(
                             showlegend=(
                                 period_idx == 0
                             ),  # Only show legend for first period
-                            hovertemplate=f"<b>{period_row[period_col]}</b><br>{LBW_CATEGORIES[category_key]['name']}: 0.00%<br>Count: 0<br>Total Weighed: {period_row[denominator_name]}<extra></extra>",
-                            customdata=[[0, period_row[denominator_name]]],
+                            # FIXED: Use actual category rate in hover template
+                            hovertemplate=(
+                                f"<b>{period_row[period_col]}</b><br>"
+                                f"{category_info['name']}: {category_rate:.2f}%<br>"
+                                f"Count: {category_count}<br>"
+                                f"Total Weighed: {period_row[denominator_name]}"
+                                "<extra></extra>"
+                            ),
                         )
                     )
             else:
@@ -337,14 +352,20 @@ def render_lbw_trend_chart(
                             showlegend=(
                                 period_idx == 0
                             ),  # Only show legend for first period
-                            hovertemplate=f"<b>{period_row[period_col]}</b><br>{category_info['name']}: %{{x:.2f}}%<br>Count: %{{customdata[0]}}<br>Total Weighed: %{{customdata[1]}}<extra></extra>",
-                            customdata=[[category_count, period_row[denominator_name]]],
+                            # FIXED: Use actual category rate in hover template
+                            hovertemplate=(
+                                f"<b>{period_row[period_col]}</b><br>"
+                                f"{category_info['name']}: {category_rate:.2f}%<br>"
+                                f"Count: {category_count}<br>"
+                                f"Total Weighed: {period_row[denominator_name]}"
+                                "<extra></extra>"
+                            ),
                             base=[cumulative_width],  # Stack on previous segments
                         )
                     )
                     cumulative_width += proportional_width
 
-        # Set x-axis range to 0-100% with proper intervals
+        # Set dynamic x-axis range with better tick spacing
         fig.update_layout(
             barmode="stack",
             title="LBW Rate by Weight Category (%) - Proportional to Overall Rate",
@@ -352,10 +373,10 @@ def render_lbw_trend_chart(
             xaxis_title="LBW Rate (%)",
             yaxis_title="Period",
             xaxis=dict(
-                range=[0, 100],
-                tickmode="array",
-                tickvals=[0, 25, 50, 75, 100],
-                ticktext=["0%", "25%", "50%", "75%", "100%"],
+                range=[0, xaxis_max],
+                tickmode="linear",
+                tick0=0,
+                dtick=10,  # Show ticks every 10% for better readability
                 showgrid=True,
                 gridcolor="rgba(128,128,128,0.2)",
             ),
@@ -457,7 +478,7 @@ def render_lbw_trend_chart(
     styled_main_table = (
         main_summary_table.style.format(
             {
-                value_col: "{:.1f}%",
+                value_col: "{:.2f}%",
                 numerator_name: "{:,.0f}",
                 denominator_name: "{:,.0f}",
             }
@@ -546,6 +567,9 @@ def render_lbw_trend_chart(
         file_name=f"{title.lower().replace(' ', '_')}_summary.csv",
         mime="text/csv",
     )
+
+
+# ... (rest of the functions remain the same - they don't need changes for this fix)
 
 
 def render_lbw_facility_comparison_chart(
