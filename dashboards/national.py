@@ -481,13 +481,13 @@ def render():
             ],
         )
 
-        bg_color = st.color_picker("🎨 Chart Background", "#FFFFFF")
-        st.markdown("</div>", unsafe_allow_html=True)
-
         # ---------------- APPLY FILTER ----------------
         filtered_events, available_aggregations, period_label = apply_date_filters(
             copied_events_df, enrollments_df, quick_range, facility_uids
         )
+
+        bg_color = st.color_picker("🎨 Chart Background", "#FFFFFF")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:

@@ -489,7 +489,7 @@ def render_lbw_trend_chart(
 
     st.markdown(styled_main_table.to_html(), unsafe_allow_html=True)
 
-    # Category Breakdown Table - FIX: Show LBW rates for each category
+    # Category Breakdown Table - FIX: Show Count first then Rate for each category
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("**LBW Rate by Weight Category**")
 
@@ -501,15 +501,16 @@ def render_lbw_trend_chart(
             "Overall LBW Rate (%)": period_row[value_col],
         }
 
-        # Add each category's rate and count
+        # Add each category's COUNT first then RATE (like uterotonic KPI)
         for category_key, category_info in LBW_CATEGORIES.items():
             rate_col = f"{category_key}_rate"
             count_col = f"{category_key}_count"
 
+            # Add count first, then rate
+            period_data[f"{category_info['name']} Count"] = period_row.get(count_col, 0)
             period_data[f"{category_info['name']} Rate (%)"] = period_row.get(
                 rate_col, 0
             )
-            period_data[f"{category_info['name']} Count"] = period_row.get(count_col, 0)
 
         category_summary_data.append(period_data)
 
@@ -531,10 +532,11 @@ def render_lbw_trend_chart(
             else 0
         )
 
+        # Add count first, then rate
+        overall_category_row[f"{category_info['name']} Count"] = total_category_count
         overall_category_row[f"{category_info['name']} Rate (%)"] = (
             overall_category_rate
         )
-        overall_category_row[f"{category_info['name']} Count"] = total_category_count
 
     overall_category_df = pd.DataFrame([overall_category_row])
     category_summary_table = pd.concat(
@@ -542,11 +544,11 @@ def render_lbw_trend_chart(
     )
     category_summary_table.insert(0, "No", range(1, len(category_summary_table) + 1))
 
-    # Format category table
+    # Format category table - ensure Count comes before Rate in formatting
     format_dict = {"Total Weighed": "{:,.0f}", "Overall LBW Rate (%)": "{:.2f}%"}
     for category_info in LBW_CATEGORIES.values():
-        format_dict[f"{category_info['name']} Rate (%)"] = "{:.2f}%"
         format_dict[f"{category_info['name']} Count"] = "{:,.0f}"
+        format_dict[f"{category_info['name']} Rate (%)"] = "{:.2f}%"
 
     styled_category_table = (
         category_summary_table.style.format(format_dict)
@@ -567,9 +569,6 @@ def render_lbw_trend_chart(
         file_name=f"{title.lower().replace(' ', '_')}_summary.csv",
         mime="text/csv",
     )
-
-
-# ... (rest of the functions remain the same - they don't need changes for this fix)
 
 
 def render_lbw_facility_comparison_chart(
@@ -748,7 +747,7 @@ def render_lbw_facility_comparison_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # FIX: Facility comparison table - Only show LBW categories
+    # FIX: Facility comparison table - Show Count first then Rate for each category
     st.subheader("📋 Facility Comparison Summary")
     facility_table_data = []
 
@@ -762,14 +761,14 @@ def render_lbw_facility_comparison_chart(
                 "Total Weighed": lbw_data["total_weighed"],
                 "LBW Rate (%)": lbw_data["lbw_rate"],
             }
-            # Add LBW rates for each weight category
+            # Add LBW Count first then Rate for each weight category
             for category_key, category_info in LBW_CATEGORIES.items():
-                row_data[f"{category_info['name']} LBW Rate (%)"] = lbw_data[
-                    "category_rates"
-                ][category_key]
                 row_data[f"{category_info['name']} Count"] = lbw_data["lbw_categories"][
                     category_key
                 ]
+                row_data[f"{category_info['name']} LBW Rate (%)"] = lbw_data[
+                    "category_rates"
+                ][category_key]
 
             facility_table_data.append(row_data)
 
@@ -793,27 +792,22 @@ def render_lbw_facility_comparison_chart(
         "LBW Rate (%)": overall_value,
     }
 
-    # Add category totals (only LBW categories)
+    # Add category totals (only LBW categories) - Count first then Rate
     for category_key, category_info in LBW_CATEGORIES.items():
+        total_category_count = facility_table_df[f"{category_info['name']} Count"].sum()
+        overall_row[f"{category_info['name']} Count"] = total_category_count
         overall_row[f"{category_info['name']} LBW Rate (%)"] = (
-            (
-                facility_table_df[f"{category_info['name']} Count"].sum()
-                / total_denominator
-                * 100
-            )
+            (total_category_count / total_denominator * 100)
             if total_denominator > 0
             else 0
         )
-        overall_row[f"{category_info['name']} Count"] = facility_table_df[
-            f"{category_info['name']} Count"
-        ].sum()
 
     facility_table_df = pd.concat(
         [facility_table_df, pd.DataFrame([overall_row])], ignore_index=True
     )
     facility_table_df.insert(0, "No", range(1, len(facility_table_df) + 1))
 
-    # Format table
+    # Format table - Count first then Rate
     format_dict = {
         "LBW Cases": "{:,.0f}",
         "Total Weighed": "{:,.0f}",
@@ -821,8 +815,8 @@ def render_lbw_facility_comparison_chart(
     }
 
     for category_info in LBW_CATEGORIES.values():
-        format_dict[f"{category_info['name']} LBW Rate (%)"] = "{:.2f}%"
         format_dict[f"{category_info['name']} Count"] = "{:,.0f}"
+        format_dict[f"{category_info['name']} LBW Rate (%)"] = "{:.2f}%"
 
     styled_table = (
         facility_table_df.style.format(format_dict)
@@ -852,6 +846,7 @@ def render_lbw_category_pie_chart(
     # Compute LBW category distribution
     category_data = compute_lbw_by_category(df, facility_uids)
     total_weighed = compute_lbw_denominator(df, facility_uids)
+    total_lbw_cases = compute_lbw_numerator(df, facility_uids)
 
     if total_weighed == 0:
         st.info("⚠️ No data available for LBW category distribution.")
@@ -860,15 +855,17 @@ def render_lbw_category_pie_chart(
     # Prepare data for visualization - Only LBW categories
     pie_data = []
     for category_key, category_info in LBW_CATEGORIES.items():
+        category_count = category_data[category_key]
+        # FIX: Calculate distribution percentage (percentage of total LBW cases, not total weighed)
+        distribution_percentage = (
+            (category_count / total_lbw_cases * 100) if total_lbw_cases > 0 else 0
+        )
+
         pie_data.append(
             {
                 "Category": category_info["name"],
-                "Count": category_data[category_key],
-                "Percentage": (
-                    (category_data[category_key] / total_weighed * 100)
-                    if total_weighed > 0
-                    else 0
-                ),
+                "Count": category_count,
+                "Distribution Percentage": distribution_percentage,  # This is now percentage of total LBW cases
             }
         )
 
@@ -893,8 +890,8 @@ def render_lbw_category_pie_chart(
             pie_df,
             values="Count",
             names="Category",
-            hover_data=["Percentage"],
-            labels={"Count": "Count", "Percentage": "Percentage"},
+            hover_data=["Distribution Percentage"],
+            labels={"Count": "Count", "Distribution Percentage": "Distribution %"},
             height=500,
             color="Category",
             color_discrete_sequence=colors,
@@ -904,8 +901,8 @@ def render_lbw_category_pie_chart(
             pie_df,
             values="Count",
             names="Category",
-            hover_data=["Percentage"],
-            labels={"Count": "Count", "Percentage": "Percentage"},
+            hover_data=["Distribution Percentage"],
+            labels={"Count": "Count", "Distribution Percentage": "Distribution %"},
             height=500,
             hole=0.4,
             color="Category",
@@ -920,7 +917,8 @@ def render_lbw_category_pie_chart(
         fig.update_traces(
             textinfo="percent+label",
             textposition="inside",
-            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
+            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Distribution: %{customdata[0]:.2f}%<extra></extra>",
+            customdata=pie_df["Distribution Percentage"],
             textfont=dict(size=10),
             insidetextfont=dict(color="white", size=9),
             outsidetextfont=dict(size=9),
@@ -929,7 +927,8 @@ def render_lbw_category_pie_chart(
         fig.update_traces(
             textinfo="percent+label",
             textposition="outside",
-            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
+            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Distribution: %{customdata[0]:.2f}%<extra></extra>",
+            customdata=pie_df["Distribution Percentage"],
             textfont=dict(size=10),
         )
 
@@ -962,13 +961,24 @@ def render_lbw_category_pie_chart(
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # Show summary table
-    st.subheader("📋 LBW Category Summary")
+    # Show summary table - FIX: Show distribution percentage instead of LBW rate
+    st.subheader("📋 LBW Category Distribution Summary")
     summary_df = pie_df.copy()
     summary_df.insert(0, "No", range(1, len(summary_df) + 1))
 
+    # Add total row
+    total_row = {
+        "No": len(summary_df) + 1,
+        "Category": "Total LBW Cases",
+        "Count": total_lbw_cases,
+        "Distribution Percentage": 100.0 if total_lbw_cases > 0 else 0.0,
+    }
+    summary_df = pd.concat([summary_df, pd.DataFrame([total_row])], ignore_index=True)
+
     styled_table = (
-        summary_df.style.format({"Count": "{:,.0f}", "Percentage": "{:.2f}%"})
+        summary_df.style.format(
+            {"Count": "{:,.0f}", "Distribution Percentage": "{:.2f}%"}
+        )
         .set_table_attributes('class="summary-table"')
         .hide(axis="index")
     )
@@ -1167,7 +1177,7 @@ def render_lbw_region_comparison_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # FIX: Region comparison table - Only show LBW categories
+    # FIX: Region comparison table - Show Count first then Rate for each category
     st.subheader("📋 Region Comparison Summary")
     region_table_data = []
 
@@ -1185,14 +1195,14 @@ def render_lbw_region_comparison_chart(
                 "Total Weighed": lbw_data["total_weighed"],
                 "LBW Rate (%)": lbw_data["lbw_rate"],
             }
-            # Add LBW rates for each weight category
+            # Add LBW Count first then Rate for each weight category
             for category_key, category_info in LBW_CATEGORIES.items():
-                row_data[f"{category_info['name']} LBW Rate (%)"] = lbw_data[
-                    "category_rates"
-                ][category_key]
                 row_data[f"{category_info['name']} Count"] = lbw_data["lbw_categories"][
                     category_key
                 ]
+                row_data[f"{category_info['name']} LBW Rate (%)"] = lbw_data[
+                    "category_rates"
+                ][category_key]
 
             region_table_data.append(row_data)
 
@@ -1216,27 +1226,22 @@ def render_lbw_region_comparison_chart(
         "LBW Rate (%)": overall_value,
     }
 
-    # Add category totals (only LBW categories)
+    # Add category totals (only LBW categories) - Count first then Rate
     for category_key, category_info in LBW_CATEGORIES.items():
+        total_category_count = region_table_df[f"{category_info['name']} Count"].sum()
+        overall_row[f"{category_info['name']} Count"] = total_category_count
         overall_row[f"{category_info['name']} LBW Rate (%)"] = (
-            (
-                region_table_df[f"{category_info['name']} Count"].sum()
-                / total_denominator
-                * 100
-            )
+            (total_category_count / total_denominator * 100)
             if total_denominator > 0
             else 0
         )
-        overall_row[f"{category_info['name']} Count"] = region_table_df[
-            f"{category_info['name']} Count"
-        ].sum()
 
     region_table_df = pd.concat(
         [region_table_df, pd.DataFrame([overall_row])], ignore_index=True
     )
     region_table_df.insert(0, "No", range(1, len(region_table_df) + 1))
 
-    # Format table
+    # Format table - Count first then Rate
     format_dict = {
         "LBW Cases": "{:,.0f}",
         "Total Weighed": "{:,.0f}",
@@ -1244,8 +1249,8 @@ def render_lbw_region_comparison_chart(
     }
 
     for category_info in LBW_CATEGORIES.values():
-        format_dict[f"{category_info['name']} LBW Rate (%)"] = "{:.2f}%"
         format_dict[f"{category_info['name']} Count"] = "{:,.0f}"
+        format_dict[f"{category_info['name']} LBW Rate (%)"] = "{:.2f}%"
 
     styled_table = (
         region_table_df.style.format(format_dict)
