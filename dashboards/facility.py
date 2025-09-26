@@ -1,36 +1,21 @@
 import streamlit as st
 import pandas as pd
-import json
 import logging
 import concurrent.futures
 import requests
-
-# Add this import near the other imports
 from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
-from utils.kpi_utils import compute_kpis, render_trend_chart, auto_text_color
-from utils.kpi_pph import (
-    compute_pph_kpi,
-    render_pph_trend_chart,
-    render_obstetric_condition_pie_chart,
-)
-
-from utils.kpi_uterotonic import (
-    compute_uterotonic_kpi,
-    render_uterotonic_trend_chart,
-    render_uterotonic_type_pie_chart,
-)
-from utils.kpi_arv import (
-    compute_arv_kpi,
-    render_arv_trend_chart,
-)
-
-from utils.kpi_lbw import (
-    compute_lbw_kpi,
-    render_lbw_trend_chart,
-    render_lbw_category_pie_chart,
-    LBW_CATEGORIES,
+from utils.dash_co import (
+    normalize_event_dates,
+    normalize_enrollment_dates,
+    get_kpi_selection,
+    render_trend_chart_section,
+    render_comparison_chart,
+    render_additional_analytics,
+    get_text_color,
+    apply_date_filters,
+    KPI_OPTIONS,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -43,51 +28,6 @@ def fetch_cached_data(user):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future = executor.submit(fetch_program_data_for_user, user)
         return future.result(timeout=180)
-
-
-def _normalize_event_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensure a single datetime column 'event_date' exists and is timezone-naive.
-    Handles:
-      - eventDate like '2025-07-25T00:00:00.000'
-      - event_date like '7/25/2025'
-    """
-    if df.empty:
-        return df
-
-    df = df.copy()
-
-    # Parse ISO 'eventDate' if present
-    if "eventDate" in df.columns:
-        # pandas can parse ISO 8601 with milliseconds without explicit format
-        iso_parsed = pd.to_datetime(df["eventDate"], errors="coerce")
-    else:
-        iso_parsed = pd.Series(pd.NaT, index=df.index)
-
-    # Parse US 'event_date' (m/d/Y) if present
-    if "event_date" in df.columns:
-        us_parsed = pd.to_datetime(df["event_date"], format="%m/%d/%Y", errors="coerce")
-    else:
-        us_parsed = pd.Series(pd.NaT, index=df.index)
-
-    # Prefer ISO if available, else fallback to US
-    df["event_date"] = iso_parsed.where(iso_parsed.notna(), us_parsed)
-
-    # Final safety: coerce any str leftovers
-    df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
-
-    return df
-
-
-def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure enrollmentDate is datetime from '7/25/2025' format."""
-    if df.empty or "enrollmentDate" not in df.columns:
-        return df
-    df = df.copy()
-    df["enrollmentDate"] = pd.to_datetime(
-        df["enrollmentDate"], format="%m/%d/%Y", errors="coerce"
-    )
-    return df
 
 
 # ---------------- Page Rendering ----------------
@@ -113,14 +53,14 @@ def render():
     user = st.session_state.get("user", {})
     username = user.get("username", "Unknown User")
     role = user.get("role", "Unknown Role")
-    facility_name = user.get("facility_name", "Unknown facility")
+    facility_name = user.get("facility_name", "Unknown Facility")
     facility_uid = user.get("facility_uid")  # Get facility UID from user session
 
     st.sidebar.markdown(
         f"""
         <div class="user-info">
             <div>👤 Username: {username}</div>
-            <div>🗺️ Facility: {facility_name}</div>
+            <div>🏥 Facility: {facility_name}</div>
             <div>🛡️ Role: {role}</div>
         </div>
     """,
@@ -150,9 +90,9 @@ def render():
     events_df = dfs.get("events", pd.DataFrame())
     raw_json = dfs.get("raw_json", [])
 
-    # Normalize dates
-    enrollments_df = _normalize_enrollment_dates(enrollments_df)
-    copied_events_df = _normalize_event_dates(events_df)
+    # Normalize dates using common functions
+    enrollments_df = normalize_enrollment_dates(enrollments_df)
+    copied_events_df = normalize_event_dates(events_df)
 
     # Filter data to only show this facility's data
     if facility_uid and not copied_events_df.empty:
@@ -176,9 +116,11 @@ def render():
     user_id = str(
         user.get("id", username)
     )  # Prefer numeric ID if available, fallback to username
+
+    # Use single facility UID (not list) for facility-level view
     render_kpi_cards(
         copied_events_df,
-        [facility_uid] if facility_uid else None,
+        facility_uid,  # Single facility UID (not list)
         facility_name,
         user_id=user_id,
     )
@@ -188,20 +130,8 @@ def render():
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
 
-        kpi_selection = st.selectbox(
-            "📊 Select KPI to Visualize",
-            [
-                "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-                "Stillbirth Rate (per 1000 births)",
-                "Early Postnatal Care (PNC) Coverage (%)",
-                "Institutional Maternal Death Rate (per 100,000 births)",
-                "C-Section Rate (%)",
-                "Postpartum Hemorrhage (PPH) Rate (%)",
-                "Delivered women who received uterotonic (%)",
-                "ARV Prophylaxis Rate (%)",
-                "Low Birth Weight (LBW) Rate (%)",
-            ],
-        )
+        # Use common KPI selection
+        kpi_selection = get_kpi_selection()
 
         # Build a minimal df for date range defaults
         _df_for_dates = (
@@ -224,30 +154,25 @@ def render():
             ],
         )
 
-        # Use your existing helper (returns Python date objects)
+        # Use the original date range helper (returns Python date objects)
         start_date, end_date = get_date_range(_df_for_dates, quick_range)
 
-        # Get available aggregation levels based on date range
+        # Get valid aggregation levels based on date range
         available_aggregations = get_available_aggregations(start_date, end_date)
 
-        # If current period selection is not available, default to the widest available
+        # If current selection is not valid, fallback to widest available
         if (
             "period_label" not in st.session_state
             or st.session_state.period_label not in available_aggregations
         ):
-            st.session_state.period_label = available_aggregations[
-                -1
-            ]  # Widest available
+            st.session_state.period_label = available_aggregations[-1]
 
+        # Show selector (with safe default applied)
         period_label = st.selectbox(
             "⏰ Aggregation Level",
             available_aggregations,
             index=available_aggregations.index(st.session_state.period_label),
-            key="period_selectbox",
         )
-
-        # Update session state with current selection
-        st.session_state.period_label = period_label
 
         bg_color = st.color_picker("🎨 Chart Background", "#FFFFFF")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -263,10 +188,10 @@ def render():
         & (copied_events_df["event_date"] <= end_datetime)
     ].copy()
 
-    # STORE FILTERED EVENTS FOR GAUGE CHART - ADD THIS LINE
+    # GAUGE - Store filtered events in session state
     st.session_state["filtered_events"] = filtered_events.copy()
 
-    # Assign period AFTER filtering (so period aligns with the time window)
+    # Assign period AFTER filtering
     filtered_events = assign_period(filtered_events, "event_date", period_label)
 
     # ---------------- KPI Trend Charts ----------------
@@ -277,7 +202,7 @@ def render():
         )
         return
 
-    text_color = auto_text_color(bg_color)
+    text_color = get_text_color(bg_color)
 
     with col_chart:
         st.markdown(
@@ -286,444 +211,19 @@ def render():
         )
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
-        # Build aggregated trend data using standardized compute_kpis function
-        if (
-            kpi_selection
-            == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
-        ):
-            group = (
-                filtered_events.groupby(["period", "period_display"], as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {
-                            "value": compute_kpis(x, facility_uid)["ippcar"],
-                            "FP Acceptances": compute_kpis(x, facility_uid)[
-                                "fp_acceptance"
-                            ],
-                            "Total Deliveries": compute_kpis(x, facility_uid)[
-                                "total_deliveries"
-                            ],
-                        }
-                    )
-                )
-                .reset_index(drop=True)
-            )
-            render_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "IPPCAR (%)",
-                bg_color,
-                text_color,
-                facility_name,
-                "FP Acceptances",
-                "Total Deliveries",
-                facility_uid,
-            )
-        elif kpi_selection == "Stillbirth Rate (per 1000 births)":
-            group = (
-                filtered_events.groupby(["period", "period_display"], as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {
-                            "value": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["stillbirth_rate"],
-                            "Stillbirths": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["stillbirths"],
-                            "Total Births": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["total_births"],
-                        }
-                    )
-                )
-                .reset_index(drop=True)
-            )
-            render_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "Stillbirth Rate (per 1000 births)",
-                bg_color,
-                text_color,
-                [facility_name],
-                "Stillbirths",
-                "Total Births",
-                [facility_uid] if facility_uid else None,
-            )
-
-        elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-            group = (
-                filtered_events.groupby(["period", "period_display"], as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {
-                            "value": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["pnc_coverage"],
-                            "Early PNC (≤48 hrs)": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["early_pnc"],
-                            "Total Deliveries": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["total_deliveries_pnc"],
-                        }
-                    )
-                )
-                .reset_index(drop=True)
-            )
-            render_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "Early PNC Coverage (%)",
-                bg_color,
-                text_color,
-                [facility_name],
-                "Early PNC (≤48 hrs)",
-                "Total Deliveries",
-                [facility_uid] if facility_uid else None,
-            )
-
-        elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
-            group = (
-                filtered_events.groupby(["period", "period_display"], as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {
-                            "value": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["maternal_death_rate"],
-                            "Maternal Deaths": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["maternal_deaths"],
-                            "Live Births": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["live_births"],
-                        }
-                    )
-                )
-                .reset_index(drop=True)
-            )
-            render_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "Maternal Death Rate (per 100,000 births)",
-                bg_color,
-                text_color,
-                [facility_name],
-                "Maternal Deaths",
-                "Live Births",
-                [facility_uid] if facility_uid else None,
-            )
-
-        elif kpi_selection == "C-Section Rate (%)":
-            group = (
-                filtered_events.groupby(["period", "period_display"], as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {
-                            "value": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["csection_rate"],
-                            "C-Sections": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["csection_deliveries"],
-                            "Total Deliverings": compute_kpis(
-                                x, [facility_uid] if facility_uid else None
-                            )["total_deliveries_cs"],
-                        }
-                    )
-                )
-                .reset_index(drop=True)
-            )
-            render_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "C-Section Rate (%)",
-                bg_color,
-                text_color,
-                [facility_name],
-                "C-Sections",
-                "Total Deliveries",
-                [facility_uid] if facility_uid else None,
-            )
-
-        elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-            # Use the same structure as other indicators
-            group = (
-                filtered_events.groupby(["period", "period_display"], as_index=False)
-                .apply(
-                    lambda x: pd.Series(
-                        {
-                            "value": compute_pph_kpi(x, facility_uid)[
-                                "pph_rate"
-                            ],  # Changed to compute_pph_kpi
-                            "PPH Cases": compute_pph_kpi(x, facility_uid)[
-                                "pph_count"
-                            ],  # Changed to compute_pph_kpi
-                            "Total Deliveries": compute_pph_kpi(x, facility_uid)[
-                                "total_deliveries"
-                            ],  # Changed to compute_pph_kpi
-                        }
-                    )
-                )
-                .reset_index(drop=True)
-            )
-            render_pph_trend_chart(  # Keep using PPH-specific render function
-                group,
-                "period_display",
-                "value",
-                "PPH Rate (%)",
-                bg_color,
-                text_color,
-                facility_name,
-                "PPH Cases",
-                "Total Deliveries",
-                facility_uid,
-            )
-
-        # Build aggregated trend data using standardized compute_kpis function
-        elif kpi_selection == "Delivered women who received uterotonic (%)":
-            # First, let's compute the data for each period
-            period_data = []
-            for period in filtered_events["period"].unique():
-                period_df = filtered_events[filtered_events["period"] == period]
-                period_display = (
-                    period_df["period_display"].iloc[0]
-                    if not period_df.empty
-                    else period
-                )
-
-                # Compute the KPI for this period
-                kpi_data = compute_uterotonic_kpi(period_df, facility_uid)
-
-                # Calculate percentage rates for each drug type
-                total_deliveries = kpi_data["total_deliveries"]
-                ergometrine_rate = (
-                    (
-                        kpi_data["uterotonic_types"]["Ergometrine"]
-                        / total_deliveries
-                        * 100
-                    )
-                    if total_deliveries > 0
-                    else 0
-                )
-                oxytocin_rate = (
-                    (kpi_data["uterotonic_types"]["Oxytocin"] / total_deliveries * 100)
-                    if total_deliveries > 0
-                    else 0
-                )
-                misoprostol_rate = (
-                    (
-                        kpi_data["uterotonic_types"]["Misoprostol"]
-                        / total_deliveries
-                        * 100
-                    )
-                    if total_deliveries > 0
-                    else 0
-                )
-
-                period_data.append(
-                    {
-                        "period": period,
-                        "period_display": period_display,
-                        "value": kpi_data["uterotonic_rate"],
-                        "Uterotonic Cases": kpi_data["uterotonic_count"],
-                        "Total Deliveries": total_deliveries,
-                        "ergometrine_rate": ergometrine_rate,
-                        "oxytocin_rate": oxytocin_rate,
-                        "misoprostol_rate": misoprostol_rate,
-                        # Keep the counts as well for reference
-                        "ergometrine_count": kpi_data["uterotonic_types"][
-                            "Ergometrine"
-                        ],
-                        "oxytocin_count": kpi_data["uterotonic_types"]["Oxytocin"],
-                        "misoprostol_count": kpi_data["uterotonic_types"][
-                            "Misoprostol"
-                        ],
-                    }
-                )
-
-                # Convert to DataFrame
-                group = pd.DataFrame(period_data)
-
-            # Render the chart
-            render_uterotonic_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "Uterotonic Administration Rate (%)",
-                bg_color,
-                text_color,
-                facility_name,
-                "Uterotonic Cases",
-                "Total Deliveries",
-                facility_uid,
-            )
-
-        elif kpi_selection == "ARV Prophylaxis Rate (%)":
-            # First, let's compute the data for each period
-            period_data = []
-            for period in filtered_events["period"].unique():
-                period_df = filtered_events[filtered_events["period"] == period]
-                period_display = (
-                    period_df["period_display"].iloc[0]
-                    if not period_df.empty
-                    else period
-                )
-
-                # Compute the ARV KPI for this period
-                arv_data = compute_arv_kpi(period_df, facility_uid)
-
-                period_data.append(
-                    {
-                        "period": period,
-                        "period_display": period_display,
-                        "value": arv_data["arv_rate"],
-                        "ARV Cases": arv_data["arv_count"],
-                        "HIV-Exposed Infants": arv_data["hiv_exposed_infants"],
-                    }
-                )
-
-            # Convert to DataFrame
-            group = pd.DataFrame(period_data)
-
-            # Render the ARV trend chart
-            render_arv_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "ARV Prophylaxis Rate (%)",
-                bg_color,
-                text_color,
-                facility_name,
-                "ARV Cases",
-                "HIV-Exposed Infants",
-                facility_uid,
-            )
-        elif kpi_selection == "ARV Prophylaxis Rate (%)":
-            # First, let's compute the data for each period
-            period_data = []
-            for period in filtered_events["period"].unique():
-                period_df = filtered_events[filtered_events["period"] == period]
-                period_display = (
-                    period_df["period_display"].iloc[0]
-                    if not period_df.empty
-                    else period
-                )
-
-                # Compute the ARV KPI for this period
-                arv_data = compute_arv_kpi(period_df, facility_uid)
-
-                period_data.append(
-                    {
-                        "period": period,
-                        "period_display": period_display,
-                        "value": arv_data["arv_rate"],
-                        "ARV Cases": arv_data["arv_count"],
-                        "HIV-Exposed Infants": arv_data["hiv_exposed_infants"],
-                    }
-                )
-
-            # Convert to DataFrame
-            group = pd.DataFrame(period_data)
-
-            # Render the ARV trend chart
-            render_arv_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "ARV Prophylaxis Rate (%)",
-                bg_color,
-                text_color,
-                facility_name,
-                "ARV Cases",
-                "HIV-Exposed Infants",
-                facility_uid,
-            )
-
-        # ADD LBW TREND CHART SECTION HERE
-        elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-            # Compute data for each period
-            period_data = []
-            for period in filtered_events["period"].unique():
-                period_df = filtered_events[filtered_events["period"] == period]
-                period_display = (
-                    period_df["period_display"].iloc[0]
-                    if not period_df.empty
-                    else period
-                )
-
-                # Compute LBW KPI for this period
-                lbw_data = compute_lbw_kpi(period_df, facility_uid)
-
-                # Base row
-                period_row = {
-                    "period": period,
-                    "period_display": period_display,
-                    "value": lbw_data["lbw_rate"],
-                    "LBW Cases (<2500g)": lbw_data["lbw_count"],
-                    "Total Weighed Births": lbw_data["total_weighed"],
-                }
-
-                # ✅ Add category rates and counts using LBW_CATEGORIES
-                for category_key, category_info in LBW_CATEGORIES.items():
-                    rate_key = f"{category_key}_rate"
-                    count_key = f"{category_key}_count"
-
-                    period_row[rate_key] = lbw_data["category_rates"][category_key]
-                    period_row[count_key] = lbw_data["lbw_categories"][category_key]
-
-                period_data.append(period_row)
-
-            # Create DataFrame and render chart
-            group = pd.DataFrame(period_data)
-            render_lbw_trend_chart(
-                group,
-                "period_display",
-                "value",
-                "Low Birth Weight Rate (%)",
-                bg_color,
-                text_color,
-                facility_name,  # single facility
-                "LBW Cases (<2500g)",
-                "Total Weighed Births",
-                facility_uid,
-            )
+        # Use common trend chart function with single facility
+        render_trend_chart_section(
+            kpi_selection,
+            filtered_events,
+            facility_uid,  # Single facility UID
+            facility_name,  # Single facility name
+            bg_color,
+            text_color,
+        )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Optional: Add additional PPH visualizations
-        if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-            st.markdown("---")
-            st.markdown(
-                f'<div class="section-header">📊 Additional PPH Analytics</div>',
-                unsafe_allow_html=True,
-            )
-
-            render_obstetric_condition_pie_chart(
-                filtered_events, facility_uid, bg_color, text_color
-            )
-        elif kpi_selection == "Delivered women who received uterotonic (%)":
-            st.markdown("---")
-            st.markdown(
-                f'<div class="section-header">📊 Additional Uterotonic Analytics</div>',
-                unsafe_allow_html=True,
-            )
-            render_uterotonic_type_pie_chart(
-                filtered_events, facility_uid, bg_color, text_color
-            )
-        # ADD LBW ANALYTICS SECTION HERE
-        elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-            st.markdown("---")
-            st.markdown(
-                '<div class="section-header">📊 Additional LBW Analytics</div>',
-                unsafe_allow_html=True,
-            )
-            render_lbw_category_pie_chart(
-                filtered_events, facility_uid, bg_color, text_color
-            )
+        # Use common additional analytics function
+        render_additional_analytics(
+            kpi_selection, filtered_events, facility_uid, bg_color, text_color
+        )

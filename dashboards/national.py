@@ -1,53 +1,20 @@
 import streamlit as st
+from utils.dash_co import (
+    get_kpi_selection,
+    apply_date_filters,
+    render_trend_chart_section,
+    render_additional_analytics,
+    render_comparison_chart,
+    get_text_color,
+    normalize_event_dates,
+    normalize_enrollment_dates,
+)
 import pandas as pd
-import json
 import logging
 import concurrent.futures
 import requests
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
-from utils.time_filter import get_date_range, assign_period, get_available_aggregations
-from utils.kpi_utils import (
-    compute_kpis,
-    render_trend_chart,
-    auto_text_color,
-    render_facility_comparison_chart,
-    render_region_comparison_chart,
-)
-
-from utils.kpi_pph import (
-    compute_pph_kpi,
-    render_pph_trend_chart,
-    render_pph_facility_comparison_chart,
-    render_pph_region_comparison_chart,
-    render_obstetric_condition_pie_chart,
-)
-from utils.kpi_uterotonic import (
-    compute_uterotonic_kpi,
-    render_uterotonic_trend_chart,
-    render_uterotonic_facility_comparison_chart,
-    render_uterotonic_region_comparison_chart,
-    render_uterotonic_type_pie_chart,
-)
-
-# Add this import with the other KPI imports
-from utils.kpi_arv import (
-    compute_arv_kpi,
-    render_arv_trend_chart,
-    render_arv_facility_comparison_chart,
-    render_arv_region_comparison_chart,
-)
-from utils.kpi_lbw import (
-    compute_lbw_kpi,
-    render_lbw_trend_chart,
-    render_lbw_facility_comparison_chart,
-    render_lbw_region_comparison_chart,
-    render_lbw_category_pie_chart,
-    LBW_CATEGORIES,
-)
 from utils.queries import (
     get_facilities_grouped_by_region,
     get_facility_mapping_for_user,
@@ -63,51 +30,6 @@ def fetch_cached_data(user):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future = executor.submit(fetch_program_data_for_user, user)
         return future.result(timeout=180)
-
-
-def _normalize_event_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensure a single datetime column 'event_date' exists and is timezone-naive.
-    Handles:
-      - eventDate like '2025-07-25T00:00:00.000'
-      - event_date like '7/25/2025'
-    """
-    if df.empty:
-        return df
-
-    df = df.copy()
-
-    # Parse ISO 'eventDate' if present
-    if "eventDate" in df.columns:
-        # pandas can parse ISO 8601 with milliseconds without explicit format
-        iso_parsed = pd.to_datetime(df["eventDate"], errors="coerce")
-    else:
-        iso_parsed = pd.Series(pd.NaT, index=df.index)
-
-    # Parse US 'event_date' (m/d/Y) if present
-    if "event_date" in df.columns:
-        us_parsed = pd.to_datetime(df["event_date"], format="%m/%d/%Y", errors="coerce")
-    else:
-        us_parsed = pd.Series(pd.NaT, index=df.index)
-
-    # Prefer ISO if available, else fallback to US
-    df["event_date"] = iso_parsed.where(iso_parsed.notna(), us_parsed)
-
-    # Final safety: coerce any str leftovers
-    df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
-
-    return df
-
-
-def _normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure enrollmentDate is datetime from '7/25/2025' format."""
-    if df.empty or "enrollmentDate" not in df.columns:
-        return df
-    df = df.copy()
-    df["enrollmentDate"] = pd.to_datetime(
-        df["enrollmentDate"], format="%m/%d/%Y", errors="coerce"
-    )
-    return df
 
 
 # Initialize session state keys at the very top
@@ -300,8 +222,8 @@ def render():
     raw_json = dfs.get("raw_json", [])
 
     # Normalize dates
-    enrollments_df = _normalize_enrollment_dates(enrollments_df)
-    copied_events_df = _normalize_event_dates(events_df)
+    enrollments_df = normalize_enrollment_dates(enrollments_df)
+    copied_events_df = normalize_event_dates(events_df)
 
     # ---------------- Facility and Region Filter ----------------
     # Get facilities grouped by region from database
@@ -543,27 +465,7 @@ def render():
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
 
-        kpi_selection = st.selectbox(
-            "📊 Select KPI to Visualize",
-            [
-                "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-                "Stillbirth Rate (per 1000 births)",
-                "Early Postnatal Care (PNC) Coverage (%)",
-                "Institutional Maternal Death Rate (per 100,000 births)",
-                "C-Section Rate (%)",
-                "Postpartum Hemorrhage (PPH) Rate (%)",
-                "Delivered women who received uterotonic (%)",
-                "ARV Prophylaxis Rate (%)",
-                "Low Birth Weight (LBW) Rate (%)",
-            ],
-        )
-
-        # Build a minimal df for date range defaults
-        _df_for_dates = (
-            copied_events_df[["event_date"]]
-            if "event_date" in copied_events_df.columns
-            else pd.DataFrame()
-        )
+        kpi_selection = get_kpi_selection()
 
         quick_range = st.selectbox(
             "📅 Time Period",
@@ -579,63 +481,13 @@ def render():
             ],
         )
 
-        # Use your existing helper (returns Python date objects)
-        start_date, end_date = get_date_range(_df_for_dates, quick_range)
-
-        # Determine available aggregation levels based on selected date range
-        available_aggregations = get_available_aggregations(start_date, end_date)
-
-        # Apply safe default if previous selection is invalid
-        if (
-            "period_label" not in st.session_state
-            or st.session_state.period_label not in available_aggregations
-        ):
-            st.session_state.period_label = available_aggregations[
-                -1
-            ]  # widest available
-
-        # Show dropdown with safe default
-        period_label = st.selectbox(
-            "⏰ Aggregation Level",
-            available_aggregations,
-            index=available_aggregations.index(st.session_state.period_label),
-        )
-
         bg_color = st.color_picker("🎨 Chart Background", "#FFFFFF")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------------- APPLY FILTER ----------------
-    # Convert date objects to datetimes for comparison
-    start_datetime = pd.to_datetime(start_date)
-    end_datetime = pd.to_datetime(end_date)
-
-    # Filter events and enrollments by selected range
-    filtered_events = copied_events_df[
-        (copied_events_df["event_date"] >= start_datetime)
-        & (copied_events_df["event_date"] <= end_datetime)
-    ].copy()
-
-    # Gauge
-    st.session_state["filtered_events"] = filtered_events.copy()
-
-    filtered_enrollments = enrollments_df.copy()
-    if (
-        not filtered_enrollments.empty
-        and "enrollmentDate" in filtered_enrollments.columns
-    ):
-        filtered_enrollments = filtered_enrollments[
-            (filtered_enrollments["enrollmentDate"] >= start_datetime)
-            & (filtered_enrollments["enrollmentDate"] <= end_datetime)
-        ]
-
-    # Apply facility filter if selected (using dhis2_uid from database)
-    if facility_uids:
-        filtered_events = filtered_events[
-            filtered_events["orgUnit"].isin(facility_uids)
-        ]
-
-    # Assign period AFTER filtering (so period aligns with the time window)
-    filtered_events = assign_period(filtered_events, "event_date", period_label)
+        # ---------------- APPLY FILTER ----------------
+        filtered_events, available_aggregations, period_label = apply_date_filters(
+            copied_events_df, enrollments_df, quick_range, facility_uids
+        )
 
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:
@@ -645,7 +497,7 @@ def render():
         )
         return
 
-    text_color = auto_text_color(bg_color)
+    text_color = get_text_color(bg_color)
 
     with col_chart:
         if view_mode == "Comparison View" and len(display_names) > 1:
@@ -655,208 +507,17 @@ def render():
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
-            # Map KPI selection to the appropriate parameters
-            kpi_mapping = {
-                "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {
-                    "title": "IPPCAR (%)",
-                    "numerator_name": "FP Acceptances",
-                    "denominator_name": "Total Deliveries",
-                },
-                "Stillbirth Rate (per 1000 births)": {
-                    "title": "Stillbirth Rate (per 1000 births)",
-                    "numerator_name": "Stillbirths",
-                    "denominator_name": "Total Births",
-                },
-                "Early Postnatal Care (PNC) Coverage (%)": {
-                    "title": "Early PNC Coverage (%)",
-                    "numerator_name": "Early PNC (≤48 hrs)",
-                    "denominator_name": "Total Deliveries",
-                },
-                "Institutional Maternal Death Rate (per 100,000 births)": {
-                    "title": "Maternal Death Rate (per 100,000 births)",
-                    "numerator_name": "Maternal Deaths",
-                    "denominator_name": "Live Births",
-                },
-                "C-Section Rate (%)": {
-                    "title": "C-Section Rate (%)",
-                    "numerator_name": "C-Sections",
-                    "denominator_name": "Total Deliveries",
-                },
-                "Postpartum Hemorrhage (PPH) Rate (%)": {
-                    "title": "PPH Rate (%)",
-                    "numerator_name": "PPH Cases",
-                    "denominator_name": "Total Deliveries",
-                },
-                "Delivered women who received uterotonic (%)": {
-                    "title": "Delivered women who received uterotonic (%)",
-                    "numerator_name": "Women given uterotonic",
-                    "denominator_name": "Deliveries",
-                },
-                "ARV Prophylaxis Rate (%)": {
-                    "title": "ARV Prophylaxis Rate (%)",
-                    "numerator_name": "ARV Cases",
-                    "denominator_name": "HIV-Exposed Infants",
-                },
-                "Low Birth Weight (LBW) Rate (%)": {  # ADD THIS ENTRY
-                    "title": "Low Birth Weight Rate (%)",
-                    "numerator_name": "LBW Cases (<2500g)",
-                    "denominator_name": "Total Weighed Births",
-                },
-            }
-
-            kpi_config = kpi_mapping.get(kpi_selection, {})
-
-            if comparison_mode == "facility":
-                if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                    # Use PPH-specific facility comparison
-                    render_pph_facility_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title="PPH Rate (%)",
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        facility_names=display_names,
-                        facility_uids=facility_uids,
-                        numerator_name="PPH Cases",
-                        denominator_name="Total Deliveries",
-                    )
-                elif kpi_selection == "Delivered women who received uterotonic (%)":
-                    # Use uterotonic-specific facility comparison
-                    render_uterotonic_facility_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title="Uterotonic Administration Rate (%)",
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        facility_names=display_names,
-                        facility_uids=facility_uids,
-                        numerator_name="Uterotonic Cases",
-                        denominator_name="Total Deliveries",
-                    )
-
-                elif kpi_selection == "ARV Prophylaxis Rate (%)":
-                    # Use ARV-specific facility comparison
-                    render_arv_facility_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title="ARV Prophylaxis Rate (%)",
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        facility_names=display_names,
-                        facility_uids=facility_uids,
-                        numerator_name="ARV Cases",
-                        denominator_name="HIV-Exposed Infants",
-                    )
-                elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-                    render_lbw_facility_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title="Low Birth Weight Rate (%)",
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        facility_names=display_names,
-                        facility_uids=facility_uids,
-                        numerator_name="LBW Cases (<2500g)",
-                        denominator_name="Total Weighed Births",
-                    )
-                else:
-                    # Use generic facility comparison for other KPIs
-                    render_facility_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title=kpi_config.get("title", kpi_selection),
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        facility_names=display_names,
-                        facility_uids=facility_uids,
-                        numerator_name=kpi_config.get("numerator_name", "Numerator"),
-                        denominator_name=kpi_config.get(
-                            "denominator_name", "Denominator"
-                        ),
-                    )
-            else:  # comparison_mode == "region"
-                if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                    # Use PPH-specific region comparison
-                    render_pph_region_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title="PPH Rate (%)",
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        region_names=display_names,
-                        region_mapping={},
-                        facilities_by_region=facilities_by_region,
-                        numerator_name="PPH Cases",
-                        denominator_name="Total Deliveries",
-                    )
-                elif kpi_selection == "Delivered women who received uterotonic (%)":
-                    # Use uterotonic-specific region comparison
-                    render_uterotonic_region_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title="Uterotonic Administration Rate (%)",
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        region_names=display_names,
-                        region_mapping={},
-                        facilities_by_region=facilities_by_region,
-                        numerator_name="Uterotonic Cases",
-                        denominator_name="Total Deliveries",
-                    )
-
-                elif kpi_selection == "ARV Prophylaxis Rate (%)":
-                    # Use ARV-specific region comparison
-                    render_arv_region_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title="ARV Prophylaxis Rate (%)",
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        region_names=display_names,
-                        region_mapping={},
-                        facilities_by_region=facilities_by_region,
-                        numerator_name="ARV Cases",
-                        denominator_name="HIV-Exposed Infants",
-                    )
-                elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":  # ADD THIS
-                    render_lbw_region_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title="Low Birth Weight Rate (%)",
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        region_names=display_names,
-                        region_mapping={},
-                        facilities_by_region=facilities_by_region,
-                        numerator_name="LBW Cases (<2500g)",
-                        denominator_name="Total Weighed Births",
-                    )
-                else:
-                    # Use generic region comparison for other KPIs
-                    render_region_comparison_chart(
-                        df=filtered_events,
-                        period_col="period_display",
-                        value_col="value",
-                        title=kpi_config.get("title", kpi_selection),
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        region_names=display_names,
-                        region_mapping={},
-                        facilities_by_region=facilities_by_region,
-                        numerator_name=kpi_config.get("numerator_name", "Numerator"),
-                        denominator_name=kpi_config.get(
-                            "denominator_name", "Denominator"
-                        ),
-                    )
+            render_comparison_chart(
+                kpi_selection=kpi_selection,
+                filtered_events=filtered_events,
+                comparison_mode=comparison_mode,
+                display_names=display_names,
+                facility_uids=facility_uids,
+                facilities_by_region=facilities_by_region,
+                bg_color=bg_color,
+                text_color=text_color,
+                is_national=True,
+            )
 
         else:
             st.markdown(
@@ -865,420 +526,17 @@ def render():
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
-            # Build aggregated trend data using standardized compute_kpis function
-            if (
-                kpi_selection
-                == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
-            ):
-                group = (
-                    filtered_events.groupby(
-                        ["period", "period_display"], as_index=False
-                    )
-                    .apply(
-                        lambda x: pd.Series(
-                            {
-                                "value": compute_kpis(x, facility_uids)["ippcar"],
-                                "FP Acceptances": compute_kpis(x, facility_uids)[
-                                    "fp_acceptance"
-                                ],
-                                "Total Deliveries": compute_kpis(x, facility_uids)[
-                                    "total_deliveries"
-                                ],
-                            }
-                        )
-                    )
-                    .reset_index(drop=True)
-                )
-                render_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    "IPPCAR (%)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "FP Acceptances",
-                    "Total Deliveries",
-                    facility_uids,
-                )
+            render_trend_chart_section(
+                kpi_selection,
+                filtered_events,
+                facility_uids,
+                display_names,
+                bg_color,
+                text_color,
+            )
 
-            elif kpi_selection == "Stillbirth Rate (per 1000 births)":
-                group = (
-                    filtered_events.groupby(
-                        ["period", "period_display"], as_index=False
-                    )
-                    .apply(
-                        lambda x: pd.Series(
-                            {
-                                "value": compute_kpis(x, facility_uids)[
-                                    "stillbirth_rate"
-                                ],
-                                "Stillbirths": compute_kpis(x, facility_uids)[
-                                    "stillbirths"
-                                ],
-                                "Total Births": compute_kpis(x, facility_uids)[
-                                    "total_births"
-                                ],
-                            }
-                        )
-                    )
-                    .reset_index(drop=True)
-                )
-                render_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    "Stillbirth Rate (per 1000 births)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "Stillbirths",
-                    "Total Births",
-                    facility_uids,
-                )
-
-            elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-                group = (
-                    filtered_events.groupby(
-                        ["period", "period_display"], as_index=False
-                    )
-                    .apply(
-                        lambda x: pd.Series(
-                            {
-                                "value": compute_kpis(x, facility_uids)["pnc_coverage"],
-                                "Early PNC (≤48 hrs)": compute_kpis(x, facility_uids)[
-                                    "early_pnc"
-                                ],
-                                "Total Deliveries": compute_kpis(x, facility_uids)[
-                                    "total_deliveries_pnc"
-                                ],
-                            }
-                        )
-                    )
-                    .reset_index(drop=True)
-                )
-                render_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    "Early PNC Coverage (%)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "Early PNC (≤48 hrs)",
-                    "Total Deliveries",
-                    facility_uids,
-                )
-
-            elif (
-                kpi_selection
-                == "Institutional Maternal Death Rate (per 100,000 births)"
-            ):
-                group = (
-                    filtered_events.groupby(
-                        ["period", "period_display"], as_index=False
-                    )
-                    .apply(
-                        lambda x: pd.Series(
-                            {
-                                "value": compute_kpis(x, facility_uids)[
-                                    "maternal_death_rate"
-                                ],
-                                "Maternal Deaths": compute_kpis(x, facility_uids)[
-                                    "maternal_deaths"
-                                ],
-                                "Live Births": compute_kpis(x, facility_uids)[
-                                    "live_births"
-                                ],
-                            }
-                        )
-                    )
-                    .reset_index(drop=True)
-                )
-                render_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    "Maternal Death Rate (per 100,000 births)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "Maternal Deaths",
-                    "Live Births",
-                    facility_uids,
-                )
-
-            elif kpi_selection == "C-Section Rate (%)":
-                group = (
-                    filtered_events.groupby(
-                        ["period", "period_display"], as_index=False
-                    )
-                    .apply(
-                        lambda x: pd.Series(
-                            {
-                                "value": compute_kpis(x, facility_uids)[
-                                    "csection_rate"
-                                ],
-                                "C-Sections": compute_kpis(x, facility_uids)[
-                                    "csection_deliveries"
-                                ],
-                                "Total Deliveries": compute_kpis(x, facility_uids)[
-                                    "total_deliveries_cs"
-                                ],
-                            }
-                        )
-                    )
-                    .reset_index(drop=True)
-                )
-                render_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    "C-Section Rate (%)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "C-Sections",
-                    "Total Deliveries",
-                    facility_uids,
-                )
-
-            elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                # Use the same structure as other indicators
-                group = (
-                    filtered_events.groupby(
-                        ["period", "period_display"], as_index=False
-                    )
-                    .apply(
-                        lambda x: pd.Series(
-                            {
-                                "value": compute_pph_kpi(x, facility_uids)[
-                                    "pph_rate"
-                                ],  # Changed to compute_pph_kpi
-                                "PPH Cases": compute_pph_kpi(x, facility_uids)[
-                                    "pph_count"
-                                ],  # Changed to compute_pph_kpi
-                                "Total Deliveries": compute_pph_kpi(x, facility_uids)[
-                                    "total_deliveries"
-                                ],  # Changed to compute_pph_kpi
-                            }
-                        )
-                    )
-                    .reset_index(drop=True)
-                )
-                render_pph_trend_chart(  # Keep using PPH-specific render function
-                    group,
-                    "period_display",
-                    "value",
-                    "PPH Rate (%)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "PPH Cases",
-                    "Total Deliveries",
-                    facility_uids,
-                )
-            # Build aggregated trend data using standardized compute_kpis function
-            elif kpi_selection == "Delivered women who received uterotonic (%)":
-                # First, let's compute the data for each period
-                period_data = []
-                for period in filtered_events["period"].unique():
-                    period_df = filtered_events[filtered_events["period"] == period]
-                    period_display = (
-                        period_df["period_display"].iloc[0]
-                        if not period_df.empty
-                        else period
-                    )
-
-                    # Compute the KPI for this period
-                    kpi_data = compute_uterotonic_kpi(period_df, facility_uids)
-
-                    # Calculate percentage rates for each drug type
-                    total_deliveries = kpi_data["total_deliveries"]
-                    ergometrine_rate = (
-                        (
-                            kpi_data["uterotonic_types"]["Ergometrine"]
-                            / total_deliveries
-                            * 100
-                        )
-                        if total_deliveries > 0
-                        else 0
-                    )
-                    oxytocin_rate = (
-                        (
-                            kpi_data["uterotonic_types"]["Oxytocin"]
-                            / total_deliveries
-                            * 100
-                        )
-                        if total_deliveries > 0
-                        else 0
-                    )
-                    misoprostol_rate = (
-                        (
-                            kpi_data["uterotonic_types"]["Misoprostol"]
-                            / total_deliveries
-                            * 100
-                        )
-                        if total_deliveries > 0
-                        else 0
-                    )
-
-                    period_data.append(
-                        {
-                            "period": period,
-                            "period_display": period_display,
-                            "value": kpi_data["uterotonic_rate"],
-                            "Uterotonic Cases": kpi_data["uterotonic_count"],
-                            "Total Deliveries": total_deliveries,
-                            "ergometrine_rate": ergometrine_rate,
-                            "oxytocin_rate": oxytocin_rate,
-                            "misoprostol_rate": misoprostol_rate,
-                            # Keep the counts as well for reference
-                            "ergometrine_count": kpi_data["uterotonic_types"][
-                                "Ergometrine"
-                            ],
-                            "oxytocin_count": kpi_data["uterotonic_types"]["Oxytocin"],
-                            "misoprostol_count": kpi_data["uterotonic_types"][
-                                "Misoprostol"
-                            ],
-                        }
-                    )
-
-                # Convert to DataFrame
-                group = pd.DataFrame(period_data)
-
-                # Render the chart
-                render_uterotonic_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    "Uterotonic Administration Rate (%)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "Uterotonic Cases",
-                    "Total Deliveries",
-                    facility_uids,
-                )
-
-            elif kpi_selection == "ARV Prophylaxis Rate (%)":
-                # First, let's compute the data for each period
-                period_data = []
-                for period in filtered_events["period"].unique():
-                    period_df = filtered_events[filtered_events["period"] == period]
-                    period_display = (
-                        period_df["period_display"].iloc[0]
-                        if not period_df.empty
-                        else period
-                    )
-
-                    # Compute the ARV KPI for this period
-                    arv_data = compute_arv_kpi(period_df, facility_uids)
-
-                    period_data.append(
-                        {
-                            "period": period,
-                            "period_display": period_display,
-                            "value": arv_data["arv_rate"],
-                            "ARV Cases": arv_data["arv_count"],
-                            "HIV-Exposed Infants": arv_data["hiv_exposed_infants"],
-                        }
-                    )
-
-                # Convert to DataFrame
-                group = pd.DataFrame(period_data)
-
-                # Render the ARV trend chart
-                render_arv_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    "ARV Prophylaxis Rate (%)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "ARV Cases",
-                    "HIV-Exposed Infants",
-                    facility_uids,
-                )
-            elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-                # Compute data for each period - FIX: Match uterotonic structure
-                period_data = []
-                for period in filtered_events["period"].unique():
-                    period_df = filtered_events[filtered_events["period"] == period]
-                    period_display = (
-                        period_df["period_display"].iloc[0]
-                        if not period_df.empty
-                        else period
-                    )
-
-                    # Compute LBW KPI for this period
-                    lbw_data = compute_lbw_kpi(period_df, facility_uids)
-
-                    # Calculate percentage rates for each LBW category
-                    total_weighed = lbw_data["total_weighed"]
-
-                    # FIX: Create individual rate columns like uterotonic does
-                    period_row = {
-                        "period": period,
-                        "period_display": period_display,
-                        "value": lbw_data["lbw_rate"],
-                        "LBW Cases (<2500g)": lbw_data["lbw_count"],
-                        "Total Weighed Births": total_weighed,
-                    }
-
-                    # Add individual rate columns for each LBW category
-                    for category_key, category_info in LBW_CATEGORIES.items():
-                        rate_key = f"{category_key}_rate"
-                        count_key = f"{category_key}_count"
-
-                        period_row[rate_key] = lbw_data["category_rates"][category_key]
-                        period_row[count_key] = lbw_data["lbw_categories"][category_key]
-
-                    period_data.append(period_row)
-
-                # Create DataFrame and render chart
-                group = pd.DataFrame(period_data)
-                render_lbw_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    "Low Birth Weight Rate (%)",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    "LBW Cases (<2500g)",
-                    "Total Weighed Births",
-                    facility_uids,
-                )
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # Optional: Add additional PPH visualizations
-        if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-            st.markdown("---")
-            st.markdown(
-                f'<div class="section-header">📊 Additional PPH Analytics</div>',
-                unsafe_allow_html=True,
-            )
-
-            render_obstetric_condition_pie_chart(
-                filtered_events, facility_uids, bg_color, text_color
-            )
-        elif kpi_selection == "Delivered women who received uterotonic (%)":
-            st.markdown("---")
-            st.markdown(
-                f'<div class="section-header">📊 Additional Uterotonic Analytics</div>',
-                unsafe_allow_html=True,
-            )
-            render_uterotonic_type_pie_chart(
-                filtered_events, facility_uids, bg_color, text_color
-            )
-        elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":  # ADD THIS
-            st.markdown("---")
-            st.markdown(
-                '<div class="section-header">📊 Additional LBW Analytics</div>',
-                unsafe_allow_html=True,
-            )
-            render_lbw_category_pie_chart(
-                filtered_events, facility_uids, bg_color, text_color
-            )
+        render_additional_analytics(
+            kpi_selection, filtered_events, facility_uids, bg_color, text_color
+        )
