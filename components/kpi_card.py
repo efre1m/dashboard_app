@@ -23,6 +23,53 @@ def save_current_kpis(user_id: str, kpis: dict):
         json.dump(kpis, f)
 
 
+# ---------------- Session State Management ----------------
+def initialize_kpi_session_state(user_id: str):
+    """Initialize session state for KPI tracking"""
+    if f"kpi_initialized_{user_id}" not in st.session_state:
+        # Load previous KPIs from file on first load
+        st.session_state[f"previous_kpis_{user_id}"] = load_previous_kpis(user_id)
+        st.session_state[f"current_kpis_{user_id}"] = {}
+        st.session_state[f"kpi_initialized_{user_id}"] = True
+        st.session_state[f"kpi_last_saved_{user_id}"] = datetime.now().isoformat()
+
+
+def should_save_kpis(user_id: str, current_kpis: dict) -> bool:
+    """Determine if we should save KPIs (only on actual data changes, not every re-render)"""
+    if f"current_kpis_{user_id}" not in st.session_state:
+        return True
+
+    # Check if KPIs have actually changed
+    previous_current = st.session_state.get(f"current_kpis_{user_id}", {})
+
+    # Compare key KPI values to see if there's a meaningful change
+    kpi_keys = [
+        "ippcar",
+        "stillbirth_rate",
+        "pnc_coverage",
+        "maternal_death_rate",
+        "csection_rate",
+    ]
+
+    for key in kpi_keys:
+        prev_value = previous_current.get(key, 0)
+        curr_value = current_kpis.get(key, 0)
+
+        # If any KPI has changed by more than 0.1, consider it a real change
+        if abs(prev_value - curr_value) > 0.1:
+            return True
+
+    # Also save if it's been more than 5 minutes since last save (in case of small changes)
+    last_saved = st.session_state.get(f"kpi_last_saved_{user_id}")
+    if last_saved:
+        last_saved_dt = datetime.fromisoformat(last_saved)
+        time_diff = (datetime.now() - last_saved_dt).total_seconds()
+        if time_diff > 300:  # 5 minutes
+            return True
+
+    return False
+
+
 # ---------------- Trend Comparison with Context ----------------
 def compare_trend(current_value, prev_value, higher_is_better=True):
     """
@@ -253,8 +300,7 @@ def render_kpi_cards(
     user=None,
 ):
     """
-    Render KPI cards component with trend indicators only (no previous values shown in cards).
-    Previous values are only included in the Excel export for comparison.
+    Render KPI cards component with trend indicators that persist until refresh or logout.
     """
     if events_df.empty or "event_date" not in events_df.columns:
         st.markdown(
@@ -263,39 +309,76 @@ def render_kpi_cards(
         )
         return
 
+    # Initialize session state for this user
+    initialize_kpi_session_state(user_id)
+
     # Compute KPIs for the selected facilities
     kpis = compute_kpis(events_df, facility_uids)
     if not isinstance(kpis, dict):
         st.error("Error computing KPI. Please check data.")
         return
 
-    # Load last KPI values for this user
-    previous_kpis = load_previous_kpis(user_id)
+    # Get previous KPIs from session state (persists across re-renders)
+    previous_kpis = st.session_state.get(f"previous_kpis_{user_id}", {})
 
-    # Compare current vs previous session (context-aware)
-    ippcar_trend, ippcar_trend_class = compare_trend(
-        kpis.get("ippcar", 0), previous_kpis.get("ippcar"), higher_is_better=True
-    )
-    pnc_trend, pnc_trend_class = compare_trend(
-        kpis.get("pnc_coverage", 0),
-        previous_kpis.get("pnc_coverage"),
-        higher_is_better=True,
-    )
-    stillbirth_trend, stillbirth_trend_class = compare_trend(
-        kpis.get("stillbirth_rate", 0),
-        previous_kpis.get("stillbirth_rate"),
-        higher_is_better=False,
-    )
-    maternal_death_trend, maternal_death_trend_class = compare_trend(
-        kpis.get("maternal_death_rate", 0),
-        previous_kpis.get("maternal_death_rate"),
-        higher_is_better=False,
-    )
-    csection_trend, csection_trend_class = compare_trend(
-        kpis.get("csection_rate", 0),
-        previous_kpis.get("csection_rate"),
-        higher_is_better=False,
-    )
+    # Only save KPIs if there's a meaningful data change or it's been a while
+    if should_save_kpis(user_id, kpis):
+        save_current_kpis(user_id, kpis)
+        st.session_state[f"previous_kpis_{user_id}"] = kpis
+        st.session_state[f"current_kpis_{user_id}"] = kpis
+        st.session_state[f"kpi_last_saved_{user_id}"] = datetime.now().isoformat()
+
+    # Update current KPIs in session state
+    st.session_state[f"current_kpis_{user_id}"] = kpis
+
+    # FIX: Store trend calculations in session state to persist across re-renders
+    trend_session_key = f"trend_calculations_{user_id}"
+
+    # Only recalculate trends if they don't exist or data has actually changed
+    if trend_session_key not in st.session_state or should_save_kpis(user_id, kpis):
+        # Compare current vs previous session (context-aware)
+        ippcar_trend, ippcar_trend_class = compare_trend(
+            kpis.get("ippcar", 0), previous_kpis.get("ippcar"), higher_is_better=True
+        )
+        pnc_trend, pnc_trend_class = compare_trend(
+            kpis.get("pnc_coverage", 0),
+            previous_kpis.get("pnc_coverage"),
+            higher_is_better=True,
+        )
+        stillbirth_trend, stillbirth_trend_class = compare_trend(
+            kpis.get("stillbirth_rate", 0),
+            previous_kpis.get("stillbirth_rate"),
+            higher_is_better=False,
+        )
+        maternal_death_trend, maternal_death_trend_class = compare_trend(
+            kpis.get("maternal_death_rate", 0),
+            previous_kpis.get("maternal_death_rate"),
+            higher_is_better=False,
+        )
+        csection_trend, csection_trend_class = compare_trend(
+            kpis.get("csection_rate", 0),
+            previous_kpis.get("csection_rate"),
+            higher_is_better=False,
+        )
+
+        # Store trends in session state
+        st.session_state[trend_session_key] = {
+            "ippcar": (ippcar_trend, ippcar_trend_class),
+            "pnc": (pnc_trend, pnc_trend_class),
+            "stillbirth": (stillbirth_trend, stillbirth_trend_class),
+            "maternal_death": (maternal_death_trend, maternal_death_trend_class),
+            "csection": (csection_trend, csection_trend_class),
+        }
+    else:
+        # Use stored trends from session state
+        stored_trends = st.session_state[trend_session_key]
+        ippcar_trend, ippcar_trend_class = stored_trends["ippcar"]
+        pnc_trend, pnc_trend_class = stored_trends["pnc"]
+        stillbirth_trend, stillbirth_trend_class = stored_trends["stillbirth"]
+        maternal_death_trend, maternal_death_trend_class = stored_trends[
+            "maternal_death"
+        ]
+        csection_trend, csection_trend_class = stored_trends["csection"]
 
     # Get location name for file naming
     if user is None:
@@ -308,9 +391,6 @@ def render_kpi_cards(
     excel_file = generate_kpi_excel_report(
         kpis, previous_kpis, location_name=location_name
     )
-
-    # Save new KPI values for the next login/session
-    save_current_kpis(user_id, kpis)
 
     # Add CSS for styling - MODIFIED TO DISPLAY CARDS IN ONE ROW
     st.markdown(
@@ -353,13 +433,31 @@ def render_kpi_cards(
         }
         .kpi-card { min-width: 200px; }
     }
+    
+    @media (max-width: 1200px) {
+        .kpi-grid { 
+            grid-template-columns: repeat(3, 1fr); 
+        }
+    }
+    
+    @media (max-width: 768px) {
+        .kpi-grid { 
+            grid-template-columns: repeat(2, 1fr); 
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .kpi-grid { 
+            grid-template-columns: 1fr; 
+        }
+    }
     </style>
     """,
         unsafe_allow_html=True,
     )
 
-    # Header with download button
-    col1, col2 = st.columns([3, 1])
+    # Header with download button and manual refresh option
+    col1, col2, col3 = st.columns([3, 1, 1])
     with col1:
         st.markdown(
             '<div class="section-header">📊 Key Performance Indicators</div>',
@@ -367,14 +465,29 @@ def render_kpi_cards(
         )
     with col2:
         st.download_button(
-            label="⬇️ Download KPI Comparison Report",
+            label="⬇️ Download KPI Report",
             data=excel_file,
             file_name=f"kpi_comparison_report_{location_file_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             help="Download Excel report with current vs previous KPI values comparison",
+            use_container_width=True,
         )
+    with col3:
+        # Manual refresh button to force update baseline
+        if st.button(
+            "🔄 Set New Comparison Point",
+            help="Set current values as new comparison for trend comparison",
+            use_container_width=True,
+        ):
+            save_current_kpis(user_id, kpis)
+            st.session_state[f"previous_kpis_{user_id}"] = kpis
+            st.session_state[f"kpi_last_saved_{user_id}"] = datetime.now().isoformat()
+            # Clear stored trends to force recalculation
+            if trend_session_key in st.session_state:
+                del st.session_state[trend_session_key]
+            st.rerun()
 
-    # KPI Cards HTML - Only show current values with trend indicators
+    # KPI Cards HTML - Show current values with persistent trend indicators
     kpi_html = f"""
     <div class="kpi-grid">
         <div class="kpi-card">
@@ -422,7 +535,7 @@ def render_kpi_cards(
 
     st.markdown(kpi_html, unsafe_allow_html=True)
 
-    # Add a small note about the Excel report
+    # Add information about trend persistence
     st.caption(
-        "💡 Download the Excel report to see detailed comparison with previous values"
+        "💡 Trend indicators compare current values with previous value. Use 'Set New Comparison Point' to set new comparison point."
     )
