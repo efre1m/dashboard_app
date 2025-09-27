@@ -111,64 +111,6 @@ KPI_OPTIONS = [
 ]
 
 
-def get_kpi_selection():
-    """Get the KPI selection dropdown - same in both files"""
-    return st.selectbox("📊 Select KPI to Visualize", KPI_OPTIONS)
-
-
-def apply_date_filters(
-    copied_events_df, enrollments_df, quick_range, facility_uids=None
-):
-    """Apply date filtering logic - same in both files"""
-    # Build a minimal df for date range defaults
-    _df_for_dates = (
-        copied_events_df[["event_date"]]
-        if "event_date" in copied_events_df.columns
-        else pd.DataFrame()
-    )
-
-    # Get date range
-    start_date, end_date = get_date_range(_df_for_dates, quick_range)
-
-    # Get available aggregations
-    available_aggregations = get_available_aggregations(start_date, end_date)
-
-    # Set safe default if needed
-    if (
-        "period_label" not in st.session_state
-        or st.session_state.period_label not in available_aggregations
-    ):
-        st.session_state.period_label = available_aggregations[-1]
-
-    # Show dropdown with safe default - THIS IS THE MISSING PART!
-    period_label = st.selectbox(
-        "⏰ Aggregation Level",
-        available_aggregations,
-        index=available_aggregations.index(st.session_state.period_label),
-    )
-
-    # Convert to datetime
-    start_datetime = pd.to_datetime(start_date)
-    end_datetime = pd.to_datetime(end_date)
-
-    # Filter events by date range
-    filtered_events = copied_events_df[
-        (copied_events_df["event_date"] >= start_datetime)
-        & (copied_events_df["event_date"] <= end_datetime)
-    ].copy()
-
-    # Apply facility filter if provided
-    if facility_uids:
-        filtered_events = filtered_events[
-            filtered_events["orgUnit"].isin(facility_uids)
-        ]
-
-    # Assign period after filtering
-    filtered_events = assign_period(filtered_events, "event_date", period_label)
-
-    return filtered_events, available_aggregations, period_label
-
-
 def render_trend_chart_section(
     kpi_selection, filtered_events, facility_uids, display_names, bg_color, text_color
 ):
@@ -720,4 +662,138 @@ def normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     df["enrollmentDate"] = pd.to_datetime(
         df["enrollmentDate"], format="%m/%d/%Y", errors="coerce"
     )
+    return df
+
+
+# ========== NEW FUNCTIONS TO ADD TO dash_co.py ==========
+
+
+def render_simple_filter_controls(events_df, container=None):
+    """Simple filter controls for all dashboard types"""
+    if container is None:
+        container = st
+
+    filters = {}
+
+    # KPI Selection
+    filters["kpi_selection"] = container.selectbox(
+        "📊 Select KPI to Visualize", KPI_OPTIONS, key="kpi_selection_simple"
+    )
+
+    # Time Period
+    filters["quick_range"] = container.selectbox(
+        "📅 Time Period",
+        [
+            "Custom Range",
+            "Today",
+            "This Week",
+            "Last Week",
+            "This Month",
+            "Last Month",
+            "This Year",
+            "Last Year",
+        ],
+        index=0,
+        key="quick_range_simple",
+    )
+
+    # Get dates from dataframe
+    min_date, max_date = _get_simple_date_range(events_df)
+
+    # Handle Custom Range vs Predefined Ranges
+    if filters["quick_range"] == "Custom Range":
+        col1, col2 = container.columns(2)
+        with col1:
+            filters["start_date"] = col1.date_input(
+                "Start Date",
+                value=min_date,
+                min_value=min_date,
+                max_value=max_date,
+                key="start_date_simple",
+            )
+        with col2:
+            filters["end_date"] = col2.date_input(
+                "End Date",
+                value=max_date,
+                min_value=min_date,
+                max_value=max_date,
+                key="end_date_simple",
+            )
+    else:
+        # For predefined ranges
+        _df_for_dates = (
+            events_df[["event_date"]].copy()
+            if not events_df.empty and "event_date" in events_df.columns
+            else pd.DataFrame()
+        )
+        start_date, end_date = get_date_range(_df_for_dates, filters["quick_range"])
+        filters["start_date"] = start_date
+        filters["end_date"] = end_date
+
+    # Aggregation Level
+    available_aggregations = get_available_aggregations(
+        filters["start_date"], filters["end_date"]
+    )
+    default_period = available_aggregations[0] if available_aggregations else "Monthly"
+
+    filters["period_label"] = container.selectbox(
+        "⏰ Aggregation Level",
+        available_aggregations,
+        index=0,
+        key="period_label_simple",
+    )
+
+    # Background Color
+    filters["bg_color"] = container.color_picker(
+        "🎨 Chart Background", "#FFFFFF", key="bg_color_simple"
+    )
+    filters["text_color"] = auto_text_color(filters["bg_color"])
+
+    return filters
+
+
+def _get_simple_date_range(events_df):
+    """Get min/max dates from dataframe"""
+    import datetime
+
+    if not events_df.empty and "event_date" in events_df.columns:
+        valid_dates = events_df["event_date"].dropna()
+        if not valid_dates.empty:
+            min_date = valid_dates.min()
+            max_date = valid_dates.max()
+            if hasattr(min_date, "date"):
+                min_date = min_date.date()
+            if hasattr(max_date, "date"):
+                max_date = max_date.date()
+            return min_date, max_date
+
+    # Fallback to current date
+    today = datetime.date.today()
+    return today, today
+
+
+def apply_simple_filters(events_df, filters, facility_uids=None):
+    """Apply simple filters to events dataframe"""
+    if events_df.empty:
+        return events_df
+
+    df = events_df.copy()
+
+    # Apply date filters
+    start_datetime = pd.to_datetime(filters["start_date"])
+    end_datetime = pd.to_datetime(filters["end_date"])
+
+    df = df[
+        (df["event_date"] >= start_datetime) & (df["event_date"] <= end_datetime)
+    ].copy()
+
+    # Apply facility filter if provided
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # Assign period
+    df = assign_period(df, "event_date", filters["period_label"])
+
     return df

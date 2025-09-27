@@ -1,13 +1,13 @@
 import streamlit as st
 from utils.dash_co import (
-    get_kpi_selection,
-    apply_date_filters,
     render_trend_chart_section,
     render_additional_analytics,
     render_comparison_chart,
     get_text_color,
     normalize_event_dates,
     normalize_enrollment_dates,
+    render_simple_filter_controls,
+    apply_simple_filters,
 )
 import pandas as pd
 import logging
@@ -465,29 +465,21 @@ def render():
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
 
-        kpi_selection = get_kpi_selection()
+        # Use simple filter controls
+        filters = render_simple_filter_controls(copied_events_df, container=col_ctrl)
 
-        quick_range = st.selectbox(
-            "📅 Time Period",
-            [
-                "Custom Range",
-                "Today",
-                "This Week",
-                "Last Week",
-                "This Month",
-                "Last Month",
-                "This Year",
-                "Last Year",
-            ],
-        )
-
-        # ---------------- APPLY FILTER ----------------
-        filtered_events, available_aggregations, period_label = apply_date_filters(
-            copied_events_df, enrollments_df, quick_range, facility_uids
-        )
-
-        bg_color = st.color_picker("🎨 Chart Background", "#FFFFFF")
         st.markdown("</div>", unsafe_allow_html=True)
+
+    # Apply simple filters
+    filtered_events = apply_simple_filters(copied_events_df, filters, facility_uids)
+
+    # Store for gauge charts
+    st.session_state["filtered_events"] = filtered_events.copy()
+
+    # Get variables from filters for later use
+    kpi_selection = filters["kpi_selection"]
+    bg_color = filters["bg_color"]
+    text_color = filters["text_color"]
 
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:

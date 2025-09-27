@@ -10,12 +10,12 @@ from utils.queries import get_facilities_for_user, get_facility_mapping_for_user
 from utils.dash_co import (
     normalize_event_dates,
     normalize_enrollment_dates,
-    get_kpi_selection,
     render_trend_chart_section,
     render_comparison_chart,
     render_additional_analytics,
     get_text_color,
-    KPI_OPTIONS,
+    apply_simple_filters,
+    render_simple_filter_controls,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -211,86 +211,21 @@ def render():
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
 
-        # Use common KPI selection
-        kpi_selection = get_kpi_selection()
+        # Use simple filter controls
+        filters = render_simple_filter_controls(copied_events_df, container=col_ctrl)
 
-        # Build a minimal df for date range defaults
-        _df_for_dates = (
-            copied_events_df[["event_date"]]
-            if "event_date" in copied_events_df.columns
-            else pd.DataFrame()
-        )
-
-        quick_range = st.selectbox(
-            "📅 Time Period",
-            [
-                "Custom Range",
-                "Today",
-                "This Week",
-                "Last Week",
-                "This Month",
-                "Last Month",
-                "This Year",
-                "Last Year",
-            ],
-        )
-
-        # Use the original date range helper (returns Python date objects)
-        start_date, end_date = get_date_range(_df_for_dates, quick_range)
-
-        # Get valid aggregation levels based on date range
-        available_aggregations = get_available_aggregations(start_date, end_date)
-
-        # If current selection is not valid, fallback to widest available
-        if (
-            "period_label" not in st.session_state
-            or st.session_state.period_label not in available_aggregations
-        ):
-            st.session_state.period_label = available_aggregations[-1]
-
-        # Show selector (with safe default applied)
-        period_label = st.selectbox(
-            "⏰ Aggregation Level",
-            available_aggregations,
-            index=available_aggregations.index(st.session_state.period_label),
-        )
-
-        bg_color = st.color_picker("🎨 Chart Background", "#FFFFFF")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------------- APPLY FILTER (PRESERVING ORIGINAL LOGIC) ----------------
-    # Convert date objects to datetimes for comparison
-    start_datetime = pd.to_datetime(start_date)
-    end_datetime = pd.to_datetime(end_date)
+    # Apply simple filters
+    filtered_events = apply_simple_filters(copied_events_df, filters, facility_uids)
 
-    # Filter events by selected range
-    filtered_events = copied_events_df[
-        (copied_events_df["event_date"] >= start_datetime)
-        & (copied_events_df["event_date"] <= end_datetime)
-    ].copy()
-
-    # GAUGE - Store filtered events in session state
+    # Store for gauge charts
     st.session_state["filtered_events"] = filtered_events.copy()
 
-    # Filter enrollments by selected range (preserved for completeness)
-    filtered_enrollments = enrollments_df.copy()
-    if (
-        not filtered_enrollments.empty
-        and "enrollmentDate" in filtered_enrollments.columns
-    ):
-        filtered_enrollments = filtered_enrollments[
-            (filtered_enrollments["enrollmentDate"] >= start_datetime)
-            & (filtered_enrollments["enrollmentDate"] <= end_datetime)
-        ]
-
-    # Apply facility filter if selected
-    if facility_uids:
-        filtered_events = filtered_events[
-            filtered_events["orgUnit"].isin(facility_uids)
-        ]
-
-    # Assign period AFTER filtering
-    filtered_events = assign_period(filtered_events, "event_date", period_label)
+    # Get variables from filters for later use
+    kpi_selection = filters["kpi_selection"]
+    bg_color = filters["bg_color"]
+    text_color = filters["text_color"]
 
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:
