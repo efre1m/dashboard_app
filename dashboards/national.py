@@ -35,6 +35,8 @@ def fetch_cached_data(user):
 # Initialize session state keys at the very top
 if "all_facilities_checkbox" not in st.session_state:
     st.session_state.all_facilities_checkbox = False
+if "all_regions_checkbox" not in st.session_state:
+    st.session_state.all_regions_checkbox = False
 
 
 # Helper functions for facility and region selection
