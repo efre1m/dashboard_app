@@ -1369,7 +1369,7 @@ def render_uterotonic_facility_comparison_chart(
     numerator_name="Uterotonic Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each facility's uterotonic performance"""
+    """SIMPLIFIED VERSION: Render facility comparison without numerator/denominator in hover"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1389,40 +1389,8 @@ def render_uterotonic_facility_comparison_chart(
         st.info("⚠️ No data available for facility comparison.")
         return
 
-    # Prepare comparison data
-    comparison_data = []
-    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_order = all_periods["period_display"].tolist()
-
-    for facility_uid in facility_uids:
-        facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
-        if not facility_df.empty:
-            uterotonic_data = compute_uterotonic_kpi(facility_df, [facility_uid])
-            comparison_data.append(
-                {
-                    "Facility": facility_uid_to_name[facility_uid],
-                    "value": uterotonic_data["uterotonic_rate"],
-                    "uterotonic_count": uterotonic_data["uterotonic_count"],
-                    "total_deliveries": uterotonic_data["total_deliveries"],
-                    "ergometrine_count": uterotonic_data["uterotonic_types"][
-                        "Ergometrine"
-                    ],
-                    "oxytocin_count": uterotonic_data["uterotonic_types"]["Oxytocin"],
-                    "misoprostol_count": uterotonic_data["uterotonic_types"][
-                        "Misoprostol"
-                    ],
-                }
-            )
-
-    if not comparison_data:
-        st.info("⚠️ No data available for facility comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_data)
-
     # Chart options
-    chart_options = ["Line Chart", "Bar Chart"]
+    chart_options = ["Bar Chart", "Line Chart"]
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -1433,8 +1401,15 @@ def render_uterotonic_facility_comparison_chart(
 
     # Create chart
     if chart_type == "Line Chart":
-        # For line chart, we need time series data
+        # For line chart, compute time series data
         time_series_data = []
+        all_periods = (
+            filtered_df[["period_display", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+        )
+        period_order = all_periods["period_display"].tolist()
+
         for period_display in period_order:
             period_df = filtered_df[filtered_df["period_display"] == period_display]
 
@@ -1449,8 +1424,6 @@ def render_uterotonic_facility_comparison_chart(
                             "period_display": period_display,
                             "Facility": facility_uid_to_name[facility_uid],
                             "value": uterotonic_data["uterotonic_rate"],
-                            "uterotonic_count": uterotonic_data["uterotonic_count"],
-                            "total_deliveries": uterotonic_data["total_deliveries"],
                         }
                     )
 
@@ -1471,46 +1444,54 @@ def render_uterotonic_facility_comparison_chart(
             category_orders={"period_display": period_order},
         )
 
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
         fig.update_traces(
             line=dict(width=3),
             marker=dict(size=7),
-            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<br>Uterotonic Cases: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (time_series_df["uterotonic_count"], time_series_df["total_deliveries"])
-            ),
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<extra></extra>",
         )
+
     else:  # Bar Chart
-        # UPDATED: Bar chart shows all facilities with their overall values
-        fig = px.bar(
-            comparison_df,
-            x="Facility",
-            y="value",
-            title=title,
-            height=500,
-            color="Facility",
-            hover_data=[
-                "uterotonic_count",
-                "total_deliveries",
-                "ergometrine_count",
-                "oxytocin_count",
-                "misoprostol_count",
-            ],
-        )
-
-        # UPDATED: Custom hover template for bar chart
-        fig.update_traces(
-            hovertemplate="<b>%{x}</b><br>Uterotonic Rate: %{y:.2f}%<br>Uterotonic Cases: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<br>Ergometrine: %{customdata[2]}<br>Oxytocin: %{customdata[3]}<br>Misoprostol: %{customdata[4]}<extra></extra>",
-            customdata=np.column_stack(
-                (
-                    comparison_df["uterotonic_count"],
-                    comparison_df["total_deliveries"],
-                    comparison_df["ergometrine_count"],
-                    comparison_df["oxytocin_count"],
-                    comparison_df["misoprostol_count"],
+        # For bar chart, compute overall values
+        bar_data = []
+        for facility_uid in facility_uids:
+            facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
+            if not facility_df.empty:
+                uterotonic_data = compute_uterotonic_kpi(facility_df, [facility_uid])
+                bar_data.append(
+                    {
+                        "Facility": facility_uid_to_name[facility_uid],
+                        "value": uterotonic_data["uterotonic_rate"],
+                        "uterotonic_count": uterotonic_data["uterotonic_count"],
+                        "total_deliveries": uterotonic_data["total_deliveries"],
+                        "ergometrine_count": uterotonic_data["uterotonic_types"][
+                            "Ergometrine"
+                        ],
+                        "oxytocin_count": uterotonic_data["uterotonic_types"][
+                            "Oxytocin"
+                        ],
+                        "misoprostol_count": uterotonic_data["uterotonic_types"][
+                            "Misoprostol"
+                        ],
+                    }
                 )
-            ),
+
+        if not bar_data:
+            st.info("⚠️ No data available for bar chart.")
+            return
+
+        bar_df = pd.DataFrame(bar_data)
+
+        fig = px.bar(
+            bar_df, x="Facility", y="value", title=title, height=500, color="Facility"
         )
 
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
+        fig.update_traces(
+            hovertemplate="<b>%{x}</b><br>Uterotonic Rate: %{y:.2f}%<extra></extra>"
+        )
+
+    # Common layout updates
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -1531,20 +1512,13 @@ def render_uterotonic_facility_comparison_chart(
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
-        legend=dict(
-            title="Facilities",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-        ),
+        showlegend=True,
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Facility comparison table
+    # Facility comparison table (shows all details including numerator/denominator)
     st.subheader("📋 Facility Comparison Summary")
     facility_table_data = []
 
@@ -1637,7 +1611,7 @@ def render_uterotonic_region_comparison_chart(
     numerator_name="Uterotonic Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each region's uterotonic performance"""
+    """SIMPLIFIED VERSION: Render region comparison without numerator/denominator in hover"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1657,44 +1631,8 @@ def render_uterotonic_region_comparison_chart(
         st.info("⚠️ No data available for region comparison.")
         return
 
-    # Prepare comparison data
-    comparison_data = []
-    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_order = all_periods["period_display"].tolist()
-
-    for region_name in region_names:
-        region_facility_uids = [
-            uid for _, uid in facilities_by_region.get(region_name, [])
-        ]
-        region_df = filtered_df[filtered_df["orgUnit"].isin(region_facility_uids)]
-
-        if not region_df.empty:
-            uterotonic_data = compute_uterotonic_kpi(region_df, region_facility_uids)
-            comparison_data.append(
-                {
-                    "Region": region_name,
-                    "value": uterotonic_data["uterotonic_rate"],
-                    "uterotonic_count": uterotonic_data["uterotonic_count"],
-                    "total_deliveries": uterotonic_data["total_deliveries"],
-                    "ergometrine_count": uterotonic_data["uterotonic_types"][
-                        "Ergometrine"
-                    ],
-                    "oxytocin_count": uterotonic_data["uterotonic_types"]["Oxytocin"],
-                    "misoprostol_count": uterotonic_data["uterotonic_types"][
-                        "Misoprostol"
-                    ],
-                }
-            )
-
-    if not comparison_data:
-        st.info("⚠️ No data available for region comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_data)
-
     # Chart options
-    chart_options = ["Line Chart", "Bar Chart"]
+    chart_options = ["Bar Chart", "Line Chart"]
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -1705,8 +1643,15 @@ def render_uterotonic_region_comparison_chart(
 
     # Create chart
     if chart_type == "Line Chart":
-        # For line chart, we need time series data
+        # For line chart, compute time series data
         time_series_data = []
+        all_periods = (
+            filtered_df[["period_display", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+        )
+        period_order = all_periods["period_display"].tolist()
+
         for period_display in period_order:
             period_df = filtered_df[filtered_df["period_display"] == period_display]
 
@@ -1727,8 +1672,6 @@ def render_uterotonic_region_comparison_chart(
                             "period_display": period_display,
                             "Region": region_name,
                             "value": uterotonic_data["uterotonic_rate"],
-                            "uterotonic_count": uterotonic_data["uterotonic_count"],
-                            "total_deliveries": uterotonic_data["total_deliveries"],
                         }
                     )
 
@@ -1749,46 +1692,60 @@ def render_uterotonic_region_comparison_chart(
             category_orders={"period_display": period_order},
         )
 
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
         fig.update_traces(
             line=dict(width=3),
             marker=dict(size=7),
-            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<br>Uterotonic Cases: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (time_series_df["uterotonic_count"], time_series_df["total_deliveries"])
-            ),
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<extra></extra>",
         )
+
     else:  # Bar Chart
-        # UPDATED: Bar chart shows all regions with their overall values
-        fig = px.bar(
-            comparison_df,
-            x="Region",
-            y="value",
-            title=title,
-            height=500,
-            color="Region",
-            hover_data=[
-                "uterotonic_count",
-                "total_deliveries",
-                "ergometrine_count",
-                "oxytocin_count",
-                "misoprostol_count",
-            ],
-        )
+        # For bar chart, compute overall values
+        bar_data = []
+        for region_name in region_names:
+            region_facility_uids = [
+                uid for _, uid in facilities_by_region.get(region_name, [])
+            ]
+            region_df = filtered_df[filtered_df["orgUnit"].isin(region_facility_uids)]
 
-        # UPDATED: Custom hover template for bar chart
-        fig.update_traces(
-            hovertemplate="<b>%{x}</b><br>Uterotonic Rate: %{y:.2f}%<br>Uterotonic Cases: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<br>Ergometrine: %{customdata[2]}<br>Oxytocin: %{customdata[3]}<br>Misoprostol: %{customdata[4]}<extra></extra>",
-            customdata=np.column_stack(
-                (
-                    comparison_df["uterotonic_count"],
-                    comparison_df["total_deliveries"],
-                    comparison_df["ergometrine_count"],
-                    comparison_df["oxytocin_count"],
-                    comparison_df["misoprostol_count"],
+            if not region_df.empty:
+                uterotonic_data = compute_uterotonic_kpi(
+                    region_df, region_facility_uids
                 )
-            ),
+                bar_data.append(
+                    {
+                        "Region": region_name,
+                        "value": uterotonic_data["uterotonic_rate"],
+                        "uterotonic_count": uterotonic_data["uterotonic_count"],
+                        "total_deliveries": uterotonic_data["total_deliveries"],
+                        "ergometrine_count": uterotonic_data["uterotonic_types"][
+                            "Ergometrine"
+                        ],
+                        "oxytocin_count": uterotonic_data["uterotonic_types"][
+                            "Oxytocin"
+                        ],
+                        "misoprostol_count": uterotonic_data["uterotonic_types"][
+                            "Misoprostol"
+                        ],
+                    }
+                )
+
+        if not bar_data:
+            st.info("⚠️ No data available for bar chart.")
+            return
+
+        bar_df = pd.DataFrame(bar_data)
+
+        fig = px.bar(
+            bar_df, x="Region", y="value", title=title, height=500, color="Region"
         )
 
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
+        fig.update_traces(
+            hovertemplate="<b>%{x}</b><br>Uterotonic Rate: %{y:.2f}%<extra></extra>"
+        )
+
+    # Common layout updates
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -1809,20 +1766,13 @@ def render_uterotonic_region_comparison_chart(
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
-        legend=dict(
-            title="Regions",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-        ),
+        showlegend=True,
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Region comparison table
+    # Region comparison table (shows all details including numerator/denominator)
     st.subheader("📋 Region Comparison Summary")
     region_table_data = []
 

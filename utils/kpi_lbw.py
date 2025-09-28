@@ -583,7 +583,7 @@ def render_lbw_facility_comparison_chart(
     numerator_name="LBW Cases",
     denominator_name="Total Weighed Births",
 ):
-    """Render a comparison chart showing each facility's LBW performance"""
+    """SIMPLIFIED VERSION: Render facility comparison without numerator/denominator in hover"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -603,43 +603,8 @@ def render_lbw_facility_comparison_chart(
         st.info("⚠️ No data available for facility comparison.")
         return
 
-    # Prepare comparison data - FIX: Ensure lbw_count is properly calculated
-    comparison_data = []
-    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_order = all_periods["period_display"].tolist()
-
-    for facility_uid in facility_uids:
-        facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
-        if not facility_df.empty:
-            lbw_data = compute_lbw_kpi(facility_df, [facility_uid])
-            # FIX: Use actual calculated lbw_count
-            actual_lbw_count = lbw_data["lbw_count"]
-            comparison_data.append(
-                {
-                    "Facility": facility_uid_to_name[facility_uid],
-                    "value": lbw_data["lbw_rate"],
-                    "lbw_count": actual_lbw_count,  # This should now show correct values
-                    "total_weighed": lbw_data["total_weighed"],
-                    **{
-                        f"{category}_rate": lbw_data["category_rates"][category]
-                        for category in LBW_CATEGORIES.keys()
-                    },
-                    **{
-                        f"{category}_count": lbw_data["lbw_categories"][category]
-                        for category in LBW_CATEGORIES.keys()
-                    },
-                }
-            )
-
-    if not comparison_data:
-        st.info("⚠️ No data available for facility comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_data)
-
     # Chart options
-    chart_options = ["Line Chart", "Bar Chart"]
+    chart_options = ["Bar Chart", "Line Chart"]
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -650,7 +615,15 @@ def render_lbw_facility_comparison_chart(
 
     # Create chart
     if chart_type == "Line Chart":
+        # For line chart, compute time series data
         time_series_data = []
+        all_periods = (
+            filtered_df[["period_display", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+        )
+        period_order = all_periods["period_display"].tolist()
+
         for period_display in period_order:
             period_df = filtered_df[filtered_df["period_display"] == period_display]
 
@@ -658,14 +631,11 @@ def render_lbw_facility_comparison_chart(
                 facility_period_df = period_df[period_df["orgUnit"] == facility_uid]
                 if not facility_period_df.empty:
                     lbw_data = compute_lbw_kpi(facility_period_df, [facility_uid])
-                    actual_lbw_count = lbw_data["lbw_count"]  # FIX: Get actual count
                     time_series_data.append(
                         {
                             "period_display": period_display,
                             "Facility": facility_uid_to_name[facility_uid],
                             "value": lbw_data["lbw_rate"],
-                            "lbw_count": actual_lbw_count,  # This should fix hover issue
-                            "total_weighed": lbw_data["total_weighed"],
                         }
                     )
 
@@ -686,34 +656,53 @@ def render_lbw_facility_comparison_chart(
             category_orders={"period_display": period_order},
         )
 
-        # FIX: Use correct custom data for hover
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
         fig.update_traces(
             line=dict(width=3),
             marker=dict(size=7),
-            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<br>LBW Cases: %{customdata[0]}<br>Total Weighed: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (time_series_df["lbw_count"], time_series_df["total_weighed"])
-            ),
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<extra></extra>",
         )
+
     else:  # Bar Chart
+        # For bar chart, compute overall values
+        bar_data = []
+        for facility_uid in facility_uids:
+            facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
+            if not facility_df.empty:
+                lbw_data = compute_lbw_kpi(facility_df, [facility_uid])
+                bar_data.append(
+                    {
+                        "Facility": facility_uid_to_name[facility_uid],
+                        "value": lbw_data["lbw_rate"],
+                        "lbw_count": lbw_data["lbw_count"],
+                        "total_weighed": lbw_data["total_weighed"],
+                        **{
+                            f"{category}_rate": lbw_data["category_rates"][category]
+                            for category in LBW_CATEGORIES.keys()
+                        },
+                        **{
+                            f"{category}_count": lbw_data["lbw_categories"][category]
+                            for category in LBW_CATEGORIES.keys()
+                        },
+                    }
+                )
+
+        if not bar_data:
+            st.info("⚠️ No data available for bar chart.")
+            return
+
+        bar_df = pd.DataFrame(bar_data)
+
         fig = px.bar(
-            comparison_df,
-            x="Facility",
-            y="value",
-            title=title,
-            height=500,
-            color="Facility",
-            hover_data=["lbw_count", "total_weighed"],
+            bar_df, x="Facility", y="value", title=title, height=500, color="Facility"
         )
 
-        # FIX: Use correct custom data
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
         fig.update_traces(
-            hovertemplate="<b>%{x}</b><br>LBW Rate: %{y:.2f}%<br>LBW Cases: %{customdata[0]}<br>Total Weighed: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (comparison_df["lbw_count"], comparison_df["total_weighed"])
-            ),
+            hovertemplate="<b>%{x}</b><br>LBW Rate: %{y:.2f}%<extra></extra>"
         )
 
+    # Common layout updates
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -734,20 +723,13 @@ def render_lbw_facility_comparison_chart(
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
-        legend=dict(
-            title="Facilities",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-        ),
+        showlegend=True,
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # FIX: Facility comparison table - Show Count first then Rate for each category
+    # Facility comparison table (shows all details including numerator/denominator)
     st.subheader("📋 Facility Comparison Summary")
     facility_table_data = []
 
@@ -832,6 +814,268 @@ def render_lbw_facility_comparison_chart(
         label="Download CSV",
         data=csv,
         file_name="lbw_rate_facility_comparison.csv",
+        mime="text/csv",
+    )
+
+
+def render_lbw_region_comparison_chart(
+    df,
+    period_col="period_display",
+    value_col="lbw_rate",
+    title="Low Birth Weight Rate - Region Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    region_names=None,
+    region_mapping=None,
+    facilities_by_region=None,
+    numerator_name="LBW Cases",
+    denominator_name="Total Weighed Births",
+):
+    """SIMPLIFIED VERSION: Render region comparison without numerator/denominator in hover"""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if not region_names or not facilities_by_region:
+        st.info("⚠️ No regions selected for comparison.")
+        return
+
+    # Get all facility UIDs for selected regions
+    all_facility_uids = []
+    for region_name in region_names:
+        facility_uids = [uid for _, uid in facilities_by_region.get(region_name, [])]
+        all_facility_uids.extend(facility_uids)
+
+    filtered_df = df[df["orgUnit"].isin(all_facility_uids)].copy()
+
+    if filtered_df.empty:
+        st.info("⚠️ No data available for region comparison.")
+        return
+
+    # Chart options
+    chart_options = ["Bar Chart", "Line Chart"]
+    chart_type = st.radio(
+        f"📊 Chart type for {title}",
+        options=chart_options,
+        index=0,
+        horizontal=True,
+        key=f"chart_type_region_comparison_{str(region_names)}",
+    )
+
+    # Create chart
+    if chart_type == "Line Chart":
+        # For line chart, compute time series data
+        time_series_data = []
+        all_periods = (
+            filtered_df[["period_display", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+        )
+        period_order = all_periods["period_display"].tolist()
+
+        for period_display in period_order:
+            period_df = filtered_df[filtered_df["period_display"] == period_display]
+
+            for region_name in region_names:
+                region_facility_uids = [
+                    uid for _, uid in facilities_by_region.get(region_name, [])
+                ]
+                region_period_df = period_df[
+                    period_df["orgUnit"].isin(region_facility_uids)
+                ]
+
+                if not region_period_df.empty:
+                    lbw_data = compute_lbw_kpi(region_period_df, region_facility_uids)
+                    time_series_data.append(
+                        {
+                            "period_display": period_display,
+                            "Region": region_name,
+                            "value": lbw_data["lbw_rate"],
+                        }
+                    )
+
+        if not time_series_data:
+            st.info("⚠️ No time series data available for line chart.")
+            return
+
+        time_series_df = pd.DataFrame(time_series_data)
+
+        fig = px.line(
+            time_series_df,
+            x="period_display",
+            y="value",
+            color="Region",
+            markers=True,
+            title=title,
+            height=500,
+            category_orders={"period_display": period_order},
+        )
+
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
+        fig.update_traces(
+            line=dict(width=3),
+            marker=dict(size=7),
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<extra></extra>",
+        )
+
+    else:  # Bar Chart
+        # For bar chart, compute overall values
+        bar_data = []
+        for region_name in region_names:
+            region_facility_uids = [
+                uid for _, uid in facilities_by_region.get(region_name, [])
+            ]
+            region_df = filtered_df[filtered_df["orgUnit"].isin(region_facility_uids)]
+
+            if not region_df.empty:
+                lbw_data = compute_lbw_kpi(region_df, region_facility_uids)
+                bar_data.append(
+                    {
+                        "Region": region_name,
+                        "value": lbw_data["lbw_rate"],
+                        "lbw_count": lbw_data["lbw_count"],
+                        "total_weighed": lbw_data["total_weighed"],
+                        **{
+                            f"{category}_rate": lbw_data["category_rates"][category]
+                            for category in LBW_CATEGORIES.keys()
+                        },
+                        **{
+                            f"{category}_count": lbw_data["lbw_categories"][category]
+                            for category in LBW_CATEGORIES.keys()
+                        },
+                    }
+                )
+
+        if not bar_data:
+            st.info("⚠️ No data available for bar chart.")
+            return
+
+        bar_df = pd.DataFrame(bar_data)
+
+        fig = px.bar(
+            bar_df, x="Region", y="value", title=title, height=500, color="Region"
+        )
+
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
+        fig.update_traces(
+            hovertemplate="<b>%{x}</b><br>LBW Rate: %{y:.2f}%<extra></extra>"
+        )
+
+    # Common layout updates
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis_title="Period" if chart_type == "Line Chart" else "Region",
+        yaxis_title="LBW Rate (%)",
+        xaxis=dict(
+            type="category",
+            tickangle=-45 if chart_type == "Line Chart" else 0,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        showlegend=True,
+    )
+
+    fig.update_layout(yaxis_tickformat=".2f")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Region comparison table (shows all details including numerator/denominator)
+    st.subheader("📋 Region Comparison Summary")
+    region_table_data = []
+
+    for region_name in region_names:
+        region_facility_uids = [
+            uid for _, uid in facilities_by_region.get(region_name, [])
+        ]
+        region_df = df[df["orgUnit"].isin(region_facility_uids)]
+
+        if not region_df.empty:
+            lbw_data = compute_lbw_kpi(region_df, region_facility_uids)
+            row_data = {
+                "Region Name": region_name,
+                "LBW Cases": lbw_data["lbw_count"],
+                "Total Weighed": lbw_data["total_weighed"],
+                "LBW Rate (%)": lbw_data["lbw_rate"],
+            }
+            # Add LBW Count first then Rate for each weight category
+            for category_key, category_info in LBW_CATEGORIES.items():
+                row_data[f"{category_info['name']} Count"] = lbw_data["lbw_categories"][
+                    category_key
+                ]
+                row_data[f"{category_info['name']} LBW Rate (%)"] = lbw_data[
+                    "category_rates"
+                ][category_key]
+
+            region_table_data.append(row_data)
+
+    if not region_table_data:
+        st.info("⚠️ No data available for region comparison table.")
+        return
+
+    region_table_df = pd.DataFrame(region_table_data)
+
+    # Calculate overall
+    total_numerator = region_table_df["LBW Cases"].sum()
+    total_denominator = region_table_df["Total Weighed"].sum()
+    overall_value = (
+        (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+    )
+
+    overall_row = {
+        "Region Name": "Overall",
+        "LBW Cases": total_numerator,
+        "Total Weighed": total_denominator,
+        "LBW Rate (%)": overall_value,
+    }
+
+    # Add category totals (only LBW categories) - Count first then Rate
+    for category_key, category_info in LBW_CATEGORIES.items():
+        total_category_count = region_table_df[f"{category_info['name']} Count"].sum()
+        overall_row[f"{category_info['name']} Count"] = total_category_count
+        overall_row[f"{category_info['name']} LBW Rate (%)"] = (
+            (total_category_count / total_denominator * 100)
+            if total_denominator > 0
+            else 0
+        )
+
+    region_table_df = pd.concat(
+        [region_table_df, pd.DataFrame([overall_row])], ignore_index=True
+    )
+    region_table_df.insert(0, "No", range(1, len(region_table_df) + 1))
+
+    # Format table - Count first then Rate
+    format_dict = {
+        "LBW Cases": "{:,.0f}",
+        "Total Weighed": "{:,.0f}",
+        "LBW Rate (%)": "{:.2f}%",
+    }
+
+    for category_info in LBW_CATEGORIES.values():
+        format_dict[f"{category_info['name']} Count"] = "{:,.0f}"
+        format_dict[f"{category_info['name']} LBW Rate (%)"] = "{:.2f}%"
+
+    styled_table = (
+        region_table_df.style.format(format_dict)
+        .set_table_attributes('class="summary-table"')
+        .hide(axis="index")
+    )
+
+    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+
+    # Download button
+    csv = region_table_df.to_csv(index=False)
+    st.download_button(
+        label="Download CSV",
+        data=csv,
+        file_name="lbw_rate_region_comparison.csv",
         mime="text/csv",
     )
 
@@ -991,280 +1235,5 @@ def render_lbw_category_pie_chart(
         label="Download CSV",
         data=csv,
         file_name="lbw_category_distribution.csv",
-        mime="text/csv",
-    )
-
-
-def render_lbw_region_comparison_chart(
-    df,
-    period_col="period_display",
-    value_col="lbw_rate",
-    title="Low Birth Weight Rate - Region Comparison",
-    bg_color="#FFFFFF",
-    text_color=None,
-    region_names=None,
-    region_mapping=None,
-    facilities_by_region=None,
-    numerator_name="LBW Cases",
-    denominator_name="Total Weighed Births",
-):
-    """Render a comparison chart showing each region's LBW performance"""
-    if text_color is None:
-        text_color = auto_text_color(bg_color)
-
-    if not region_names or not facilities_by_region:
-        st.info("⚠️ No regions selected for comparison.")
-        return
-
-    # Get all facility UIDs for selected regions
-    all_facility_uids = []
-    for region_name in region_names:
-        facility_uids = [uid for _, uid in facilities_by_region.get(region_name, [])]
-        all_facility_uids.extend(facility_uids)
-
-    filtered_df = df[df["orgUnit"].isin(all_facility_uids)].copy()
-
-    if filtered_df.empty:
-        st.info("⚠️ No data available for region comparison.")
-        return
-
-    # Prepare comparison data - FIX: Ensure lbw_count is properly calculated
-    comparison_data = []
-    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_order = all_periods["period_display"].tolist()
-
-    for region_name in region_names:
-        region_facility_uids = [
-            uid for _, uid in facilities_by_region.get(region_name, [])
-        ]
-        region_df = filtered_df[filtered_df["orgUnit"].isin(region_facility_uids)]
-
-        if not region_df.empty:
-            lbw_data = compute_lbw_kpi(region_df, region_facility_uids)
-            # FIX: Use actual calculated lbw_count
-            actual_lbw_count = lbw_data["lbw_count"]
-            comparison_data.append(
-                {
-                    "Region": region_name,
-                    "value": lbw_data["lbw_rate"],
-                    "lbw_count": actual_lbw_count,  # This should now show correct values
-                    "total_weighed": lbw_data["total_weighed"],
-                    **{
-                        f"{category}_rate": lbw_data["category_rates"][category]
-                        for category in LBW_CATEGORIES.keys()
-                    },
-                    **{
-                        f"{category}_count": lbw_data["lbw_categories"][category]
-                        for category in LBW_CATEGORIES.keys()
-                    },
-                }
-            )
-
-    if not comparison_data:
-        st.info("⚠️ No data available for region comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_data)
-
-    # Chart options and creation
-    chart_options = ["Line Chart", "Bar Chart"]
-    chart_type = st.radio(
-        f"📊 Chart type for {title}",
-        options=chart_options,
-        index=0,
-        horizontal=True,
-        key=f"chart_type_region_comparison_{str(region_names)}",
-    )
-
-    # Create chart
-    if chart_type == "Line Chart":
-        time_series_data = []
-        for period_display in period_order:
-            period_df = filtered_df[filtered_df["period_display"] == period_display]
-
-            for region_name in region_names:
-                region_facility_uids = [
-                    uid for _, uid in facilities_by_region.get(region_name, [])
-                ]
-                region_period_df = period_df[
-                    period_df["orgUnit"].isin(region_facility_uids)
-                ]
-
-                if not region_period_df.empty:
-                    lbw_data = compute_lbw_kpi(region_period_df, region_facility_uids)
-                    actual_lbw_count = lbw_data["lbw_count"]  # FIX: Get actual count
-                    time_series_data.append(
-                        {
-                            "period_display": period_display,
-                            "Region": region_name,
-                            "value": lbw_data["lbw_rate"],
-                            "lbw_count": actual_lbw_count,  # This should fix hover issue
-                            "total_weighed": lbw_data["total_weighed"],
-                        }
-                    )
-
-        if not time_series_data:
-            st.info("⚠️ No time series data available for line chart.")
-            return
-
-        time_series_df = pd.DataFrame(time_series_data)
-        fig = px.line(
-            time_series_df,
-            x="period_display",
-            y="value",
-            color="Region",
-            markers=True,
-            title=title,
-            height=500,
-            category_orders={"period_display": period_order},
-        )
-        fig.update_traces(
-            line=dict(width=3),
-            marker=dict(size=7),
-            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<br>LBW Cases: %{customdata[0]}<br>Total Weighed: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (time_series_df["lbw_count"], time_series_df["total_weighed"])
-            ),
-        )
-    else:
-        fig = px.bar(
-            comparison_df,
-            x="Region",
-            y="value",
-            title=title,
-            height=500,
-            color="Region",
-            hover_data=["lbw_count", "total_weighed"],
-        )
-        fig.update_traces(
-            hovertemplate="<b>%{x}</b><br>LBW Rate: %{y:.2f}%<br>LBW Cases: %{customdata[0]}<br>Total Weighed: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (comparison_df["lbw_count"], comparison_df["total_weighed"])
-            ),
-        )
-
-    fig.update_layout(
-        paper_bgcolor=bg_color,
-        plot_bgcolor=bg_color,
-        font_color=text_color,
-        title_font_color=text_color,
-        xaxis_title="Period" if chart_type == "Line Chart" else "Region",
-        yaxis_title="LBW Rate (%)",
-        xaxis=dict(
-            type="category",
-            tickangle=-45 if chart_type == "Line Chart" else 0,
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-        ),
-        yaxis=dict(
-            rangemode="tozero",
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-            zeroline=True,
-            zerolinecolor="rgba(128,128,128,0.5)",
-        ),
-        legend=dict(
-            title="Regions",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-        ),
-    )
-
-    fig.update_layout(yaxis_tickformat=".2f")
-    st.plotly_chart(fig, use_container_width=True)
-
-    # FIX: Region comparison table - Show Count first then Rate for each category
-    st.subheader("📋 Region Comparison Summary")
-    region_table_data = []
-
-    for region_name in region_names:
-        region_facility_uids = [
-            uid for _, uid in facilities_by_region.get(region_name, [])
-        ]
-        region_df = df[df["orgUnit"].isin(region_facility_uids)]
-
-        if not region_df.empty:
-            lbw_data = compute_lbw_kpi(region_df, region_facility_uids)
-            row_data = {
-                "Region Name": region_name,
-                "LBW Cases": lbw_data["lbw_count"],
-                "Total Weighed": lbw_data["total_weighed"],
-                "LBW Rate (%)": lbw_data["lbw_rate"],
-            }
-            # Add LBW Count first then Rate for each weight category
-            for category_key, category_info in LBW_CATEGORIES.items():
-                row_data[f"{category_info['name']} Count"] = lbw_data["lbw_categories"][
-                    category_key
-                ]
-                row_data[f"{category_info['name']} LBW Rate (%)"] = lbw_data[
-                    "category_rates"
-                ][category_key]
-
-            region_table_data.append(row_data)
-
-    if not region_table_data:
-        st.info("⚠️ No data available for region comparison table.")
-        return
-
-    region_table_df = pd.DataFrame(region_table_data)
-
-    # Calculate overall
-    total_numerator = region_table_df["LBW Cases"].sum()
-    total_denominator = region_table_df["Total Weighed"].sum()
-    overall_value = (
-        (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
-    )
-
-    overall_row = {
-        "Region Name": "Overall",
-        "LBW Cases": total_numerator,
-        "Total Weighed": total_denominator,
-        "LBW Rate (%)": overall_value,
-    }
-
-    # Add category totals (only LBW categories) - Count first then Rate
-    for category_key, category_info in LBW_CATEGORIES.items():
-        total_category_count = region_table_df[f"{category_info['name']} Count"].sum()
-        overall_row[f"{category_info['name']} Count"] = total_category_count
-        overall_row[f"{category_info['name']} LBW Rate (%)"] = (
-            (total_category_count / total_denominator * 100)
-            if total_denominator > 0
-            else 0
-        )
-
-    region_table_df = pd.concat(
-        [region_table_df, pd.DataFrame([overall_row])], ignore_index=True
-    )
-    region_table_df.insert(0, "No", range(1, len(region_table_df) + 1))
-
-    # Format table - Count first then Rate
-    format_dict = {
-        "LBW Cases": "{:,.0f}",
-        "Total Weighed": "{:,.0f}",
-        "LBW Rate (%)": "{:.2f}%",
-    }
-
-    for category_info in LBW_CATEGORIES.values():
-        format_dict[f"{category_info['name']} Count"] = "{:,.0f}"
-        format_dict[f"{category_info['name']} LBW Rate (%)"] = "{:.2f}%"
-
-    styled_table = (
-        region_table_df.style.format(format_dict)
-        .set_table_attributes('class="summary-table"')
-        .hide(axis="index")
-    )
-
-    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
-
-    # Download button
-    csv = region_table_df.to_csv(index=False)
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="lbw_rate_region_comparison.csv",
         mime="text/csv",
     )

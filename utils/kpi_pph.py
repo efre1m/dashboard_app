@@ -334,7 +334,7 @@ def render_pph_facility_comparison_chart(
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each facility's PPH performance with heatmap option"""
+    """SIMPLIFIED VERSION: Render facility comparison without numerator/denominator in hover"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -354,37 +354,8 @@ def render_pph_facility_comparison_chart(
         st.info("⚠️ No data available for facility comparison.")
         return
 
-    # Prepare comparison data
-    comparison_data = []
-    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_order = all_periods["period_display"].tolist()
-
-    for period_display in period_order:
-        period_df = filtered_df[filtered_df["period_display"] == period_display]
-
-        for facility_uid in facility_uids:
-            facility_df = period_df[period_df["orgUnit"] == facility_uid]
-            if not facility_df.empty:
-                pph_data = compute_pph_kpi(facility_df, [facility_uid])
-                comparison_data.append(
-                    {
-                        "period_display": period_display,
-                        "Facility": facility_uid_to_name[facility_uid],
-                        "value": pph_data["pph_rate"],
-                        "pph_count": pph_data["pph_count"],
-                        "total_deliveries": pph_data["total_deliveries"],
-                    }
-                )
-
-    if not comparison_data:
-        st.info("⚠️ No data available for facility comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_data)
-
-    # Chart options - Line Chart vs Heatmap
-    chart_options = ["Line Chart", "Heatmap"]
+    # Chart options
+    chart_options = ["Bar Chart", "Line Chart"]
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -393,84 +364,98 @@ def render_pph_facility_comparison_chart(
         key=f"chart_type_facility_comparison_{str(facility_uids)}",
     )
 
-    if chart_type == "Heatmap":
-        # Call the heatmap function with facility label
-        render_pph_heatmap(
-            df,
-            facility_names,
-            period_order,
-            bg_color,
-            text_color,
-            entity_label="Facility",
+    # Create chart
+    if chart_type == "Line Chart":
+        # For line chart, compute time series data
+        time_series_data = []
+        all_periods = (
+            filtered_df[["period_display", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+        )
+        period_order = all_periods["period_display"].tolist()
+
+        for period_display in period_order:
+            period_df = filtered_df[filtered_df["period_display"] == period_display]
+
+            for facility_uid in facility_uids:
+                facility_period_df = period_df[period_df["orgUnit"] == facility_uid]
+                if not facility_period_df.empty:
+                    pph_data = compute_pph_kpi(facility_period_df, [facility_uid])
+                    time_series_data.append(
+                        {
+                            "period_display": period_display,
+                            "Facility": facility_uid_to_name[facility_uid],
+                            "value": pph_data["pph_rate"],
+                        }
+                    )
+
+        if not time_series_data:
+            st.info("⚠️ No time series data available for line chart.")
+            return
+
+        time_series_df = pd.DataFrame(time_series_data)
+
+        fig = px.line(
+            time_series_df,
+            x="period_display",
+            y="value",
+            color="Facility",
+            markers=True,
+            title=title,
+            height=500,
+            category_orders={"period_display": period_order},
         )
 
-        # Generate heatmap CSV for download
-        heatmap_data = []
-        for facility_name in facility_names:
-            for period in period_order:
-                period_data = comparison_df[
-                    (comparison_df["Facility"] == facility_name)
-                    & (comparison_df["period_display"] == period)
-                ]
-                if not period_data.empty:
-                    pph_rate = period_data["value"].iloc[0]
-                    pph_count = period_data["pph_count"].iloc[0]
-                    total_deliveries = period_data["total_deliveries"].iloc[0]
-                else:
-                    pph_rate = 0.0
-                    pph_count = 0
-                    total_deliveries = 0
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
+        fig.update_traces(
+            line=dict(width=3),
+            marker=dict(size=7),
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<extra></extra>",
+        )
 
-                heatmap_data.append(
+    else:  # Bar Chart
+        # For bar chart, compute overall values
+        bar_data = []
+        for facility_uid in facility_uids:
+            facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
+            if not facility_df.empty:
+                pph_data = compute_pph_kpi(facility_df, [facility_uid])
+                bar_data.append(
                     {
-                        "Facility": facility_name,
-                        "Period": period,
-                        "PPH Rate": pph_rate,
-                        "PPH Cases": pph_count,
-                        "Total Deliveries": total_deliveries,
+                        "Facility": facility_uid_to_name[facility_uid],
+                        "value": pph_data["pph_rate"],
+                        "pph_count": pph_data["pph_count"],
+                        "total_deliveries": pph_data["total_deliveries"],
                     }
                 )
 
-        heatmap_df = pd.DataFrame(heatmap_data)
-        pivot_df = heatmap_df.pivot(
-            index="Facility", columns="Period", values="PPH Rate"
+        if not bar_data:
+            st.info("⚠️ No data available for bar chart.")
+            return
+
+        bar_df = pd.DataFrame(bar_data)
+
+        fig = px.bar(
+            bar_df, x="Facility", y="value", title=title, height=500, color="Facility"
         )
 
-        # Download button for heatmap CSV
-        csv = pivot_df.to_csv()
-        st.download_button(
-            label="Download Heatmap CSV",
-            data=csv,
-            file_name="pph_rate_facility_heatmap.csv",
-            mime="text/csv",
-            key="facility_heatmap_download",
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
+        fig.update_traces(
+            hovertemplate="<b>%{x}</b><br>PPH Rate: %{y:.2f}%<extra></extra>"
         )
 
-        return  # Exit early for heatmap view
-
-    # Line chart view (original functionality)
-    fig = px.line(
-        comparison_df,
-        x="period_display",
-        y="value",
-        color="Facility",
-        markers=True,
-        title=title,
-        height=500,
-        category_orders={"period_display": period_order},
-    )
-
-    fig.update_traces(line=dict(width=3), marker=dict(size=7))
+    # Common layout updates
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title="Period",
+        xaxis_title="Period" if chart_type == "Line Chart" else "Facility",
         yaxis_title="PPH Rate (%)",
         xaxis=dict(
             type="category",
-            tickangle=-45,
+            tickangle=-45 if chart_type == "Line Chart" else 0,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
@@ -481,20 +466,13 @@ def render_pph_facility_comparison_chart(
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
-        legend=dict(
-            title="Facilities",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-        ),
+        showlegend=True,
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Facility comparison table
+    # Facility comparison table (shows all details including numerator/denominator)
     st.subheader("📋 Facility Comparison Summary")
     facility_table_data = []
 
@@ -574,7 +552,7 @@ def render_pph_region_comparison_chart(
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each region's PPH performance with heatmap option"""
+    """SIMPLIFIED VERSION: Render region comparison without numerator/denominator in hover"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -594,41 +572,8 @@ def render_pph_region_comparison_chart(
         st.info("⚠️ No data available for region comparison.")
         return
 
-    # Prepare comparison data
-    comparison_data = []
-    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_order = all_periods["period_display"].tolist()
-
-    for period_display in period_order:
-        period_df = filtered_df[filtered_df["period_display"] == period_display]
-
-        for region_name in region_names:
-            region_facility_uids = [
-                uid for _, uid in facilities_by_region.get(region_name, [])
-            ]
-            region_df = period_df[period_df["orgUnit"].isin(region_facility_uids)]
-
-            if not region_df.empty:
-                pph_data = compute_pph_kpi(region_df, region_facility_uids)
-                comparison_data.append(
-                    {
-                        "period_display": period_display,
-                        "Region": region_name,
-                        "value": pph_data["pph_rate"],
-                        "pph_count": pph_data["pph_count"],
-                        "total_deliveries": pph_data["total_deliveries"],
-                    }
-                )
-
-    if not comparison_data:
-        st.info("⚠️ No data available for region comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_data)
-
-    # Chart options - Line Chart vs Heatmap
-    chart_options = ["Line Chart", "Heatmap"]
+    # Chart options
+    chart_options = ["Bar Chart", "Line Chart"]
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -637,77 +582,108 @@ def render_pph_region_comparison_chart(
         key=f"chart_type_region_comparison_{str(region_names)}",
     )
 
-    if chart_type == "Heatmap":
-        # Call the heatmap function with region label
-        render_pph_heatmap(
-            df, region_names, period_order, bg_color, text_color, entity_label="Region"
+    # Create chart
+    if chart_type == "Line Chart":
+        # For line chart, compute time series data
+        time_series_data = []
+        all_periods = (
+            filtered_df[["period_display", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+        )
+        period_order = all_periods["period_display"].tolist()
+
+        for period_display in period_order:
+            period_df = filtered_df[filtered_df["period_display"] == period_display]
+
+            for region_name in region_names:
+                region_facility_uids = [
+                    uid for _, uid in facilities_by_region.get(region_name, [])
+                ]
+                region_period_df = period_df[
+                    period_df["orgUnit"].isin(region_facility_uids)
+                ]
+
+                if not region_period_df.empty:
+                    pph_data = compute_pph_kpi(region_period_df, region_facility_uids)
+                    time_series_data.append(
+                        {
+                            "period_display": period_display,
+                            "Region": region_name,
+                            "value": pph_data["pph_rate"],
+                        }
+                    )
+
+        if not time_series_data:
+            st.info("⚠️ No time series data available for line chart.")
+            return
+
+        time_series_df = pd.DataFrame(time_series_data)
+
+        fig = px.line(
+            time_series_df,
+            x="period_display",
+            y="value",
+            color="Region",
+            markers=True,
+            title=title,
+            height=500,
+            category_orders={"period_display": period_order},
         )
 
-        # Generate heatmap CSV for download
-        heatmap_data = []
-        for region_name in region_names:
-            for period in period_order:
-                period_data = comparison_df[
-                    (comparison_df["Region"] == region_name)
-                    & (comparison_df["period_display"] == period)
-                ]
-                if not period_data.empty:
-                    pph_rate = period_data["value"].iloc[0]
-                    pph_count = period_data["pph_count"].iloc[0]
-                    total_deliveries = period_data["total_deliveries"].iloc[0]
-                else:
-                    pph_rate = 0.0
-                    pph_count = 0
-                    total_deliveries = 0
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
+        fig.update_traces(
+            line=dict(width=3),
+            marker=dict(size=7),
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<extra></extra>",
+        )
 
-                heatmap_data.append(
+    else:  # Bar Chart
+        # For bar chart, compute overall values
+        bar_data = []
+        for region_name in region_names:
+            region_facility_uids = [
+                uid for _, uid in facilities_by_region.get(region_name, [])
+            ]
+            region_df = filtered_df[filtered_df["orgUnit"].isin(region_facility_uids)]
+
+            if not region_df.empty:
+                pph_data = compute_pph_kpi(region_df, region_facility_uids)
+                bar_data.append(
                     {
                         "Region": region_name,
-                        "Period": period,
-                        "PPH Rate": pph_rate,
-                        "PPH Cases": pph_count,
-                        "Total Deliveries": total_deliveries,
+                        "value": pph_data["pph_rate"],
+                        "pph_count": pph_data["pph_count"],
+                        "total_deliveries": pph_data["total_deliveries"],
                     }
                 )
 
-        heatmap_df = pd.DataFrame(heatmap_data)
-        pivot_df = heatmap_df.pivot(index="Region", columns="Period", values="PPH Rate")
+        if not bar_data:
+            st.info("⚠️ No data available for bar chart.")
+            return
 
-        # Download button for heatmap CSV
-        csv = pivot_df.to_csv()
-        st.download_button(
-            label="Download Heatmap CSV",
-            data=csv,
-            file_name="pph_rate_region_heatmap.csv",
-            mime="text/csv",
-            key="region_heatmap_download",
+        bar_df = pd.DataFrame(bar_data)
+
+        fig = px.bar(
+            bar_df, x="Region", y="value", title=title, height=500, color="Region"
         )
 
-        return  # Exit early for heatmap view
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
+        fig.update_traces(
+            hovertemplate="<b>%{x}</b><br>PPH Rate: %{y:.2f}%<extra></extra>"
+        )
 
-    # Line chart view (original functionality)
-    fig = px.line(
-        comparison_df,
-        x="period_display",
-        y="value",
-        color="Region",
-        markers=True,
-        title=title,
-        height=500,
-        category_orders={"period_display": period_order},
-    )
-
-    fig.update_traces(line=dict(width=3), marker=dict(size=7))
+    # Common layout updates
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title="Period",
+        xaxis_title="Period" if chart_type == "Line Chart" else "Region",
         yaxis_title="PPH Rate (%)",
         xaxis=dict(
             type="category",
-            tickangle=-45,
+            tickangle=-45 if chart_type == "Line Chart" else 0,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
@@ -718,20 +694,13 @@ def render_pph_region_comparison_chart(
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
-        legend=dict(
-            title="Regions",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-        ),
+        showlegend=True,
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Region comparison table
+    # Region comparison table (shows all details including numerator/denominator)
     st.subheader("📋 Region Comparison Summary")
     region_table_data = []
 

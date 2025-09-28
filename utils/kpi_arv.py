@@ -372,7 +372,7 @@ def render_arv_facility_comparison_chart(
     numerator_name="ARV Cases",
     denominator_name="HIV-Exposed Infants",
 ):
-    """Render a comparison chart showing each facility's ARV performance"""
+    """SIMPLIFIED VERSION: Render facility comparison without numerator/denominator in hover"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -392,33 +392,8 @@ def render_arv_facility_comparison_chart(
         st.info("⚠️ No data available for facility comparison.")
         return
 
-    # Prepare comparison data
-    comparison_data = []
-    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_order = all_periods["period_display"].tolist()
-
-    for facility_uid in facility_uids:
-        facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
-        if not facility_df.empty:
-            arv_data = compute_arv_kpi(facility_df, [facility_uid])
-            comparison_data.append(
-                {
-                    "Facility": facility_uid_to_name[facility_uid],
-                    "value": arv_data["arv_rate"],
-                    "arv_count": arv_data["arv_count"],
-                    "hiv_exposed_infants": arv_data["hiv_exposed_infants"],
-                }
-            )
-
-    if not comparison_data:
-        st.info("⚠️ No data available for facility comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_data)
-
     # Chart options
-    chart_options = ["Line Chart", "Bar Chart"]
+    chart_options = ["Bar Chart", "Line Chart"]
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -429,8 +404,15 @@ def render_arv_facility_comparison_chart(
 
     # Create chart
     if chart_type == "Line Chart":
-        # For line chart, we need time series data
+        # For line chart, compute time series data
         time_series_data = []
+        all_periods = (
+            filtered_df[["period_display", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+        )
+        period_order = all_periods["period_display"].tolist()
+
         for period_display in period_order:
             period_df = filtered_df[filtered_df["period_display"] == period_display]
 
@@ -443,8 +425,6 @@ def render_arv_facility_comparison_chart(
                             "period_display": period_display,
                             "Facility": facility_uid_to_name[facility_uid],
                             "value": arv_data["arv_rate"],
-                            "arv_count": arv_data["arv_count"],
-                            "hiv_exposed_infants": arv_data["hiv_exposed_infants"],
                         }
                     )
 
@@ -465,32 +445,45 @@ def render_arv_facility_comparison_chart(
             category_orders={"period_display": period_order},
         )
 
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
         fig.update_traces(
             line=dict(width=3),
             marker=dict(size=7),
-            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<br>ARV Cases: %{customdata[0]}<br>HIV-Exposed Infants: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (time_series_df["arv_count"], time_series_df["hiv_exposed_infants"])
-            ),
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<extra></extra>",
         )
+
     else:  # Bar Chart
+        # For bar chart, compute overall values
+        bar_data = []
+        for facility_uid in facility_uids:
+            facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
+            if not facility_df.empty:
+                arv_data = compute_arv_kpi(facility_df, [facility_uid])
+                bar_data.append(
+                    {
+                        "Facility": facility_uid_to_name[facility_uid],
+                        "value": arv_data["arv_rate"],
+                        "arv_count": arv_data["arv_count"],
+                        "hiv_exposed_infants": arv_data["hiv_exposed_infants"],
+                    }
+                )
+
+        if not bar_data:
+            st.info("⚠️ No data available for bar chart.")
+            return
+
+        bar_df = pd.DataFrame(bar_data)
+
         fig = px.bar(
-            comparison_df,
-            x="Facility",
-            y="value",
-            title=title,
-            height=500,
-            color="Facility",
-            hover_data=["arv_count", "hiv_exposed_infants"],
+            bar_df, x="Facility", y="value", title=title, height=500, color="Facility"
         )
 
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
         fig.update_traces(
-            hovertemplate="<b>%{x}</b><br>ARV Rate: %{y:.2f}%<br>ARV Cases: %{customdata[0]}<br>HIV-Exposed Infants: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (comparison_df["arv_count"], comparison_df["hiv_exposed_infants"])
-            ),
+            hovertemplate="<b>%{x}</b><br>ARV Rate: %{y:.2f}%<extra></extra>"
         )
 
+    # Common layout updates
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -511,20 +504,13 @@ def render_arv_facility_comparison_chart(
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
-        legend=dict(
-            title="Facilities",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-        ),
+        showlegend=True,
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Facility comparison table
+    # Facility comparison table (shows all details including numerator/denominator)
     st.subheader("📋 Facility Comparison Summary")
     facility_table_data = []
 
@@ -604,7 +590,7 @@ def render_arv_region_comparison_chart(
     numerator_name="ARV Cases",
     denominator_name="HIV-Exposed Infants",
 ):
-    """Render a comparison chart showing each region's ARV performance"""
+    """SIMPLIFIED VERSION: Render region comparison without numerator/denominator in hover"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -624,37 +610,8 @@ def render_arv_region_comparison_chart(
         st.info("⚠️ No data available for region comparison.")
         return
 
-    # Prepare comparison data
-    comparison_data = []
-    all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_order = all_periods["period_display"].tolist()
-
-    for region_name in region_names:
-        region_facility_uids = [
-            uid for _, uid in facilities_by_region.get(region_name, [])
-        ]
-        region_df = filtered_df[filtered_df["orgUnit"].isin(region_facility_uids)]
-
-        if not region_df.empty:
-            arv_data = compute_arv_kpi(region_df, region_facility_uids)
-            comparison_data.append(
-                {
-                    "Region": region_name,
-                    "value": arv_data["arv_rate"],
-                    "arv_count": arv_data["arv_count"],
-                    "hiv_exposed_infants": arv_data["hiv_exposed_infants"],
-                }
-            )
-
-    if not comparison_data:
-        st.info("⚠️ No data available for region comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_data)
-
     # Chart options
-    chart_options = ["Line Chart", "Bar Chart"]
+    chart_options = ["Bar Chart", "Line Chart"]
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -665,8 +622,15 @@ def render_arv_region_comparison_chart(
 
     # Create chart
     if chart_type == "Line Chart":
-        # For line chart, we need time series data
+        # For line chart, compute time series data
         time_series_data = []
+        all_periods = (
+            filtered_df[["period_display", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+        )
+        period_order = all_periods["period_display"].tolist()
+
         for period_display in period_order:
             period_df = filtered_df[filtered_df["period_display"] == period_display]
 
@@ -685,8 +649,6 @@ def render_arv_region_comparison_chart(
                             "period_display": period_display,
                             "Region": region_name,
                             "value": arv_data["arv_rate"],
-                            "arv_count": arv_data["arv_count"],
-                            "hiv_exposed_infants": arv_data["hiv_exposed_infants"],
                         }
                     )
 
@@ -707,32 +669,49 @@ def render_arv_region_comparison_chart(
             category_orders={"period_display": period_order},
         )
 
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
         fig.update_traces(
             line=dict(width=3),
             marker=dict(size=7),
-            hovertemplate="<b>%{{x}}</b><br>%{{data.name}: %{{y:.2f}}%<br>ARV Cases: %{{customdata[0]}<br>HIV-Exposed Infants: %{{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (time_series_df["arv_count"], time_series_df["hiv_exposed_infants"])
-            ),
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<extra></extra>",
         )
+
     else:  # Bar Chart
+        # For bar chart, compute overall values
+        bar_data = []
+        for region_name in region_names:
+            region_facility_uids = [
+                uid for _, uid in facilities_by_region.get(region_name, [])
+            ]
+            region_df = filtered_df[filtered_df["orgUnit"].isin(region_facility_uids)]
+
+            if not region_df.empty:
+                arv_data = compute_arv_kpi(region_df, region_facility_uids)
+                bar_data.append(
+                    {
+                        "Region": region_name,
+                        "value": arv_data["arv_rate"],
+                        "arv_count": arv_data["arv_count"],
+                        "hiv_exposed_infants": arv_data["hiv_exposed_infants"],
+                    }
+                )
+
+        if not bar_data:
+            st.info("⚠️ No data available for bar chart.")
+            return
+
+        bar_df = pd.DataFrame(bar_data)
+
         fig = px.bar(
-            comparison_df,
-            x="Region",
-            y="value",
-            title=title,
-            height=500,
-            color="Region",
-            hover_data=["arv_count", "hiv_exposed_infants"],
+            bar_df, x="Region", y="value", title=title, height=500, color="Region"
         )
 
+        # SIMPLE HOVER: Only show rate, no numerator/denominator
         fig.update_traces(
-            hovertemplate="<b>%{x}</b><br>ARV Rate: %{y:.2f}%<br>ARV Cases: %{customdata[0]}<br>HIV-Exposed Infants: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (comparison_df["arv_count"], comparison_df["hiv_exposed_infants"])
-            ),
+            hovertemplate="<b>%{x}</b><br>ARV Rate: %{y:.2f}%<extra></extra>"
         )
 
+    # Common layout updates
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -753,20 +732,13 @@ def render_arv_region_comparison_chart(
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
-        legend=dict(
-            title="Regions",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-        ),
+        showlegend=True,
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Region comparison table
+    # Region comparison table (shows all details including numerator/denominator)
     st.subheader("📋 Region Comparison Summary")
     region_table_data = []
 
