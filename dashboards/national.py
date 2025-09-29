@@ -32,11 +32,24 @@ def fetch_cached_data(user):
         return future.result(timeout=180)
 
 
-# Initialize session state keys at the very top
+# ---------------- Initialize Session State ----------------
+if "refresh_trigger" not in st.session_state:
+    st.session_state.refresh_trigger = False
+
 if "all_facilities_checkbox" not in st.session_state:
     st.session_state.all_facilities_checkbox = False
+
 if "all_regions_checkbox" not in st.session_state:
     st.session_state.all_regions_checkbox = False
+
+if "selected_facilities" not in st.session_state:
+    st.session_state.selected_facilities = []
+
+if "selected_regions" not in st.session_state:
+    st.session_state.selected_regions = []
+
+if "expanded_regions" not in st.session_state:
+    st.session_state.expanded_regions = {}
 
 
 # Helper functions for facility and region selection
@@ -228,175 +241,106 @@ def render():
     copied_events_df = normalize_event_dates(events_df)
 
     # ---------------- Facility and Region Filter ----------------
-    # Get facilities grouped by region from database
     facilities_by_region = get_facilities_grouped_by_region(user)
-
-    # Create facility mapping for UID lookup (from database)
     facility_mapping = get_facility_mapping_for_user(user)
 
-    # Get all facility names for "All Facilities" selection
-    all_facility_names = []
-    for region_name, facilities in facilities_by_region.items():
-        for facility_name, _ in facilities:
-            all_facility_names.append(facility_name)
-
-    # Get all region names
+    # Flatten all facility names
+    all_facility_names = [
+        f for region, facs in facilities_by_region.items() for f, _ in facs
+    ]
     all_region_names = list(facilities_by_region.keys())
 
-    # Initialize session state for facility and region selection
-    if "selected_facilities" not in st.session_state:
-        st.session_state.selected_facilities = ["All Facilities"] + all_facility_names
+    # Initialize session state for selections if not present
+    if "current_facility_uids" not in st.session_state:
+        st.session_state.current_facility_uids = list(facility_mapping.values())
+    if "current_display_names" not in st.session_state:
+        st.session_state.current_display_names = ["All Facilities"]
+    if "current_comparison_mode" not in st.session_state:
+        st.session_state.current_comparison_mode = "facility"
 
-    if "selected_regions" not in st.session_state:
-        st.session_state.selected_regions = []
-
-    if "expanded_regions" not in st.session_state:
-        # Default all regions to collapsed (not expanded)
-        st.session_state.expanded_regions = {
-            region_name: False for region_name in facilities_by_region.keys()
-        }
-
-    # Facility and region selector in sidebar with expandable regions
-    st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities or Regions</p>',
-        unsafe_allow_html=True,
-    )
-
-    # Create a container for the selector
-    selector_container = st.sidebar.container()
-
-    with selector_container:
-        # "All Facilities" checkbox
-        all_facilities_selected = st.checkbox(
-            "All Facilities",
-            value="All Facilities" in st.session_state.selected_facilities,
-            key="all_facilities_checkbox",
-            on_change=lambda: handle_all_facilities_change(all_facility_names),
-        )
-
-        # "All Regions" checkbox
-        all_regions_selected = st.checkbox(
-            "All Regions",
-            value=len(st.session_state.selected_regions) == len(all_region_names),
-            key="all_regions_checkbox",
-            on_change=lambda: handle_all_regions_change(all_region_names),
-        )
-
-        # Individual region checkboxes for region comparison
+    # ---- Sidebar Filter Form ----
+    with st.sidebar.form("facility_filter_form"):
         st.markdown(
-            '<p style="color: white; font-weight: 600; margin: 15px 0 8px 0;">Select Regions for Comparison:</p>',
+            '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Facility Selection Mode</p>',
             unsafe_allow_html=True,
         )
 
-        for region_name in all_region_names:
-            region_selected = st.checkbox(
-                region_name,
-                value=region_name in st.session_state.selected_regions,
-                key=f"region_{region_name}",
-                on_change=lambda rn=region_name: handle_region_selection_change(rn),
-            )
-
-        # Region expanders for facility selection
-        st.markdown(
-            '<p style="color: white; font-weight: 600; margin: 15px 0 8px 0;">Select Individual Facilities:</p>',
-            unsafe_allow_html=True,
+        filter_mode = st.radio(
+            "Select facilities by:",
+            ["All Facilities", "By Region", "By Facility"],
+            index=0,
         )
 
-        for region_name, facilities in facilities_by_region.items():
-            # Create expander for each region
-            with st.expander(
-                f"{region_name} ({len(facilities)})",
-                expanded=st.session_state.expanded_regions[region_name],
-            ):
-                # Update expanded state when user expands
-                st.session_state.expanded_regions[region_name] = True
+        selected_facilities, selected_regions = [], []
 
-                # Select all facilities in this region
-                all_in_region_selected = all(
-                    [
-                        facility_name in st.session_state.selected_facilities
-                        for facility_name, _ in facilities
-                    ]
-                )
-                all_in_region = st.checkbox(
-                    f"Select all in {region_name}",
-                    value=all_in_region_selected,
-                    key=f"select_all_{region_name}",
-                    on_change=lambda r=region_name, f=[
-                        fac[0] for fac in facilities
-                    ]: handle_region_change(r, f),
-                )
+        if filter_mode == "By Region":
+            st.markdown("**🌍 Select Regions**")
+            all_regions_selected = st.checkbox("All Regions")
+            if all_regions_selected:
+                selected_regions = all_region_names.copy()
+            else:
+                for region in all_region_names:
+                    if st.checkbox(region, key=f"region_{region}"):
+                        selected_regions.append(region)
 
-                # Individual facility checkboxes
-                for facility_name, _ in facilities:
-                    facility_selected = st.checkbox(
-                        facility_name,
-                        value=facility_name in st.session_state.selected_facilities,
-                        key=f"facility_{facility_name}",
-                        on_change=lambda fn=facility_name: handle_facility_change(fn),
+        elif filter_mode == "By Facility":
+            st.markdown("**🏢 Select Facilities (grouped by region)**")
+            for region_name, facilities in facilities_by_region.items():
+                with st.expander(f"{region_name} ({len(facilities)})", expanded=False):
+                    select_all_region = st.checkbox(
+                        f"Select all in {region_name}", key=f"select_all_{region_name}"
                     )
+                    if select_all_region:
+                        for fac_name, _ in facilities:
+                            selected_facilities.append(fac_name)
+                    else:
+                        for fac_name, _ in facilities:
+                            if st.checkbox(fac_name, key=f"facility_{fac_name}"):
+                                selected_facilities.append(fac_name)
 
-    # Get the selected facilities and regions
-    selected_facilities = [
-        f for f in st.session_state.selected_facilities if f != "All Facilities"
-    ]
-    selected_regions = st.session_state.selected_regions
+        # Apply button
+        submitted = st.form_submit_button("✅ Apply Filters")
 
-    # Calculate total facilities count
-    total_facilities = sum(
-        len(facilities) for facilities in facilities_by_region.values()
-    )
+    # ---- Apply the selection only if Apply button is clicked ----
+    if submitted:
+        if filter_mode == "All Facilities":
+            facility_uids = list(facility_mapping.values())
+            display_names = ["All Facilities"]
+            comparison_mode = "facility"
 
-    # Display selection count
-    if "All Facilities" in st.session_state.selected_facilities:
-        display_text = f"Selected: All Facilities ({total_facilities})"
-    elif selected_facilities:
-        display_text = (
-            f"Selected: {len(selected_facilities)} / {total_facilities} Facilities"
-        )
-    elif selected_regions:
-        if len(selected_regions) == len(all_region_names):
-            display_text = f"Selected: All Regions ({len(selected_regions)})"
+        elif filter_mode == "By Region" and selected_regions:
+            facility_uids, display_names = [], []
+            for region in selected_regions:
+                if region in facilities_by_region:
+                    for fac_name, fac_uid in facilities_by_region[region]:
+                        facility_uids.append(fac_uid)
+            display_names = selected_regions
+            comparison_mode = "region"
+
+        elif filter_mode == "By Facility" and selected_facilities:
+            facility_uids = [
+                facility_mapping[f]
+                for f in selected_facilities
+                if f in facility_mapping
+            ]
+            display_names = selected_facilities
+            comparison_mode = "facility"
+
         else:
-            display_text = (
-                f"Selected: {len(selected_regions)} / {len(all_region_names)} Regions"
-            )
-    else:
-        display_text = "No selection"
+            # fallback
+            facility_uids = list(facility_mapping.values())
+            display_names = ["All Facilities"]
+            comparison_mode = "facility"
 
-    st.sidebar.markdown(
-        f"<p style='color: white; font-size: 13px; margin-top: 10px;'>{display_text}</p>",
-        unsafe_allow_html=True,
-    )
+        # Save selections in session_state
+        st.session_state.current_facility_uids = facility_uids
+        st.session_state.current_display_names = display_names
+        st.session_state.current_comparison_mode = comparison_mode
 
-    # Get the facility UIDs for selected facilities or regions
-    facility_uids = None
-    display_names = None
-    comparison_mode = None
-
-    if selected_facilities:
-        # Use selected individual facilities
-        facility_uids = [
-            facility_mapping[facility]
-            for facility in selected_facilities
-            if facility in facility_mapping
-        ]
-        display_names = selected_facilities
-        comparison_mode = "facility"
-    elif selected_regions:
-        # Use all facilities in selected regions
-        facility_uids = []
-        for region_name in selected_regions:
-            if region_name in facilities_by_region:
-                for facility_name, facility_uid in facilities_by_region[region_name]:
-                    facility_uids.append(facility_uid)
-        display_names = selected_regions
-        comparison_mode = "region"
-    else:
-        # Default to all facilities
-        facility_uids = list(facility_mapping.values())
-        display_names = ["All Facilities"]
-        comparison_mode = "facility"
+    # ---- Use session_state for the rest of dashboard ----
+    facility_uids = st.session_state.current_facility_uids
+    display_names = st.session_state.current_display_names
+    comparison_mode = st.session_state.current_comparison_mode
 
     # ---------------- View Mode Selection ----------------
     view_mode = "Normal Trend"
