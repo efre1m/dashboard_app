@@ -46,7 +46,6 @@ def initialize_session_state():
 # Initialize session state at the very beginning
 initialize_session_state()
 
-
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
 
@@ -71,7 +70,7 @@ def render():
     # Re-initialize session state for safety
     initialize_session_state()
 
-    # Load both CSS files - facility.css first, then national.css for overrides
+    # Load CSS files
     try:
         with open("utils/facility.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -83,92 +82,6 @@ def render():
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except Exception as e:
         st.warning(f"National CSS file not found: {e}")
-        # Fallback to basic national styling
-        st.markdown(
-            """
-            <style>
-            /* National-specific fallback styles */
-            .sidebar .sidebar-content {
-                background: linear-gradient(135deg, #1a5fb4 0%, #1c71d8 100%);
-                color: white;
-            }
-            .user-info {
-                background: rgba(255, 255, 255, 0.1);
-                padding: 15px;
-                border-radius: 10px;
-                margin-bottom: 20px;
-                border: 1px solid rgba(255, 255, 255, 0.2);
-            }
-            .section-header {
-                color: white !important;
-                font-weight: 700;
-                font-size: 18px;
-                margin: 20px 0 15px 0;
-                padding-bottom: 8px;
-                border-bottom: 2px solid rgba(255, 255, 255, 0.2);
-            }
-            .stCheckbox [data-baseweb="checkbox"]:checked {
-                background-color: #ffa348;
-                border-color: #ffa348;
-            }
-            .stExpander {
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                margin-bottom: 10px;
-            }
-            .stExpander summary {
-                color: white !important;
-                font-weight: 600;
-                padding: 12px 15px;
-                background: rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-            }
-            /* Selection status styles */
-            .region-header-fully-selected {
-                background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%) !important;
-                color: white !important;
-                border-left: 4px solid #2E7D32 !important;
-            }
-            .region-header-partially-selected {
-                background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%) !important;
-                color: black !important;
-                border-left: 4px solid #FF8F00 !important;
-            }
-            .region-header-none-selected {
-                background: rgba(255, 255, 255, 0.1) !important;
-                color: white !important;
-                border-left: 4px solid rgba(255, 255, 255, 0.3) !important;
-            }
-            /* Fix for button visibility */
-            .stButton > button {
-                color: black !important;
-                border: 1px solid #ccc !important;
-                background-color: #f0f2f6 !important;
-            }
-            /* Selection counter styles */
-            .selection-counter {
-                background: linear-gradient(135deg, #1a5fb4 0%, #1c71d8 100%);
-                color: white;
-                padding: 10px 15px;
-                border-radius: 8px;
-                margin: 10px 0;
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                font-weight: 600;
-            }
-            .selection-counter-all {
-                background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-            }
-            .selection-counter-regions {
-                background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
-            }
-            .selection-counter-facilities {
-                background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%);
-            }
-            </style>
-        """,
-            unsafe_allow_html=True,
-        )
 
     # Sidebar user info
     user = st.session_state.get("user", {})
@@ -230,12 +143,8 @@ def render():
     total_regions = len(all_region_names)
 
     # ---------------- Selection Counter Display ----------------
-
-    # Calculate current selection counts
     current_selected_facilities_count = len(st.session_state.selected_facilities)
     current_selected_regions_count = len(st.session_state.selected_regions)
-
-    # Display selection counter based on current mode
     filter_mode = st.session_state.get("filter_mode", "All Facilities")
 
     if filter_mode == "All Facilities":
@@ -250,7 +159,6 @@ def render():
         )
     elif filter_mode == "By Region":
         if current_selected_regions_count > 0:
-            # Calculate total facilities in selected regions
             facilities_in_selected_regions = 0
             for region in st.session_state.selected_regions:
                 if region in facilities_by_region:
@@ -298,8 +206,6 @@ def render():
             )
 
     # ---------------- Sidebar Filter ----------------
-
-    # ---- Form 1: Mode selection ----
     with st.sidebar.form("mode_selection_form"):
         st.markdown(
             '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Facility Selection Mode</p>',
@@ -314,53 +220,45 @@ def render():
 
         submitted_mode = st.form_submit_button("✅ Apply Mode")
         if submitted_mode:
-            # Clear previous selections when switching modes
             st.session_state.selected_regions = []
             st.session_state.selected_facilities = []
             st.session_state.filter_mode = filter_mode
-            st.rerun()  # Force immediate update
+            st.rerun()
 
-    # Use previously selected mode
     filter_mode = st.session_state.get("filter_mode", "All Facilities")
 
     # ---- Form 2: Selections (Regions or Facilities) ----
     with st.sidebar.form("selection_form"):
         if filter_mode == "By Region":
             st.markdown("**🌍 Select Regions**")
-            temp_selected_regions = st.session_state.selected_regions.copy()
 
-            # All Regions checkbox
-            all_regions_selected = len(temp_selected_regions) == len(all_region_names)
-            all_regions_box = st.checkbox(
-                "All Regions", value=all_regions_selected, key="all_regions_checkbox"
+            # Multi-select dropdown for regions with facility counts
+            region_options = {
+                f"{region} ({len(facilities_by_region.get(region, []))} facilities)": region
+                for region in all_region_names
+            }
+
+            selected_region_labels = st.multiselect(
+                "Choose regions:",
+                options=list(region_options.keys()),
+                default=[
+                    label
+                    for label in region_options.keys()
+                    if region_options[label] in st.session_state.selected_regions
+                ],
+                help="Select one or more regions",
             )
 
-            if all_regions_box:
-                temp_selected_regions = all_region_names.copy()
-            elif all_regions_selected and not all_regions_box:
-                temp_selected_regions = []
-
-            # Individual region checkboxes with facility counts
-            for region in all_region_names:
-                region_facility_count = len(facilities_by_region.get(region, []))
-                checked = region in temp_selected_regions
-                checked = st.checkbox(
-                    f"{region} ({region_facility_count} facilities)",
-                    value=checked,
-                    key=f"region_{region}",
-                )
-                if checked and region not in temp_selected_regions:
-                    temp_selected_regions.append(region)
-                elif not checked and region in temp_selected_regions:
-                    temp_selected_regions.remove(region)
+            # Convert back to region names
+            temp_selected_regions = [
+                region_options[label] for label in selected_region_labels
+            ]
 
             submitted_selection = st.form_submit_button("✅ Apply Selection")
             if submitted_selection:
                 st.session_state.selected_regions = temp_selected_regions
-                st.session_state.selected_facilities = (
-                    []
-                )  # clear facilities when regions selected
-                st.rerun()  # Force immediate UI update
+                st.session_state.selected_facilities = []
+                st.rerun()
 
         elif filter_mode == "By Facility":
             st.markdown("**🏢 Select Facilities (grouped by region)**")
@@ -383,19 +281,16 @@ def render():
                     header_class = "region-header-partially-selected"
                     icon = "⚠️"
 
-                # Create expander with custom header
                 with st.expander(
                     f"{icon} {region_name} ({selected_count}/{total_count} selected)",
                     expanded=False,
                 ):
-
-                    # Apply header styling
                     st.markdown(
                         f"""<div class="{header_class}">{region_name} - {selected_count}/{total_count} selected</div>""",
                         unsafe_allow_html=True,
                     )
 
-                    # Select all checkbox with immediate state handling
+                    # Select all checkbox
                     all_selected_in_region = all(
                         fac in temp_selected_facilities for fac, _ in facilities
                     )
@@ -431,18 +326,14 @@ def render():
             submitted_selection = st.form_submit_button("✅ Apply Selection")
             if submitted_selection:
                 st.session_state.selected_facilities = temp_selected_facilities
-                st.session_state.selected_regions = (
-                    []
-                )  # clear regions when facilities selected
-                st.rerun()  # Force immediate UI update
+                st.session_state.selected_regions = []
+                st.rerun()
 
     # ---------------- Update session_state for dashboard ----------------
-    # Handle "All Facilities" mode - always use all facilities regardless of previous selections
     if filter_mode == "All Facilities":
         facility_uids = list(facility_mapping.values())
         display_names = ["All Facilities"]
         comparison_mode = "facility"
-        # Clear any previous selections
         st.session_state.selected_regions = []
         st.session_state.selected_facilities = []
     elif st.session_state.selected_regions:
@@ -471,7 +362,6 @@ def render():
     st.session_state.current_display_names = display_names
     st.session_state.current_comparison_mode = comparison_mode
 
-    # ---------------- Use session_state in rest of dashboard ----------------
     facility_uids = st.session_state.current_facility_uids
     display_names = st.session_state.current_display_names
     comparison_mode = st.session_state.current_comparison_mode
@@ -490,10 +380,7 @@ def render():
 
     # MAIN HEADING with selection summary
     selected_facilities_count = len(facility_uids)
-    if (
-        comparison_mode == "facility"
-        and "All Facilities" in st.session_state.current_display_names
-    ):
+    if comparison_mode == "facility" and "All Facilities" in display_names:
         st.markdown(
             f'<div class="main-header">🌍 National Maternal Health Dashboard - {country_name}</div>',
             unsafe_allow_html=True,
@@ -518,7 +405,6 @@ def render():
             f'<div class="main-header">🌍 National Maternal Health Dashboard - {display_names[0]} Region</div>',
             unsafe_allow_html=True,
         )
-        # Calculate facilities in this region
         region_facilities_count = 0
         for region in display_names:
             if region in facilities_by_region:
@@ -545,15 +431,13 @@ def render():
 
     # 🔒 Always national view
     display_name = country_name
-
-    # Pass user_id into KPI card renderer so it can save/load previous values
     user_id = str(user.get("id", user.get("username", "default_user")))
+    all_facility_uids = list(facility_mapping.values())
 
-    all_facility_uids = list(facility_mapping.values())  # all facilities in the DB
     render_kpi_cards(
-        copied_events_df,  # full dataset
-        all_facility_uids,  # force ALL facilities
-        display_name,  # ✅ fixed to national label
+        copied_events_df,
+        all_facility_uids,
+        display_name,
         user_id=user_id,
     )
 
@@ -561,19 +445,13 @@ def render():
     col_chart, col_ctrl = st.columns([3, 1])
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-
-        # Use simple filter controls
         filters = render_simple_filter_controls(copied_events_df, container=col_ctrl)
-
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Apply simple filters
     filtered_events = apply_simple_filters(copied_events_df, filters, facility_uids)
-
-    # Store for gauge charts
     st.session_state["filtered_events"] = filtered_events.copy()
 
-    # Get variables from filters for later use
     kpi_selection = filters["kpi_selection"]
     bg_color = filters["bg_color"]
     text_color = filters["text_color"]
@@ -607,7 +485,6 @@ def render():
                 text_color=text_color,
                 is_national=True,
             )
-
         else:
             st.markdown(
                 f'<div class="section-header">📈 {kpi_selection} Trend</div>',
