@@ -185,3 +185,56 @@
 div[data-testid="stRadio"] label {
     color: #000000 !important;
 }
+
+/* Fix button text visibility */
+.stButton>button {
+    color: #000000 !important;
+    border: 1px solid #cccccc !important;
+    background: linear-gradient(135deg, #ffa348 0%, #ff7800 100%) !important;
+}
+
+.stButton>button:hover {
+    color: #000000 !important;
+    background: linear-gradient(135deg, #ff7800 0%, #e55c00 100%) !important;
+}
+
+/* Specifically target form submit buttons */
+.stFormSubmitButton>button {
+    color: #000000 !important;
+    border: 1px solid #cccccc !important;
+}
+
+/* Enhanced region selection styling */
+.region-header-fully-selected,
+.region-header-partially-selected,
+.region-header-none-selected {
+    padding: 12px 15px !important;
+    border-radius: 8px 8px 0 0 !important;
+    margin-bottom: 0 !important;
+    font-weight: 600 !important;
+    border-left: 4px solid !important;
+}
+
+.region-header-fully-selected {
+    background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%) !important;
+    color: white !important;
+    border-left-color: #2E7D32 !important;
+}
+
+.region-header-partially-selected {
+    background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%) !important;
+    color: black !important;
+    border-left-color: #FF8F00 !important;
+}
+
+.region-header-none-selected {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: white !important;
+    border-left-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* Highlight selected facility checkboxes */
+.stCheckbox input:checked+label {
+    color: #ffa348 !important;
+    font-weight: 600 !important;
+}
