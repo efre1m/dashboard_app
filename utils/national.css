@@ -137,7 +137,7 @@
 }
 
 /* Highlight selected facilities */
-.stCheckbox input:checked + label {
+.stCheckbox input:checked+label {
     color: #ffa348 !important;
     font-weight: 600;
 }
@@ -172,4 +172,16 @@
 
 .stExpander[data-expanded="true"] summary {
     border-radius: 8px 8px 0 0;
+}
+
+/* Force black text for radio buttons in main content area (not sidebar) */
+.main .stRadio label,
+.main .stRadio p,
+.main .stRadio div {
+    color: #000000 !important;
+}
+
+/* Specifically target chart type radio buttons */
+div[data-testid="stRadio"] label {
+    color: #000000 !important;
 }

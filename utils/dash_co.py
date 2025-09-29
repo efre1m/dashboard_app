@@ -734,12 +734,16 @@ def render_simple_filter_controls(events_df, container=None):
     available_aggregations = get_available_aggregations(
         filters["start_date"], filters["end_date"]
     )
-    default_period = available_aggregations[0] if available_aggregations else "Monthly"
+    # Force default to "Monthly" if present, otherwise fallback to first option
+    if "Monthly" in available_aggregations:
+        default_index = available_aggregations.index("Monthly")
+    else:
+        default_index = 0
 
     filters["period_label"] = container.selectbox(
         "⏰ Aggregation Level",
         available_aggregations,
-        index=0,
+        index=default_index,
         key="period_label_simple",
     )
 

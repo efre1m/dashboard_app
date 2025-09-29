@@ -456,8 +456,8 @@ def render_kpi_cards(
         unsafe_allow_html=True,
     )
 
-    # Header with download button and manual refresh option
-    col1, col2, col3 = st.columns([3, 1, 1])
+    col1, col2 = st.columns([3, 1])
+
     with col1:
         st.markdown(
             '<div class="section-header">📊 Key Performance Indicators</div>',
@@ -472,20 +472,6 @@ def render_kpi_cards(
             help="Download Excel report with current vs previous KPI values comparison",
             use_container_width=True,
         )
-    with col3:
-        # Manual refresh button to force update baseline
-        if st.button(
-            "🔄 Set New Comparison Point",
-            help="Set current values as new comparison for trend comparison",
-            use_container_width=True,
-        ):
-            save_current_kpis(user_id, kpis)
-            st.session_state[f"previous_kpis_{user_id}"] = kpis
-            st.session_state[f"kpi_last_saved_{user_id}"] = datetime.now().isoformat()
-            # Clear stored trends to force recalculation
-            if trend_session_key in st.session_state:
-                del st.session_state[trend_session_key]
-            st.rerun()
 
     # KPI Cards HTML - Show current values with persistent trend indicators
     kpi_html = f"""
@@ -537,5 +523,5 @@ def render_kpi_cards(
 
     # Add information about trend persistence
     st.caption(
-        "💡 Trend indicators compare current values with previous value. Use 'Set New Comparison Point' to set new comparison point."
+        "💡 Trend indicators compare current values with the last saved baseline. The baseline resets automatically after ~3 minutes, refresh, or new login."
     )
