@@ -3,6 +3,27 @@ import plotly.express as px
 import plotly.graph_objects as go
 import datetime as dt
 import streamlit as st
+import hashlib  # ADD THIS LINE
+
+# ---------------- Caching Setup ----------------
+if "kpi_cache" not in st.session_state:
+    st.session_state.kpi_cache = {}
+
+
+def get_cache_key(df, facility_uids=None, computation_type=""):
+    """Generate a unique cache key based on data and filters"""
+    key_data = {
+        "computation_type": computation_type,
+        "facility_uids": tuple(sorted(facility_uids)) if facility_uids else None,
+        "data_hash": hashlib.md5(pd.util.hash_pandas_object(df).values).hexdigest(),
+        "data_shape": df.shape,
+    }
+    return str(key_data)
+
+
+def clear_cache():
+    """Clear the KPI cache - call this when you know data has changed"""
+    st.session_state.kpi_cache = {}
 
 
 # ---------------- Utility ----------------
@@ -101,224 +122,301 @@ def compute_birth_counts(df, facility_uids=None):
     Compute birth counts accounting for multiple births (twins, triplets, etc.)
     Returns: total_births, live_births, stillbirths
     """
+    # Generate cache key for this specific computation
+    cache_key = get_cache_key(df, facility_uids, "birth_counts")
+
+    # Check if we already computed this
+    if cache_key in st.session_state.kpi_cache:
+        return st.session_state.kpi_cache[cache_key]
+
     if df is None or df.empty:
-        return 0, 0, 0
+        result = (0, 0, 0)
+    else:
+        # Filter by facilities if specified
+        if facility_uids:
+            df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        # Initialize counts
+        total_births = 0
+        live_births = 0
+        stillbirths = 0
 
-    # Initialize counts
-    total_births = 0
-    live_births = 0
-    stillbirths = 0
+        # Process each mother (tracked by tei_id)
+        for tei_id in df["tei_id"].unique():
+            mother_df = df[df["tei_id"] == tei_id]
 
-    # Process each mother (tracked by tei_id)
-    for tei_id in df["tei_id"].unique():
-        mother_df = df[df["tei_id"] == tei_id]
+            # Get number of newborns - this should represent the total babies born
+            newborns_records = mother_df[
+                mother_df["dataElement_uid"] == NUMBER_OF_NEWBORNS_UID
+            ]
+            other_newborns_records = mother_df[
+                mother_df["dataElement_uid"] == OTHER_NUMBER_OF_NEWBORNS_UID
+            ]
 
-        # Get number of newborns - this should represent the total babies born
-        newborns_records = mother_df[
-            mother_df["dataElement_uid"] == NUMBER_OF_NEWBORNS_UID
-        ]
-        other_newborns_records = mother_df[
-            mother_df["dataElement_uid"] == OTHER_NUMBER_OF_NEWBORNS_UID
-        ]
+            # Calculate total babies for this mother - only count what's actually recorded
+            num_newborns = 0
+            if not newborns_records.empty:
+                try:
+                    num_newborns = int(float(newborns_records["value"].iloc[0]))
+                except (ValueError, TypeError):
+                    num_newborns = 0  # If invalid, count as 0
 
-        # Calculate total babies for this mother - only count what's actually recorded
-        num_newborns = 0
-        if not newborns_records.empty:
-            try:
-                num_newborns = int(float(newborns_records["value"].iloc[0]))
-            except (ValueError, TypeError):
-                num_newborns = 0  # If invalid, count as 0
+            num_other_newborns = 0
+            if not other_newborns_records.empty:
+                try:
+                    num_other_newborns = int(
+                        float(other_newborns_records["value"].iloc[0])
+                    )
+                except (ValueError, TypeError):
+                    num_other_newborns = 0  # If invalid, count as 0
 
-        num_other_newborns = 0
-        if not other_newborns_records.empty:
-            try:
-                num_other_newborns = int(float(other_newborns_records["value"].iloc[0]))
-            except (ValueError, TypeError):
-                num_other_newborns = 0  # If invalid, count as 0
+            total_babies = num_newborns + num_other_newborns
 
-        total_babies = num_newborns + num_other_newborns
+            # If no newborn count records exist, we cannot assume any births occurred
+            # Only count births if we have actual data
+            if total_babies == 0:
+                # Check if we have birth outcome records as evidence of births
+                birth_outcome_records = mother_df[
+                    mother_df["dataElement_uid"] == BIRTH_OUTCOME_UID
+                ]
+                if not birth_outcome_records.empty:
+                    # Use the number of birth outcome records as the total babies
+                    total_babies = len(birth_outcome_records)
+                else:
+                    # No evidence of any births for this mother, skip
+                    continue
 
-        # If no newborn count records exist, we cannot assume any births occurred
-        # Only count births if we have actual data
-        if total_babies == 0:
-            # Check if we have birth outcome records as evidence of births
+            # Get birth outcome records
             birth_outcome_records = mother_df[
                 mother_df["dataElement_uid"] == BIRTH_OUTCOME_UID
             ]
-            if not birth_outcome_records.empty:
-                # Use the number of birth outcome records as the total babies
-                total_babies = len(birth_outcome_records)
+
+            # Count outcomes based on actual records
+            alive_count = 0
+            stillbirth_count = 0
+
+            for _, record in birth_outcome_records.iterrows():
+                if record["value"] == ALIVE_CODE:
+                    alive_count += 1
+                elif record["value"] == STILLBIRTH_CODE:
+                    stillbirth_count += 1
+
+            # Handle cases where outcome counts don't match total babies
+            if alive_count + stillbirth_count == total_babies:
+                # Perfect match - use exact counts
+                live_births += alive_count
+                stillbirths += stillbirth_count
+            elif alive_count + stillbirth_count > total_babies:
+                # More outcomes than total babies - data inconsistency, use proportion
+                proportion_alive = alive_count / (alive_count + stillbirth_count)
+                estimated_live = round(total_babies * proportion_alive)
+                live_births += estimated_live
+                stillbirths += total_babies - estimated_live
+            elif alive_count + stillbirth_count < total_babies:
+                # Fewer outcomes than total babies - assume missing outcomes are live births
+                live_births += alive_count + (
+                    total_babies - (alive_count + stillbirth_count)
+                )
+                stillbirths += stillbirth_count
             else:
-                # No evidence of any births for this mother, skip
-                continue
+                # No outcome records - cannot determine outcomes, skip counting outcomes
+                # But still count the total births
+                pass
 
-        # Get birth outcome records
-        birth_outcome_records = mother_df[
-            mother_df["dataElement_uid"] == BIRTH_OUTCOME_UID
-        ]
+            total_births += total_babies
 
-        # Count outcomes based on actual records
-        alive_count = 0
-        stillbirth_count = 0
+        result = (total_births, live_births, stillbirths)
 
-        for _, record in birth_outcome_records.iterrows():
-            if record["value"] == ALIVE_CODE:
-                alive_count += 1
-            elif record["value"] == STILLBIRTH_CODE:
-                stillbirth_count += 1
-
-        # Handle cases where outcome counts don't match total babies
-        if alive_count + stillbirth_count == total_babies:
-            # Perfect match - use exact counts
-            live_births += alive_count
-            stillbirths += stillbirth_count
-        elif alive_count + stillbirth_count > total_babies:
-            # More outcomes than total babies - data inconsistency, use proportion
-            proportion_alive = alive_count / (alive_count + stillbirth_count)
-            estimated_live = round(total_babies * proportion_alive)
-            live_births += estimated_live
-            stillbirths += total_babies - estimated_live
-        elif alive_count + stillbirth_count < total_babies:
-            # Fewer outcomes than total babies - assume missing outcomes are live births
-            live_births += alive_count + (
-                total_babies - (alive_count + stillbirth_count)
-            )
-            stillbirths += stillbirth_count
-        else:
-            # No outcome records - cannot determine outcomes, skip counting outcomes
-            # But still count the total births
-            pass
-
-        total_births += total_babies
-
-    return total_births, live_births, stillbirths
+    # Store result in cache
+    st.session_state.kpi_cache[cache_key] = result
+    return result
 
 
 # ---------------- KPI Computation Functions ----------------
 def compute_total_deliveries(df, facility_uids=None):
+    # Generate cache key for this specific computation
+    cache_key = get_cache_key(df, facility_uids, "total_deliveries")
+
+    # Check if we already computed this
+    if cache_key in st.session_state.kpi_cache:
+        return st.session_state.kpi_cache[cache_key]
+
+    # Original computation logic
     if df is None or df.empty:
-        return 0
+        result = 0
+    else:
+        # Filter by facilities if specified
+        if facility_uids:
+            df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
-
-    deliveries = df[(df["dataElement_uid"] == DELIVERY_TYPE_UID) & df["value"].notna()]
-    if deliveries.empty:
         deliveries = df[
-            (df["dataElement_uid"] == DELIVERY_MODE_UID) & df["value"].notna()
+            (df["dataElement_uid"] == DELIVERY_TYPE_UID) & df["value"].notna()
         ]
-    return deliveries["tei_id"].nunique()
+        if deliveries.empty:
+            deliveries = df[
+                (df["dataElement_uid"] == DELIVERY_MODE_UID) & df["value"].notna()
+            ]
+        result = deliveries["tei_id"].nunique()
+
+    # Store result in cache
+    st.session_state.kpi_cache[cache_key] = result
+    return result
 
 
 def compute_fp_acceptance(df, facility_uids=None):
+    cache_key = get_cache_key(df, facility_uids, "fp_acceptance")
+
+    if cache_key in st.session_state.kpi_cache:
+        return st.session_state.kpi_cache[cache_key]
+
     if df is None or df.empty:
-        return 0
+        result = 0
+    else:
+        # Filter by facilities if specified
+        if facility_uids:
+            df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        # Use CODE values instead of IDs
+        result = df[
+            (df["dataElement_uid"] == FP_ACCEPTANCE_UID)
+            & (df["value"].isin(FP_ACCEPTED_CODES))
+        ]["tei_id"].nunique()
 
-    # Use CODE values instead of IDs
-    return df[
-        (df["dataElement_uid"] == FP_ACCEPTANCE_UID)
-        & (df["value"].isin(FP_ACCEPTED_CODES))
-    ]["tei_id"].nunique()
+    st.session_state.kpi_cache[cache_key] = result
+    return result
 
 
 def compute_stillbirth_rate(df, facility_uids=None):
+    cache_key = get_cache_key(df, facility_uids, "stillbirth_rate")
+
+    if cache_key in st.session_state.kpi_cache:
+        return st.session_state.kpi_cache[cache_key]
+
     if df is None or df.empty:
-        return 0.0, 0, 0
+        result = (0.0, 0, 0)
+    else:
+        # Filter by facilities if specified
+        if facility_uids:
+            df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        # Use the new helper function that accounts for multiple births
+        total_births, live_births, stillbirths = compute_birth_counts(df, facility_uids)
 
-    # Use the new helper function that accounts for multiple births
-    total_births, live_births, stillbirths = compute_birth_counts(df, facility_uids)
+        # Calculate stillbirth rate per 1000 births
+        rate = (stillbirths / total_births * 1000) if total_births > 0 else 0.0
+        result = (rate, stillbirths, total_births)
 
-    # Calculate stillbirth rate per 1000 births
-    rate = (stillbirths / total_births * 1000) if total_births > 0 else 0.0
-
-    return rate, stillbirths, total_births
+    st.session_state.kpi_cache[cache_key] = result
+    return result
 
 
 def compute_early_pnc_coverage(df, facility_uids=None):
+    cache_key = get_cache_key(df, facility_uids, "pnc_coverage")
+
+    if cache_key in st.session_state.kpi_cache:
+        return st.session_state.kpi_cache[cache_key]
+
     if df is None or df.empty:
-        return 0.0, 0, 0
+        result = (0.0, 0, 0)
+    else:
+        if facility_uids:
+            df = df[df["orgUnit"].isin(facility_uids)]
 
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        total_deliveries = compute_total_deliveries(df, facility_uids)
 
-    total_deliveries = compute_total_deliveries(df, facility_uids)
+        early_pnc = df[
+            (df["dataElement_uid"] == PNC_TIMING_UID)
+            & (df["value"].isin(PNC_EARLY_CODES))
+        ]["tei_id"].nunique()
 
-    early_pnc = df[
-        (df["dataElement_uid"] == PNC_TIMING_UID) & (df["value"].isin(PNC_EARLY_CODES))
-    ]["tei_id"].nunique()
+        coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
+        result = (coverage, early_pnc, total_deliveries)
 
-    coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
-    return coverage, early_pnc, total_deliveries
+    st.session_state.kpi_cache[cache_key] = result
+    return result
 
 
 def compute_maternal_death_rate(df, facility_uids=None):
+    cache_key = get_cache_key(df, facility_uids, "maternal_death_rate")
+
+    if cache_key in st.session_state.kpi_cache:
+        return st.session_state.kpi_cache[cache_key]
+
     if df is None or df.empty:
-        return 0.0, 0, 0
+        result = (0.0, 0, 0)
+    else:
+        # Filter by facilities if specified
+        if facility_uids:
+            df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        dfx = df.copy()
+        dfx["event_date"] = pd.to_datetime(dfx["event_date"], errors="coerce")
+        dfx = dfx[dfx["event_date"].notna()]
 
-    dfx = df.copy()
-    dfx["event_date"] = pd.to_datetime(dfx["event_date"], errors="coerce")
-    dfx = dfx[dfx["event_date"].notna()]
+        # Maternal deaths
+        deaths_df = dfx[
+            (dfx["dataElement_uid"] == CONDITION_OF_DISCHARGE_UID)
+            & (dfx["value"] == DEAD_CODE)
+        ]
+        maternal_deaths = deaths_df["tei_id"].nunique()
 
-    # Maternal deaths
-    deaths_df = dfx[
-        (dfx["dataElement_uid"] == CONDITION_OF_DISCHARGE_UID)
-        & (dfx["value"] == DEAD_CODE)
-    ]
-    maternal_deaths = deaths_df["tei_id"].nunique()
+        # Use the new helper function to get live births (accounts for multiple births)
+        total_births, live_births, stillbirths = compute_birth_counts(
+            dfx, facility_uids
+        )
 
-    # Use the new helper function to get live births (accounts for multiple births)
-    total_births, live_births, stillbirths = compute_birth_counts(dfx, facility_uids)
+        # Compute rate (0 if no deaths)
+        rate = (
+            (maternal_deaths / live_births * 100000)
+            if live_births > 0 and maternal_deaths > 0
+            else 0.0
+        )
+        result = (rate, maternal_deaths, live_births)
 
-    # Compute rate (0 if no deaths)
-    rate = (
-        (maternal_deaths / live_births * 100000)
-        if live_births > 0 and maternal_deaths > 0
-        else 0.0
-    )
-
-    return rate, maternal_deaths, live_births
+    st.session_state.kpi_cache[cache_key] = result
+    return result
 
 
 def compute_csection_rate(df, facility_uids=None):
+    cache_key = get_cache_key(df, facility_uids, "csection_rate")
+
+    if cache_key in st.session_state.kpi_cache:
+        return st.session_state.kpi_cache[cache_key]
+
     if df is None or df.empty:
-        return 0.0, 0, 0
+        result = (0.0, 0, 0)
+    else:
+        # Filter by facilities if specified
+        if facility_uids:
+            df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        csection_deliveries = df[
+            (df["dataElement_uid"] == DELIVERY_TYPE_UID)
+            & (df["value"] == CSECTION_CODE)
+        ]["tei_id"].nunique()
+        total_deliveries = df[
+            (df["dataElement_uid"] == DELIVERY_TYPE_UID)
+            & (df["value"].isin([SVD_CODE, CSECTION_CODE]))
+        ]["tei_id"].nunique()
+        rate = (
+            (csection_deliveries / total_deliveries * 100)
+            if total_deliveries > 0
+            else 0.0
+        )
+        result = (rate, csection_deliveries, total_deliveries)
 
-    csection_deliveries = df[
-        (df["dataElement_uid"] == DELIVERY_TYPE_UID) & (df["value"] == CSECTION_CODE)
-    ]["tei_id"].nunique()
-    total_deliveries = df[
-        (df["dataElement_uid"] == DELIVERY_TYPE_UID)
-        & (df["value"].isin([SVD_CODE, CSECTION_CODE]))
-    ]["tei_id"].nunique()
-    rate = (
-        (csection_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0.0
-    )
-    return rate, csection_deliveries, total_deliveries
+    st.session_state.kpi_cache[cache_key] = result
+    return result
 
 
 # ---------------- Master KPI Function ----------------
 def compute_kpis(df, facility_uids=None):
+    cache_key = get_cache_key(df, facility_uids, "main_kpis")
+
+    # Check if we have cached results
+    if cache_key in st.session_state.kpi_cache:
+        return st.session_state.kpi_cache[cache_key]
+
     # Filter by facilities if specified
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
@@ -345,7 +443,7 @@ def compute_kpis(df, facility_uids=None):
         df, facility_uids
     )
 
-    return {
+    result = {
         "total_deliveries": int(total_deliveries),
         "fp_acceptance": int(fp_acceptance),
         "ippcar": float(ippcar),
@@ -362,6 +460,11 @@ def compute_kpis(df, facility_uids=None):
         "csection_deliveries": int(csection_deliveries),
         "total_deliveries_cs": int(total_deliveries_cs),
     }
+
+    # Cache the results
+    st.session_state.kpi_cache[cache_key] = result
+
+    return result
 
 
 def aggregate_by_period_with_sorting(

@@ -17,6 +17,7 @@ from utils.dash_co import (
     apply_simple_filters,
     render_simple_filter_controls,
 )
+from utils.kpi_utils import clear_cache
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -68,6 +69,7 @@ def render():
 
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
+        clear_cache()
         st.session_state["refresh_trigger"] = not st.session_state["refresh_trigger"]
 
     # Fetch DHIS2 data

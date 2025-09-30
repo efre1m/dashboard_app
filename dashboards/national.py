@@ -19,6 +19,7 @@ from utils.queries import (
     get_facilities_grouped_by_region,
     get_facility_mapping_for_user,
 )
+from utils.kpi_utils import clear_cache
 
 
 # ---------------- Robust Session State Initialization ----------------
@@ -217,6 +218,7 @@ def render():
     # Refresh Data Button
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
+        clear_cache()
         st.session_state.cached_events_data = None
         st.session_state.cached_enrollments_data = None
         st.session_state.cached_tei_data = None
