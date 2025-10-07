@@ -20,6 +20,14 @@ from utils.queries import (
     get_facility_mapping_for_user,
 )
 from utils.kpi_utils import clear_cache
+from utils.status import (
+    render_connection_status,
+    update_last_sync_time,
+    initialize_status_system,
+)
+
+# Initialize status system
+initialize_status_system()
 
 
 # ---------------- Robust Session State Initialization ----------------
@@ -215,6 +223,10 @@ def render():
         unsafe_allow_html=True,
     )
 
+    render_connection_status(
+        st.session_state.get("cached_events_data", pd.DataFrame()), user=user
+    )
+
     # Refresh Data Button
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
@@ -232,6 +244,7 @@ def render():
             try:
                 dfs = fetch_cached_data(user)
                 process_and_cache_data(dfs)
+                update_last_sync_time()
             except concurrent.futures.TimeoutError:
                 st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
                 return

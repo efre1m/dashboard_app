@@ -16,6 +16,13 @@ from utils.dash_co import (
     render_simple_filter_controls,
 )
 from utils.kpi_utils import clear_cache
+from utils.status import (
+    render_connection_status,
+    update_last_sync_time,
+    initialize_status_system,
+)
+
+initialize_status_system()
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -75,6 +82,7 @@ def render():
     with st.spinner("Fetching maternal data..."):
         try:
             dfs = fetch_cached_data(user)
+            update_last_sync_time()
         except concurrent.futures.TimeoutError:
             st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
             return
@@ -98,6 +106,7 @@ def render():
     if facility_uid and not copied_events_df.empty:
         copied_events_df = copied_events_df[copied_events_df["orgUnit"] == facility_uid]
 
+    render_connection_status(copied_events_df, user=user)
     # MAIN HEADING
     st.markdown(
         f'<div class="main-header">🏥 Maternal Health Dashboard - {facility_name}</div>',

@@ -18,6 +18,13 @@ from utils.dash_co import (
     render_simple_filter_controls,
 )
 from utils.kpi_utils import clear_cache
+from utils.status import (
+    render_connection_status,
+    update_last_sync_time,
+    initialize_status_system,
+)
+
+initialize_status_system()
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -76,6 +83,7 @@ def render():
     with st.spinner("Fetching maternal data..."):
         try:
             dfs = fetch_cached_data(user)
+            update_last_sync_time()
         except concurrent.futures.TimeoutError:
             st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
             return
@@ -103,6 +111,7 @@ def render():
     # Create facility mapping for UID lookup (from database)
     facility_mapping = get_facility_mapping_for_user(user)
 
+    render_connection_status(copied_events_df, user=user)
     # Multi-select facility selector in sidebar
     st.sidebar.markdown(
         '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities</p>',
