@@ -1100,7 +1100,6 @@ def render_lbw_category_pie_chart(
     pie_data = []
     for category_key, category_info in LBW_CATEGORIES.items():
         category_count = category_data[category_key]
-        # FIX: Calculate distribution percentage (percentage of total LBW cases, not total weighed)
         distribution_percentage = (
             (category_count / total_lbw_cases * 100) if total_lbw_cases > 0 else 0
         )
@@ -1109,22 +1108,38 @@ def render_lbw_category_pie_chart(
             {
                 "Category": category_info["name"],
                 "Count": category_count,
-                "Distribution Percentage": distribution_percentage,  # This is now percentage of total LBW cases
+                "Distribution Percentage": distribution_percentage,
             }
         )
 
     pie_df = pd.DataFrame(pie_data)
 
+    # Add CSS for better pie chart layout
+    st.markdown(
+        """
+    <style>
+    .pie-chart-container {
+        margin-top: -30px;
+        margin-bottom: 20px;
+    }
+    .pie-chart-title {
+        font-size: 16px;
+        font-weight: bold;
+        margin-bottom: 10px;
+        text-align: center;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
     # Chart type selection
-    st.markdown("### 📊 Chart Type Selection")
     chart_type = st.selectbox(
-        "Choose how to display the LBW category distribution:",
+        "Select Chart Type",
         options=["Pie Chart", "Donut Chart"],
         index=0,
         key=f"lbw_chart_type_{str(facility_uids)}",
     )
-
-    st.markdown("---")
 
     # Create chart
     colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71"]
@@ -1137,8 +1152,6 @@ def render_lbw_category_pie_chart(
             hover_data=["Distribution Percentage"],
             labels={"Count": "Count", "Distribution Percentage": "Distribution %"},
             height=500,
-            color="Category",
-            color_discrete_sequence=colors,
         )
     else:  # Donut Chart
         fig = px.pie(
@@ -1149,11 +1162,9 @@ def render_lbw_category_pie_chart(
             labels={"Count": "Count", "Distribution Percentage": "Distribution %"},
             height=500,
             hole=0.4,
-            color="Category",
-            color_discrete_sequence=colors,
         )
 
-    # Configure text display
+    # Calculate if we should use inside text for small slices
     total_count = pie_df["Count"].sum()
     use_inside_text = any((pie_df["Count"] / total_count) < 0.05)
 
@@ -1176,6 +1187,7 @@ def render_lbw_category_pie_chart(
             textfont=dict(size=10),
         )
 
+    # FIX: COMPLETELY REMOVE ANY TITLE FROM THE LAYOUT
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -1197,15 +1209,23 @@ def render_lbw_category_pie_chart(
         uniformtext_mode="hide",
     )
 
-    # Display chart
+    # CRITICAL FIX: Remove any trace of title completely
+    fig.update_layout(title=None)  # Explicitly set title to None
+    fig.layout.pop("title", None)  # Remove title from layout completely
+
+    # Also check and remove any annotations that might contain "undefined"
+    if hasattr(fig.layout, "annotations") and fig.layout.annotations:
+        fig.layout.annotations = []
+
+    # Use container to control layout
     with st.container():
         st.markdown(
-            '<div style="font-size: 16px; font-weight: bold; margin-bottom: 10px; text-align: center;">Distribution of LBW Weight Categories</div>',
+            '<div class="pie-chart-title">Distribution of LBW Weight Categories</div>',
             unsafe_allow_html=True,
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # Show summary table - FIX: Show distribution percentage instead of LBW rate
+    # Show summary table
     st.subheader("📋 LBW Category Distribution Summary")
     summary_df = pie_df.copy()
     summary_df.insert(0, "No", range(1, len(summary_df) + 1))

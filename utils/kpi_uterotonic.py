@@ -1215,17 +1215,6 @@ def render_uterotonic_type_pie_chart(
     total = pie_df["Count"].sum()
     pie_df["Percentage"] = (pie_df["Count"] / total * 100) if total > 0 else 0
 
-    # UPDATED: Move chart type selection to the top and make it more visible
-    st.markdown("### 📊 Chart Type Selection")
-    chart_type = st.selectbox(
-        "Choose how to display the uterotonic type distribution:",
-        options=["Pie Chart", "Donut Chart"],
-        index=0,  # Default to Pie Chart
-        key=f"uterotonic_chart_type_{str(facility_uids)}",
-    )
-
-    st.markdown("---")  # Add a separator
-
     # Add CSS for better pie chart layout
     st.markdown(
         """
@@ -1245,7 +1234,15 @@ def render_uterotonic_type_pie_chart(
         unsafe_allow_html=True,
     )
 
-    # Create chart with consistent height
+    # Chart type selection
+    chart_type = st.selectbox(
+        "Select Chart Type",
+        options=["Pie Chart", "Donut Chart"],
+        index=0,
+        key=f"uterotonic_chart_type_{str(facility_uids)}",
+    )
+
+    # Create chart with reduced size
     if chart_type == "Pie Chart":
         fig = px.pie(
             pie_df,
@@ -1253,13 +1250,7 @@ def render_uterotonic_type_pie_chart(
             names="Type",
             hover_data=["Percentage"],
             labels={"Count": "Count", "Percentage": "Percentage"},
-            height=500,
-            color="Type",
-            color_discrete_map={
-                "Oxytocin": "#ff7f0e",
-                "Ergometrine": "#1f77b4",
-                "Misoprostol": "#2ca02c",
-            },
+            height=500,  # Slightly increased height
         )
     else:  # Donut Chart
         fig = px.pie(
@@ -1270,12 +1261,6 @@ def render_uterotonic_type_pie_chart(
             labels={"Count": "Count", "Percentage": "Percentage"},
             height=500,
             hole=0.4,
-            color="Type",
-            color_discrete_map={
-                "Oxytocin": "#ff7f0e",
-                "Ergometrine": "#1f77b4",
-                "Misoprostol": "#2ca02c",
-            },
         )
 
     # Calculate if we should use inside text for small slices
@@ -1301,12 +1286,13 @@ def render_uterotonic_type_pie_chart(
             textfont=dict(size=10),
         )
 
+    # FIX: COMPLETELY REMOVE ANY TITLE FROM THE LAYOUT
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        height=500,
+        height=500,  # SAME HEIGHT AS PPH
         showlegend=True,
         legend=dict(
             orientation="v",
@@ -1317,14 +1303,18 @@ def render_uterotonic_type_pie_chart(
             font=dict(size=10),
             itemwidth=30,
         ),
-        margin=dict(l=0, r=150, t=20, b=20),
+        margin=dict(l=0, r=150, t=20, b=20),  # SAME MARGINS AS PPH
         uniformtext_minsize=8,
         uniformtext_mode="hide",
     )
 
-    # Ensure no "undefined" placeholder
-    fig.update_layout(title=None)
-    fig.layout.pop("title", None)
+    # CRITICAL FIX: Remove any trace of title completely
+    fig.update_layout(title=None)  # Explicitly set title to None
+    fig.layout.pop("title", None)  # Remove title from layout completely
+
+    # Also check and remove any annotations that might contain "undefined"
+    if hasattr(fig.layout, "annotations") and fig.layout.annotations:
+        fig.layout.annotations = []
 
     # Use container to control layout
     with st.container():
