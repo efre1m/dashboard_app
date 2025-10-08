@@ -9,6 +9,7 @@ from utils.dash_co import (
     normalize_enrollment_dates,
     render_simple_filter_controls,
     apply_simple_filters,
+    render_kpi_tab_navigation,
 )
 import pandas as pd
 import logging
@@ -502,15 +503,18 @@ def render_maternal_dashboard(
     text_color = get_text_color(bg_color)
 
     with col_chart:
+        # NEW: Use KPI tab navigation instead of filters["kpi_selection"]
+        selected_kpi = render_kpi_tab_navigation()
+
         if view_mode == "Comparison View" and len(display_names) > 1:
             st.markdown(
-                f'<div class="section-header">📈 {kpi_selection} - {comparison_mode.title()} Comparison - Maternal Inpatient Data</div>',
+                f'<div class="section-header">📈 {selected_kpi} - {comparison_mode.title()} Comparison - Maternal Inpatient Data</div>',  # Use selected_kpi instead of kpi_selection
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             render_comparison_chart(
-                kpi_selection=kpi_selection,
+                kpi_selection=selected_kpi,  # Use selected_kpi here
                 filtered_events=filtered_events,
                 comparison_mode=comparison_mode,
                 display_names=display_names,
@@ -522,13 +526,13 @@ def render_maternal_dashboard(
             )
         else:
             st.markdown(
-                f'<div class="section-header">📈 {kpi_selection} Trend - Maternal Inpatient Data</div>',
+                f'<div class="section-header">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',  # Use selected_kpi here
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             render_trend_chart_section(
-                kpi_selection,
+                selected_kpi,  # Use selected_kpi here
                 filtered_events,
                 facility_uids,
                 display_names,
@@ -539,7 +543,11 @@ def render_maternal_dashboard(
             st.markdown("</div>", unsafe_allow_html=True)
 
         render_additional_analytics(
-            kpi_selection, filtered_events, facility_uids, bg_color, text_color
+            selected_kpi,
+            filtered_events,
+            facility_uids,
+            bg_color,
+            text_color,
         )
 
 

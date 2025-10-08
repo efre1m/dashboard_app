@@ -21,6 +21,7 @@ from utils.dash_co import (
     get_text_color,
     apply_simple_filters,
     render_simple_filter_controls,
+    render_kpi_tab_navigation,  # ADD THIS IMPORT
 )
 from utils.kpi_utils import clear_cache
 from utils.status import (
@@ -247,7 +248,6 @@ def render_maternal_dashboard(
     st.session_state["filtered_events"] = filtered_events.copy()
 
     # Get variables from filters for later use
-    kpi_selection = filters["kpi_selection"]
     bg_color = filters["bg_color"]
     text_color = filters["text_color"]
 
@@ -262,16 +262,19 @@ def render_maternal_dashboard(
     text_color = get_text_color(bg_color)
 
     with col_chart:
+        # NEW: Use KPI tab navigation instead of filters["kpi_selection"]
+        selected_kpi = render_kpi_tab_navigation()
+
         if view_mode == "Facility Comparison" and len(selected_facilities) > 1:
             st.markdown(
-                f'<div class="section-header">📈 {kpi_selection} - Facility Comparison - Maternal Inpatient Data</div>',
+                f'<div class="section-header">📈 {selected_kpi} - Facility Comparison - Maternal Inpatient Data</div>',  # Use selected_kpi instead of kpi_selection
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             # Use common comparison chart function
             render_comparison_chart(
-                kpi_selection=kpi_selection,
+                kpi_selection=selected_kpi,  # Use selected_kpi here
                 filtered_events=filtered_events,
                 comparison_mode="facility",
                 display_names=facility_names,
@@ -284,14 +287,14 @@ def render_maternal_dashboard(
 
         else:
             st.markdown(
-                f'<div class="section-header">📈 {kpi_selection} Trend - Maternal Inpatient Data</div>',
+                f'<div class="section-header">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',  # Use selected_kpi here
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             # Use common trend chart function
             render_trend_chart_section(
-                kpi_selection,
+                selected_kpi,  # Use selected_kpi here
                 filtered_events,
                 facility_uids,
                 facility_names,
@@ -303,7 +306,11 @@ def render_maternal_dashboard(
 
         # Use common additional analytics function
         render_additional_analytics(
-            kpi_selection, filtered_events, facility_uids, bg_color, text_color
+            selected_kpi,  # Use selected_kpi here
+            filtered_events,
+            facility_uids,
+            bg_color,
+            text_color,
         )
 
 

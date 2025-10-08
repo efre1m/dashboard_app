@@ -238,3 +238,40 @@ div[data-testid="stRadio"] label {
     color: #ffa348 !important;
     font-weight: 600 !important;
 }
+
+/* Tabs Styling */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    background-color: #f8f9fa;
+    padding: 8px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    height: 50px;
+    padding: 0px 20px;
+    font-weight: 600;
+    font-size: 14px;
+    border-radius: 6px 6px 0px 0px;
+    background-color: #e9ecef;
+    border: 1px solid #dee2e6;
+    border-bottom: none;
+    transition: all 0.3s ease;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: #1f77b4 !important;
+    color: white !important;
+    border-color: #1a6790 !important;
+    box-shadow: 0px -2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.stTabs [data-baseweb="tab"]:hover:not([aria-selected="true"]) {
+    background-color: #dee2e6;
+    color: #495057;
+}
+
+.stTabs [data-baseweb="tab-panel"] {
+    padding: 20px 0px;
+}

@@ -86,6 +86,25 @@ KPI_MAPPING = {
     },
 }
 
+# KPI Grouping for Tab Navigation
+KPI_GROUPS = {
+    "Mortality": [
+        "Institutional Maternal Death Rate (per 100,000 births)",
+        "Stillbirth Rate (per 1000 births)",
+    ],
+    "Complications": [
+        "Postpartum Hemorrhage (PPH) Rate (%)",
+        "Low Birth Weight (LBW) Rate (%)",
+    ],
+    "Care": [
+        "C-Section Rate (%)",
+        "Delivered women who received uterotonic (%)",
+        "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+        "Early Postnatal Care (PNC) Coverage (%)",
+        "ARV Prophylaxis Rate (%)",
+    ],
+}
+
 
 def get_text_color(bg_color):
     """Get auto text color for background - used in both files"""
@@ -109,6 +128,216 @@ KPI_OPTIONS = [
     "ARV Prophylaxis Rate (%)",
     "Low Birth Weight (LBW) Rate (%)",
 ]
+
+
+def render_kpi_tab_navigation():
+    """Render professional tab navigation for KPI selection without duplication"""
+
+    # Custom CSS for professional tab styling and active button highlighting
+    # Using !important to override national.css styles
+    st.markdown(
+        """
+    <style>
+    /* Custom button styling for active state - using !important to override */
+    div.stButton > button[kind="primary"] {
+        background-color: #1f77b4 !important;
+        color: white !important;
+        border-color: #1a6790 !important;
+        font-weight: 600 !important;
+    }
+    
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #1668a1 !important;
+        color: white !important;
+        border-color: #145a8c !important;
+    }
+    
+    div.stButton > button[kind="secondary"] {
+        background-color: #f8f9fa !important;
+        color: #495057 !important;
+        border-color: #dee2e6 !important;
+        font-weight: 500 !important;
+    }
+    
+    div.stButton > button[kind="secondary"]:hover {
+        background-color: #e9ecef !important;
+        color: #495057 !important;
+        border-color: #ced4da !important;
+    }
+    
+    /* Ensure our styles take precedence */
+    .stButton button {
+        transition: all 0.3s ease !important;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # KPI Grouping for Tab Navigation
+    KPI_GROUPS = {
+        "📉 Mortality": [
+            "Institutional Maternal Death Rate (per 100,000 births)",
+            "Stillbirth Rate (per 1000 births)",
+        ],
+        "🚨 Complications": [
+            "Postpartum Hemorrhage (PPH) Rate (%)",
+            "Low Birth Weight (LBW) Rate (%)",
+        ],
+        "🏥 Care": [
+            "C-Section Rate (%)",
+            "Delivered women who received uterotonic (%)",
+            "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+            "Early Postnatal Care (PNC) Coverage (%)",
+            "ARV Prophylaxis Rate (%)",
+        ],
+    }
+
+    # Initialize session state for KPI selection
+    if "selected_kpi" not in st.session_state:
+        st.session_state.selected_kpi = (
+            "Institutional Maternal Death Rate (per 100,000 births)"
+        )
+
+    # Create main KPI group tabs
+    tab1, tab2, tab3 = st.tabs(
+        ["📉 **Mortality**", "🚨 **Complications**", "🏥 **Care**"]
+    )
+
+    selected_kpi = st.session_state.selected_kpi
+
+    with tab1:
+        # Mortality KPIs - Direct selection without instructional text
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button(
+                "📊 Maternal Death Rate",
+                key="maternal_death_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi
+                    == "Institutional Maternal Death Rate (per 100,000 births)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Institutional Maternal Death Rate (per 100,000 births)"
+
+        with col2:
+            if st.button(
+                "📊 Stillbirth Rate",
+                key="stillbirth_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Stillbirth Rate (per 1000 births)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Stillbirth Rate (per 1000 births)"
+
+    with tab2:
+        # Complications KPIs - Direct selection without instructional text
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button(
+                "📊 Postpartum Hemorrhage",
+                key="pph_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Postpartum Hemorrhage (PPH) Rate (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Postpartum Hemorrhage (PPH) Rate (%)"
+
+        with col2:
+            if st.button(
+                "📊 Low Birth Weight",
+                key="lbw_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Low Birth Weight (LBW) Rate (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Low Birth Weight (LBW) Rate (%)"
+
+    with tab3:
+        # Care KPIs - Direct selection without instructional text
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button(
+                "📊 C-Section Rate",
+                key="csection_btn",
+                use_container_width=True,
+                type="primary" if selected_kpi == "C-Section Rate (%)" else "secondary",
+            ):
+                selected_kpi = "C-Section Rate (%)"
+
+            if st.button(
+                "📊 Uterotonic Administration",
+                key="uterotonic_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Delivered women who received uterotonic (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Delivered women who received uterotonic (%)"
+
+            if st.button(
+                "📊 Contraceptive Acceptance",
+                key="contraceptive_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi
+                    == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = (
+                    "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
+                )
+
+        with col2:
+            if st.button(
+                "📊 PNC Coverage",
+                key="pnc_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Early Postnatal Care (PNC) Coverage (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Early Postnatal Care (PNC) Coverage (%)"
+
+            if st.button(
+                "📊 ARV Prophylaxis",
+                key="arv_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "ARV Prophylaxis Rate (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "ARV Prophylaxis Rate (%)"
+
+    # Update session state with final selection
+    if selected_kpi != st.session_state.selected_kpi:
+        st.session_state.selected_kpi = selected_kpi
+        st.rerun()
+
+    return st.session_state.selected_kpi
 
 
 def render_trend_chart_section(
@@ -665,20 +894,17 @@ def normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ========== NEW FUNCTIONS TO ADD TO dash_co.py ==========
+# ========== UPDATED FILTER CONTROLS WITHOUT KPI SELECTION ==========
 
 
 def render_simple_filter_controls(events_df, container=None):
-    """Simple filter controls for all dashboard types"""
+    """Simple filter controls without KPI selection (KPI selection moved to tabs)"""
     if container is None:
         container = st
 
     filters = {}
 
-    # KPI Selection
-    filters["kpi_selection"] = container.selectbox(
-        "📊 Select KPI to Visualize", KPI_OPTIONS, key="kpi_selection_simple"
-    )
+    # NOTE: KPI Selection removed - now handled by tab navigation
 
     # Time Period
     filters["quick_range"] = container.selectbox(
@@ -752,6 +978,11 @@ def render_simple_filter_controls(events_df, container=None):
         "🎨 Chart Background", "#FFFFFF", key="bg_color_simple"
     )
     filters["text_color"] = auto_text_color(filters["bg_color"])
+
+    # Add a placeholder for kpi_selection to maintain compatibility
+    filters["kpi_selection"] = st.session_state.get(
+        "selected_kpi", "Institutional Maternal Death Rate (per 100,000 births)"
+    )
 
     return filters
 
