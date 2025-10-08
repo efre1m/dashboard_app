@@ -24,7 +24,6 @@ from utils.status import (
     render_connection_status,
     update_last_sync_time,
     initialize_status_system,
-    should_refresh_data,
 )
 
 # Initialize status system
@@ -224,10 +223,6 @@ def render():
         unsafe_allow_html=True,
     )
 
-    render_connection_status(
-        st.session_state.get("cached_events_data", pd.DataFrame()), user=user
-    )
-
     # Refresh Data Button
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
@@ -263,6 +258,10 @@ def render():
     tei_df = st.session_state.cached_tei_data
     enrollments_df = st.session_state.cached_enrollments_data
     events_df = st.session_state.cached_events_data
+
+    render_connection_status(
+        st.session_state.get("cached_events_data", pd.DataFrame()), user=user
+    )
 
     # Get facility data (cached)
     facilities_by_region, facility_mapping = get_cached_facilities(user)
