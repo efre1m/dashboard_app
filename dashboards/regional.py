@@ -27,7 +27,7 @@ from utils.status import (
 initialize_status_system()
 
 logging.basicConfig(level=logging.INFO)
-CACHE_TTL = 1800  # 30 minutes
+CACHE_TTL = 600  # 10 minutes
 
 
 # ---------------- Cache Wrapper ----------------

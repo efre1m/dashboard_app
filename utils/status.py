@@ -17,11 +17,20 @@ class ConnectionStatus:
         self.is_online = None
         self.last_successful_sync = None
         self.cache_age = None
+        self.check_interval = timedelta(minutes=10)  # Check every 10 minutes
 
     def is_local_server(self, base_url):
         """Check if this is a local server (localhost or local network)"""
         local_indicators = ["localhost", "127.0.0.1", "192.168.", "10.", "172."]
         return any(indicator in base_url for indicator in local_indicators)
+
+    def should_check_connection(self):
+        """Determine if we should check connection based on time interval"""
+        if self.last_online_check is None:
+            return True
+
+        time_since_last_check = datetime.now() - self.last_online_check
+        return time_since_last_check >= self.check_interval
 
     def test_dhis2_connection(self, user=None, timeout=10):
         """Simple connection test to DHIS2"""
@@ -68,8 +77,17 @@ class ConnectionStatus:
             return False
 
     def check_connection(self, user=None, timeout=10):
-        """Alias for test_dhis2_connection"""
-        return self.test_dhis2_connection(user, timeout)
+        """Check connection only if enough time has passed since last check"""
+        if self.should_check_connection():
+            return self.test_dhis2_connection(user, timeout)
+        else:
+            # Return cached status
+            time_since_check = datetime.now() - self.last_online_check
+            minutes_since = int(time_since_check.total_seconds() / 60)
+            logger.info(
+                f"Using cached connection status (checked {minutes_since} minutes ago)"
+            )
+            return self.is_online
 
     def get_cache_status(self, events_data):
         """Simple cache status for non-technical users"""
@@ -92,6 +110,29 @@ class ConnectionStatus:
 
         return "Data loaded previously"
 
+    def should_refresh_data(self):
+        """Determine if we should refresh data based on cache age"""
+        if "last_data_fetch" not in st.session_state:
+            return True
+
+        cache_age = datetime.now() - st.session_state.last_data_fetch
+        return cache_age >= self.check_interval
+
+    def get_time_until_next_check(self):
+        """Get time remaining until next automatic check"""
+        if self.last_online_check is None:
+            return "Soon"
+
+        next_check = self.last_online_check + self.check_interval
+        time_remaining = next_check - datetime.now()
+
+        if time_remaining.total_seconds() <= 0:
+            return "Now"
+        elif time_remaining.total_seconds() < 60:
+            return f"{int(time_remaining.total_seconds())} seconds"
+        else:
+            return f"{int(time_remaining.total_seconds() / 60)} minutes"
+
 
 # Create global status instance
 status_monitor = ConnectionStatus()
@@ -106,7 +147,7 @@ def render_connection_status(events_data=None, user=None):
     if user is None:
         user = st.session_state.get("user", {})
 
-    # Test connection
+    # Test connection (will use cache if recent enough)
     is_connected = status_monitor.check_connection(user)
 
     # Get base URL to determine if it's local or internet
@@ -114,18 +155,27 @@ def render_connection_status(events_data=None, user=None):
     is_local = status_monitor.is_local_server(base_url)
 
     cache_status = status_monitor.get_cache_status(events_data)
+    time_until_next = status_monitor.get_time_until_next_check()
 
     # Show simple status banner at the top
     if is_connected:
         if is_local:
-            st.success(f"✅ **Connected to Local System** - {cache_status}")
+            st.success(
+                f"✅ **Connected to Local System** - {cache_status} - Next check: {time_until_next}"
+            )
         else:
-            st.success(f"✅ **Connected to Live System** - {cache_status}")
+            st.success(
+                f"✅ **Connected to Live System** - {cache_status} - Next check: {time_until_next}"
+            )
     else:
         if is_local:
-            st.error(f"⚠️ **Local System Unavailable** - Showing previously saved data")
+            st.error(
+                f"⚠️ **Local System Unavailable** - Showing previously saved data - Next check: {time_until_next}"
+            )
         else:
-            st.error(f"⚠️ **No Internet Connection** - Showing previously saved data")
+            st.error(
+                f"⚠️ **No Internet Connection** - Showing previously saved data - Next check: {time_until_next}"
+            )
 
 
 def update_last_sync_time():
@@ -140,6 +190,11 @@ def initialize_status_system():
 
     if "last_data_fetch" not in st.session_state:
         st.session_state.last_data_fetch = datetime.now()
+
+
+def should_refresh_data():
+    """Check if data should be refreshed based on time interval"""
+    return status_monitor.should_refresh_data()
 
 
 # Simple check functions

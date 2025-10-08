@@ -1,8 +1,10 @@
 import bcrypt
 from utils.db import get_db_connection
 
+
 def _is_bcrypt_hash(value: str) -> bool:
     return isinstance(value, str) and value.startswith("$2")
+
 
 def hash_all_passwords():
     conn = get_db_connection()
@@ -13,10 +15,10 @@ def hash_all_passwords():
     for user_id, pw in users:
         # only hash plain text passwords
         if not _is_bcrypt_hash(pw):
-            hashed_pw = bcrypt.hashpw(pw.encode('utf-8'), bcrypt.gensalt())
+            hashed_pw = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt())
             cur.execute(
                 "UPDATE users SET password_hash=%s WHERE user_id=%s",
-                (hashed_pw.decode('utf-8'), user_id)
+                (hashed_pw.decode("utf-8"), user_id),
             )
 
     conn.commit()
@@ -24,5 +26,13 @@ def hash_all_passwords():
     conn.close()
     print("✅ Plain passwords hashed successfully! Already-hashed ones left intact.")
 
+
 if __name__ == "__main__":
     hash_all_passwords()
+
+
+# print(tabulate(main_summary_table, headers='keys', tablefmt='grid', showindex=False))
+# pd.set_option("display.max_rows", None)
+# pd.set_option("display.max_columns", None)
+# pd.set_option("display.width", None)
+# pd.set_option("display.max_colwidth", None)

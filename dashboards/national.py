@@ -24,6 +24,7 @@ from utils.status import (
     render_connection_status,
     update_last_sync_time,
     initialize_status_system,
+    should_refresh_data,
 )
 
 # Initialize status system
@@ -238,11 +239,14 @@ def render():
         st.session_state.selection_applied = True
         st.rerun()
 
-    # Fetch DHIS2 data (only if not cached)
-    if st.session_state.cached_events_data is None or st.session_state.refresh_trigger:
+    # Fetch DHIS2 data (only if not cached or refresh needed)
+    if (
+        st.session_state.cached_events_data is None or st.session_state.refresh_trigger
+    ):  # REMOVED: or should_refresh_data()
+
         with st.spinner("Fetching national maternal data..."):
             try:
-                dfs = fetch_cached_data(user)
+                dfs = fetch_cached_data(user)  # This automatically uses 10-minute cache
                 process_and_cache_data(dfs)
                 update_last_sync_time()
             except concurrent.futures.TimeoutError:
