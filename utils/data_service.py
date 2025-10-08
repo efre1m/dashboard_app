@@ -12,7 +12,7 @@ def fetch_program_data_for_user(
     user: dict,
     facility_uids: List[str] = None,
     period_label: str = "Monthly",
-    program_name: str = "Maternal Inpatient Data"
+    program_name: str = "Maternal Inpatient Data",
 ) -> Dict[str, pd.DataFrame]:
     """
     Fetch DHIS2 program data for a given user and return structured DataFrames.
@@ -61,11 +61,10 @@ def fetch_program_data_for_user(
         record_path=["attributes"],
         meta=["trackedEntityInstance", "orgUnit"],
         meta_prefix="tei_",
-        errors="ignore"
-    ).rename(columns={
-        "tei_trackedEntityInstance": "tei_id",
-        "tei_orgUnit": "tei_orgUnit"
-    })
+        errors="ignore",
+    ).rename(
+        columns={"tei_trackedEntityInstance": "tei_id", "tei_orgUnit": "tei_orgUnit"}
+    )
     tei_df["orgUnit_name"] = tei_df["tei_orgUnit"].apply(map_org_name)
 
     # --- Enrollment DataFrame ---
@@ -74,11 +73,10 @@ def fetch_program_data_for_user(
         record_path=["enrollments"],
         meta=["trackedEntityInstance", "orgUnit"],
         meta_prefix="tei_",
-        errors="ignore"
-    ).rename(columns={
-        "tei_trackedEntityInstance": "tei_id",
-        "tei_orgUnit": "tei_orgUnit"
-    })
+        errors="ignore",
+    ).rename(
+        columns={"tei_trackedEntityInstance": "tei_id", "tei_orgUnit": "tei_orgUnit"}
+    )
     enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
 
     # --- Events DataFrame ---
@@ -88,7 +86,9 @@ def fetch_program_data_for_user(
         tei_org_unit = tei.get("orgUnit")
         for enrollment in tei.get("enrollments", []):
             for event in enrollment.get("events", []):
-                event_orgUnit = event.get("orgUnit") or enrollment.get("orgUnit") or tei_org_unit
+                event_orgUnit = (
+                    event.get("orgUnit") or enrollment.get("orgUnit") or tei_org_unit
+                )
                 for dv in event.get("dataValues", []):
                     event_data = {
                         "tei_id": tei_id,
@@ -96,7 +96,9 @@ def fetch_program_data_for_user(
                         "programStage_uid": event.get("programStage"),
                         "programStageName": event.get(
                             "programStageName",
-                            ps_dict.get(event.get("programStage"), event.get("programStage"))
+                            ps_dict.get(
+                                event.get("programStage"), event.get("programStage")
+                            ),
                         ),
                         "orgUnit": event_orgUnit,
                         "orgUnit_name": map_org_name(event_orgUnit),
@@ -104,9 +106,9 @@ def fetch_program_data_for_user(
                         "dataElement_uid": dv.get("dataElement"),
                         "dataElementName": dv.get(
                             "dataElementName",
-                            de_dict.get(dv.get("dataElement"), dv.get("dataElement"))
+                            de_dict.get(dv.get("dataElement"), dv.get("dataElement")),
                         ),
-                        "value": dv.get("value")
+                        "value": dv.get("value"),
                     }
                     events_list.append(event_data)
 
@@ -126,7 +128,9 @@ def fetch_program_data_for_user(
 
     # --- Convert enrollment dates ---
     if not enr_df.empty and "enrollmentDate" in enr_df.columns:
-        enr_df["enrollmentDate"] = pd.to_datetime(enr_df["enrollmentDate"], errors="coerce")
+        enr_df["enrollmentDate"] = pd.to_datetime(
+            enr_df["enrollmentDate"], errors="coerce"
+        )
 
     return {
         "raw_json": patients,

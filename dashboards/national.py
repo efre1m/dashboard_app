@@ -40,13 +40,14 @@ def initialize_session_state():
         "current_facility_uids": [],
         "current_display_names": ["All Facilities"],
         "current_comparison_mode": "facility",
-        "filter_mode": "All Facilities",
+        "filter_mode": "All Facilities",  # Make sure this matches the radio options
         "filtered_events": pd.DataFrame(),
         "selection_applied": True,
         "cached_events_data": None,
         "cached_enrollments_data": None,
         "cached_tei_data": None,
         "last_applied_selection": "All Facilities",
+        "kpi_cache": {},
     }
 
     for key, default_value in session_vars.items():
@@ -145,6 +146,12 @@ def get_current_selection_summary(
                 f"🏢 SELECT FACILITIES<br><small>Choose from {total_facilities} facilities</small>",
                 "selection-counter",
             )
+
+    # Default fallback - should never reach here, but just in case
+    return (
+        f"🏥 SELECTION MODE<br><small>Choose facilities to display data</small>",
+        "selection-counter",
+    )
 
 
 def update_facility_selection(
@@ -263,33 +270,52 @@ def render():
         st.session_state.get("cached_events_data", pd.DataFrame()), user=user
     )
 
-    # Get facility data (cached)
-    facilities_by_region, facility_mapping = get_cached_facilities(user)
+    # Get facility data (cached) - with error handling
+    try:
+        facilities_by_region, facility_mapping = get_cached_facilities(user)
 
-    # Flatten all facility names
-    all_facility_names = [
-        f for region, facs in facilities_by_region.items() for f, _ in facs
-    ]
-    all_region_names = list(facilities_by_region.keys())
+        # Flatten all facility names
+        all_facility_names = [
+            f for region, facs in facilities_by_region.items() for f, _ in facs
+        ]
+        all_region_names = list(facilities_by_region.keys())
 
-    # Calculate total counts
-    total_facilities = len(facility_mapping)
-    total_regions = len(all_region_names)
+        # Calculate total counts
+        total_facilities = len(facility_mapping)
+        total_regions = len(all_region_names)
+
+    except Exception as e:
+        st.error(f"⚠️ Error loading facility data: {e}")
+        # Set default values to prevent further errors
+        facilities_by_region = {}
+        facility_mapping = {}
+        all_facility_names = []
+        all_region_names = []
+        total_facilities = 0
+        total_regions = 0
 
     # ---------------- Selection Counter Display ----------------
     filter_mode = st.session_state.get("filter_mode", "All Facilities")
     selected_regions = st.session_state.get("selected_regions", [])
     selected_facilities = st.session_state.get("selected_facilities", [])
 
-    summary_text, css_class = get_current_selection_summary(
-        filter_mode,
-        selected_regions,
-        selected_facilities,
-        facilities_by_region,
-        facility_mapping,
-        total_facilities,
-        total_regions,
-    )
+    # Add safe unpacking with default values
+    try:
+        summary_text, css_class = get_current_selection_summary(
+            filter_mode,
+            selected_regions,
+            selected_facilities,
+            facilities_by_region,
+            facility_mapping,
+            total_facilities,
+            total_regions,
+        )
+    except Exception as e:
+        # Fallback values if the function fails
+        summary_text = (
+            "🏥 SELECTION MODE<br><small>Choose facilities to display data</small>"
+        )
+        css_class = "selection-counter"
 
     st.sidebar.markdown(
         f'<div class="selection-counter {css_class}">{summary_text}</div>',
@@ -302,12 +328,21 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # Fix the radio index calculation with safe fallback
+    radio_options = ["All Facilities", "By Region", "By Facility"]
+
+    # Safely get the index - handle cases where filter_mode might have old values
+    try:
+        current_index = radio_options.index(st.session_state.filter_mode)
+    except ValueError:
+        # If filter_mode contains an old value like 'facility', reset to default
+        current_index = 0
+        st.session_state.filter_mode = "All Facilities"
+
     new_filter_mode = st.sidebar.radio(
         "Select facilities by:",
-        ["All Facilities", "By Region", "By Facility"],
-        index=["All Facilities", "By Region", "By Facility"].index(
-            st.session_state.filter_mode
-        ),
+        radio_options,
+        index=current_index,
         key="mode_radio",
     )
 

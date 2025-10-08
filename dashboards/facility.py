@@ -24,6 +24,35 @@ from utils.status import (
 
 initialize_status_system()
 
+
+# ---------------- Robust Session State Initialization ----------------
+def initialize_session_state():
+    """Initialize all session state variables to prevent AttributeError"""
+    session_vars = {
+        "refresh_trigger": False,
+        "selected_facilities": [],
+        "selected_regions": [],
+        "current_facility_uids": [],
+        "current_display_names": [],
+        "current_comparison_mode": "facility",
+        "filter_mode": "facility",
+        "filtered_events": pd.DataFrame(),
+        "selection_applied": True,
+        "cached_events_data": None,
+        "cached_enrollments_data": None,
+        "cached_tei_data": None,
+        "last_applied_selection": None,
+        "kpi_cache": {},
+    }
+
+    for key, default_value in session_vars.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+
+
+# Initialize session state at the very beginning
+initialize_session_state()
+
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 600  # 30 minutes
 
@@ -39,7 +68,7 @@ def fetch_cached_data(user):
 # ---------------- Page Rendering ----------------
 def render():
     st.set_page_config(
-        page_title="Maternal Health Dashboard",
+        page_title="IMNID Health Dashboard",
         page_icon="🏥",
         layout="wide",
         initial_sidebar_state="expanded",

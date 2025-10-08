@@ -18,26 +18,32 @@ def get_orgunit_uids_for_user(user: dict) -> List[Tuple[str, str]]:
 
     try:
         if role == "facility" and user.get("facility_id"):
-            cur.execute("SELECT dhis2_uid, facility_name FROM facilities WHERE facility_id=%s",
-                        (user["facility_id"],))
+            cur.execute(
+                "SELECT dhis2_uid, facility_name FROM facilities WHERE facility_id=%s",
+                (user["facility_id"],),
+            )
             ous = cur.fetchall()
-            
+
         elif role == "regional" and user.get("region_id"):
             # For regional users, return the regional UID (will use DESCENDANTS mode)
-            cur.execute("SELECT dhis2_regional_uid, region_name FROM regions WHERE region_id=%s",
-                        (user["region_id"],))
+            cur.execute(
+                "SELECT dhis2_regional_uid, region_name FROM regions WHERE region_id=%s",
+                (user["region_id"],),
+            )
             row = cur.fetchone()
             if row:
                 ous = [(row[0], row[1])]
-                
+
         elif role == "national" and user.get("country_id"):
             # For national users, return the country UID (will use DESCENDANTS mode)
-            cur.execute("SELECT dhis2_uid, country_name FROM countries WHERE country_id=%s",
-                        (user["country_id"],))
+            cur.execute(
+                "SELECT dhis2_uid, country_name FROM countries WHERE country_id=%s",
+                (user["country_id"],),
+            )
             row = cur.fetchone()
             if row:
                 ous = [(row[0], row[1])]
-                
+
     except Exception as e:
         logging.error(f"Error fetching orgUnits for user: {e}")
     finally:
@@ -55,9 +61,11 @@ def get_program_uid(program_name: str = "Maternal Inpatient Data") -> Optional[s
     conn = get_db_connection()
     cur = conn.cursor()
     program_uid: Optional[str] = None
-    
+
     try:
-        cur.execute("SELECT program_uid FROM programs WHERE program_name=%s", (program_name,))
+        cur.execute(
+            "SELECT program_uid FROM programs WHERE program_name=%s", (program_name,)
+        )
         row = cur.fetchone()
         program_uid = row[0] if row else None
     except Exception as e:
@@ -80,9 +88,11 @@ def get_facility_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
     conn = get_db_connection()
     cur = conn.cursor()
     facility_name = None
-    
+
     try:
-        cur.execute("SELECT facility_name FROM facilities WHERE dhis2_uid=%s", (dhis_uid,))
+        cur.execute(
+            "SELECT facility_name FROM facilities WHERE dhis2_uid=%s", (dhis_uid,)
+        )
         row = cur.fetchone()
         facility_name = row[0] if row else None
     except Exception as e:
@@ -104,9 +114,11 @@ def get_region_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
     conn = get_db_connection()
     cur = conn.cursor()
     region_name = None
-    
+
     try:
-        cur.execute("SELECT region_name FROM regions WHERE dhis2_regional_uid=%s", (dhis_uid,))
+        cur.execute(
+            "SELECT region_name FROM regions WHERE dhis2_regional_uid=%s", (dhis_uid,)
+        )
         row = cur.fetchone()
         region_name = row[0] if row else None
     except Exception as e:
@@ -128,9 +140,11 @@ def get_country_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
     conn = get_db_connection()
     cur = conn.cursor()
     country_name = None
-    
+
     try:
-        cur.execute("SELECT country_name FROM countries WHERE dhis2_uid=%s", (dhis_uid,))
+        cur.execute(
+            "SELECT country_name FROM countries WHERE dhis2_uid=%s", (dhis_uid,)
+        )
         row = cur.fetchone()
         country_name = row[0] if row else None
     except Exception as e:
@@ -150,28 +164,34 @@ def get_facilities_for_user(user: dict) -> List[Tuple[str, str]]:
     conn = get_db_connection()
     cur = conn.cursor()
     facilities = []
-    
+
     try:
         role = user.get("role", "")
-        
+
         if role == "national":
             # National users can see all facilities
             cur.execute("SELECT facility_name, dhis2_uid FROM facilities")
             facilities = cur.fetchall()
         elif role == "regional" and user.get("region_id"):
             # Get all facilities in the user's region
-            cur.execute("SELECT facility_name, dhis2_uid FROM facilities WHERE region_id = %s", (user["region_id"],))
+            cur.execute(
+                "SELECT facility_name, dhis2_uid FROM facilities WHERE region_id = %s",
+                (user["region_id"],),
+            )
             facilities = cur.fetchall()
         elif role == "facility" and user.get("facility_id"):
             # Get the specific facility for facility users
-            cur.execute("SELECT facility_name, dhis2_uid FROM facilities WHERE facility_id = %s", (user["facility_id"],))
+            cur.execute(
+                "SELECT facility_name, dhis2_uid FROM facilities WHERE facility_id = %s",
+                (user["facility_id"],),
+            )
             facilities = cur.fetchall()
     except Exception as e:
         logging.error(f"Error fetching facilities from database: {e}")
     finally:
         cur.close()
         conn.close()
-    
+
     return facilities
 
 
@@ -192,53 +212,61 @@ def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, st
     conn = get_db_connection()
     cur = conn.cursor()
     facilities_by_region = {}
-    
+
     try:
         role = user.get("role", "")
-        
+
         if role == "national":
             # National users can see all facilities grouped by region
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT r.region_name, f.facility_name, f.dhis2_uid 
                 FROM facilities f
                 JOIN regions r ON f.region_id = r.region_id
                 ORDER BY r.region_name, f.facility_name
-            """)
+            """
+            )
             facilities = cur.fetchall()
-            
+
         elif role == "regional" and user.get("region_id"):
             # Regional users see facilities only in their region
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT r.region_name, f.facility_name, f.dhis2_uid 
                 FROM facilities f
                 JOIN regions r ON f.region_id = r.region_id
                 WHERE r.region_id = %s
                 ORDER BY f.facility_name
-            """, (user["region_id"],))
+            """,
+                (user["region_id"],),
+            )
             facilities = cur.fetchall()
-            
+
         elif role == "facility" and user.get("facility_id"):
             # Facility users see only their facility
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT r.region_name, f.facility_name, f.dhis2_uid 
                 FROM facilities f
                 JOIN regions r ON f.region_id = r.region_id
                 WHERE f.facility_id = %s
-            """, (user["facility_id"],))
+            """,
+                (user["facility_id"],),
+            )
             facilities = cur.fetchall()
-        
+
         # Group facilities by region
         for region_name, facility_name, dhis2_uid in facilities:
             if region_name not in facilities_by_region:
                 facilities_by_region[region_name] = []
             facilities_by_region[region_name].append((facility_name, dhis2_uid))
-            
+
     except Exception as e:
         logging.error(f"Error fetching facilities grouped by region: {e}")
     finally:
         cur.close()
         conn.close()
-    
+
     return facilities_by_region
 
 
@@ -249,8 +277,8 @@ def get_all_facilities_flat(user: dict) -> List[Tuple[str, str]]:
     """
     facilities_by_region = get_facilities_grouped_by_region(user)
     all_facilities = []
-    
+
     for region_facilities in facilities_by_region.values():
         all_facilities.extend(region_facilities)
-    
+
     return all_facilities
