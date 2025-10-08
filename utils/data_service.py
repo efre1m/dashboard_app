@@ -1,7 +1,8 @@
+# utils/data_service.py
 from typing import Optional, Dict, List
 import pandas as pd
 import logging
-from utils.queries import get_orgunit_uids_for_user, get_program_uid
+from utils.queries import get_orgunit_uids_for_user, get_program_by_uid
 from utils.dhis2 import fetch_dhis2_data_for_ous
 from utils.config import settings
 
@@ -10,17 +11,28 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 def fetch_program_data_for_user(
     user: dict,
+    program_uid: str = None,
     facility_uids: List[str] = None,
     period_label: str = "Monthly",
-    program_name: str = "Maternal Inpatient Data",
 ) -> Dict[str, pd.DataFrame]:
     """
     Fetch DHIS2 program data for a given user and return structured DataFrames.
-    Uses orgUnit names from DHIS2 for TEIs, enrollments, and events.
+
+    Args:
+        user: User dictionary with role and access info
+        program_uid: Specific program UID to fetch data for
+        facility_uids: Optional list of facility UIDs to filter by
+        period_label: Period aggregation level
     """
-    program_uid: Optional[str] = get_program_uid(program_name)
+    # If no program_uid provided, we can't fetch data
     if not program_uid:
-        logging.warning("No program UID found.")
+        logging.warning("No program UID provided.")
+        return {}
+
+    # Get program info for display purposes
+    program_info = get_program_by_uid(program_uid)
+    if not program_info:
+        logging.warning(f"Program with UID {program_uid} not found in database.")
         return {}
 
     # Get OU access based on role
@@ -48,8 +60,10 @@ def fetch_program_data_for_user(
     final_ou_names = {**dhis2_ou_names, **ou_names}
 
     if not patients:
-        logging.warning("No patient data found.")
-        return {}
+        logging.warning(
+            f"No patient data found for program {program_info['program_name']}."
+        )
+        return {"program_info": program_info}
 
     # Helper: map UID -> name
     def map_org_name(uid: str) -> str:
@@ -65,7 +79,8 @@ def fetch_program_data_for_user(
     ).rename(
         columns={"tei_trackedEntityInstance": "tei_id", "tei_orgUnit": "tei_orgUnit"}
     )
-    tei_df["orgUnit_name"] = tei_df["tei_orgUnit"].apply(map_org_name)
+    if not tei_df.empty:
+        tei_df["orgUnit_name"] = tei_df["tei_orgUnit"].apply(map_org_name)
 
     # --- Enrollment DataFrame ---
     enr_df = pd.json_normalize(
@@ -77,7 +92,8 @@ def fetch_program_data_for_user(
     ).rename(
         columns={"tei_trackedEntityInstance": "tei_id", "tei_orgUnit": "tei_orgUnit"}
     )
-    enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
+    if not enr_df.empty:
+        enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
 
     # --- Events DataFrame ---
     events_list = []
@@ -133,6 +149,7 @@ def fetch_program_data_for_user(
         )
 
     return {
+        "program_info": program_info,
         "raw_json": patients,
         "tei": tei_df,
         "enrollments": enr_df,

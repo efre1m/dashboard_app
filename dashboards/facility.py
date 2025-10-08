@@ -1,3 +1,4 @@
+# dashboards/facility.py
 import streamlit as st
 import pandas as pd
 import logging
@@ -5,6 +6,7 @@ import concurrent.futures
 import requests
 from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
+from utils.queries import get_all_programs
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
 from utils.dash_co import (
     normalize_event_dates,
@@ -25,7 +27,6 @@ from utils.status import (
 initialize_status_system()
 
 
-# ---------------- Robust Session State Initialization ----------------
 def initialize_session_state():
     """Initialize all session state variables to prevent AttributeError"""
     session_vars = {
@@ -43,6 +44,8 @@ def initialize_session_state():
         "cached_tei_data": None,
         "last_applied_selection": None,
         "kpi_cache": {},
+        "selected_program_uid": None,
+        "selected_program_name": "Maternal Inpatient Data",
     }
 
     for key, default_value in session_vars.items():
@@ -57,60 +60,105 @@ logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 600  # 30 minutes
 
 
-# ---------------- Cache Wrapper ----------------
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def fetch_cached_data(user):
+def fetch_cached_data(user, program_uid):
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(fetch_program_data_for_user, user)
+        future = executor.submit(fetch_program_data_for_user, user, program_uid)
         return future.result(timeout=180)
 
 
-# ---------------- Page Rendering ----------------
-def render():
-    st.set_page_config(
-        page_title="IMNID Health Dashboard",
-        page_icon="🏥",
-        layout="wide",
-        initial_sidebar_state="expanded",
+def render_program_selector():
+    """Render program selection dropdown in sidebar"""
+    programs = get_all_programs()
+
+    if not programs:
+        st.sidebar.error("No programs found in database")
+        return None
+
+    # Create display names for dropdown
+    program_options = {p["program_name"]: p["program_uid"] for p in programs}
+
+    # Get current selection
+    current_program_name = st.session_state.get(
+        "selected_program_name", "Maternal Inpatient Data"
     )
 
-    if "refresh_trigger" not in st.session_state:
-        st.session_state["refresh_trigger"] = False
-
-    # Load CSS if available
-    try:
-        with open("utils/facility.css") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-    except Exception:
-        pass
-
-    # Sidebar user info
-    user = st.session_state.get("user", {})
-    username = user.get("username", "Unknown User")
-    role = user.get("role", "Unknown Role")
-    facility_name = user.get("facility_name", "Unknown Facility")
-    facility_uid = user.get("facility_uid")  # Get facility UID from user session
-
+    # Add CSS to make the label white
     st.sidebar.markdown(
-        f"""
-        <div class="user-info">
-            <div>👤 Username: {username}</div>
-            <div>🏥 Facility: {facility_name}</div>
-            <div>🛡️ Role: {role}</div>
-        </div>
-    """,
+        """
+        <style>
+        .program-selector-label {
+            color: white !important;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        </style>
+        """,
         unsafe_allow_html=True,
     )
 
-    if st.sidebar.button("🔄 Refresh Data"):
-        st.cache_data.clear()
-        clear_cache()
-        st.session_state["refresh_trigger"] = not st.session_state["refresh_trigger"]
+    st.sidebar.markdown(
+        '<p class="program-selector-label">📋 Select Program</p>',
+        unsafe_allow_html=True,
+    )
 
-    # Fetch DHIS2 data
-    with st.spinner("Fetching maternal data..."):
+    # Program selector
+    selected_program_name = st.sidebar.selectbox(
+        " ",  # Empty label since we're using the styled label above
+        options=list(program_options.keys()),
+        index=(
+            list(program_options.keys()).index(current_program_name)
+            if current_program_name in program_options
+            else 0
+        ),
+        key="program_selector",
+        label_visibility="collapsed",  # Hide the default label
+    )
+
+    selected_program_uid = program_options[selected_program_name]
+
+    # Update session state if program changed
+    if selected_program_uid != st.session_state.get(
+        "selected_program_uid"
+    ) or selected_program_name != st.session_state.get("selected_program_name"):
+        st.session_state.selected_program_uid = selected_program_uid
+        st.session_state.selected_program_name = selected_program_name
+        st.session_state.refresh_trigger = not st.session_state.refresh_trigger
+        st.rerun()
+
+    return selected_program_uid
+
+
+def render_newborn_dashboard(facility_name):
+    """Render Newborn Care Form dashboard content"""
+    st.markdown(
+        f'<div class="main-header">👶 Newborn Care Dashboard - {facility_name}</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.info("🚧 **Newborn Care Dashboard Coming Soon!**")
+    st.markdown(
+        """
+    We're working on building the Newborn Care dashboard with specialized KPIs and visualizations.
+    
+    **Features coming soon:**
+    - Newborn admission metrics
+    - Birth weight tracking
+    - Feeding status monitoring
+    - Vaccination coverage
+    - Growth monitoring charts
+    
+    In the meantime, please use the **Maternal Inpatient Data** program for maternal health analytics.
+    """
+    )
+
+
+def render_maternal_dashboard(user, program_uid, facility_name, facility_uid):
+    """Render Maternal Inpatient Data dashboard content"""
+    # Fetch DHIS2 data for Maternal program
+    with st.spinner(f"Fetching Maternal Inpatient Data..."):
         try:
-            dfs = fetch_cached_data(user)
+            dfs = fetch_cached_data(user, program_uid)
             update_last_sync_time()
         except concurrent.futures.TimeoutError:
             st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
@@ -126,6 +174,7 @@ def render():
     enrollments_df = dfs.get("enrollments", pd.DataFrame())
     events_df = dfs.get("events", pd.DataFrame())
     raw_json = dfs.get("raw_json", [])
+    program_info = dfs.get("program_info", {})
 
     # Normalize dates using common functions
     enrollments_df = normalize_enrollment_dates(enrollments_df)
@@ -136,24 +185,23 @@ def render():
         copied_events_df = copied_events_df[copied_events_df["orgUnit"] == facility_uid]
 
     render_connection_status(copied_events_df, user=user)
-    # MAIN HEADING
+
+    # MAIN HEADING for Maternal program
     st.markdown(
-        f'<div class="main-header">🏥 Maternal Health Dashboard - {facility_name}</div>',
+        f'<div class="main-header">🏥 Maternal Inpatient Data - {facility_name}</div>',
         unsafe_allow_html=True,
     )
 
     # ---------------- KPI CARDS ----------------
     if copied_events_df.empty or "event_date" not in copied_events_df.columns:
         st.markdown(
-            '<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>',
+            f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available. KPIs and charts are hidden.</div>',
             unsafe_allow_html=True,
         )
         return
 
-    # Pass user_id into KPI card renderer so it can save/load previous values
-    user_id = str(
-        user.get("id", username)
-    )  # Prefer numeric ID if available, fallback to username
+    # Pass user_id into KPI card renderer
+    user_id = str(user.get("id", user.get("username", "Unknown User")))
 
     # Use single facility UID (not list) for facility-level view
     render_kpi_cards(
@@ -187,7 +235,7 @@ def render():
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:
         st.markdown(
-            '<div class="no-data-warning">⚠️ No data available for the selected period. Charts are hidden.</div>',
+            f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for the selected period. Charts are hidden.</div>',
             unsafe_allow_html=True,
         )
         return
@@ -196,7 +244,7 @@ def render():
 
     with col_chart:
         st.markdown(
-            f'<div class="section-header">📈 {kpi_selection} Trend</div>',
+            f'<div class="section-header">📈 {kpi_selection} Trend - Maternal Inpatient Data</div>',
             unsafe_allow_html=True,
         )
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
@@ -217,3 +265,69 @@ def render():
         render_additional_analytics(
             kpi_selection, filtered_events, facility_uid, bg_color, text_color
         )
+
+
+def render():
+    st.set_page_config(
+        page_title="IMNID Health Dashboard",
+        page_icon="🏥",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    if "refresh_trigger" not in st.session_state:
+        st.session_state["refresh_trigger"] = False
+
+    # Load CSS if available
+    try:
+        with open("utils/facility.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except Exception:
+        pass
+
+    # Sidebar user info
+    user = st.session_state.get("user", {})
+    username = user.get("username", "Unknown User")
+    role = user.get("role", "Unknown Role")
+    facility_name = user.get("facility_name", "Unknown Facility")
+    facility_uid = user.get("facility_uid")
+
+    st.sidebar.markdown(
+        f"""
+        <div class="user-info">
+            <div>👤 Username: {username}</div>
+            <div>🏥 Facility: {facility_name}</div>
+            <div>🛡️ Role: {role}</div>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Program selection
+    program_uid = render_program_selector()
+    if not program_uid:
+        return
+
+    # Refresh button
+    if st.sidebar.button("🔄 Refresh Data"):
+        st.cache_data.clear()
+        clear_cache()
+        st.session_state["refresh_trigger"] = not st.session_state["refresh_trigger"]
+
+    # ✅ CLEAR PROGRAM SELECTION LOGIC
+    selected_program_name = st.session_state.selected_program_name
+
+    if selected_program_name == "Newborn Care Form":
+        # GROUP 1: Newborn Care Form Content
+        render_newborn_dashboard(facility_name)
+
+    elif selected_program_name == "Maternal Inpatient Data":
+        # GROUP 2: Maternal Inpatient Data Content
+        render_maternal_dashboard(user, program_uid, facility_name, facility_uid)
+
+    else:
+        # Fallback: Show Maternal dashboard
+        st.warning(
+            f"Unknown program: {selected_program_name}. Showing Maternal Inpatient Data."
+        )
+        render_maternal_dashboard(user, program_uid, facility_name, facility_uid)
