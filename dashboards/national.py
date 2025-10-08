@@ -661,6 +661,56 @@ def render():
     except Exception:
         pass
 
+    # SIMPLE HARDCODED FIX FOR CHECKBOX VISIBILITY
+    st.markdown(
+        """
+    <style>
+    /* Make ALL checkbox labels black */
+    .stCheckbox label {
+        color: #000000 !important;
+    }
+
+    /* Make expander content white background */
+    .stExpander .streamlit-expanderContent {
+        background: white !important;
+    }
+
+    /* FIX: Keep region headers visible - prevent them from becoming white */
+    .stExpander summary {
+        color: white !important;
+        background: rgba(255, 255, 255, 0.1) !important;
+    }
+
+    .stExpander summary:hover {
+        background: rgba(255, 255, 255, 0.15) !important;
+    }
+
+    /* FIX: Prevent region headers from changing color when expanded */
+    .stExpander[data-expanded="true"] summary {
+        color: white !important;
+        background: rgba(255, 255, 255, 0.1) !important;
+    }
+
+    /* FIX: Make sure the region header text stays white in all states */
+    .stExpander summary,
+    .stExpander summary:focus,
+    .stExpander summary:active,
+    .stExpander summary:hover,
+    .stExpander[data-expanded="true"] summary,
+    .stExpander[data-expanded="true"] summary:hover {
+        color: white !important;
+    }
+
+    /* FIX: Ensure the expander icon/arrow stays visible */
+    .stExpander summary svg {
+        color: white !important;
+        fill: white !important;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
     # Sidebar user info
     user = st.session_state.get("user", {})
     username = user.get("username", "Unknown User")

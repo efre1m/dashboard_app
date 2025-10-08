@@ -1,4 +1,4 @@
-/* national.css - Unique Styles for National Dashboard Sidebar */
+/* national.css - Clean version without checkbox/expander conflicts */
 
 /* Sidebar Styling */
 .sidebar .sidebar-content {
@@ -15,66 +15,6 @@
     font-size: 16px;
 }
 
-/* Checkbox Styling */
-.stCheckbox label {
-    color: white !important;
-    font-weight: 500;
-}
-
-.stCheckbox [data-baseweb="checkbox"] {
-    background-color: rgba(255, 255, 255, 0.9);
-    border-color: rgba(255, 255, 255, 0.5);
-}
-
-.stCheckbox [data-baseweb="checkbox"]:checked {
-    background-color: #ffa348;
-    border-color: #ffa348;
-}
-
-/* Expander Styling */
-.stExpander {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    margin-bottom: 10px;
-}
-
-.stExpander summary {
-    color: white !important;
-    font-weight: 600;
-    padding: 12px 15px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    transition: all 0.3s ease;
-}
-
-.stExpander summary:hover {
-    background: rgba(255, 255, 255, 0.15);
-}
-
-.stExpander .streamlit-expanderContent {
-    padding: 15px;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 0 0 8px 8px;
-}
-
-/* Facility List Styling */
-.stExpander .stCheckbox {
-    margin: 8px 0;
-    padding-left: 10px;
-}
-
-.stExpander .stCheckbox label {
-    font-size: 14px;
-    font-weight: 400;
-}
-
-/* Select All Checkbox */
-.stExpander .stCheckbox:first-child label {
-    font-weight: 600;
-    color: #ffa348 !important;
-}
-
 /* Selection Count Display */
 .sidebar .stMarkdown p:last-child {
     background: rgba(255, 255, 255, 0.1);
@@ -83,23 +23,6 @@
     text-align: center;
     margin-top: 15px;
     font-weight: 500;
-}
-
-/* Refresh Button Styling */
-.stButton button {
-    width: 100%;
-    background: linear-gradient(135deg, #ffa348 0%, #ff7800 100%);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 12px;
-    font-weight: 600;
-    margin-bottom: 20px;
-}
-
-.stButton button:hover {
-    background: linear-gradient(135deg, #ff7800 0%, #e55c00 100%);
-    color: white;
 }
 
 /* Section Headers (sidebar-specific override) */
@@ -112,68 +35,6 @@
     border-bottom: 2px solid rgba(255, 255, 255, 0.2);
 }
 
-/* Export Buttons (sidebar-specific) */
-.stButton button[kind="secondary"] {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: white;
-}
-
-.stButton button[kind="secondary"]:hover {
-    background: rgba(255, 255, 255, 0.2);
-}
-
-/* Radio Button Styling (sidebar-specific) */
-.stRadio label {
-    color: white !important;
-    font-weight: 500;
-}
-
-.stRadio [role="radiogroup"] {
-    background: rgba(255, 255, 255, 0.05);
-    padding: 10px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* Highlight selected facilities */
-.stCheckbox input:checked+label {
-    color: #ffa348 !important;
-    font-weight: 600;
-}
-
-/* Facility counter badge */
-.stExpander summary::after {
-    content: attr(data-count);
-    background: rgba(255, 255, 255, 0.2);
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    margin-left: 10px;
-    font-weight: 500;
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .sidebar .sidebar-content {
-        padding: 15px 10px;
-    }
-
-    .stExpander summary {
-        padding: 10px 12px;
-        font-size: 14px;
-    }
-
-    .stButton button {
-        padding: 10px;
-        font-size: 14px;
-    }
-}
-
-.stExpander[data-expanded="true"] summary {
-    border-radius: 8px 8px 0 0;
-}
-
 /* Force black text for radio buttons in main content area (not sidebar) */
 .main .stRadio label,
 .main .stRadio p,
@@ -184,24 +45,6 @@
 /* Specifically target chart type radio buttons */
 div[data-testid="stRadio"] label {
     color: #000000 !important;
-}
-
-/* Fix button text visibility */
-.stButton>button {
-    color: #000000 !important;
-    border: 1px solid #cccccc !important;
-    background: linear-gradient(135deg, #ffa348 0%, #ff7800 100%) !important;
-}
-
-.stButton>button:hover {
-    color: #000000 !important;
-    background: linear-gradient(135deg, #ff7800 0%, #e55c00 100%) !important;
-}
-
-/* Specifically target form submit buttons */
-.stFormSubmitButton>button {
-    color: #000000 !important;
-    border: 1px solid #cccccc !important;
 }
 
 /* Enhanced region selection styling */
@@ -233,45 +76,9 @@ div[data-testid="stRadio"] label {
     border-left-color: rgba(255, 255, 255, 0.3) !important;
 }
 
-/* Highlight selected facility checkboxes */
-.stCheckbox input:checked+label {
-    color: #ffa348 !important;
-    font-weight: 600 !important;
-}
-
-/* Tabs Styling */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
-    background-color: #f8f9fa;
-    padding: 8px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-}
-
-.stTabs [data-baseweb="tab"] {
-    height: 50px;
-    padding: 0px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    border-radius: 6px 6px 0px 0px;
-    background-color: #e9ecef;
-    border: 1px solid #dee2e6;
-    border-bottom: none;
-    transition: all 0.3s ease;
-}
-
-.stTabs [aria-selected="true"] {
-    background-color: #1f77b4 !important;
-    color: white !important;
-    border-color: #1a6790 !important;
-    box-shadow: 0px -2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.stTabs [data-baseweb="tab"]:hover:not([aria-selected="true"]) {
-    background-color: #dee2e6;
-    color: #495057;
-}
-
-.stTabs [data-baseweb="tab-panel"] {
-    padding: 20px 0px;
+/* Responsive Design */
+@media (max-width: 768px) {
+    .sidebar .sidebar-content {
+        padding: 15px 10px;
+    }
 }
