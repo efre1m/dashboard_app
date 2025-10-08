@@ -67,68 +67,6 @@ def fetch_cached_data(user, program_uid):
         return future.result(timeout=180)
 
 
-def render_program_selector():
-    """Render program selection dropdown in sidebar"""
-    programs = get_all_programs()
-
-    if not programs:
-        st.sidebar.error("No programs found in database")
-        return None
-
-    # Create display names for dropdown
-    program_options = {p["program_name"]: p["program_uid"] for p in programs}
-
-    # Get current selection
-    current_program_name = st.session_state.get(
-        "selected_program_name", "Maternal Inpatient Data"
-    )
-
-    # Add CSS to make the label white
-    st.sidebar.markdown(
-        """
-        <style>
-        .program-selector-label {
-            color: white !important;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.sidebar.markdown(
-        '<p class="program-selector-label">📋 Select Program</p>',
-        unsafe_allow_html=True,
-    )
-
-    # Program selector
-    selected_program_name = st.sidebar.selectbox(
-        " ",  # Empty label since we're using the styled label above
-        options=list(program_options.keys()),
-        index=(
-            list(program_options.keys()).index(current_program_name)
-            if current_program_name in program_options
-            else 0
-        ),
-        key="program_selector",
-        label_visibility="collapsed",  # Hide the default label
-    )
-
-    selected_program_uid = program_options[selected_program_name]
-
-    # Update session state if program changed
-    if selected_program_uid != st.session_state.get(
-        "selected_program_uid"
-    ) or selected_program_name != st.session_state.get("selected_program_name"):
-        st.session_state.selected_program_uid = selected_program_uid
-        st.session_state.selected_program_name = selected_program_name
-        st.session_state.refresh_trigger = not st.session_state.refresh_trigger
-        st.rerun()
-
-    return selected_program_uid
-
-
 def render_newborn_dashboard(facility_name):
     """Render Newborn Care Form dashboard content"""
     st.markdown(
@@ -188,7 +126,7 @@ def render_maternal_dashboard(user, program_uid, facility_name, facility_uid):
 
     # MAIN HEADING for Maternal program
     st.markdown(
-        f'<div class="main-header">🏥 Maternal Inpatient Data - {facility_name}</div>',
+        f'<div class="main-header">🤰 Maternal Inpatient Data - {facility_name}</div>',
         unsafe_allow_html=True,
     )
 
@@ -303,31 +241,33 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Program selection
-    program_uid = render_program_selector()
-    if not program_uid:
-        return
-
     # Refresh button
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
         clear_cache()
         st.session_state["refresh_trigger"] = not st.session_state["refresh_trigger"]
 
-    # ✅ CLEAR PROGRAM SELECTION LOGIC
-    selected_program_name = st.session_state.selected_program_name
+    # Get programs for UID mapping
+    programs = get_all_programs()
+    program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
 
-    if selected_program_name == "Newborn Care Form":
-        # GROUP 1: Newborn Care Form Content
-        render_newborn_dashboard(facility_name)
+    # CREATE PROFESSIONAL TABS IN MAIN AREA
+    tab1, tab2 = st.tabs(["🤰 **Maternal Inpatient Data**", "👶 **Newborn Care Form**"])
 
-    elif selected_program_name == "Maternal Inpatient Data":
-        # GROUP 2: Maternal Inpatient Data Content
-        render_maternal_dashboard(user, program_uid, facility_name, facility_uid)
+    with tab1:
+        # GROUP 1: Maternal Inpatient Data Content
+        maternal_program_uid = program_uid_map.get("Maternal Inpatient Data")
+        if maternal_program_uid:
+            render_maternal_dashboard(
+                user, maternal_program_uid, facility_name, facility_uid
+            )
+        else:
+            st.error("Maternal Inpatient Data program not found")
 
-    else:
-        # Fallback: Show Maternal dashboard
-        st.warning(
-            f"Unknown program: {selected_program_name}. Showing Maternal Inpatient Data."
-        )
-        render_maternal_dashboard(user, program_uid, facility_name, facility_uid)
+    with tab2:
+        # GROUP 2: Newborn Care Form Content
+        newborn_program_uid = program_uid_map.get("Newborn Care Form")
+        if newborn_program_uid:
+            render_newborn_dashboard(facility_name)
+        else:
+            st.error("Newborn Care Form program not found")

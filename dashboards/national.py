@@ -80,68 +80,6 @@ def get_cached_facilities(user):
     return facilities_by_region, facility_mapping
 
 
-def render_program_selector():
-    """Render program selection dropdown in sidebar"""
-    programs = get_all_programs()
-
-    if not programs:
-        st.sidebar.error("No programs found in database")
-        return None
-
-    # Create display names for dropdown
-    program_options = {p["program_name"]: p["program_uid"] for p in programs}
-
-    # Get current selection
-    current_program_name = st.session_state.get(
-        "selected_program_name", "Maternal Inpatient Data"
-    )
-
-    # Add CSS to make the label white
-    st.sidebar.markdown(
-        """
-        <style>
-        .program-selector-label {
-            color: white !important;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.sidebar.markdown(
-        '<p class="program-selector-label">📋 Select Program</p>',
-        unsafe_allow_html=True,
-    )
-
-    # Program selector
-    selected_program_name = st.sidebar.selectbox(
-        " ",  # Empty label since we're using the styled label above
-        options=list(program_options.keys()),
-        index=(
-            list(program_options.keys()).index(current_program_name)
-            if current_program_name in program_options
-            else 0
-        ),
-        key="program_selector",
-        label_visibility="collapsed",  # Hide the default label
-    )
-
-    selected_program_uid = program_options[selected_program_name]
-
-    # Update session state if program changed
-    if selected_program_uid != st.session_state.get(
-        "selected_program_uid"
-    ) or selected_program_name != st.session_state.get("selected_program_name"):
-        st.session_state.selected_program_uid = selected_program_uid
-        st.session_state.selected_program_name = selected_program_name
-        st.session_state.refresh_trigger = not st.session_state.refresh_trigger
-        st.rerun()
-
-    return selected_program_uid
-
-
 def render_newborn_dashboard(country_name, facilities_by_region, facility_mapping):
     """Render Newborn Care Form dashboard content"""
     st.markdown(
@@ -403,19 +341,19 @@ def render_maternal_dashboard(
 
     if comparison_mode == "facility" and "All Facilities" in display_names:
         st.markdown(
-            f'<div class="main-header">🌍 Maternal Inpatient Data - {country_name}</div>',
+            f'<div class="main-header">🤰 Maternal Inpatient Data - {country_name}</div>',
             unsafe_allow_html=True,
         )
         st.markdown(f"**📊 Displaying data from all {total_facilities} facilities**")
     elif comparison_mode == "facility" and len(display_names) == 1:
         st.markdown(
-            f'<div class="main-header">🌍 Maternal Inpatient Data - {display_names[0]}</div>',
+            f'<div class="main-header">🤰 Maternal Inpatient Data - {display_names[0]}</div>',
             unsafe_allow_html=True,
         )
         st.markdown(f"**📊 Displaying data from 1 facility**")
     elif comparison_mode == "facility":
         st.markdown(
-            f'<div class="main-header">🌍 Maternal Inpatient Data - Multiple Facilities</div>',
+            f'<div class="main-header">🤰 Maternal Inpatient Data - Multiple Facilities</div>',
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -423,7 +361,7 @@ def render_maternal_dashboard(
         )
     elif comparison_mode == "region" and len(display_names) == 1:
         st.markdown(
-            f'<div class="main-header">🌍 Maternal Inpatient Data - {display_names[0]} Region</div>',
+            f'<div class="main-header">🤰 Maternal Inpatient Data - {display_names[0]} Region</div>',
             unsafe_allow_html=True,
         )
         region_facilities_count = 0
@@ -435,7 +373,7 @@ def render_maternal_dashboard(
         )
     else:
         st.markdown(
-            f'<div class="main-header">🌍 Maternal Inpatient Data - Multiple Regions</div>',
+            f'<div class="main-header">🤰 Maternal Inpatient Data - Multiple Regions</div>',
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -732,11 +670,6 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Program selection
-    program_uid = render_program_selector()
-    if not program_uid:
-        return
-
     # Refresh Data Button
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
@@ -748,7 +681,7 @@ def render():
         st.session_state.selection_applied = True
         st.rerun()
 
-    # ---------------- Get Facilities Data (SAME FOR BOTH PROGRAMS) ----------------
+    # ---------------- Get Facilities Data ----------------
     try:
         facilities_by_region, facility_mapping = get_cached_facilities(user)
     except Exception as e:
@@ -757,24 +690,33 @@ def render():
         facilities_by_region = {}
         facility_mapping = {}
 
-    # ✅ CLEAR PROGRAM SELECTION LOGIC
-    selected_program_name = st.session_state.selected_program_name
+    # Get programs for UID mapping
+    programs = get_all_programs()
+    program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
 
-    if selected_program_name == "Newborn Care Form":
-        # GROUP 1: Newborn Care Form Content
-        render_newborn_dashboard(country_name, facilities_by_region, facility_mapping)
+    # CREATE PROFESSIONAL TABS IN MAIN AREA
+    tab1, tab2 = st.tabs(["🤰 **Maternal Inpatient Data**", "👶 **Newborn Care Form**"])
 
-    elif selected_program_name == "Maternal Inpatient Data":
-        # GROUP 2: Maternal Inpatient Data Content
-        render_maternal_dashboard(
-            user, program_uid, country_name, facilities_by_region, facility_mapping
-        )
+    with tab1:
+        # GROUP 1: Maternal Inpatient Data Content
+        maternal_program_uid = program_uid_map.get("Maternal Inpatient Data")
+        if maternal_program_uid:
+            render_maternal_dashboard(
+                user,
+                maternal_program_uid,
+                country_name,
+                facilities_by_region,
+                facility_mapping,
+            )
+        else:
+            st.error("Maternal Inpatient Data program not found")
 
-    else:
-        # Fallback: Show Maternal dashboard
-        st.warning(
-            f"Unknown program: {selected_program_name}. Showing Maternal Inpatient Data."
-        )
-        render_maternal_dashboard(
-            user, program_uid, country_name, facilities_by_region, facility_mapping
-        )
+    with tab2:
+        # GROUP 2: Newborn Care Form Content
+        newborn_program_uid = program_uid_map.get("Newborn Care Form")
+        if newborn_program_uid:
+            render_newborn_dashboard(
+                country_name, facilities_by_region, facility_mapping
+            )
+        else:
+            st.error("Newborn Care Form program not found")
