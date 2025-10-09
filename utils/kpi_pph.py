@@ -31,13 +31,15 @@ PPH_CODE = "3"  # Postpartum Hemorrhage (PPH) option code
 # ---------------- PPH KPI Computation Functions ----------------
 def compute_pph_kpi(df, facility_uids=None):
     """
-    Compute PPH KPI for the given dataframe
+    Compute PPH KPI for the given dataframe.
 
-    Formula: PPH Rate (%) = (Count of deliveries where condition = "PPH") ÷ (Total Deliveries) × 100
+    Formula:
+        PPH Rate (%) = (Number of women with Obstetric condition at delivery including code '3')
+        ÷ (Total Deliveries) × 100
 
-    Returns:
-        Dictionary with PPH metrics
+    Handles multi-code (comma or semicolon-separated) option values such as "3,5,6".
     """
+
     if df is None or df.empty:
         return {"pph_rate": 0.0, "pph_count": 0, "total_deliveries": 0}
 
@@ -45,18 +47,37 @@ def compute_pph_kpi(df, facility_uids=None):
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Use the EXACT SAME total deliveries calculation as other KPIs
+    # Compute total deliveries
     total_deliveries = compute_total_deliveries(df, facility_uids)
 
-    # Filter for PPH cases specifically (where obstetric condition = PPH)
-    pph_cases = df[
-        (df["dataElement_uid"] == PPH_CONDITION_UID)
-        & (df["value"] == PPH_CODE)
-        & df["value"].notna()
-    ]
+    # Filter rows for the correct data element
+    cond_df = df[df["dataElement_uid"] == PPH_CONDITION_UID].copy()
+
+    # Safety check: if no such data element exists
+    if cond_df.empty or "tei_id" not in cond_df.columns:
+        return {
+            "pph_rate": 0.0,
+            "pph_count": 0,
+            "total_deliveries": int(total_deliveries),
+        }
+
+    # Ensure 'value' is string
+    cond_df["value"] = cond_df["value"].astype(str)
+
+    # Mark rows containing PPH code in multi-text field
+    cond_df["has_pph"] = cond_df["value"].apply(
+        lambda v: any(
+            part.strip() == PPH_CODE
+            for part in v.replace(";", ",").split(",")
+            if part.strip()
+        )
+    )
+
+    # Count unique TEIs that have PPH
+    pph_cases = cond_df[cond_df["has_pph"]]
     pph_count = pph_cases["tei_id"].nunique()
 
-    # Calculate PPH rate
+    # Compute rate
     pph_rate = (pph_count / total_deliveries * 100) if total_deliveries > 0 else 0.0
 
     return {
@@ -68,7 +89,8 @@ def compute_pph_kpi(df, facility_uids=None):
 
 def compute_obstetric_condition_distribution(df, facility_uids=None):
     """
-    Compute distribution of all obstetric conditions
+    Compute distribution of all obstetric complications,
+    handling multiple condition codes in one record (e.g. "1,3,5" or "2;3").
 
     Returns:
         DataFrame with columns: condition, count, percentage
@@ -80,7 +102,7 @@ def compute_obstetric_condition_distribution(df, facility_uids=None):
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter for delivery summary events with obstetric condition data
+    # Filter only rows for obstetric conditions
     delivery_events = df[
         (df["dataElement_uid"] == PPH_CONDITION_UID) & df["value"].notna()
     ]
@@ -88,11 +110,30 @@ def compute_obstetric_condition_distribution(df, facility_uids=None):
     if delivery_events.empty:
         return pd.DataFrame()
 
-    # Count occurrences of each condition
-    condition_counts = delivery_events["value"].value_counts().reset_index()
+    # ---- EXPAND MULTI-CODE VALUES ----
+    expanded_rows = []
+    for _, row in delivery_events.iterrows():
+        # Replace ";" with "," and split by comma
+        codes = [
+            c.strip()
+            for c in str(row["value"]).replace(";", ",").split(",")
+            if c.strip()
+        ]
+        for code in codes:
+            new_row = row.copy()
+            new_row["condition_code"] = code
+            expanded_rows.append(new_row)
+
+    if not expanded_rows:
+        return pd.DataFrame()
+
+    expanded_df = pd.DataFrame(expanded_rows)
+
+    # ---- COUNT OCCURRENCES ----
+    condition_counts = expanded_df["condition_code"].value_counts().reset_index()
     condition_counts.columns = ["condition_code", "count"]
 
-    # Map condition codes to human-readable names
+    # ---- MAP CODES TO READABLE NAMES ----
     condition_mapping = {
         "0": "None",
         "1": "Obstructed",
@@ -111,7 +152,7 @@ def compute_obstetric_condition_distribution(df, facility_uids=None):
         condition_mapping
     )
 
-    # Calculate percentages
+    # ---- CALCULATE PERCENTAGES ----
     total_count = condition_counts["count"].sum()
     condition_counts["percentage"] = (
         (condition_counts["count"] / total_count * 100) if total_count > 0 else 0
