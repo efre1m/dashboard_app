@@ -14,7 +14,6 @@ from utils.dash_co import (
     render_simple_filter_controls,
 )
 from utils.status import update_last_sync_time
-from utils.kpi_utils import clear_cache
 
 CACHE_TTL = 600  # 10 minutes
 
@@ -26,6 +25,24 @@ def fetch_newborn_data(user, program_uid):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future = executor.submit(fetch_program_data_for_user, user, program_uid)
         return future.result(timeout=180)
+
+
+# -------------------- Counting Functions --------------------
+def count_unique_teis_fixed(tei_df):
+    """Count unique TEIs from tei_df using correct column name"""
+    if tei_df.empty:
+        return 0
+
+    # Use tei_id column (confirmed from your data)
+    if "tei_id" in tei_df.columns:
+        unique_count = tei_df["tei_id"].nunique()
+        return unique_count
+    # Fallback to other possible column names
+    elif "trackedEntityInstance" in tei_df.columns:
+        unique_count = tei_df["trackedEntityInstance"].nunique()
+        return unique_count
+    else:
+        return 0
 
 
 # -------------------- Render Dashboard --------------------
@@ -51,10 +68,6 @@ def render_newborn_dashboard(
             country_name,
             facilities_by_region,
             facility_mapping,
-            selected_facilities,
-            facility_uids,
-            facility_names,
-            view_mode,
         )
 
     # ==================== REGIONAL LEVEL USER ====================
@@ -63,11 +76,8 @@ def render_newborn_dashboard(
             user,
             program_uid,
             region_name,
-            selected_facilities,
             facility_uids,
             facility_mapping,
-            facility_names,
-            view_mode,
         )
 
     # ==================== FACILITY LEVEL USER ====================
@@ -82,19 +92,15 @@ def _render_national_newborn_dashboard(
     country_name,
     facilities_by_region,
     facility_mapping,
-    selected_facilities,
-    facility_uids,
-    facility_names,
-    view_mode,
 ):
     """Render Newborn Care Form for national level users"""
 
-    # Get the current selection from session state (EXACTLY like maternal)
+    # Get the current selection from session state
     filter_mode = st.session_state.get("filter_mode", "All Facilities")
     selected_regions = st.session_state.get("selected_regions", [])
     selected_facilities = st.session_state.get("selected_facilities", [])
 
-    # Update facility selection (EXACTLY like maternal)
+    # Update facility selection
     facility_uids, display_names, comparison_mode = _update_facility_selection(
         filter_mode,
         selected_regions,
@@ -103,7 +109,7 @@ def _render_national_newborn_dashboard(
         facility_mapping,
     )
 
-    # Determine header (EXACTLY like maternal)
+    # Determine header
     total_facilities = len(facility_mapping)
     selected_facilities_count = len(facility_uids)
 
@@ -153,7 +159,6 @@ def _render_national_newborn_dashboard(
     tei_df = dfs.get("tei", pd.DataFrame())
     enrollments_df = dfs.get("enrollments", pd.DataFrame())
     events_df = dfs.get("events", pd.DataFrame())
-    raw_json = dfs.get("raw_json", [])
 
     # Tag dataset type
     tei_df["_dataset_type"] = "newborn"
@@ -162,112 +167,34 @@ def _render_national_newborn_dashboard(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
-    # Apply facility filtering based on selection
+    # Apply facility filtering based on selection - FIXED FOR NATIONAL LEVEL
     filtered_tei, filtered_enrollments, filtered_events = (
         _apply_facility_filtering_fixed(
             tei_df, enrollments_df, events_df, facility_uids
         )
     )
 
-    # Calculate UNIQUE counts (not total rows)
-    unique_tei_count = (
-        filtered_tei["trackedEntityInstance"].nunique()
-        if "trackedEntityInstance" in filtered_tei.columns
-        else 0
-    )
+    # Calculate UNIQUE counts using FIXED counting function
+    unique_tei_count = count_unique_teis_fixed(filtered_tei)
     unique_enrollments_count = (
         filtered_enrollments["enrollment"].nunique()
-        if "enrollment" in filtered_enrollments.columns
+        if not filtered_enrollments.empty
+        and "enrollment" in filtered_enrollments.columns
         else 0
     )
     unique_events_count = (
-        filtered_events["event"].nunique() if "event" in filtered_events.columns else 0
+        filtered_events["event"].nunique()
+        if not filtered_events.empty and "event" in filtered_events.columns
+        else 0
     )
 
     # Display summary metrics - show UNIQUE counts
-    st.success("✅ Successfully fetched and filtered Newborn Care Data!")
+    st.success("✅ Successfully fetched Newborn Care Data!")
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Unique Tracked Entities (Newborn)", unique_tei_count)
     col2.metric("Unique Enrollments", unique_enrollments_count)
     col3.metric("Unique Events", unique_events_count)
-
-    # Export buttons - ALWAYS VISIBLE like maternal dashboard
-    st.markdown("---")
-    st.markdown("### 📤 Export Data")
-
-    col_exp1, col_exp2, col_exp3 = st.columns(3)
-
-    with col_exp1:
-        st.markdown("**Raw JSON Export**")
-        if raw_json:
-            st.download_button(
-                "📥 Download Raw JSON",
-                data=json.dumps(raw_json, indent=2),
-                file_name=f"{country_name}_newborn_raw.json",
-                mime="application/json",
-            )
-        else:
-            st.warning("No raw JSON data available")
-
-    with col_exp2:
-        st.markdown("**All Data Export**")
-        buffer = BytesIO()
-        with zipfile.ZipFile(buffer, "w") as zf:
-            if not tei_df.empty:
-                zf.writestr("tei.csv", tei_df.to_csv(index=False).encode("utf-8"))
-            if not enrollments_df.empty:
-                zf.writestr(
-                    "enrollments.csv",
-                    enrollments_df.to_csv(index=False).encode("utf-8"),
-                )
-            if not events_df.empty:
-                zf.writestr("events.csv", events_df.to_csv(index=False).encode("utf-8"))
-        buffer.seek(0)
-        st.download_button(
-            "📊 Download All DataFrames (ZIP)",
-            data=buffer,
-            file_name=f"{country_name}_newborn_dataframes.zip",
-            mime="application/zip",
-        )
-
-    with col_exp3:
-        st.markdown("**Filtered Data Export**")
-        if not filtered_events.empty:
-            # Create individual CSV download buttons for filtered data
-            tei_csv = filtered_tei.to_csv(index=False) if not filtered_tei.empty else ""
-            enroll_csv = (
-                filtered_enrollments.to_csv(index=False)
-                if not filtered_enrollments.empty
-                else ""
-            )
-            events_csv = (
-                filtered_events.to_csv(index=False) if not filtered_events.empty else ""
-            )
-
-            if tei_csv:
-                st.download_button(
-                    "📥 Filtered TEI Data",
-                    data=tei_csv,
-                    file_name="filtered_newborn_tei.csv",
-                    mime="text/csv",
-                )
-            if enroll_csv:
-                st.download_button(
-                    "📥 Filtered Enrollments",
-                    data=enroll_csv,
-                    file_name="filtered_newborn_enrollments.csv",
-                    mime="text/csv",
-                )
-            if events_csv:
-                st.download_button(
-                    "📥 Filtered Events",
-                    data=events_csv,
-                    file_name="filtered_newborn_events.csv",
-                    mime="text/csv",
-                )
-        else:
-            st.warning("No filtered data available")
 
     # National level controls and filtering
     col_chart, col_ctrl = st.columns([3, 1])
@@ -287,24 +214,10 @@ def _render_national_newborn_dashboard(
         st.markdown("### 📊 Analytics & Charts")
         st.info("🚧 **Charts & KPIs Coming Soon!**")
 
-        # Show view mode information (like maternal)
-        if view_mode == "Comparison View" and len(display_names) > 1:
-            st.markdown(
-                f"**Comparison Mode:** {comparison_mode.title()} Comparison across {len(display_names)} {comparison_mode}s"
-            )
-        else:
-            st.markdown(f"**View Mode:** Normal Trend")
-
         # Show basic data preview
         if not time_filtered_events.empty:
             st.markdown("#### 📋 Filtered Data Preview")
             st.dataframe(time_filtered_events.head(10), use_container_width=True)
-
-            # Show facility distribution in filtered data
-            if "orgUnit" in time_filtered_events.columns:
-                facility_counts = time_filtered_events["orgUnit"].value_counts()
-                st.markdown("#### 🏥 Events per Facility in Selection")
-                st.dataframe(facility_counts, use_container_width=True)
         else:
             st.warning("No data available for the selected facilities and time period.")
 
@@ -314,14 +227,14 @@ def _render_regional_newborn_dashboard(
     user,
     program_uid,
     region_name,
-    selected_facilities,
     facility_uids,
     facility_mapping,
-    facility_names,
-    view_mode,
 ):
     """Render Newborn Care Form for regional level users"""
-    # Determine header name (EXACTLY like maternal)
+
+    selected_facilities = st.session_state.get("selected_facilities", [])
+
+    # Determine header name
     if selected_facilities == ["All Facilities"]:
         header_name = region_name
         selection_text = f"**📊 Displaying data from all {len(facility_mapping)} facilities in {region_name}**"
@@ -359,7 +272,6 @@ def _render_regional_newborn_dashboard(
     tei_df = dfs.get("tei", pd.DataFrame())
     enrollments_df = dfs.get("enrollments", pd.DataFrame())
     events_df = dfs.get("events", pd.DataFrame())
-    raw_json = dfs.get("raw_json", [])
 
     # Tag dataset type
     tei_df["_dataset_type"] = "newborn"
@@ -375,105 +287,27 @@ def _render_regional_newborn_dashboard(
     filtered_enrollments = normalize_enrollment_dates(filtered_enrollments)
     filtered_events = normalize_event_dates(filtered_events)
 
-    # Calculate UNIQUE counts (not total rows)
-    unique_tei_count = (
-        filtered_tei["trackedEntityInstance"].nunique()
-        if "trackedEntityInstance" in filtered_tei.columns
-        else 0
-    )
+    # Calculate UNIQUE counts using FIXED counting function
+    unique_tei_count = count_unique_teis_fixed(filtered_tei)
     unique_enrollments_count = (
         filtered_enrollments["enrollment"].nunique()
-        if "enrollment" in filtered_enrollments.columns
+        if not filtered_enrollments.empty
+        and "enrollment" in filtered_enrollments.columns
         else 0
     )
     unique_events_count = (
-        filtered_events["event"].nunique() if "event" in filtered_events.columns else 0
+        filtered_events["event"].nunique()
+        if not filtered_events.empty and "event" in filtered_events.columns
+        else 0
     )
 
     # Display summary metrics - show UNIQUE counts
-    st.success("✅ Successfully fetched and filtered Newborn Care Data!")
+    st.success("✅ Successfully fetched Newborn Care Data!")
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Unique Tracked Entities (Newborn)", unique_tei_count)
     col2.metric("Unique Enrollments", unique_enrollments_count)
     col3.metric("Unique Events", unique_events_count)
-
-    # Export buttons - ALWAYS VISIBLE like maternal dashboard
-    st.markdown("---")
-    st.markdown("### 📤 Export Data")
-
-    col_exp1, col_exp2, col_exp3 = st.columns(3)
-
-    with col_exp1:
-        st.markdown("**Raw JSON Export**")
-        if raw_json:
-            st.download_button(
-                "📥 Download Raw JSON",
-                data=json.dumps(raw_json, indent=2),
-                file_name=f"{region_name}_newborn_raw.json",
-                mime="application/json",
-            )
-        else:
-            st.warning("No raw JSON data available")
-
-    with col_exp2:
-        st.markdown("**All Data Export**")
-        buffer = BytesIO()
-        with zipfile.ZipFile(buffer, "w") as zf:
-            if not tei_df.empty:
-                zf.writestr("tei.csv", tei_df.to_csv(index=False).encode("utf-8"))
-            if not enrollments_df.empty:
-                zf.writestr(
-                    "enrollments.csv",
-                    enrollments_df.to_csv(index=False).encode("utf-8"),
-                )
-            if not events_df.empty:
-                zf.writestr("events.csv", events_df.to_csv(index=False).encode("utf-8"))
-        buffer.seek(0)
-        st.download_button(
-            "📊 Download All DataFrames (ZIP)",
-            data=buffer,
-            file_name=f"{region_name}_newborn_dataframes.zip",
-            mime="application/zip",
-        )
-
-    with col_exp3:
-        st.markdown("**Filtered Data Export**")
-        if not filtered_events.empty:
-            # Create individual CSV download buttons for filtered data
-            tei_csv = filtered_tei.to_csv(index=False) if not filtered_tei.empty else ""
-            enroll_csv = (
-                filtered_enrollments.to_csv(index=False)
-                if not filtered_enrollments.empty
-                else ""
-            )
-            events_csv = (
-                filtered_events.to_csv(index=False) if not filtered_events.empty else ""
-            )
-
-            if tei_csv:
-                st.download_button(
-                    "📥 Filtered TEI Data",
-                    data=tei_csv,
-                    file_name="filtered_newborn_tei.csv",
-                    mime="text/csv",
-                )
-            if enroll_csv:
-                st.download_button(
-                    "📥 Filtered Enrollments",
-                    data=enroll_csv,
-                    file_name="filtered_newborn_enrollments.csv",
-                    mime="text/csv",
-                )
-            if events_csv:
-                st.download_button(
-                    "📥 Filtered Events",
-                    data=events_csv,
-                    file_name="filtered_newborn_events.csv",
-                    mime="text/csv",
-                )
-        else:
-            st.warning("No filtered data available")
 
     # Regional controls and filtering
     col_chart, col_ctrl = st.columns([3, 1])
@@ -493,24 +327,10 @@ def _render_regional_newborn_dashboard(
         st.markdown("### 📊 Analytics & Charts")
         st.info("🚧 **Charts & KPIs Coming Soon!**")
 
-        # Show view mode information (like maternal)
-        if view_mode == "Facility Comparison" and len(selected_facilities) > 1:
-            st.markdown(
-                f"**Comparison Mode:** Facility Comparison across {len(selected_facilities)} facilities"
-            )
-        else:
-            st.markdown(f"**View Mode:** Normal Trend for {header_name}")
-
         # Show basic data preview
         if not time_filtered_events.empty:
             st.markdown("#### 📋 Filtered Data Preview")
             st.dataframe(time_filtered_events.head(10), use_container_width=True)
-
-            # Show facility distribution in filtered data
-            if "orgUnit" in time_filtered_events.columns:
-                facility_counts = time_filtered_events["orgUnit"].value_counts()
-                st.markdown("#### 🏥 Events per Facility in Selection")
-                st.dataframe(facility_counts, use_container_width=True)
         else:
             st.warning("No data available for the selected facilities and time period.")
 
@@ -546,7 +366,6 @@ def _render_facility_newborn_dashboard(user, program_uid):
     tei_df = dfs.get("tei", pd.DataFrame())
     enrollments_df = dfs.get("enrollments", pd.DataFrame())
     events_df = dfs.get("events", pd.DataFrame())
-    raw_json = dfs.get("raw_json", [])
 
     # Tag dataset type
     tei_df["_dataset_type"] = "newborn"
@@ -562,105 +381,27 @@ def _render_facility_newborn_dashboard(user, program_uid):
     filtered_enrollments = normalize_enrollment_dates(filtered_enrollments)
     filtered_events = normalize_event_dates(filtered_events)
 
-    # Calculate UNIQUE counts (not total rows)
-    unique_tei_count = (
-        filtered_tei["trackedEntityInstance"].nunique()
-        if "trackedEntityInstance" in filtered_tei.columns
-        else 0
-    )
+    # Calculate UNIQUE counts using FIXED counting function
+    unique_tei_count = count_unique_teis_fixed(filtered_tei)
     unique_enrollments_count = (
         filtered_enrollments["enrollment"].nunique()
-        if "enrollment" in filtered_enrollments.columns
+        if not filtered_enrollments.empty
+        and "enrollment" in filtered_enrollments.columns
         else 0
     )
     unique_events_count = (
-        filtered_events["event"].nunique() if "event" in filtered_events.columns else 0
+        filtered_events["event"].nunique()
+        if not filtered_events.empty and "event" in filtered_events.columns
+        else 0
     )
 
     # Display summary metrics - show UNIQUE counts
-    st.success("✅ Successfully fetched and filtered Newborn Care Data!")
+    st.success("✅ Successfully fetched Newborn Care Data!")
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Unique Tracked Entities (Newborn)", unique_tei_count)
     col2.metric("Unique Enrollments", unique_enrollments_count)
     col3.metric("Unique Events", unique_events_count)
-
-    # Export buttons - ALWAYS VISIBLE like maternal dashboard
-    st.markdown("---")
-    st.markdown("### 📤 Export Data")
-
-    col_exp1, col_exp2, col_exp3 = st.columns(3)
-
-    with col_exp1:
-        st.markdown("**Raw JSON Export**")
-        if raw_json:
-            st.download_button(
-                "📥 Download Raw JSON",
-                data=json.dumps(raw_json, indent=2),
-                file_name=f"{facility_name}_newborn_raw.json",
-                mime="application/json",
-            )
-        else:
-            st.warning("No raw JSON data available")
-
-    with col_exp2:
-        st.markdown("**All Data Export**")
-        buffer = BytesIO()
-        with zipfile.ZipFile(buffer, "w") as zf:
-            if not tei_df.empty:
-                zf.writestr("tei.csv", tei_df.to_csv(index=False).encode("utf-8"))
-            if not enrollments_df.empty:
-                zf.writestr(
-                    "enrollments.csv",
-                    enrollments_df.to_csv(index=False).encode("utf-8"),
-                )
-            if not events_df.empty:
-                zf.writestr("events.csv", events_df.to_csv(index=False).encode("utf-8"))
-        buffer.seek(0)
-        st.download_button(
-            "📊 Download All DataFrames (ZIP)",
-            data=buffer,
-            file_name=f"{facility_name}_newborn_dataframes.zip",
-            mime="application/zip",
-        )
-
-    with col_exp3:
-        st.markdown("**Filtered Data Export**")
-        if not filtered_events.empty:
-            # Create individual CSV download buttons for filtered data
-            tei_csv = filtered_tei.to_csv(index=False) if not filtered_tei.empty else ""
-            enroll_csv = (
-                filtered_enrollments.to_csv(index=False)
-                if not filtered_enrollments.empty
-                else ""
-            )
-            events_csv = (
-                filtered_events.to_csv(index=False) if not filtered_events.empty else ""
-            )
-
-            if tei_csv:
-                st.download_button(
-                    "📥 Filtered TEI Data",
-                    data=tei_csv,
-                    file_name="filtered_newborn_tei.csv",
-                    mime="text/csv",
-                )
-            if enroll_csv:
-                st.download_button(
-                    "📥 Filtered Enrollments",
-                    data=enroll_csv,
-                    file_name="filtered_newborn_enrollments.csv",
-                    mime="text/csv",
-                )
-            if events_csv:
-                st.download_button(
-                    "📥 Filtered Events",
-                    data=events_csv,
-                    file_name="filtered_newborn_events.csv",
-                    mime="text/csv",
-                )
-        else:
-            st.warning("No filtered data available")
 
     # Facility controls and filtering
     col_chart, col_ctrl = st.columns([3, 1])
@@ -698,7 +439,7 @@ def _update_facility_selection(
     facilities_by_region,
     facility_mapping,
 ):
-    """Update facility selection based on current mode and selections (EXACTLY like maternal)"""
+    """Update facility selection based on current mode and selections"""
     if filter_mode == "All Facilities":
         facility_uids = list(facility_mapping.values())
         display_names = ["All Facilities"]
@@ -726,7 +467,7 @@ def _update_facility_selection(
 
 
 def _apply_facility_filtering_fixed(tei_df, enrollments_df, events_df, facility_uids):
-    """FIXED VERSION: Apply facility filtering to all dataframes based on selection"""
+    """Apply facility filtering to all dataframes based on selection - FIXED FOR NATIONAL LEVEL"""
     if not facility_uids:
         return tei_df, enrollments_df, events_df
 
@@ -735,41 +476,24 @@ def _apply_facility_filtering_fixed(tei_df, enrollments_df, events_df, facility_
     filtered_enrollments = pd.DataFrame()
     filtered_events = pd.DataFrame()
 
+    # Filter TEI based on tei_orgUnit (FIXED FOR NATIONAL LEVEL)
+    if not tei_df.empty:
+        if "tei_orgUnit" in tei_df.columns:
+            filtered_tei = tei_df[tei_df["tei_orgUnit"].isin(facility_uids)].copy()
+        elif "orgUnit" in tei_df.columns:
+            filtered_tei = tei_df[tei_df["orgUnit"].isin(facility_uids)].copy()
+        else:
+            # If no orgUnit column, return all TEI data
+            filtered_tei = tei_df.copy()
+
     # Filter events by facility UIDs
     if not events_df.empty and "orgUnit" in events_df.columns:
         filtered_events = events_df[events_df["orgUnit"].isin(facility_uids)].copy()
-
-    # Filter TEI based on orgUnit (NOT based on events)
-    if not tei_df.empty and "orgUnit" in tei_df.columns:
-        filtered_tei = tei_df[tei_df["orgUnit"].isin(facility_uids)].copy()
 
     # Filter enrollments based on orgUnit
     if not enrollments_df.empty and "orgUnit" in enrollments_df.columns:
         filtered_enrollments = enrollments_df[
             enrollments_df["orgUnit"].isin(facility_uids)
-        ].copy()
-
-    # If no direct orgUnit filtering worked, try alternative approach
-    if (
-        filtered_tei.empty
-        and "trackedEntityInstance" in tei_df.columns
-        and not filtered_events.empty
-    ):
-        # Get TEI IDs from filtered events and filter TEI
-        tei_ids_from_events = filtered_events["trackedEntityInstance"].unique()
-        filtered_tei = tei_df[
-            tei_df["trackedEntityInstance"].isin(tei_ids_from_events)
-        ].copy()
-
-    if (
-        filtered_enrollments.empty
-        and "trackedEntityInstance" in enrollments_df.columns
-        and not filtered_tei.empty
-    ):
-        # Get TEI IDs from filtered TEI and filter enrollments
-        tei_ids_from_tei = filtered_tei["trackedEntityInstance"].unique()
-        filtered_enrollments = enrollments_df[
-            enrollments_df["trackedEntityInstance"].isin(tei_ids_from_tei)
         ].copy()
 
     return filtered_tei, filtered_enrollments, filtered_events
