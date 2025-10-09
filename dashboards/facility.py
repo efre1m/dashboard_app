@@ -255,14 +255,16 @@ def render():
         newborn_program_uid = program_uid_map.get("Newborn Care Form")
         if newborn_program_uid:
             render_newborn_dashboard(
-                user,  # same as Maternal
-                newborn_program_uid,  # program UID
-                region_name=None,  # Not used for facility-level
-                selected_facilities=None,  # Facility users don't select facilities
-                facility_uids=facility_uid,  # single facility UID
-                facility_mapping=None,  # Not needed for facility-level
-                facility_names=facility_name,  # single facility name
-                view_mode=None,  # Not used for facility-level
+                user,
+                newborn_program_uid,
+                region_name=None,
+                selected_facilities=None,
+                facility_uids=facility_uid,
+                facility_mapping=None,
+                facility_names=facility_name,
+                view_mode=None,
+                country_name=None,
+                facilities_by_region=None,
             )
         else:
             st.error("Newborn Care Form program not found")

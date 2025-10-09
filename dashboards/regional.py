@@ -381,6 +381,8 @@ def render():
                 facility_mapping=facility_mapping,
                 facility_names=facility_names,
                 view_mode=view_mode,
+                country_name=None,
+                facilities_by_region=None,
             )
         else:
             st.error("Newborn Care Form program not found")

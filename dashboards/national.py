@@ -1,26 +1,27 @@
 # dashboards/national.py
 import streamlit as st
-from utils.dash_co import (
-    render_trend_chart_section,
-    render_additional_analytics,
-    render_comparison_chart,
-    get_text_color,
-    normalize_event_dates,
-    normalize_enrollment_dates,
-    render_simple_filter_controls,
-    apply_simple_filters,
-    render_kpi_tab_navigation,
-)
 import pandas as pd
 import logging
 import concurrent.futures
 import requests
 from components.kpi_card import render_kpi_cards
+from newborns_dashboard.newborn_dashboard import render_newborn_dashboard
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import (
     get_all_programs,
     get_facilities_grouped_by_region,
     get_facility_mapping_for_user,
+)
+from utils.dash_co import (
+    normalize_event_dates,
+    normalize_enrollment_dates,
+    render_trend_chart_section,
+    render_comparison_chart,
+    render_additional_analytics,
+    get_text_color,
+    apply_simple_filters,
+    render_simple_filter_controls,
+    render_kpi_tab_navigation,
 )
 from utils.kpi_utils import clear_cache
 from utils.status import (
@@ -81,73 +82,36 @@ def get_cached_facilities(user):
     return facilities_by_region, facility_mapping
 
 
-def render_newborn_dashboard(country_name, facilities_by_region, facility_mapping):
-    """Render Newborn Care Form dashboard content"""
-    st.markdown(
-        f'<div class="main-header">👶 Newborn Care Dashboard - {country_name}</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.info("🚧 **Newborn Care Dashboard Coming Soon!**")
-    st.markdown(
-        """
-    We're working on building the Newborn Care dashboard with specialized KPIs and visualizations.
-    
-    **Features coming soon:**
-    - Newborn admission metrics
-    - Birth weight tracking
-    - Feeding status monitoring
-    - Vaccination coverage
-    - Growth monitoring charts
-    
-    In the meantime, please use the **Maternal Inpatient Data** program for maternal health analytics.
-    """
-    )
-
-
 def render_maternal_dashboard(
     user, program_uid, country_name, facilities_by_region, facility_mapping
 ):
     """Render Maternal Inpatient Data dashboard content"""
-    # Fetch DHIS2 data (only if not cached or refresh needed)
-    if st.session_state.cached_events_data is None or st.session_state.refresh_trigger:
-        with st.spinner(f"Fetching Maternal Inpatient Data..."):
-            try:
-                dfs = fetch_cached_data(user, program_uid)
-                tei_df = dfs.get("tei", pd.DataFrame())
-                enrollments_df = dfs.get("enrollments", pd.DataFrame())
-                events_df = dfs.get("events", pd.DataFrame())
+    # Fetch DHIS2 data for Maternal program
+    with st.spinner(f"Fetching Maternal Inpatient Data..."):
+        try:
+            dfs = fetch_cached_data(user, program_uid)
+            update_last_sync_time()
+        except concurrent.futures.TimeoutError:
+            st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
+            return
+        except requests.RequestException as e:
+            st.error(f"⚠️ DHIS2 request failed: {e}")
+            return
+        except Exception as e:
+            st.error(f"⚠️ Unexpected error: {e}")
+            return
 
-                # Normalize dates
-                enrollments_df = normalize_enrollment_dates(enrollments_df)
-                events_df = normalize_event_dates(events_df)
+    tei_df = dfs.get("tei", pd.DataFrame())
+    enrollments_df = dfs.get("enrollments", pd.DataFrame())
+    events_df = dfs.get("events", pd.DataFrame())
+    raw_json = dfs.get("raw_json", [])
+    program_info = dfs.get("program_info", {})
 
-                # Cache processed data
-                st.session_state.cached_tei_data = tei_df
-                st.session_state.cached_enrollments_data = enrollments_df
-                st.session_state.cached_events_data = events_df
-                st.session_state.program_info = dfs.get("program_info", {})
+    # Normalize dates using common functions
+    enrollments_df = normalize_enrollment_dates(enrollments_df)
+    events_df = normalize_event_dates(events_df)
 
-                update_last_sync_time()
-            except concurrent.futures.TimeoutError:
-                st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
-                return
-            except requests.RequestException as e:
-                st.error(f"⚠️ DHIS2 request failed: {e}")
-                return
-            except Exception as e:
-                st.error(f"⚠️ Unexpected error: {e}")
-                return
-
-    # Use cached data
-    tei_df = st.session_state.cached_tei_data
-    enrollments_df = st.session_state.cached_enrollments_data
-    events_df = st.session_state.cached_events_data
-    program_info = st.session_state.get("program_info", {})
-
-    render_connection_status(
-        st.session_state.get("cached_events_data", pd.DataFrame()), user=user
-    )
+    render_connection_status(events_df, user=user)
 
     # Calculate total counts
     total_facilities = len(facility_mapping)
@@ -381,82 +345,7 @@ def render_maternal_dashboard(
             f"**📊 Displaying data from {selected_facilities_count} facilities across {len(display_names)} regions**"
         )
 
-    # ---------------- Data Display Logic ----------------
-    if not st.session_state.get("selection_applied", False):
-        # Show previous data if available
-        if (
-            "filtered_events" in st.session_state
-            and not st.session_state.filtered_events.empty
-            and st.session_state.get("last_applied_selection")
-        ):
-            filtered_events = st.session_state.filtered_events
-            display_name = country_name
-            user_id = str(user.get("id", user.get("username", "default_user")))
-
-            # Render KPIs with cached data
-            render_kpi_cards(
-                filtered_events,
-                st.session_state.current_facility_uids,
-                display_name,
-                user_id=user_id,
-            )
-
-            # Render charts with cached data
-            col_chart, col_ctrl = st.columns([3, 1])
-            with col_ctrl:
-                st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-                filters = render_simple_filter_controls(
-                    filtered_events, container=col_ctrl
-                )
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            kpi_selection = filters["kpi_selection"]
-            bg_color = filters["bg_color"]
-            text_color = filters["text_color"]
-
-            with col_chart:
-                if view_mode == "Comparison View" and len(display_names) > 1:
-                    st.markdown(
-                        f'<div class="section-header">📈 {kpi_selection} - {comparison_mode.title()} Comparison - Maternal Inpatient Data</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-
-                    render_comparison_chart(
-                        kpi_selection=kpi_selection,
-                        filtered_events=filtered_events,
-                        comparison_mode=comparison_mode,
-                        display_names=display_names,
-                        facility_uids=facility_uids,
-                        facilities_by_region=facilities_by_region,
-                        bg_color=bg_color,
-                        text_color=text_color,
-                        is_national=True,
-                    )
-                else:
-                    st.markdown(
-                        f'<div class="section-header">📈 {kpi_selection} Trend - Maternal Inpatient Data</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-
-                    render_trend_chart_section(
-                        kpi_selection,
-                        filtered_events,
-                        facility_uids,
-                        display_names,
-                        bg_color,
-                        text_color,
-                    )
-
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                render_additional_analytics(
-                    kpi_selection, filtered_events, facility_uids, bg_color, text_color
-                )
-        return
-
-    # ---------------- KPI CARDS (Only when selection applied) ----------------
+    # ---------------- KPI CARDS ----------------
     if events_df.empty or "event_date" not in events_df.columns:
         st.markdown(
             f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available. KPIs and charts are hidden.</div>',
@@ -464,7 +353,7 @@ def render_maternal_dashboard(
         )
         return
 
-    # 🔒 Always national view
+    # 🔒 Always national view for KPI cards
     display_name = country_name
     user_id = str(user.get("id", user.get("username", "default_user")))
     all_facility_uids = list(facility_mapping.values())
@@ -480,15 +369,17 @@ def render_maternal_dashboard(
     col_chart, col_ctrl = st.columns([3, 1])
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-        filters = render_simple_filter_controls(events_df, container=col_ctrl)
+        filters = render_simple_filter_controls(
+            events_df, container=col_ctrl, context="national_maternal"
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply simple filters
+    # Apply simple filters - FIXED: Use events_df instead of filtered_events
     filtered_events = apply_simple_filters(events_df, filters, facility_uids)
     st.session_state["filtered_events"] = filtered_events.copy()
     st.session_state["last_applied_selection"] = True
 
-    kpi_selection = filters["kpi_selection"]
+    # Get variables from filters for later use
     bg_color = filters["bg_color"]
     text_color = filters["text_color"]
 
@@ -503,18 +394,18 @@ def render_maternal_dashboard(
     text_color = get_text_color(bg_color)
 
     with col_chart:
-        # NEW: Use KPI tab navigation instead of filters["kpi_selection"]
+        # Use KPI tab navigation
         selected_kpi = render_kpi_tab_navigation()
 
         if view_mode == "Comparison View" and len(display_names) > 1:
             st.markdown(
-                f'<div class="section-header">📈 {selected_kpi} - {comparison_mode.title()} Comparison - Maternal Inpatient Data</div>',  # Use selected_kpi instead of kpi_selection
+                f'<div class="section-header">📈 {selected_kpi} - {comparison_mode.title()} Comparison - Maternal Inpatient Data</div>',
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             render_comparison_chart(
-                kpi_selection=selected_kpi,  # Use selected_kpi here
+                kpi_selection=selected_kpi,
                 filtered_events=filtered_events,
                 comparison_mode=comparison_mode,
                 display_names=display_names,
@@ -526,13 +417,13 @@ def render_maternal_dashboard(
             )
         else:
             st.markdown(
-                f'<div class="section-header">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',  # Use selected_kpi here
+                f'<div class="section-header">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             render_trend_chart_section(
-                selected_kpi,  # Use selected_kpi here
+                selected_kpi,
                 filtered_events,
                 facility_uids,
                 display_names,
@@ -774,7 +665,16 @@ def render():
         newborn_program_uid = program_uid_map.get("Newborn Care Form")
         if newborn_program_uid:
             render_newborn_dashboard(
-                country_name, facilities_by_region, facility_mapping
+                user,
+                newborn_program_uid,
+                region_name=None,
+                selected_facilities=None,
+                facility_uids=None,
+                facility_mapping=facility_mapping,
+                facility_names=None,
+                view_mode=None,
+                country_name=country_name,
+                facilities_by_region=facilities_by_region,
             )
         else:
             st.error("Newborn Care Form program not found")
