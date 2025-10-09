@@ -5,6 +5,7 @@ import logging
 import concurrent.futures
 import requests
 from components.kpi_card import render_kpi_cards
+from utils.kpi_lbw import compute_lbw_kpi
 from newborns_dashboard.newborn_dashboard import render_newborn_dashboard
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import (
@@ -23,7 +24,7 @@ from utils.dash_co import (
     render_simple_filter_controls,
     render_kpi_tab_navigation,
 )
-from utils.kpi_utils import clear_cache
+from utils.kpi_utils import clear_cache, compute_kpis
 from utils.status import (
     render_connection_status,
     update_last_sync_time,
@@ -80,6 +81,436 @@ def get_cached_facilities(user):
     facilities_by_region = get_facilities_grouped_by_region(user)
     facility_mapping = get_facility_mapping_for_user(user)
     return facilities_by_region, facility_mapping
+
+
+def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUnit"):
+    """Count unique TEIs from tei_df filtered by facility UIDs"""
+    if tei_df.empty:
+        return 0
+
+    # Filter TEI dataframe by the selected facility UIDs
+    if org_unit_column in tei_df.columns:
+        filtered_tei = tei_df[tei_df[org_unit_column].isin(facility_uids)]
+    else:
+        # Fallback to orgUnit if tei_orgUnit doesn't exist
+        filtered_tei = (
+            tei_df[tei_df["orgUnit"].isin(facility_uids)]
+            if "orgUnit" in tei_df.columns
+            else tei_df
+        )
+
+    # Count unique TEIs from the filtered dataframe
+    if "tei_id" in filtered_tei.columns:
+        return filtered_tei["tei_id"].nunique()
+    elif "trackedEntityInstance" in filtered_tei.columns:
+        return filtered_tei["trackedEntityInstance"].nunique()
+    else:
+        return 0
+
+
+def get_earliest_date(df, date_column):
+    """Get the earliest date from a dataframe column"""
+    if df.empty or date_column not in df.columns:
+        return "N/A"
+
+    try:
+        earliest_date = df[date_column].min()
+        if pd.isna(earliest_date):
+            return "N/A"
+        return earliest_date.strftime("%Y-%m-%d")
+    except:
+        return "N/A"
+
+
+def calculate_maternal_indicators(maternal_events_df, facility_uids):
+    """Calculate maternal indicators using appropriate KPI functions"""
+    if maternal_events_df.empty:
+        return {
+            "total_deliveries": 0,
+            "maternal_deaths": 0,
+            "maternal_death_rate": 0.0,
+            "live_births": 0,
+            "stillbirths": 0,
+            "total_births": 0,
+            "stillbirth_rate": 0.0,
+            "low_birth_weight_rate": 0.0,
+            "low_birth_weight_count": 0,
+        }
+
+    # Use compute_kpis for basic maternal indicators
+    kpi_data = compute_kpis(maternal_events_df, facility_uids)
+
+    total_deliveries = kpi_data.get("total_deliveries", 0)
+    maternal_deaths = kpi_data.get("maternal_deaths", 0)
+    live_births = kpi_data.get("live_births", 0)
+    stillbirths = kpi_data.get("stillbirths", 0)
+    total_births = kpi_data.get("total_births", 0)
+
+    # Use compute_lbw_kpi specifically for low birth weight data
+    lbw_data = compute_lbw_kpi(maternal_events_df, facility_uids)
+    low_birth_weight_count = lbw_data.get("lbw_count", 0)
+    total_weighed = lbw_data.get("total_weighed", total_births)
+    low_birth_weight_rate = lbw_data.get("lbw_rate", 0.0)
+
+    # Calculate rates for indicators not provided by specialized functions
+    maternal_death_rate = (
+        (maternal_deaths / live_births * 100000) if live_births > 0 else 0.0
+    )
+    stillbirth_rate = (stillbirths / total_births * 1000) if total_births > 0 else 0.0
+
+    # If lbw_rate is 0 but we have data, calculate it manually
+    if low_birth_weight_rate == 0 and total_weighed > 0:
+        low_birth_weight_rate = low_birth_weight_count / total_weighed * 100
+
+    return {
+        "total_deliveries": total_deliveries,
+        "maternal_deaths": maternal_deaths,
+        "maternal_death_rate": round(maternal_death_rate, 2),
+        "live_births": live_births,
+        "stillbirths": stillbirths,
+        "total_births": total_births,
+        "stillbirth_rate": round(stillbirth_rate, 2),
+        "low_birth_weight_rate": round(low_birth_weight_rate, 2),
+        "low_birth_weight_count": low_birth_weight_count,
+    }
+
+
+def calculate_newborn_indicators(newborn_events_df, facility_uids):
+    """Calculate newborn indicators"""
+    if newborn_events_df.empty:
+        return {"total_admitted": 0, "nmr": 0.0}
+
+    # For newborn admitted count, we need to count from filtered TEI data separately
+    total_admitted = 0  # Placeholder - will be set from filtered TEI count
+    nmr = 0.0  # Placeholder - will need specific NMR calculation
+
+    return {"total_admitted": total_admitted, "nmr": nmr}
+
+
+def get_location_display_name(
+    filter_mode, selected_regions, selected_facilities, country_name
+):
+    """Get the display name for location based on selection"""
+    if filter_mode == "All Facilities":
+        return country_name, "Country"
+    elif filter_mode == "By Region" and selected_regions:
+        if len(selected_regions) == 1:
+            return selected_regions[0], "Region"
+        else:
+            # Join multiple regions with comma
+            return ", ".join(selected_regions), "Regions"
+    elif filter_mode == "By Facility" and selected_facilities:
+        if len(selected_facilities) == 1:
+            return selected_facilities[0], "Facility"
+        else:
+            # Join multiple facilities with comma
+            return ", ".join(selected_facilities), "Facilities"
+    else:
+        return country_name, "Country"
+
+
+def render_summary_dashboard(
+    user, country_name, facilities_by_region, facility_mapping
+):
+    """Render Summary Dashboard with both maternal and newborn overview tables"""
+
+    st.markdown(
+        f'<div class="main-header">📊 Summary Dashboard - {country_name}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("**Comprehensive overview of maternal and newborn health indicators**")
+
+    # Get programs for UID mapping
+    programs = get_all_programs()
+    program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
+
+    # Get facility selection
+    filter_mode = st.session_state.get("filter_mode", "All Facilities")
+    selected_regions = st.session_state.get("selected_regions", [])
+    selected_facilities = st.session_state.get("selected_facilities", [])
+
+    # Update facility selection
+    facility_uids, display_names, comparison_mode = update_facility_selection(
+        filter_mode,
+        selected_regions,
+        selected_facilities,
+        facilities_by_region,
+        facility_mapping,
+    )
+
+    # Get location display name
+    location_name, location_type = get_location_display_name(
+        filter_mode, selected_regions, selected_facilities, country_name
+    )
+
+    # Fetch both maternal and newborn data
+    with st.spinner("Fetching summary data for both programs..."):
+        try:
+            # Fetch maternal data
+            maternal_program_uid = program_uid_map.get("Maternal Inpatient Data")
+            maternal_dfs = (
+                fetch_cached_data(user, maternal_program_uid)
+                if maternal_program_uid
+                else {}
+            )
+
+            # Fetch newborn data
+            newborn_program_uid = program_uid_map.get("Newborn Care Form")
+            newborn_dfs = (
+                fetch_cached_data(user, newborn_program_uid)
+                if newborn_program_uid
+                else {}
+            )
+
+            update_last_sync_time()
+
+        except Exception as e:
+            st.error(f"⚠️ Error fetching summary data: {e}")
+            return
+
+    # Extract dataframes
+    maternal_tei_df = maternal_dfs.get("tei", pd.DataFrame())
+    maternal_events_df = maternal_dfs.get("events", pd.DataFrame())
+    newborn_tei_df = newborn_dfs.get("tei", pd.DataFrame())
+    newborn_events_df = newborn_dfs.get("events", pd.DataFrame())
+
+    # Normalize dates for start date calculation
+    newborn_enrollments_df = newborn_dfs.get("enrollments", pd.DataFrame())
+    newborn_enrollments_df = normalize_enrollment_dates(newborn_enrollments_df)
+
+    maternal_enrollments_df = maternal_dfs.get("enrollments", pd.DataFrame())
+    maternal_enrollments_df = normalize_enrollment_dates(maternal_enrollments_df)
+
+    # Calculate indicators
+    maternal_indicators = calculate_maternal_indicators(
+        maternal_events_df, facility_uids
+    )
+    newborn_indicators = calculate_newborn_indicators(newborn_events_df, facility_uids)
+
+    # Get filtered TEI counts based on facility selection
+    maternal_tei_count = count_unique_teis_filtered(
+        maternal_tei_df, facility_uids, "tei_orgUnit"
+    )
+    newborn_tei_count = count_unique_teis_filtered(
+        newborn_tei_df, facility_uids, "tei_orgUnit"
+    )
+
+    # Update newborn indicators with correct TEI count
+    newborn_indicators["total_admitted"] = newborn_tei_count
+
+    # Get earliest dates from enrollments
+    newborn_start_date = get_earliest_date(newborn_enrollments_df, "enrollmentDate")
+    maternal_start_date = get_earliest_date(maternal_enrollments_df, "enrollmentDate")
+
+    # Apply professional table styling
+    st.markdown(
+        """
+    <style>
+    .professional-table {
+        font-family: 'Arial', sans-serif;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin: 1rem 0;
+        border: 1px solid #e0e0e0;
+    }
+    .professional-table table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+    }
+    .professional-table th {
+        background: linear-gradient(135deg, #1f77b4, #1668a1);
+        color: white;
+        padding: 14px 16px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 14px;
+        border: none;
+    }
+    .professional-table td {
+        padding: 12px 16px;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 14px;
+        background-color: white;
+    }
+    .professional-table tr:last-child td {
+        border-bottom: none;
+    }
+    .professional-table tr:hover td {
+        background-color: #f8f9fa;
+    }
+    .newborn-header {
+        background: linear-gradient(135deg, #1f77b4, #1668a1) !important;
+    }
+    .maternal-header {
+        background: linear-gradient(135deg, #2ca02c, #228b22) !important;
+    }
+    .indicator-cell {
+        font-weight: 500;
+        color: #333;
+    }
+    .value-cell {
+        font-weight: 600;
+        color: #1a1a1a;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Create overview tables with professional styling
+    st.markdown("---")
+
+    # Newborn Overview Table - Professional Styling
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        st.markdown("### 👶 Newborn Care Overview")
+
+    with col2:
+        # Create newborn data for download
+        newborn_data = {
+            "Start Date": [newborn_start_date],
+            f"{location_type}": [location_name],
+            "Total Admitted Newborns": [newborn_tei_count],
+            "NMR": [f"{newborn_indicators['nmr']}%"],
+            "Stillbirth Rate": [
+                f"{maternal_indicators['stillbirth_rate']} per 1000 births"
+            ],
+            "Live Births": [maternal_indicators["live_births"]],
+            "Stillbirths": [maternal_indicators["stillbirths"]],
+            "Total Births": [maternal_indicators["total_births"]],
+            "Low Birth Weight Rate": [
+                f"{maternal_indicators['low_birth_weight_rate']}%"
+            ],
+        }
+
+        newborn_df = pd.DataFrame(newborn_data)
+        newborn_csv = newborn_df.to_csv(index=False)
+
+        st.download_button(
+            "📥 Download Newborn Data",
+            data=newborn_csv,
+            file_name=f"newborn_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    # Create newborn table data
+    newborn_table_data = {
+        "Indicator": [
+            "Start Date",
+            location_type,
+            "Total Admitted Newborns",
+            "NMR",
+            "Stillbirth Rate",
+            "Live Births",
+            "Stillbirths",
+            "Total Births",
+            "Low Birth Weight Rate (<2500g)",
+        ],
+        "Value": [
+            newborn_start_date,
+            location_name,
+            f"{newborn_tei_count:,}",
+            f"{newborn_indicators['nmr']}%",
+            f"{maternal_indicators['stillbirth_rate']} per 1000 births",
+            f"{maternal_indicators['live_births']:,}",
+            f"{maternal_indicators['stillbirths']:,}",
+            f"{maternal_indicators['total_births']:,}",
+            f"{maternal_indicators['low_birth_weight_rate']}%",
+        ],
+    }
+
+    newborn_table_df = pd.DataFrame(newborn_table_data)
+
+    # Display styled newborn table
+    st.markdown('<div class="professional-table">', unsafe_allow_html=True)
+    st.table(newborn_table_df)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Maternal Overview Table - Professional Styling
+    st.markdown("---")
+
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        st.markdown("### 🤰 Maternal Care Overview")
+
+    with col2:
+        # Create maternal data for download
+        maternal_data = {
+            "Start Date": [maternal_start_date],
+            f"{location_type}": [location_name],
+            "Total Admitted Mothers": [maternal_tei_count],
+            "Total Deliveries": [maternal_indicators["total_deliveries"]],
+            "Maternal Death Rate": [
+                f"{maternal_indicators['maternal_death_rate']} per 100,000 births"
+            ],
+        }
+
+        maternal_df = pd.DataFrame(maternal_data)
+        maternal_csv = maternal_df.to_csv(index=False)
+
+        st.download_button(
+            "📥 Download Maternal Data",
+            data=maternal_csv,
+            file_name=f"maternal_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    # Create maternal table data
+    maternal_table_data = {
+        "Indicator": [
+            "Start Date",
+            location_type,
+            "Total Admitted Mothers",
+            "Total Deliveries",
+            "Maternal Death Rate",
+        ],
+        "Value": [
+            maternal_start_date,
+            location_name,
+            f"{maternal_tei_count:,}",
+            f"{maternal_indicators['total_deliveries']:,}",
+            f"{maternal_indicators['maternal_death_rate']} per 100,000 births",
+        ],
+    }
+
+    maternal_table_df = pd.DataFrame(maternal_table_data)
+
+    # Display styled maternal table
+    st.markdown('<div class="professional-table">', unsafe_allow_html=True)
+    st.table(maternal_table_df)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Summary statistics cards
+    st.markdown("---")
+    st.markdown("### 📈 Quick Statistics")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "Total Mothers", f"{maternal_tei_count:,}", help="Unique mothers admitted"
+        )
+
+    with col2:
+        st.metric(
+            "Total Newborns", f"{newborn_tei_count:,}", help="Unique newborns admitted"
+        )
+
+    with col3:
+        st.metric(
+            "Total Deliveries",
+            f"{maternal_indicators['total_deliveries']:,}",
+            help="Total number of deliveries",
+        )
+
+    with col4:
+        st.metric("Coverage Start", maternal_start_date, help="Earliest data record")
 
 
 def render_maternal_dashboard(
@@ -644,7 +1075,13 @@ def render():
     program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
 
     # CREATE PROFESSIONAL TABS IN MAIN AREA
-    tab1, tab2 = st.tabs(["🤰 **Maternal Inpatient Data**", "👶 **Newborn Care Form**"])
+    tab1, tab2, tab3 = st.tabs(
+        [
+            "🤰 **Maternal Inpatient Data**",
+            "👶 **Newborn Care Form**",
+            "📊 **Summary Dashboard**",
+        ]
+    )
 
     with tab1:
         # GROUP 1: Maternal Inpatient Data Content
@@ -678,3 +1115,12 @@ def render():
             )
         else:
             st.error("Newborn Care Form program not found")
+
+    with tab3:
+        # GROUP 3: Summary Dashboard Content
+        render_summary_dashboard(
+            user,
+            country_name,
+            facilities_by_region,
+            facility_mapping,
+        )
