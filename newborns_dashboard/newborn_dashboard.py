@@ -28,18 +28,18 @@ def fetch_newborn_data(user, program_uid):
 
 
 # -------------------- Counting Functions --------------------
-def count_unique_teis_fixed(tei_df):
-    """Count unique TEIs from tei_df using correct column name"""
-    if tei_df.empty:
+def count_unique_newborn_teis(newborn_tei_df):
+    """Count unique TEIs from newborn_tei_df using correct column name"""
+    if newborn_tei_df.empty:
         return 0
 
     # Use tei_id column (confirmed from your data)
-    if "tei_id" in tei_df.columns:
-        unique_count = tei_df["tei_id"].nunique()
+    if "tei_id" in newborn_tei_df.columns:
+        unique_count = newborn_tei_df["tei_id"].nunique()
         return unique_count
     # Fallback to other possible column names
-    elif "trackedEntityInstance" in tei_df.columns:
-        unique_count = tei_df["trackedEntityInstance"].nunique()
+    elif "trackedEntityInstance" in newborn_tei_df.columns:
+        unique_count = newborn_tei_df["trackedEntityInstance"].nunique()
         return unique_count
     else:
         return 0
@@ -101,7 +101,7 @@ def _render_national_newborn_dashboard(
     selected_facilities = st.session_state.get("selected_facilities", [])
 
     # Update facility selection
-    facility_uids, display_names, comparison_mode = _update_facility_selection(
+    facility_uids, display_names, comparison_mode = _update_newborn_facility_selection(
         filter_mode,
         selected_regions,
         selected_facilities,
@@ -143,7 +143,7 @@ def _render_national_newborn_dashboard(
     # Fetch Data
     with st.spinner("Fetching National Newborn Care Data..."):
         try:
-            dfs = fetch_newborn_data(user, program_uid)
+            newborn_dfs = fetch_newborn_data(user, program_uid)
             update_last_sync_time()
         except concurrent.futures.TimeoutError:
             st.error("⚠️ Newborn Care data could not be fetched within 3 minutes.")
@@ -156,35 +156,36 @@ def _render_national_newborn_dashboard(
             return
 
     # Extract and process DataFrames
-    tei_df = dfs.get("tei", pd.DataFrame())
-    enrollments_df = dfs.get("enrollments", pd.DataFrame())
-    events_df = dfs.get("events", pd.DataFrame())
+    newborn_tei_df = newborn_dfs.get("tei", pd.DataFrame())
+    newborn_enrollments_df = newborn_dfs.get("enrollments", pd.DataFrame())
+    newborn_events_df = newborn_dfs.get("events", pd.DataFrame())
 
     # Tag dataset type
-    tei_df["_dataset_type"] = "newborn"
+    newborn_tei_df["_dataset_type"] = "newborn"
 
     # Normalize dates
-    enrollments_df = normalize_enrollment_dates(enrollments_df)
-    events_df = normalize_event_dates(events_df)
+    newborn_enrollments_df = normalize_enrollment_dates(newborn_enrollments_df)
+    newborn_events_df = normalize_event_dates(newborn_events_df)
 
     # Apply facility filtering based on selection - FIXED FOR NATIONAL LEVEL
-    filtered_tei, filtered_enrollments, filtered_events = (
-        _apply_facility_filtering_fixed(
-            tei_df, enrollments_df, events_df, facility_uids
+    filtered_newborn_tei, filtered_newborn_enrollments, filtered_newborn_events = (
+        _apply_newborn_facility_filtering(
+            newborn_tei_df, newborn_enrollments_df, newborn_events_df, facility_uids
         )
     )
 
     # Calculate UNIQUE counts using FIXED counting function
-    unique_tei_count = count_unique_teis_fixed(filtered_tei)
-    unique_enrollments_count = (
-        filtered_enrollments["enrollment"].nunique()
-        if not filtered_enrollments.empty
-        and "enrollment" in filtered_enrollments.columns
+    unique_newborn_tei_count = count_unique_newborn_teis(filtered_newborn_tei)
+    unique_newborn_enrollments_count = (
+        filtered_newborn_enrollments["enrollment"].nunique()
+        if not filtered_newborn_enrollments.empty
+        and "enrollment" in filtered_newborn_enrollments.columns
         else 0
     )
-    unique_events_count = (
-        filtered_events["event"].nunique()
-        if not filtered_events.empty and "event" in filtered_events.columns
+    unique_newborn_events_count = (
+        filtered_newborn_events["event"].nunique()
+        if not filtered_newborn_events.empty
+        and "event" in filtered_newborn_events.columns
         else 0
     )
 
@@ -192,22 +193,24 @@ def _render_national_newborn_dashboard(
     st.success("✅ Successfully fetched Newborn Care Data!")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Unique Tracked Entities (Newborn)", unique_tei_count)
-    col2.metric("Unique Enrollments", unique_enrollments_count)
-    col3.metric("Unique Events", unique_events_count)
+    col1.metric("Unique Tracked Entities (Newborn)", unique_newborn_tei_count)
+    col2.metric("Unique Enrollments", unique_newborn_enrollments_count)
+    col3.metric("Unique Events", unique_newborn_events_count)
 
     # National level controls and filtering
     col_chart, col_ctrl = st.columns([3, 1])
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
         filters = render_simple_filter_controls(
-            filtered_events, container=col_ctrl, context="national_newborn"
+            filtered_newborn_events, container=col_ctrl, context="national_newborn"
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Apply time-based filters
-    time_filtered_events = apply_simple_filters(filtered_events, filters, facility_uids)
-    st.session_state["filtered_events"] = time_filtered_events.copy()
+    time_filtered_newborn_events = apply_simple_filters(
+        filtered_newborn_events, filters, facility_uids
+    )
+    st.session_state["filtered_newborn_events"] = time_filtered_newborn_events.copy()
 
     # Display charts coming soon message
     with col_chart:
@@ -215,9 +218,11 @@ def _render_national_newborn_dashboard(
         st.info("🚧 **Charts & KPIs Coming Soon!**")
 
         # Show basic data preview
-        if not time_filtered_events.empty:
+        if not time_filtered_newborn_events.empty:
             st.markdown("#### 📋 Filtered Data Preview")
-            st.dataframe(time_filtered_events.head(10), use_container_width=True)
+            st.dataframe(
+                time_filtered_newborn_events.head(10), use_container_width=True
+            )
         else:
             st.warning("No data available for the selected facilities and time period.")
 
@@ -256,7 +261,7 @@ def _render_regional_newborn_dashboard(
     # Fetch Data
     with st.spinner("Fetching Regional Newborn Care Data..."):
         try:
-            dfs = fetch_newborn_data(user, program_uid)
+            newborn_dfs = fetch_newborn_data(user, program_uid)
             update_last_sync_time()
         except concurrent.futures.TimeoutError:
             st.error("⚠️ Newborn Care data could not be fetched within 3 minutes.")
@@ -269,35 +274,38 @@ def _render_regional_newborn_dashboard(
             return
 
     # Extract and process DataFrames
-    tei_df = dfs.get("tei", pd.DataFrame())
-    enrollments_df = dfs.get("enrollments", pd.DataFrame())
-    events_df = dfs.get("events", pd.DataFrame())
+    newborn_tei_df = newborn_dfs.get("tei", pd.DataFrame())
+    newborn_enrollments_df = newborn_dfs.get("enrollments", pd.DataFrame())
+    newborn_events_df = newborn_dfs.get("events", pd.DataFrame())
 
     # Tag dataset type
-    tei_df["_dataset_type"] = "newborn"
+    newborn_tei_df["_dataset_type"] = "newborn"
 
     # Apply facility filtering based on selection
-    filtered_tei, filtered_enrollments, filtered_events = (
-        _apply_facility_filtering_fixed(
-            tei_df, enrollments_df, events_df, facility_uids
+    filtered_newborn_tei, filtered_newborn_enrollments, filtered_newborn_events = (
+        _apply_newborn_facility_filtering(
+            newborn_tei_df, newborn_enrollments_df, newborn_events_df, facility_uids
         )
     )
 
     # Normalize dates
-    filtered_enrollments = normalize_enrollment_dates(filtered_enrollments)
-    filtered_events = normalize_event_dates(filtered_events)
+    filtered_newborn_enrollments = normalize_enrollment_dates(
+        filtered_newborn_enrollments
+    )
+    filtered_newborn_events = normalize_event_dates(filtered_newborn_events)
 
     # Calculate UNIQUE counts using FIXED counting function
-    unique_tei_count = count_unique_teis_fixed(filtered_tei)
-    unique_enrollments_count = (
-        filtered_enrollments["enrollment"].nunique()
-        if not filtered_enrollments.empty
-        and "enrollment" in filtered_enrollments.columns
+    unique_newborn_tei_count = count_unique_newborn_teis(filtered_newborn_tei)
+    unique_newborn_enrollments_count = (
+        filtered_newborn_enrollments["enrollment"].nunique()
+        if not filtered_newborn_enrollments.empty
+        and "enrollment" in filtered_newborn_enrollments.columns
         else 0
     )
-    unique_events_count = (
-        filtered_events["event"].nunique()
-        if not filtered_events.empty and "event" in filtered_events.columns
+    unique_newborn_events_count = (
+        filtered_newborn_events["event"].nunique()
+        if not filtered_newborn_events.empty
+        and "event" in filtered_newborn_events.columns
         else 0
     )
 
@@ -305,22 +313,24 @@ def _render_regional_newborn_dashboard(
     st.success("✅ Successfully fetched Newborn Care Data!")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Unique Tracked Entities (Newborn)", unique_tei_count)
-    col2.metric("Unique Enrollments", unique_enrollments_count)
-    col3.metric("Unique Events", unique_events_count)
+    col1.metric("Unique Tracked Entities (Newborn)", unique_newborn_tei_count)
+    col2.metric("Unique Enrollments", unique_newborn_enrollments_count)
+    col3.metric("Unique Events", unique_newborn_events_count)
 
     # Regional controls and filtering
     col_chart, col_ctrl = st.columns([3, 1])
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
         filters = render_simple_filter_controls(
-            filtered_events, container=col_ctrl, context="regional_newborn"
+            filtered_newborn_events, container=col_ctrl, context="regional_newborn"
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Apply time-based filters
-    time_filtered_events = apply_simple_filters(filtered_events, filters, facility_uids)
-    st.session_state["filtered_events"] = time_filtered_events.copy()
+    time_filtered_newborn_events = apply_simple_filters(
+        filtered_newborn_events, filters, facility_uids
+    )
+    st.session_state["filtered_newborn_events"] = time_filtered_newborn_events.copy()
 
     # Display charts coming soon message
     with col_chart:
@@ -328,9 +338,11 @@ def _render_regional_newborn_dashboard(
         st.info("🚧 **Charts & KPIs Coming Soon!**")
 
         # Show basic data preview
-        if not time_filtered_events.empty:
+        if not time_filtered_newborn_events.empty:
             st.markdown("#### 📋 Filtered Data Preview")
-            st.dataframe(time_filtered_events.head(10), use_container_width=True)
+            st.dataframe(
+                time_filtered_newborn_events.head(10), use_container_width=True
+            )
         else:
             st.warning("No data available for the selected facilities and time period.")
 
@@ -350,7 +362,7 @@ def _render_facility_newborn_dashboard(user, program_uid):
     # Fetch Data
     with st.spinner("Fetching Facility Newborn Care Data..."):
         try:
-            dfs = fetch_newborn_data(user, program_uid)
+            newborn_dfs = fetch_newborn_data(user, program_uid)
             update_last_sync_time()
         except concurrent.futures.TimeoutError:
             st.error("⚠️ Newborn Care data could not be fetched within 3 minutes.")
@@ -363,35 +375,41 @@ def _render_facility_newborn_dashboard(user, program_uid):
             return
 
     # Extract and process DataFrames
-    tei_df = dfs.get("tei", pd.DataFrame())
-    enrollments_df = dfs.get("enrollments", pd.DataFrame())
-    events_df = dfs.get("events", pd.DataFrame())
+    newborn_tei_df = newborn_dfs.get("tei", pd.DataFrame())
+    newborn_enrollments_df = newborn_dfs.get("enrollments", pd.DataFrame())
+    newborn_events_df = newborn_dfs.get("events", pd.DataFrame())
 
     # Tag dataset type
-    tei_df["_dataset_type"] = "newborn"
+    newborn_tei_df["_dataset_type"] = "newborn"
 
     # Apply facility filtering for single facility
-    filtered_tei, filtered_enrollments, filtered_events = (
-        _apply_facility_filtering_fixed(
-            tei_df, enrollments_df, events_df, [facility_uid] if facility_uid else []
+    filtered_newborn_tei, filtered_newborn_enrollments, filtered_newborn_events = (
+        _apply_newborn_facility_filtering(
+            newborn_tei_df,
+            newborn_enrollments_df,
+            newborn_events_df,
+            [facility_uid] if facility_uid else [],
         )
     )
 
     # Normalize dates
-    filtered_enrollments = normalize_enrollment_dates(filtered_enrollments)
-    filtered_events = normalize_event_dates(filtered_events)
+    filtered_newborn_enrollments = normalize_enrollment_dates(
+        filtered_newborn_enrollments
+    )
+    filtered_newborn_events = normalize_event_dates(filtered_newborn_events)
 
     # Calculate UNIQUE counts using FIXED counting function
-    unique_tei_count = count_unique_teis_fixed(filtered_tei)
-    unique_enrollments_count = (
-        filtered_enrollments["enrollment"].nunique()
-        if not filtered_enrollments.empty
-        and "enrollment" in filtered_enrollments.columns
+    unique_newborn_tei_count = count_unique_newborn_teis(filtered_newborn_tei)
+    unique_newborn_enrollments_count = (
+        filtered_newborn_enrollments["enrollment"].nunique()
+        if not filtered_newborn_enrollments.empty
+        and "enrollment" in filtered_newborn_enrollments.columns
         else 0
     )
-    unique_events_count = (
-        filtered_events["event"].nunique()
-        if not filtered_events.empty and "event" in filtered_events.columns
+    unique_newborn_events_count = (
+        filtered_newborn_events["event"].nunique()
+        if not filtered_newborn_events.empty
+        and "event" in filtered_newborn_events.columns
         else 0
     )
 
@@ -399,22 +417,24 @@ def _render_facility_newborn_dashboard(user, program_uid):
     st.success("✅ Successfully fetched Newborn Care Data!")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Unique Tracked Entities (Newborn)", unique_tei_count)
-    col2.metric("Unique Enrollments", unique_enrollments_count)
-    col3.metric("Unique Events", unique_events_count)
+    col1.metric("Unique Tracked Entities (Newborn)", unique_newborn_tei_count)
+    col2.metric("Unique Enrollments", unique_newborn_enrollments_count)
+    col3.metric("Unique Events", unique_newborn_events_count)
 
     # Facility controls and filtering
     col_chart, col_ctrl = st.columns([3, 1])
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
         filters = render_simple_filter_controls(
-            filtered_events, container=col_ctrl, context="facility_newborn"
+            filtered_newborn_events, container=col_ctrl, context="facility_newborn"
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Apply time-based filters
-    time_filtered_events = apply_simple_filters(filtered_events, filters, facility_uid)
-    st.session_state["filtered_events"] = time_filtered_events.copy()
+    time_filtered_newborn_events = apply_simple_filters(
+        filtered_newborn_events, filters, facility_uid
+    )
+    st.session_state["filtered_newborn_events"] = time_filtered_newborn_events.copy()
 
     # Display charts coming soon message
     with col_chart:
@@ -422,9 +442,11 @@ def _render_facility_newborn_dashboard(user, program_uid):
         st.info("🚧 **Charts & KPIs Coming Soon!**")
 
         # Show basic data preview
-        if not time_filtered_events.empty:
+        if not time_filtered_newborn_events.empty:
             st.markdown("#### 📋 Filtered Data Preview")
-            st.dataframe(time_filtered_events.head(10), use_container_width=True)
+            st.dataframe(
+                time_filtered_newborn_events.head(10), use_container_width=True
+            )
         else:
             st.warning("No data available for the selected time period.")
 
@@ -432,7 +454,7 @@ def _render_facility_newborn_dashboard(user, program_uid):
 # ==================== COMMON UTILITY FUNCTIONS ====================
 
 
-def _update_facility_selection(
+def _update_newborn_facility_selection(
     filter_mode,
     selected_regions,
     selected_facilities,
@@ -466,34 +488,42 @@ def _update_facility_selection(
     return facility_uids, display_names, comparison_mode
 
 
-def _apply_facility_filtering_fixed(tei_df, enrollments_df, events_df, facility_uids):
-    """Apply facility filtering to all dataframes based on selection - FIXED FOR NATIONAL LEVEL"""
+def _apply_newborn_facility_filtering(
+    newborn_tei_df, newborn_enrollments_df, newborn_events_df, facility_uids
+):
+    """Apply facility filtering to all newborn dataframes based on selection - FIXED FOR NATIONAL LEVEL"""
     if not facility_uids:
-        return tei_df, enrollments_df, events_df
+        return newborn_tei_df, newborn_enrollments_df, newborn_events_df
 
     # Start with empty dataframes
-    filtered_tei = pd.DataFrame()
-    filtered_enrollments = pd.DataFrame()
-    filtered_events = pd.DataFrame()
+    filtered_newborn_tei = pd.DataFrame()
+    filtered_newborn_enrollments = pd.DataFrame()
+    filtered_newborn_events = pd.DataFrame()
 
     # Filter TEI based on tei_orgUnit (FIXED FOR NATIONAL LEVEL)
-    if not tei_df.empty:
-        if "tei_orgUnit" in tei_df.columns:
-            filtered_tei = tei_df[tei_df["tei_orgUnit"].isin(facility_uids)].copy()
-        elif "orgUnit" in tei_df.columns:
-            filtered_tei = tei_df[tei_df["orgUnit"].isin(facility_uids)].copy()
+    if not newborn_tei_df.empty:
+        if "tei_orgUnit" in newborn_tei_df.columns:
+            filtered_newborn_tei = newborn_tei_df[
+                newborn_tei_df["tei_orgUnit"].isin(facility_uids)
+            ].copy()
+        elif "orgUnit" in newborn_tei_df.columns:
+            filtered_newborn_tei = newborn_tei_df[
+                newborn_tei_df["orgUnit"].isin(facility_uids)
+            ].copy()
         else:
             # If no orgUnit column, return all TEI data
-            filtered_tei = tei_df.copy()
+            filtered_newborn_tei = newborn_tei_df.copy()
 
     # Filter events by facility UIDs
-    if not events_df.empty and "orgUnit" in events_df.columns:
-        filtered_events = events_df[events_df["orgUnit"].isin(facility_uids)].copy()
-
-    # Filter enrollments based on orgUnit
-    if not enrollments_df.empty and "orgUnit" in enrollments_df.columns:
-        filtered_enrollments = enrollments_df[
-            enrollments_df["orgUnit"].isin(facility_uids)
+    if not newborn_events_df.empty and "orgUnit" in newborn_events_df.columns:
+        filtered_newborn_events = newborn_events_df[
+            newborn_events_df["orgUnit"].isin(facility_uids)
         ].copy()
 
-    return filtered_tei, filtered_enrollments, filtered_events
+    # Filter enrollments based on orgUnit
+    if not newborn_enrollments_df.empty and "orgUnit" in newborn_enrollments_df.columns:
+        filtered_newborn_enrollments = newborn_enrollments_df[
+            newborn_enrollments_df["orgUnit"].isin(facility_uids)
+        ].copy()
+
+    return filtered_newborn_tei, filtered_newborn_enrollments, filtered_newborn_events
