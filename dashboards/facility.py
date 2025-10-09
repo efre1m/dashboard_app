@@ -8,6 +8,7 @@ from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import get_all_programs
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
+from newborns_dashboard.newborn_dashboard import render_newborn_dashboard
 from utils.dash_co import (
     normalize_event_dates,
     normalize_enrollment_dates,
@@ -66,30 +67,6 @@ def fetch_cached_data(user, program_uid):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future = executor.submit(fetch_program_data_for_user, user, program_uid)
         return future.result(timeout=180)
-
-
-def render_newborn_dashboard(facility_name):
-    """Render Newborn Care Form dashboard content"""
-    st.markdown(
-        f'<div class="main-header">👶 Newborn Care Dashboard - {facility_name}</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.info("🚧 **Newborn Care Dashboard Coming Soon!**")
-    st.markdown(
-        """
-    We're working on building the Newborn Care dashboard with specialized KPIs and visualizations.
-    
-    **Features coming soon:**
-    - Newborn admission metrics
-    - Birth weight tracking
-    - Feeding status monitoring
-    - Vaccination coverage
-    - Growth monitoring charts
-    
-    In the meantime, please use the **Maternal Inpatient Data** program for maternal health analytics.
-    """
-    )
 
 
 def render_maternal_dashboard(user, program_uid, facility_name, facility_uid):
@@ -156,7 +133,9 @@ def render_maternal_dashboard(user, program_uid, facility_name, facility_uid):
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
 
         # Use simple filter controls
-        filters = render_simple_filter_controls(copied_events_df, container=col_ctrl)
+        filters = render_simple_filter_controls(
+            copied_events_df, container=col_ctrl, context="facility_maternal"
+        )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -275,6 +254,15 @@ def render():
         # GROUP 2: Newborn Care Form Content
         newborn_program_uid = program_uid_map.get("Newborn Care Form")
         if newborn_program_uid:
-            render_newborn_dashboard(facility_name)
+            render_newborn_dashboard(
+                user,  # same as Maternal
+                newborn_program_uid,  # program UID
+                region_name=None,  # Not used for facility-level
+                selected_facilities=None,  # Facility users don't select facilities
+                facility_uids=facility_uid,  # single facility UID
+                facility_mapping=None,  # Not needed for facility-level
+                facility_names=facility_name,  # single facility name
+                view_mode=None,  # Not used for facility-level
+            )
         else:
             st.error("Newborn Care Form program not found")

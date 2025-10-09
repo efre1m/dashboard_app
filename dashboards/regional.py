@@ -5,6 +5,7 @@ import logging
 import concurrent.futures
 import requests
 from components.kpi_card import render_kpi_cards
+from newborns_dashboard.newborn_dashboard import render_newborn_dashboard
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import (
     get_all_programs,
@@ -73,32 +74,15 @@ def fetch_cached_data(user, program_uid):
         return future.result(timeout=180)
 
 
-def render_newborn_dashboard(region_name, facilities, facility_mapping):
-    """Render Newborn Care Form dashboard content"""
-    st.markdown(
-        f'<div class="main-header">👶 Newborn Care Dashboard - {region_name}</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.info("🚧 **Newborn Care Dashboard Coming Soon!**")
-    st.markdown(
-        """
-    We're working on building the Newborn Care dashboard with specialized KPIs and visualizations.
-    
-    **Features coming soon:**
-    - Newborn admission metrics
-    - Birth weight tracking
-    - Feeding status monitoring
-    - Vaccination coverage
-    - Growth monitoring charts
-    
-    In the meantime, please use the **Maternal Inpatient Data** program for maternal health analytics.
-    """
-    )
-
-
 def render_maternal_dashboard(
-    user, program_uid, region_name, facilities, facility_mapping
+    user,
+    program_uid,
+    region_name,
+    selected_facilities,
+    facility_uids,
+    view_mode,
+    facility_mapping,
+    facility_names,
 ):
     """Render Maternal Inpatient Data dashboard content"""
     # Fetch DHIS2 data for Maternal program
@@ -127,67 +111,6 @@ def render_maternal_dashboard(
     copied_events_df = normalize_event_dates(events_df)
 
     render_connection_status(copied_events_df, user=user)
-
-    # ---------------- Facility Filter ----------------
-    st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities</p>',
-        unsafe_allow_html=True,
-    )
-
-    # Default to all facilities
-    default_facilities = ["All Facilities"]
-
-    selected_facilities = st.sidebar.multiselect(
-        " ",
-        ["All Facilities"] + facilities,
-        default=default_facilities,
-        key="facility_selector",
-        label_visibility="collapsed",
-    )
-
-    # 👇 Dynamic count below the dropdown
-    total_facilities = len(facilities)
-    if selected_facilities == ["All Facilities"]:
-        display_text = f"Selected: All ({total_facilities})"
-    else:
-        display_text = f"Selected: {len(selected_facilities)} / {total_facilities}"
-
-    st.sidebar.markdown(
-        f"<p style='color: white; font-size: 13px; margin-top: -10px;'>{display_text}</p>",
-        unsafe_allow_html=True,
-    )
-
-    # Handle "All Facilities" selection logic
-    if "All Facilities" in selected_facilities:
-        if len(selected_facilities) > 1:
-            # If "All Facilities" is selected with others, remove "All Facilities"
-            selected_facilities = [
-                f for f in selected_facilities if f != "All Facilities"
-            ]
-        else:
-            # Only "All Facilities" is selected
-            selected_facilities = ["All Facilities"]
-
-    # Get the facility UIDs for selected facilities
-    facility_uids = None
-    facility_names = None
-    if selected_facilities != ["All Facilities"]:
-        facility_uids = [
-            facility_mapping[facility]
-            for facility in selected_facilities
-            if facility in facility_mapping
-        ]
-        facility_names = selected_facilities
-
-    # ---------------- View Mode Selection ----------------
-    view_mode = "Normal Trend"
-    if selected_facilities != ["All Facilities"] and len(selected_facilities) > 1:
-        view_mode = st.sidebar.radio(
-            "📊 View Mode",
-            ["Normal Trend", "Facility Comparison"],
-            index=0,
-            help="Compare trends across multiple facilities",
-        )
 
     # MAIN HEADING for Maternal program
     if selected_facilities == ["All Facilities"]:
@@ -237,7 +160,9 @@ def render_maternal_dashboard(
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
 
         # Use simple filter controls
-        filters = render_simple_filter_controls(copied_events_df, container=col_ctrl)
+        filters = render_simple_filter_controls(
+            copied_events_df, container=col_ctrl, context="regional_maternal"
+        )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -360,6 +285,67 @@ def render():
     facilities = [facility[0] for facility in db_facilities]
     facility_mapping = get_facility_mapping_for_user(user)
 
+    # ---------------- Facility Filter ----------------
+    st.sidebar.markdown(
+        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Select Facilities</p>',
+        unsafe_allow_html=True,
+    )
+
+    # Default to all facilities
+    default_facilities = ["All Facilities"]
+
+    selected_facilities = st.sidebar.multiselect(
+        " ",
+        ["All Facilities"] + facilities,
+        default=default_facilities,
+        key="facility_selector",
+        label_visibility="collapsed",
+    )
+
+    # 👇 Dynamic count below the dropdown
+    total_facilities = len(facilities)
+    if selected_facilities == ["All Facilities"]:
+        display_text = f"Selected: All ({total_facilities})"
+    else:
+        display_text = f"Selected: {len(selected_facilities)} / {total_facilities}"
+
+    st.sidebar.markdown(
+        f"<p style='color: white; font-size: 13px; margin-top: -10px;'>{display_text}</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Handle "All Facilities" selection logic
+    if "All Facilities" in selected_facilities:
+        if len(selected_facilities) > 1:
+            # If "All Facilities" is selected with others, remove "All Facilities"
+            selected_facilities = [
+                f for f in selected_facilities if f != "All Facilities"
+            ]
+        else:
+            # Only "All Facilities" is selected
+            selected_facilities = ["All Facilities"]
+
+    # Get the facility UIDs for selected facilities
+    facility_uids = None
+    facility_names = None
+    if selected_facilities != ["All Facilities"]:
+        facility_uids = [
+            facility_mapping[facility]
+            for facility in selected_facilities
+            if facility in facility_mapping
+        ]
+        facility_names = selected_facilities
+
+    # ---------------- View Mode Selection ----------------
+    view_mode = "Normal Trend"
+    if selected_facilities != ["All Facilities"] and len(selected_facilities) > 1:
+        view_mode = st.sidebar.radio(
+            "📊 View Mode",
+            ["Normal Trend", "Facility Comparison"],
+            index=0,
+            help="Compare trends across multiple facilities",
+        )
+
     # Get programs for UID mapping
     programs = get_all_programs()
     program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
@@ -368,19 +354,33 @@ def render():
     tab1, tab2 = st.tabs(["🤰 **Maternal Inpatient Data**", "👶 **Newborn Care Form**"])
 
     with tab1:
-        # GROUP 1: Maternal Inpatient Data Content
         maternal_program_uid = program_uid_map.get("Maternal Inpatient Data")
         if maternal_program_uid:
             render_maternal_dashboard(
-                user, maternal_program_uid, region_name, facilities, facility_mapping
+                user,
+                maternal_program_uid,
+                region_name,
+                selected_facilities,
+                facility_uids,
+                view_mode,
+                facility_mapping,
+                facility_names,
             )
         else:
             st.error("Maternal Inpatient Data program not found")
 
     with tab2:
-        # GROUP 2: Newborn Care Form Content
         newborn_program_uid = program_uid_map.get("Newborn Care Form")
         if newborn_program_uid:
-            render_newborn_dashboard(region_name, facilities, facility_mapping)
+            render_newborn_dashboard(
+                user,
+                newborn_program_uid,
+                region_name=region_name,
+                selected_facilities=selected_facilities,
+                facility_uids=facility_uids,
+                facility_mapping=facility_mapping,
+                facility_names=facility_names,
+                view_mode=view_mode,
+            )
         else:
             st.error("Newborn Care Form program not found")

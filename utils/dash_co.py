@@ -897,12 +897,15 @@ def normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
 # ========== UPDATED FILTER CONTROLS WITHOUT KPI SELECTION ==========
 
 
-def render_simple_filter_controls(events_df, container=None):
+def render_simple_filter_controls(events_df, container=None, context="default"):
     """Simple filter controls without KPI selection (KPI selection moved to tabs)"""
     if container is None:
         container = st
 
     filters = {}
+
+    # Generate unique key suffix based on context
+    key_suffix = f"_{context}"
 
     # NOTE: KPI Selection removed - now handled by tab navigation
 
@@ -920,7 +923,7 @@ def render_simple_filter_controls(events_df, container=None):
             "Last Year",
         ],
         index=0,
-        key="quick_range_simple",
+        key=f"quick_range{key_suffix}",  # Unique key
     )
 
     # Get dates from dataframe
@@ -935,7 +938,7 @@ def render_simple_filter_controls(events_df, container=None):
                 value=min_date,
                 min_value=min_date,
                 max_value=max_date,
-                key="start_date_simple",
+                key=f"start_date{key_suffix}",  # Unique key
             )
         with col2:
             filters["end_date"] = col2.date_input(
@@ -943,7 +946,7 @@ def render_simple_filter_controls(events_df, container=None):
                 value=max_date,
                 min_value=min_date,
                 max_value=max_date,
-                key="end_date_simple",
+                key=f"end_date{key_suffix}",  # Unique key
             )
     else:
         # For predefined ranges
@@ -970,12 +973,12 @@ def render_simple_filter_controls(events_df, container=None):
         "⏰ Aggregation Level",
         available_aggregations,
         index=default_index,
-        key="period_label_simple",
+        key=f"period_label{key_suffix}",  # Unique key
     )
 
     # Background Color
     filters["bg_color"] = container.color_picker(
-        "🎨 Chart Background", "#FFFFFF", key="bg_color_simple"
+        "🎨 Chart Background", "#FFFFFF", key=f"bg_color{key_suffix}"  # Unique key
     )
     filters["text_color"] = auto_text_color(filters["bg_color"])
 
