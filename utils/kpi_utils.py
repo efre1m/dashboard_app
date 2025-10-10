@@ -3,7 +3,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import datetime as dt
 import streamlit as st
-import hashlib  # ADD THIS LINE
+import hashlib
 
 # ---------------- Caching Setup ----------------
 if "kpi_cache" not in st.session_state:
@@ -125,6 +125,10 @@ def compute_birth_counts(df, facility_uids=None):
     # Generate cache key for this specific computation
     cache_key = get_cache_key(df, facility_uids, "birth_counts")
 
+    # ✅ SAFE ACCESS: Check if cache exists first
+    if "kpi_cache" not in st.session_state:
+        st.session_state.kpi_cache = {}
+
     # Check if we already computed this
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
@@ -237,6 +241,10 @@ def compute_total_deliveries(df, facility_uids=None):
     # Generate cache key for this specific computation
     cache_key = get_cache_key(df, facility_uids, "total_deliveries")
 
+    # ✅ SAFE ACCESS: Check if cache exists first
+    if "kpi_cache" not in st.session_state:
+        st.session_state.kpi_cache = {}
+
     # Check if we already computed this
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
@@ -266,6 +274,10 @@ def compute_total_deliveries(df, facility_uids=None):
 def compute_fp_acceptance(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "fp_acceptance")
 
+    # ✅ SAFE ACCESS: Check if cache exists first
+    if "kpi_cache" not in st.session_state:
+        st.session_state.kpi_cache = {}
+
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 
@@ -288,6 +300,10 @@ def compute_fp_acceptance(df, facility_uids=None):
 
 def compute_stillbirth_rate(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "stillbirth_rate")
+
+    # ✅ SAFE ACCESS: Check if cache exists first
+    if "kpi_cache" not in st.session_state:
+        st.session_state.kpi_cache = {}
 
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
@@ -312,6 +328,10 @@ def compute_stillbirth_rate(df, facility_uids=None):
 
 def compute_early_pnc_coverage(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "pnc_coverage")
+
+    # ✅ SAFE ACCESS: Check if cache exists first
+    if "kpi_cache" not in st.session_state:
+        st.session_state.kpi_cache = {}
 
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
@@ -338,6 +358,10 @@ def compute_early_pnc_coverage(df, facility_uids=None):
 
 def compute_maternal_death_rate(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "maternal_death_rate")
+
+    # ✅ SAFE ACCESS: Check if cache exists first
+    if "kpi_cache" not in st.session_state:
+        st.session_state.kpi_cache = {}
 
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
@@ -413,7 +437,11 @@ def compute_csection_rate(df, facility_uids=None):
 def compute_kpis(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "main_kpis")
 
-    # Check if we have cached results
+    # ✅ SAFE ACCESS: Check if cache exists first
+    if "kpi_cache" not in st.session_state:
+        st.session_state.kpi_cache = {}
+
+    # ✅ NOW safe to access
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 
