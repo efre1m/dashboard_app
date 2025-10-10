@@ -10,3 +10,9 @@ python-dotenv>=1.0.1
 seaborn>=0.13.2
 matplotlib>=3.9.0
 numpy>=1.26.0
+
+# 🔹 Additions
+typing-extensions>=4.12.2
+urllib3>=2.2.2
+orjson>=3.10.7
+cffi>=1.17.0
