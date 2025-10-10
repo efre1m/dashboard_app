@@ -302,25 +302,30 @@ def render_summary_dashboard(
     newborn_start_date = get_earliest_date(newborn_enrollments_df, "enrollmentDate")
     maternal_start_date = get_earliest_date(maternal_enrollments_df, "enrollmentDate")
 
-    # Apply professional table styling
+    # Apply professional table styling - MATCHING KPI UTILS STYLING
     st.markdown(
         """
     <style>
-    .professional-table {
-        font-family: 'Arial', sans-serif;
+    .summary-table-container {
         border-radius: 10px;
         overflow: hidden;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         margin: 1rem 0;
         border: 1px solid #e0e0e0;
     }
-    .professional-table table {
+
+    .summary-table {
         width: 100%;
         border-collapse: collapse;
+        font-family: 'Arial', sans-serif;
         font-size: 14px;
     }
-    .professional-table th {
+
+    .summary-table thead tr {
         background: linear-gradient(135deg, #1f77b4, #1668a1);
+    }
+
+    .summary-table th {
         color: white;
         padding: 14px 16px;
         text-align: left;
@@ -328,31 +333,50 @@ def render_summary_dashboard(
         font-size: 14px;
         border: none;
     }
-    .professional-table td {
+
+    .summary-table td {
         padding: 12px 16px;
         border-bottom: 1px solid #f0f0f0;
         font-size: 14px;
         background-color: white;
     }
-    .professional-table tr:last-child td {
+
+    .summary-table tbody tr:last-child td {
         border-bottom: none;
     }
-    .professional-table tr:hover td {
+
+    .summary-table tbody tr:hover td {
         background-color: #f8f9fa;
     }
-    .newborn-header {
+
+    /* Specific styling for different table types */
+    .newborn-table thead tr {
         background: linear-gradient(135deg, #1f77b4, #1668a1) !important;
     }
-    .maternal-header {
+
+    .maternal-table thead tr {
         background: linear-gradient(135deg, #2ca02c, #228b22) !important;
     }
+
     .indicator-cell {
         font-weight: 500;
         color: #333;
     }
+
     .value-cell {
         font-weight: 600;
         color: #1a1a1a;
+    }
+
+    /* Number column styling */
+    .summary-table td:first-child {
+        font-weight: 600;
+        color: #666;
+        text-align: center;
+    }
+
+    .summary-table th:first-child {
+        text-align: center;
     }
     </style>
     """,
@@ -397,8 +421,9 @@ def render_summary_dashboard(
             use_container_width=True,
         )
 
-    # Create newborn table data
+    # Create newborn table data WITH NUMBERING
     newborn_table_data = {
+        "No": list(range(1, 10)),
         "Indicator": [
             "Start Date",
             location_type,
@@ -425,9 +450,33 @@ def render_summary_dashboard(
 
     newborn_table_df = pd.DataFrame(newborn_table_data)
 
-    # Display styled newborn table
-    st.markdown('<div class="professional-table">', unsafe_allow_html=True)
-    st.table(newborn_table_df)
+    # Display styled newborn table - USING KPI UTILS STYLING
+    st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
+    st.markdown(
+        newborn_table_df.style.set_table_attributes(
+            'class="summary-table newborn-table"'
+        )
+        .hide(axis="index")
+        .set_properties(**{"text-align": "left"})
+        .set_table_styles(
+            [
+                {
+                    "selector": "thead th",
+                    "props": [("color", "white"), ("font-weight", "600")],
+                },
+                {
+                    "selector": "tbody td",
+                    "props": [("border-bottom", "1px solid #f0f0f0")],
+                },
+                {
+                    "selector": "tbody tr:last-child td",
+                    "props": [("border-bottom", "none")],
+                },
+            ]
+        )
+        .to_html(),
+        unsafe_allow_html=True,
+    )
     st.markdown("</div>", unsafe_allow_html=True)
 
     # Maternal Overview Table - Professional Styling
@@ -461,8 +510,9 @@ def render_summary_dashboard(
             use_container_width=True,
         )
 
-    # Create maternal table data
+    # Create maternal table data WITH NUMBERING
     maternal_table_data = {
+        "No": list(range(1, 6)),
         "Indicator": [
             "Start Date",
             location_type,
@@ -481,9 +531,33 @@ def render_summary_dashboard(
 
     maternal_table_df = pd.DataFrame(maternal_table_data)
 
-    # Display styled maternal table
-    st.markdown('<div class="professional-table">', unsafe_allow_html=True)
-    st.table(maternal_table_df)
+    # Display styled maternal table - USING KPI UTILS STYLING
+    st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
+    st.markdown(
+        maternal_table_df.style.set_table_attributes(
+            'class="summary-table maternal-table"'
+        )
+        .hide(axis="index")
+        .set_properties(**{"text-align": "left"})
+        .set_table_styles(
+            [
+                {
+                    "selector": "thead th",
+                    "props": [("color", "white"), ("font-weight", "600")],
+                },
+                {
+                    "selector": "tbody td",
+                    "props": [("border-bottom", "1px solid #f0f0f0")],
+                },
+                {
+                    "selector": "tbody tr:last-child td",
+                    "props": [("border-bottom", "none")],
+                },
+            ]
+        )
+        .to_html(),
+        unsafe_allow_html=True,
+    )
     st.markdown("</div>", unsafe_allow_html=True)
 
     # Summary statistics cards
