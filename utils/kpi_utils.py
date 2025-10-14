@@ -404,6 +404,10 @@ def compute_maternal_death_rate(df, facility_uids=None):
 def compute_csection_rate(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "csection_rate")
 
+    # ✅ SAFE ACCESS: Check if cache exists first
+    if "kpi_cache" not in st.session_state:
+        st.session_state.kpi_cache = {}
+
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 

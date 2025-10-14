@@ -31,6 +31,8 @@ from utils.status import (
     initialize_status_system,
 )
 
+from utils.odk_dashboard import display_odk_dashboard
+
 # Initialize status system
 initialize_status_system()
 
@@ -560,31 +562,119 @@ def render_summary_dashboard(
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Summary statistics cards
+    # Summary statistics cards - PROFESSIONAL STYLING
     st.markdown("---")
     st.markdown("### 📈 Quick Statistics")
 
+    # Add professional CSS styling for the metrics
+    st.markdown(
+        """
+    <style>
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 15px;
+        padding: 20px;
+        margin: 10px;
+        color: white;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        border: 2px solid rgba(255,255,255,0.2);
+        text-align: center;
+        transition: transform 0.3s ease;
+        min-height: 140px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    }
+    .metric-value {
+        font-size: 2rem;
+        font-weight: bold;
+        margin: 10px 0;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        line-height: 1.2;
+    }
+    .metric-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+        margin-bottom: 5px;
+        font-weight: 600;
+    }
+    .metric-help {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        margin-top: 5px;
+        line-height: 1.3;
+    }
+    .critical-metric {
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%) !important;
+    }
+    .success-metric {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%) !important;
+    }
+    .info-metric {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%) !important;
+    }
+    .warning-metric {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Create the professional metric cards
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric(
-            "Total Mothers", f"{maternal_tei_count:,}", help="Unique mothers admitted"
+        st.markdown(
+            f"""
+        <div class="metric-card info-metric">
+            <div class="metric-label">👩 Total Mothers</div>
+            <div class="metric-value">{maternal_tei_count:,}</div>
+            <div class="metric-help">Unique mothers admitted</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
 
     with col2:
-        st.metric(
-            "Total Newborns", f"{newborn_tei_count:,}", help="Unique newborns admitted"
+        st.markdown(
+            f"""
+        <div class="metric-card success-metric">
+            <div class="metric-label">👶 Total Newborns</div>
+            <div class="metric-value">{newborn_tei_count:,}</div>
+            <div class="metric-help">Unique newborns admitted</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
 
     with col3:
-        st.metric(
-            "Total Deliveries",
-            f"{maternal_indicators['total_deliveries']:,}",
-            help="Total number of deliveries",
+        st.markdown(
+            f"""
+        <div class="metric-card critical-metric">
+            <div class="metric-label">⚠️ Maternal Deaths</div>
+            <div class="metric-value">{maternal_indicators['maternal_deaths']:,}</div>
+            <div class="metric-help">Maternal mortality cases</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
 
     with col4:
-        st.metric("Coverage Start", maternal_start_date, help="Earliest data record")
+        st.markdown(
+            f"""
+        <div class="metric-card warning-metric">
+            <div class="metric-label">📅 Coverage Start</div>
+            <div class="metric-value">{maternal_start_date}</div>
+            <div class="metric-help">Earliest data record</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_maternal_dashboard(
@@ -1149,11 +1239,12 @@ def render():
     program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
 
     # CREATE PROFESSIONAL TABS IN MAIN AREA
-    tab1, tab2, tab3 = st.tabs(
+    tab1, tab2, tab3, tab4 = st.tabs(
         [
             "🤰 **Maternal Inpatient Data**",
             "👶 **Newborn Care Form**",
             "📊 **Summary Dashboard**",
+            "📋 **ODK Forms**",
         ]
     )
 
@@ -1198,3 +1289,6 @@ def render():
             facilities_by_region,
             facility_mapping,
         )
+    with tab4:
+        # NEW: ODK Forms Dashboard Tab
+        display_odk_dashboard(user)

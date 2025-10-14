@@ -1,10 +1,11 @@
 # utils/data_service.py
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union
 import pandas as pd
 import logging
 from utils.queries import get_orgunit_uids_for_user, get_program_by_uid
 from utils.dhis2 import fetch_dhis2_data_for_ous
 from utils.config import settings
+from utils.odk_api import fetch_all_forms_as_dataframes, fetch_form_csv, list_forms
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -14,7 +15,7 @@ def fetch_program_data_for_user(
     program_uid: str = None,
     facility_uids: List[str] = None,
     period_label: str = "Monthly",
-) -> Dict[str, pd.DataFrame]:
+) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
     Fetch DHIS2 program data for a given user and return structured DataFrames.
 
@@ -155,3 +156,90 @@ def fetch_program_data_for_user(
         "enrollments": enr_df,
         "events": evt_df,
     }
+
+
+def fetch_odk_data_for_user(
+    user: dict, form_id: str = None
+) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
+    """
+    Fetch ODK form data and return the CSV exactly as it is in the system.
+
+    Args:
+        user: User dictionary (for future role-based access control)
+        form_id: Specific form ID to fetch. If None, fetches all forms.
+
+    Returns:
+        Dictionary containing ODK form dataframes
+    """
+    odk_data = {}
+
+    try:
+        if form_id:
+            # Fetch specific form
+            df = fetch_form_csv(form_id)
+            if not df.empty:
+                odk_data[form_id] = df
+                logging.info(f"Retrieved ODK form '{form_id}' with {len(df)} records")
+            else:
+                logging.warning(f"No data found for ODK form '{form_id}'")
+        else:
+            # Fetch all forms
+            form_dfs = fetch_all_forms_as_dataframes()
+            odk_data.update(form_dfs)
+            logging.info(f"Retrieved {len(form_dfs)} ODK forms")
+
+    except Exception as e:
+        logging.error(f"Error fetching ODK data: {e}")
+
+    return {"odk_forms": odk_data}
+
+
+def fetch_combined_data_for_user(
+    user: dict,
+    program_uid: str = None,
+    facility_uids: List[str] = None,
+    period_label: str = "Monthly",
+    odk_form_id: str = None,
+) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
+    """
+    Fetch both DHIS2 program data and ODK form data for a user.
+
+    Args:
+        user: User dictionary with role and access info
+        program_uid: Specific program UID to fetch data for
+        facility_uids: Optional list of facility UIDs to filter by
+        period_label: Period aggregation level
+        odk_form_id: Specific ODK form ID to fetch. If None, fetches all forms.
+
+    Returns:
+        Combined dictionary with both DHIS2 and ODK data
+    """
+    result = {}
+
+    # Fetch DHIS2 data if program_uid provided
+    if program_uid:
+        dhis2_data = fetch_program_data_for_user(
+            user, program_uid, facility_uids, period_label
+        )
+        result.update(dhis2_data)
+
+    # Always fetch ODK data
+    odk_data = fetch_odk_data_for_user(user, odk_form_id)
+    result.update(odk_data)
+
+    return result
+
+
+def list_available_odk_forms() -> List[dict]:
+    """
+    List all available ODK forms in the project.
+
+    Returns:
+        List of form metadata dictionaries
+    """
+    try:
+        forms = list_forms()
+        return forms
+    except Exception as e:
+        logging.error(f"Error listing ODK forms: {e}")
+        return []
