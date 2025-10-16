@@ -26,7 +26,8 @@ from utils.status import (
     update_last_sync_time,
     initialize_status_system,
 )
-from utils.odk_dashboard import display_odk_dashboard
+
+# from utils.odk_dashboard import display_odk_dashboard
 
 initialize_status_system()
 
@@ -816,12 +817,11 @@ def render():
     program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
 
     # CREATE PROFESSIONAL TABS IN MAIN AREA - ADDED SUMMARY DASHBOARD TAB
-    tab1, tab2, tab3, tab4 = st.tabs(
+    tab1, tab2, tab3 = st.tabs(
         [
             "🤰 **Maternal Inpatient Data**",
             "👶 **Newborn Care Form**",
             "📊 **Summary Dashboard**",
-            "📋 **ODK Forms**",
         ]
     )
 
@@ -857,6 +857,6 @@ def render():
     with tab3:
         # NEW: Summary Dashboard Tab
         render_summary_dashboard(user, facility_name, facility_uid)
-    with tab4:
-        # NEW: ODK Forms Dashboard Tab
-        display_odk_dashboard(user)
+    # with tab4:
+    # NEW: ODK Forms Dashboard Tab
+    # display_odk_dashboard(user)
