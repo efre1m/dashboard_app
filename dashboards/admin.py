@@ -1007,6 +1007,174 @@ def entity_editable_table(df, table_name, id_column, add_function):
     )
 
 
+# ---------------- Add Program Form ----------------
+def add_program_form():
+    """Form to add a new program"""
+    with st.expander("➕ Add New Program", expanded=False):
+        st.markdown('<div class="form-container">', unsafe_allow_html=True)
+
+        with st.form("add_program_form", clear_on_submit=True):
+            program_name = st.text_input("Program Name *", key="new_program_name")
+            program_uid = st.text_input("Program UID", key="new_program_uid")
+
+            submit = st.form_submit_button("Add Program")
+
+            if submit:
+                if not program_name:
+                    st.error("Program Name is required.")
+                elif check_entity_exists("programs", "program_name", program_name):
+                    st.error(f"Program '{program_name}' already exists.")
+                elif program_uid and check_entity_exists(
+                    "programs", "program_uid", program_uid
+                ):
+                    st.error(f"Program UID '{program_uid}' already exists.")
+                else:
+                    success, message = execute_query(
+                        "INSERT INTO programs (program_name, program_uid) VALUES (%s, %s)",
+                        (program_name, program_uid or None),
+                    )
+                    if success:
+                        st.success(f"Program '{program_name}' added successfully!")
+                        st.session_state.refresh_data = True
+                        st.cache_data.clear()
+                    else:
+                        st.error(f"Error adding program: {message}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ---------------- Program Editable Table ----------------
+def program_editable_table(df):
+    """Display and manage programs table with editing capabilities"""
+    if df.empty:
+        st.info("No programs found.")
+        add_program_form()
+        return
+
+    # Create a display copy
+    display_df = df.copy()
+
+    # Display the table
+    st.dataframe(display_df, use_container_width=True)
+
+    # Add edit functionality for each row
+    for idx, row in df.iterrows():
+        # Initialize session state for delete confirmation
+        delete_key = f"delete_confirm_programs_{row['program_id']}"
+        if delete_key not in st.session_state:
+            st.session_state[delete_key] = False
+
+        with st.expander(f"Edit Program: {row['program_name']}", expanded=False):
+            st.markdown('<div class="form-container">', unsafe_allow_html=True)
+
+            # Create form for editing
+            with st.form(f"edit_program_{row['program_id']}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_program_name = st.text_input(
+                        "Program Name *",
+                        value=row["program_name"],
+                        key=f"program_name_{row['program_id']}_{idx}",
+                    )
+                with col2:
+                    new_program_uid = st.text_input(
+                        "Program UID",
+                        value=(
+                            row["program_uid"] if pd.notna(row["program_uid"]) else ""
+                        ),
+                        key=f"program_uid_{row['program_id']}_{idx}",
+                    )
+
+                # Update button inside the form
+                update_submit = st.form_submit_button("Update")
+
+                if update_submit:
+                    # Validation
+                    if not new_program_name:
+                        st.error("Program Name is required.")
+                    elif new_program_name != row[
+                        "program_name"
+                    ] and check_entity_exists(
+                        "programs",
+                        "program_name",
+                        new_program_name,
+                        "program_id",
+                        row["program_id"],
+                    ):
+                        st.error(f"Program name '{new_program_name}' already exists.")
+                    elif (
+                        new_program_uid
+                        and new_program_uid != row["program_uid"]
+                        and check_entity_exists(
+                            "programs",
+                            "program_uid",
+                            new_program_uid,
+                            "program_id",
+                            row["program_id"],
+                        )
+                    ):
+                        st.error(f"Program UID '{new_program_uid}' already exists.")
+                    else:
+                        success, message = execute_query(
+                            """UPDATE programs 
+                               SET program_name=%s, program_uid=%s 
+                               WHERE program_id=%s""",
+                            (
+                                new_program_name,
+                                new_program_uid or None,
+                                row["program_id"],
+                            ),
+                        )
+                        if success:
+                            st.success(
+                                f"Program '{new_program_name}' updated successfully!"
+                            )
+                            st.session_state.refresh_data = True
+                            st.cache_data.clear()
+                        else:
+                            st.error(f"Error updating program: {message}")
+
+            # Delete button and confirmation (OUTSIDE the form)
+            delete_col1, delete_col2 = st.columns(2)
+            with delete_col2:
+                if st.button("Delete", key=f"delete_program_{row['program_id']}_{idx}"):
+                    st.session_state[delete_key] = True
+
+                if st.session_state[delete_key]:
+                    st.warning(
+                        f"Are you sure you want to delete program '{row['program_name']}'?"
+                    )
+                    confirm_col1, confirm_col2 = st.columns(2)
+                    with confirm_col1:
+                        if st.button(
+                            "Yes, Delete",
+                            key=f"confirm_delete_program_{row['program_id']}_{idx}",
+                        ):
+                            if delete_row("programs", "program_id", row["program_id"]):
+                                st.session_state[delete_key] = False
+                                st.session_state.refresh_data = True
+                                st.cache_data.clear()
+                                time.sleep(1)  # Small delay to show success message
+                                st.rerun()
+                    with confirm_col2:
+                        if st.button(
+                            "Cancel",
+                            key=f"cancel_delete_program_{row['program_id']}_{idx}",
+                        ):
+                            st.session_state[delete_key] = False
+                            st.rerun()
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    # Add new program form
+    add_program_form()
+
+    # Export button
+    csv = display_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Programs CSV", csv, file_name="programs.csv", mime="text/csv"
+    )
+
+
 # ---------------- Search Configuration ----------------
 def get_search_config(table_name):
     """Return search configuration for each table"""
@@ -1042,6 +1210,14 @@ def get_search_config(table_name):
             "default_column": "country_name",
             "display_names": {"country_name": "Country Name", "dhis2_uid": "DHIS2 UID"},
         },
+        "programs": {
+            "columns": ["program_name", "program_uid"],
+            "default_column": "program_name",
+            "display_names": {
+                "program_name": "Program Name",
+                "program_uid": "Program UID",
+            },
+        },
     }
     return config.get(
         table_name, {"columns": [], "default_column": None, "display_names": {}}
@@ -1060,6 +1236,7 @@ def render():
             "facilities": "",
             "regions": "",
             "countries": "",
+            "programs": "",  # ADDED: Programs search term
         }
 
     if "search_columns" not in st.session_state:
@@ -1068,6 +1245,7 @@ def render():
             "facilities": "facility_name",
             "regions": "region_name",
             "countries": "country_name",
+            "programs": "program_name",  # ADDED: Programs search column
         }
 
     if "refresh_data" not in st.session_state:
@@ -1079,7 +1257,8 @@ def render():
         st.cache_data.clear()
         st.session_state.refresh_data = False
 
-    tabs = st.tabs(["Users", "Facilities", "Regions", "Countries"])
+    # ADDED: Programs tab to the list
+    tabs = st.tabs(["Users", "Facilities", "Regions", "Countries", "Programs"])
 
     # Users tab
     with tabs[0]:
@@ -1288,3 +1467,55 @@ def render():
             df = fetch_table("countries")
 
         entity_editable_table(df, "countries", "country_id", add_country_form)
+
+    # ADDED: Programs tab
+    with tabs[4]:
+        st.markdown('<div class="search-input">', unsafe_allow_html=True)
+        search_config = get_search_config("programs")
+
+        col1, col2, col3 = st.columns([2, 2, 1])
+        with col1:
+            filter_by = st.selectbox(
+                "Filter By",
+                options=["all"] + search_config["columns"],
+                format_func=lambda x: (
+                    "All Columns"
+                    if x == "all"
+                    else search_config["display_names"].get(x, x)
+                ),
+                key="programs_filter_by",
+            )
+        with col2:
+            search_input = st.text_input(
+                "Search",
+                value=st.session_state.search_terms["programs"],
+                key="programs_search_input",
+            )
+        with col3:
+            st.write("")  # Spacer for alignment
+            st.write("")  # Spacer for alignment
+            if st.button("Search", key="programs_search_btn"):
+                st.session_state.search_terms["programs"] = search_input
+                st.session_state.search_columns["programs"] = filter_by
+            if st.button("Clear", key="programs_clear_btn"):
+                st.session_state.search_terms["programs"] = ""
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Fetch data based on search
+        if st.session_state.search_terms["programs"]:
+            if st.session_state.search_columns["programs"] == "all":
+                df = fetch_table_multi_filter(
+                    "programs",
+                    search_config["columns"],
+                    st.session_state.search_terms["programs"],
+                )
+            else:
+                df = fetch_table(
+                    "programs",
+                    st.session_state.search_columns["programs"],
+                    st.session_state.search_terms["programs"],
+                )
+        else:
+            df = fetch_table("programs")
+
+        program_editable_table(df)
