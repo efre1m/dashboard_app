@@ -677,8 +677,16 @@ def render_summary_dashboard(
         )
 
 
+# In national.py - Update the render_maternal_dashboard function
+
+
 def render_maternal_dashboard(
-    user, program_uid, country_name, facilities_by_region, facility_mapping
+    user,
+    program_uid,
+    country_name,
+    facilities_by_region,
+    facility_mapping,
+    view_mode="Normal Trend",  # Add view_mode parameter
 ):
     """Render Maternal Inpatient Data dashboard content"""
     # Fetch DHIS2 data for Maternal program
@@ -883,18 +891,8 @@ def render_maternal_dashboard(
     st.session_state.current_display_names = display_names
     st.session_state.current_comparison_mode = comparison_mode
 
-    # ---------------- View Mode Selection ----------------
-    view_mode = "Normal Trend"
-    if (comparison_mode == "facility" and len(display_names) > 1) or (
-        comparison_mode == "region" and len(display_names) > 1
-    ):
-        view_mode = st.sidebar.radio(
-            "📊 View Mode",
-            ["Normal Trend", "Comparison View"],
-            index=0,
-            help="Compare trends across multiple facilities or regions",
-            key="view_mode_radio",
-        )
+    # REMOVED: View Mode Selection (now handled outside tabs)
+    # Using the passed view_mode parameter instead
 
     # MAIN HEADING with selection summary
     selected_facilities_count = len(facility_uids)
@@ -992,6 +990,7 @@ def render_maternal_dashboard(
         # Use KPI tab navigation
         selected_kpi = render_kpi_tab_navigation()
 
+        # Use the passed view_mode parameter
         if view_mode == "Comparison View" and len(display_names) > 1:
             st.markdown(
                 f'<div class="section-header">📈 {selected_kpi} - {comparison_mode.title()} Comparison - Maternal Inpatient Data</div>',
@@ -1123,6 +1122,9 @@ def update_facility_selection(
     return facility_uids, display_names, comparison_mode
 
 
+# In national.py - Update the render() function
+
+
 def render():
     st.set_page_config(
         page_title="National Maternal Health Dashboard",
@@ -1238,6 +1240,25 @@ def render():
     programs = get_all_programs()
     program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
 
+    # ================ SHARED VIEW MODE CONTROL ================
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(
+        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">📊 Dashboard View Mode</p>',
+        unsafe_allow_html=True,
+    )
+
+    # Shared View Mode for both Maternal and Newborn dashboards
+    view_mode = st.sidebar.radio(
+        "Select how to view data:",
+        ["Normal Trend", "Comparison View"],
+        index=0,
+        help="Normal Trend: Single trend line | Comparison View: Compare multiple facilities/regions",
+        key="view_mode_shared",
+    )
+
+    st.sidebar.markdown("---")
+    # ================ END SHARED VIEW MODE ================
+
     # CREATE PROFESSIONAL TABS IN MAIN AREA
     tab1, tab2, tab3, tab4 = st.tabs(
         [
@@ -1258,6 +1279,7 @@ def render():
                 country_name,
                 facilities_by_region,
                 facility_mapping,
+                view_mode=view_mode,  # Pass the shared view mode
             )
         else:
             st.error("Maternal Inpatient Data program not found")
@@ -1269,14 +1291,10 @@ def render():
             render_newborn_dashboard(
                 user,
                 newborn_program_uid,
-                region_name=None,
-                selected_facilities=None,
-                facility_uids=None,
-                facility_mapping=facility_mapping,
-                facility_names=None,
-                view_mode=None,
-                country_name=country_name,
-                facilities_by_region=facilities_by_region,
+                country_name,
+                facilities_by_region,
+                facility_mapping,
+                view_mode=view_mode,  # Pass the shared view mode
             )
         else:
             st.error("Newborn Care Form program not found")
