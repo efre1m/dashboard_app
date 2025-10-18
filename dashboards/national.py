@@ -6,7 +6,7 @@ import concurrent.futures
 import requests
 from components.kpi_card import render_kpi_cards
 from utils.kpi_lbw import compute_lbw_kpi
-from newborns_dashboard.newborn_dashboard import render_newborn_dashboard
+from newborns_dashboard.national_newborn import render_newborn_dashboard
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import (
     get_all_programs,
@@ -1263,7 +1263,7 @@ def render():
     tab1, tab2, tab3, tab4 = st.tabs(
         [
             "🤰 **Maternal Inpatient Data**",
-            "👶 **Newborn Care Form**",
+            "👶 **Newborn Inpatient Data**",
             "📊 **Summary Dashboard**",
             "📋 **ODK Forms**",
         ]

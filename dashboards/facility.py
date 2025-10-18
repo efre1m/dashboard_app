@@ -8,7 +8,7 @@ from components.kpi_card import render_kpi_cards
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import get_all_programs
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
-from newborns_dashboard.newborn_dashboard import render_newborn_dashboard
+from newborns_dashboard.facility_newborn import render_newborn_dashboard
 from utils.dash_co import (
     normalize_event_dates,
     normalize_enrollment_dates,
@@ -820,7 +820,7 @@ def render():
     tab1, tab2, tab3 = st.tabs(
         [
             "🤰 **Maternal Inpatient Data**",
-            "👶 **Newborn Care Form**",
+            "👶 **Newborn Inpatient Data**",
             "📊 **Summary Dashboard**",
         ]
     )
@@ -836,20 +836,13 @@ def render():
             st.error("Maternal Inpatient Data program not found")
 
     with tab2:
-        # GROUP 2: Newborn Care Form Content
         newborn_program_uid = program_uid_map.get("Newborn Care Form")
         if newborn_program_uid:
             render_newborn_dashboard(
-                user,
-                newborn_program_uid,
-                region_name=None,
-                selected_facilities=None,
-                facility_uids=facility_uid,
-                facility_mapping=None,
-                facility_names=facility_name,
-                view_mode=None,
-                country_name=None,
-                facilities_by_region=None,
+                user=user,
+                program_uid=newborn_program_uid,
+                facility_name=facility_name,
+                facility_uid=facility_uid,
             )
         else:
             st.error("Newborn Care Form program not found")

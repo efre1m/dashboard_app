@@ -5,7 +5,7 @@ import logging
 import concurrent.futures
 import requests
 from components.kpi_card import render_kpi_cards
-from newborns_dashboard.newborn_dashboard import render_newborn_dashboard
+from newborns_dashboard.reginal_newborn import render_newborn_dashboard
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import (
     get_all_programs,
@@ -930,7 +930,7 @@ def render():
     tab1, tab2, tab3 = st.tabs(
         [
             "🤰 **Maternal Inpatient Data**",
-            "👶 **Newborn Care Form**",
+            "👶 **Newborn Inpatient Data**",
             "📊 **Summary Dashboard**",
         ]
     )
@@ -955,16 +955,14 @@ def render():
         newborn_program_uid = program_uid_map.get("Newborn Care Form")
         if newborn_program_uid:
             render_newborn_dashboard(
-                user,
-                newborn_program_uid,
+                user=user,
+                program_uid=newborn_program_uid,
                 region_name=region_name,
                 selected_facilities=selected_facilities,
                 facility_uids=facility_uids,
+                view_mode=view_mode,
                 facility_mapping=facility_mapping,
                 facility_names=facility_names,
-                view_mode=view_mode,
-                country_name=None,
-                facilities_by_region=None,
             )
         else:
             st.error("Newborn Care Form program not found")
