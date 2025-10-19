@@ -337,18 +337,8 @@ def render_newborn_dashboard(
     # Get filtered TEI count for total admitted newborns
     newborn_tei_count = count_unique_teis_filtered(tei_df, facility_uids, "tei_orgUnit")
 
-    # Display summary metrics
-    st.success("✅ Successfully fetched Newborn Care Data!")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Unique Tracked Entities (Newborn)", newborn_tei_count)
-    col2.metric(
-        "Unique Enrollments",
-        enrollments_df["enrollment"].nunique() if not enrollments_df.empty else 0,
-    )
-    col3.metric(
-        "Unique Events", events_df["event"].nunique() if not events_df.empty else 0
-    )
+    # REMOVED: The quick numbers/metrics display section
+    # This removes the three columns with Unique Tracked Entities, Unique Enrollments, and Unique Events
 
     # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])

@@ -720,163 +720,6 @@ def render_maternal_dashboard(
     total_facilities = len(facility_mapping)
     total_regions = len(facilities_by_region.keys())
 
-    # ---------------- Selection Counter Display ----------------
-    filter_mode = st.session_state.get("filter_mode", "All Facilities")
-    selected_regions = st.session_state.get("selected_regions", [])
-    selected_facilities = st.session_state.get("selected_facilities", [])
-
-    # Add safe unpacking with default values
-    try:
-        summary_text, css_class = get_current_selection_summary(
-            filter_mode,
-            selected_regions,
-            selected_facilities,
-            facilities_by_region,
-            facility_mapping,
-            total_facilities,
-            total_regions,
-        )
-    except Exception as e:
-        # Fallback values if the function fails
-        summary_text = (
-            "🏥 SELECTION MODE<br><small>Choose facilities to display data</small>"
-        )
-        css_class = "selection-counter"
-
-    st.sidebar.markdown(
-        f'<div class="selection-counter {css_class}">{summary_text}</div>',
-        unsafe_allow_html=True,
-    )
-
-    # ---------------- Mode Selection ----------------
-    st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">🏥 Facility Selection Mode</p>',
-        unsafe_allow_html=True,
-    )
-
-    # Fix the radio index calculation with safe fallback
-    radio_options = ["All Facilities", "By Region", "By Facility"]
-
-    # Safely get the index - handle cases where filter_mode might have old values
-    try:
-        current_index = radio_options.index(st.session_state.filter_mode)
-    except ValueError:
-        # If filter_mode contains an old value like 'facility', reset to default
-        current_index = 0
-        st.session_state.filter_mode = "All Facilities"
-
-    new_filter_mode = st.sidebar.radio(
-        "Select facilities by:",
-        radio_options,
-        index=current_index,
-        key="mode_radio",
-    )
-
-    # Update mode without resetting selections
-    if new_filter_mode != st.session_state.filter_mode:
-        st.session_state.filter_mode = new_filter_mode
-        # Don't reset selections - preserve them across mode changes
-
-    # ---------------- Selection Form ----------------
-    with st.sidebar.form("selection_form"):
-        temp_selected_regions = st.session_state.selected_regions.copy()
-        temp_selected_facilities = st.session_state.selected_facilities.copy()
-
-        if st.session_state.filter_mode == "By Region":
-            st.markdown("**🌍 Select Regions**")
-
-            # Multi-select dropdown for regions with facility counts
-            region_options = {
-                f"{region} ({len(facilities_by_region.get(region, []))} facilities)": region
-                for region in facilities_by_region.keys()
-            }
-
-            selected_region_labels = st.multiselect(
-                "Choose regions:",
-                options=list(region_options.keys()),
-                default=[
-                    label
-                    for label in region_options.keys()
-                    if region_options[label] in st.session_state.selected_regions
-                ],
-                help="Select one or more regions",
-                key="region_multiselect",
-            )
-
-            # Convert back to region names
-            temp_selected_regions = [
-                region_options[label] for label in selected_region_labels
-            ]
-
-        elif st.session_state.filter_mode == "By Facility":
-            st.markdown("**🏢 Select Facilities (grouped by region)**")
-
-            for region_name, facilities in facilities_by_region.items():
-                total_count = len(facilities)
-                selected_count = sum(
-                    1 for fac, _ in facilities if fac in temp_selected_facilities
-                )
-
-                # Determine selection status
-                if selected_count == 0:
-                    header_class = "region-header-none-selected"
-                    icon = "○"
-                elif selected_count == total_count:
-                    header_class = "region-header-fully-selected"
-                    icon = "✅"
-                else:
-                    header_class = "region-header-partially-selected"
-                    icon = "⚠️"
-
-                with st.expander(
-                    f"{icon} {region_name} ({selected_count}/{total_count} selected)",
-                    expanded=False,
-                ):
-                    # Select all checkbox
-                    all_selected_in_region = all(
-                        fac in temp_selected_facilities for fac, _ in facilities
-                    )
-                    select_all_box = st.checkbox(
-                        f"Select all in {region_name}",
-                        value=all_selected_in_region,
-                        key=f"select_all_{region_name}",
-                    )
-
-                    # Handle select all logic
-                    if select_all_box and not all_selected_in_region:
-                        for fac_name, _ in facilities:
-                            if fac_name not in temp_selected_facilities:
-                                temp_selected_facilities.append(fac_name)
-                    elif not select_all_box and all_selected_in_region:
-                        for fac_name, _ in facilities:
-                            if fac_name in temp_selected_facilities:
-                                temp_selected_facilities.remove(fac_name)
-
-                    # Individual facility checkboxes
-                    for fac_name, _ in facilities:
-                        fac_checked = fac_name in temp_selected_facilities
-                        fac_checked = st.checkbox(
-                            fac_name,
-                            value=fac_checked,
-                            key=f"fac_{region_name}_{fac_name}",
-                        )
-                        if fac_checked and fac_name not in temp_selected_facilities:
-                            temp_selected_facilities.append(fac_name)
-                        elif not fac_checked and fac_name in temp_selected_facilities:
-                            temp_selected_facilities.remove(fac_name)
-
-        else:  # All Facilities mode
-            st.markdown("**🏥 All Facilities Mode**")
-
-        selection_submitted = st.form_submit_button("✅ Apply Selection")
-
-        if selection_submitted:
-            # Update selections and trigger data display
-            st.session_state.selected_regions = temp_selected_regions
-            st.session_state.selected_facilities = temp_selected_facilities
-            st.session_state.selection_applied = True
-            st.rerun()
-
     # ---------------- Update Facility Selection ----------------
     facility_uids, display_names, comparison_mode = update_facility_selection(
         st.session_state.filter_mode,
@@ -890,9 +733,6 @@ def render_maternal_dashboard(
     st.session_state.current_facility_uids = facility_uids
     st.session_state.current_display_names = display_names
     st.session_state.current_comparison_mode = comparison_mode
-
-    # REMOVED: View Mode Selection (now handled outside tabs)
-    # Using the passed view_mode parameter instead
 
     # MAIN HEADING with selection summary
     selected_facilities_count = len(facility_uids)
@@ -1149,7 +989,7 @@ def render():
     except Exception:
         pass
 
-    # SIMPLE HARDCODED FIX FOR CHECKBOX VISIBILITY
+    # COMPACT SIDEBAR STYLING
     st.markdown(
         """
     <style>
@@ -1194,6 +1034,38 @@ def render():
         color: white !important;
         fill: white !important;
     }
+    
+    /* REDUCE ALL SPACING IN SIDEBAR */
+    .sidebar .element-container {
+        margin-bottom: 0.2rem !important;
+    }
+    
+    .stButton button {
+        margin-bottom: 0.3rem !important;
+    }
+    
+    .stRadio > div {
+        padding-top: 0.2rem !important;
+        padding-bottom: 0.2rem !important;
+    }
+    
+    .stMarkdown {
+        margin-bottom: 0.3rem !important;
+    }
+    
+    .stForm {
+        margin-bottom: 0.5rem !important;
+    }
+    
+    /* Reduce spacing around dividers */
+    hr {
+        margin: 0.5rem 0 !important;
+    }
+    
+    /* Compact user info */
+    .user-info {
+        margin-bottom: 0.5rem !important;
+    }
     </style>
     """,
         unsafe_allow_html=True,
@@ -1216,7 +1088,7 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Refresh Data Button
+    # Refresh Data Button - MINIMAL SPACING
     if st.sidebar.button("🔄 Refresh Data"):
         st.cache_data.clear()
         clear_cache()
@@ -1240,10 +1112,140 @@ def render():
     programs = get_all_programs()
     program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
 
-    # ================ SHARED VIEW MODE CONTROL ================
+    # ================ FACILITY SELECTION MODE ================
     st.sidebar.markdown("---")
     st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 8px;">📊 Dashboard View Mode</p>',
+        '<p style="color: white; font-weight: 600; margin-bottom: 5px;">🏥 Facility Selection Mode</p>',
+        unsafe_allow_html=True,
+    )
+
+    # Fix the radio index calculation with safe fallback
+    radio_options = ["All Facilities", "By Region", "By Facility"]
+
+    # Safely get the index - handle cases where filter_mode might have old values
+    try:
+        current_index = radio_options.index(st.session_state.filter_mode)
+    except ValueError:
+        # If filter_mode contains an old value like 'facility', reset to default
+        current_index = 0
+        st.session_state.filter_mode = "All Facilities"
+
+    new_filter_mode = st.sidebar.radio(
+        "Select facilities by:",
+        radio_options,
+        index=current_index,
+        key="mode_radio",
+    )
+
+    # Update mode without resetting selections
+    if new_filter_mode != st.session_state.filter_mode:
+        st.session_state.filter_mode = new_filter_mode
+        # Don't reset selections - preserve them across mode changes
+
+    # ---------------- Selection Form ----------------
+    with st.sidebar.form("selection_form"):
+        temp_selected_regions = st.session_state.selected_regions.copy()
+        temp_selected_facilities = st.session_state.selected_facilities.copy()
+
+        if st.session_state.filter_mode == "By Region":
+            st.markdown("**🌍 Select Regions**")
+
+            # Multi-select dropdown for regions with facility counts
+            region_options = {
+                f"{region} ({len(facilities_by_region.get(region, []))} facilities)": region
+                for region in facilities_by_region.keys()
+            }
+
+            selected_region_labels = st.multiselect(
+                "Choose regions:",
+                options=list(region_options.keys()),
+                default=[
+                    label
+                    for label in region_options.keys()
+                    if region_options[label] in st.session_state.selected_regions
+                ],
+                help="Select one or more regions",
+                key="region_multiselect",
+            )
+
+            # Convert back to region names
+            temp_selected_regions = [
+                region_options[label] for label in selected_region_labels
+            ]
+
+        elif st.session_state.filter_mode == "By Facility":
+            st.markdown("**🏢 Select Facilities (grouped by region)**")
+
+            for region_name, facilities in facilities_by_region.items():
+                total_count = len(facilities)
+                selected_count = sum(
+                    1 for fac, _ in facilities if fac in temp_selected_facilities
+                )
+
+                # Determine selection status
+                if selected_count == 0:
+                    header_class = "region-header-none-selected"
+                    icon = "○"
+                elif selected_count == total_count:
+                    header_class = "region-header-fully-selected"
+                    icon = "✅"
+                else:
+                    header_class = "region-header-partially-selected"
+                    icon = "⚠️"
+
+                with st.expander(
+                    f"{icon} {region_name} ({selected_count}/{total_count} selected)",
+                    expanded=False,
+                ):
+                    # Select all checkbox
+                    all_selected_in_region = all(
+                        fac in temp_selected_facilities for fac, _ in facilities
+                    )
+                    select_all_box = st.checkbox(
+                        f"Select all in {region_name}",
+                        value=all_selected_in_region,
+                        key=f"select_all_{region_name}",
+                    )
+
+                    # Handle select all logic
+                    if select_all_box and not all_selected_in_region:
+                        for fac_name, _ in facilities:
+                            if fac_name not in temp_selected_facilities:
+                                temp_selected_facilities.append(fac_name)
+                    elif not select_all_box and all_selected_in_region:
+                        for fac_name, _ in facilities:
+                            if fac_name in temp_selected_facilities:
+                                temp_selected_facilities.remove(fac_name)
+
+                    # Individual facility checkboxes
+                    for fac_name, _ in facilities:
+                        fac_checked = fac_name in temp_selected_facilities
+                        fac_checked = st.checkbox(
+                            fac_name,
+                            value=fac_checked,
+                            key=f"fac_{region_name}_{fac_name}",
+                        )
+                        if fac_checked and fac_name not in temp_selected_facilities:
+                            temp_selected_facilities.append(fac_name)
+                        elif not fac_checked and fac_name in temp_selected_facilities:
+                            temp_selected_facilities.remove(fac_name)
+
+        else:  # All Facilities mode
+            st.markdown("**🏥 All Facilities Mode**")
+
+        selection_submitted = st.form_submit_button("✅ Apply Selection")
+
+        if selection_submitted:
+            # Update selections and trigger data display
+            st.session_state.selected_regions = temp_selected_regions
+            st.session_state.selected_facilities = temp_selected_facilities
+            st.session_state.selection_applied = True
+            st.rerun()
+
+    # ================ DASHBOARD VIEW MODE ================
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(
+        '<p style="color: white; font-weight: 600; margin-bottom: 5px;">📊 Dashboard View Mode</p>',
         unsafe_allow_html=True,
     )
 
@@ -1255,9 +1257,6 @@ def render():
         help="Normal Trend: Single trend line | Comparison View: Compare multiple facilities/regions",
         key="view_mode_shared",
     )
-
-    st.sidebar.markdown("---")
-    # ================ END SHARED VIEW MODE ================
 
     # CREATE PROFESSIONAL TABS IN MAIN AREA
     tab1, tab2, tab3, tab4 = st.tabs(

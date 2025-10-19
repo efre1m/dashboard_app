@@ -1,4 +1,4 @@
-# newborns_dashboard/reginal_newborn.py
+# newborns_dashboard/regional_newborn.py
 import streamlit as st
 import pandas as pd
 import logging
