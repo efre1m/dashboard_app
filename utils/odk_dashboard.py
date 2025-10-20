@@ -24,7 +24,7 @@ def list_forms_cached():
 
 def display_odk_dashboard(user: dict = None):
     """
-    Display simplified ODK forms dashboard with downloadable CSV files.
+    Display simplified forms dashboard with downloadable CSV files.
     Automatically loads data on first render.
     """
     st.markdown(
@@ -79,34 +79,6 @@ def display_odk_dashboard(user: dict = None):
         justify-content: flex-end;
         margin-bottom: 20px;
     }
-    .user-info-box {
-        background: #f0f8ff;
-        border-left: 4px solid #4169e1;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-    }
-    .national-user-box {
-        background: #e8f5e8;
-        border-left: 4px solid #4caf50;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-    }
-    .regional-user-box {
-        background: #fff3cd;
-        border-left: 4px solid #ffc107;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-    }
-    .mapping-info {
-        background: #e3f2fd;
-        border-left: 4px solid #2196f3;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-    }
     </style>
     """,
         unsafe_allow_html=True,
@@ -115,7 +87,7 @@ def display_odk_dashboard(user: dict = None):
     # 🔥 OPTIMIZATION: Get current user info directly from session state
     current_user = st.session_state.get("user", {})
     if not current_user:
-        st.warning("🚪 Please log in to access ODK data")
+        st.warning("🚪 Please log in to access data")
         return
 
     current_user_id = current_user.get("id", "anonymous")
@@ -139,7 +111,7 @@ def display_odk_dashboard(user: dict = None):
             # 🔥 USER CHANGED - CLEAR ALL OLD DATA
             st.info(f"🔄 Loading data for {current_username}...")
 
-            # Clear ALL ODK session data
+            # Clear ALL session data
             for key in list(st.session_state.keys()):
                 if key.startswith("odk_forms_data_") or key.startswith(
                     "last_odk_refresh_"
@@ -156,51 +128,15 @@ def display_odk_dashboard(user: dict = None):
     if odk_data_key not in st.session_state:
         st.session_state[odk_data_key] = {}
 
-    # Display user info
-    user_role = current_user.get("role", "")
-    database_region_id = current_user.get("region_id")
-    region_name = current_user.get("region_name", "Unknown Region")
-
-    # Get ODK codes for this region
-    odk_codes = get_odk_region_codes(database_region_id) if database_region_id else []
-    odk_codes_display = ", ".join(odk_codes) if odk_codes else "No mapping"
-
-    if user_role == "national":
-        st.markdown(
-            f"""
-        <div class="national-user-box">
-            <strong>👑 NATIONAL USER - FULL ACCESS</strong><br>
-            <strong>User:</strong> {current_username} | 
-            <strong>Role:</strong> {user_role.title()} | 
-            <strong>Access Level:</strong> FULL ACCESS TO ALL DATA<br>
-            <strong>Filtering:</strong> ❌ NO FILTERING - All ODK data from ALL regions
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-    elif user_role == "regional":
-        st.markdown(
-            f"""
-        <div class="regional-user-box">
-            <strong>📍 REGIONAL USER - FILTERED ACCESS</strong><br>
-            <strong>User:</strong> {current_username} | 
-            <strong>Role:</strong> {user_role.title()} | 
-            <strong>Database Region:</strong> {region_name} (ID: {database_region_id}) |
-            <strong>ODK Filter Codes:</strong> {odk_codes_display}
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
     # Header with action buttons
     col1, col2 = st.columns([3, 1])
 
     with col1:
         st.markdown(
-            '<div class="main-header">📋 Integrated Mentorship Data (ODK)</div>',
+            '<div class="main-header">📋 Integrated Mentorship Data</div>',
             unsafe_allow_html=True,
         )
-        st.markdown("**All available ODK forms are automatically loaded below**")
+        st.markdown("**All available forms are automatically loaded below**")
 
     with col2:
         st.markdown('<div class="action-buttons-container">', unsafe_allow_html=True)
@@ -210,19 +146,22 @@ def display_odk_dashboard(user: dict = None):
             st.session_state[last_refresh_key] = pd.Timestamp.now()
             st.rerun()
 
-        has_data = (
-            st.session_state.get(odk_data_key)
-            and len(st.session_state[odk_data_key]) > 0
-        )
-        if has_data:
-            if st.button("💾 Download All", use_container_width=True, type="secondary"):
+        # Download All button ALWAYS visible - no conditions
+        if st.button("💾 Download All", use_container_width=True, type="secondary"):
+            has_data = (
+                st.session_state.get(odk_data_key)
+                and len(st.session_state[odk_data_key]) > 0
+            )
+            if has_data:
                 download_all_forms(st.session_state[odk_data_key])
+            else:
+                st.warning("No data available to download. Please refresh data first.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
     # 🔥 OPTIMIZATION: Load data only if needed
     if not st.session_state[odk_data_key]:
-        with st.spinner("🔄 Loading ODK forms data..."):
+        with st.spinner("🔄 Loading forms data..."):
             try:
                 # Fetch data once
                 odk_data = fetch_odk_data_for_user(current_user)
@@ -231,15 +170,10 @@ def display_odk_dashboard(user: dict = None):
                 st.session_state[odk_data_key] = forms_data
                 st.session_state[last_refresh_key] = pd.Timestamp.now()
 
-                if user_role == "national":
-                    st.success(f"✅ Loaded {len(forms_data)} forms with FULL ACCESS")
-                elif user_role == "regional":
-                    st.success(
-                        f"✅ Loaded {len(forms_data)} forms filtered by your region"
-                    )
+                st.success(f"✅ Loaded {len(forms_data)} forms")
 
             except Exception as e:
-                st.error(f"❌ Failed to load ODK data: {str(e)}")
+                st.error(f"❌ Failed to load data: {str(e)}")
 
     # Show refresh info
     if st.session_state[last_refresh_key]:
@@ -253,7 +187,7 @@ def display_odk_dashboard(user: dict = None):
     if st.session_state.get(odk_data_key) and len(st.session_state[odk_data_key]) > 0:
         display_forms_grid(st.session_state[odk_data_key])
     else:
-        st.info("📭 No ODK forms data available. Click 'Refresh Data' to try again.")
+        st.info("📭 No forms data available. Click 'Refresh Data' to try again.")
 
 
 def display_forms_grid(forms_data: Dict[str, pd.DataFrame]):
@@ -324,7 +258,7 @@ def download_all_forms(forms_data: Dict[str, pd.DataFrame]):
     st.download_button(
         label="💾 Download All as ZIP",
         data=zip_buffer,
-        file_name="odk_forms.zip",
+        file_name="forms.zip",
         mime="application/zip",
         use_container_width=True,
         key="download_all_zip",

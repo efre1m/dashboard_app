@@ -180,11 +180,11 @@ def calculate_maternal_indicators(maternal_events_df, facility_uids):
 def calculate_newborn_indicators(newborn_events_df, facility_uids):
     """Calculate newborn indicators"""
     if newborn_events_df.empty:
-        return {"total_admitted": 0, "nmr": 0.0}
+        return {"total_admitted": 0, "nmr": "N/A"}  # CHANGED: 0.0 → "N/A"
 
     # For newborn admitted count, we need to count from filtered TEI data separately
     total_admitted = 0  # Placeholder - will be set from filtered TEI count
-    nmr = 0.0  # Placeholder - will need specific NMR calculation
+    nmr = "N/A"  # CHANGED: 0.0 → "N/A"
 
     return {"total_admitted": total_admitted, "nmr": nmr}
 
@@ -400,7 +400,7 @@ def render_summary_dashboard(
             "Start Date": [newborn_start_date],
             f"{location_type}": [location_name],
             "Total Admitted Newborns": [newborn_tei_count],
-            "NMR": [f"{newborn_indicators['nmr']}%"],
+            "NMR": [f"{newborn_indicators['nmr']}"],
             "Stillbirth Rate": [
                 f"{maternal_indicators['stillbirth_rate']} per 1000 births"
             ],
@@ -441,7 +441,7 @@ def render_summary_dashboard(
             newborn_start_date,
             location_name,
             f"{newborn_tei_count:,}",
-            f"{newborn_indicators['nmr']}%",
+            f"{newborn_indicators['nmr']}",
             f"{maternal_indicators['stillbirth_rate']} per 1000 births",
             f"{maternal_indicators['live_births']:,}",
             f"{maternal_indicators['stillbirths']:,}",
@@ -1264,7 +1264,7 @@ def render():
             "🤰 **Maternal Inpatient Data**",
             "👶 **Newborn Inpatient Data**",
             "📊 **Summary Dashboard**",
-            "📋 **ODK Forms**",
+            "📋 **Integrated Mentorship Data**",
         ]
     )
 
