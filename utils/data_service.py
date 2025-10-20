@@ -4,7 +4,6 @@ import pandas as pd
 import logging
 from utils.queries import get_orgunit_uids_for_user, get_program_by_uid
 from utils.dhis2 import fetch_dhis2_data_for_ous
-from utils.config import settings
 from utils.odk_api import fetch_all_forms_as_dataframes, fetch_form_csv, list_forms
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -18,25 +17,16 @@ def fetch_program_data_for_user(
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
     Fetch DHIS2 program data for a given user and return structured DataFrames.
-
-    Args:
-        user: User dictionary with role and access info
-        program_uid: Specific program UID to fetch data for
-        facility_uids: Optional list of facility UIDs to filter by
-        period_label: Period aggregation level
     """
-    # If no program_uid provided, we can't fetch data
     if not program_uid:
         logging.warning("No program UID provided.")
         return {}
 
-    # Get program info for display purposes
     program_info = get_program_by_uid(program_uid)
     if not program_info:
         logging.warning(f"Program with UID {program_uid} not found in database.")
         return {}
 
-    # Get OU access based on role
     if facility_uids:
         ou_uids = facility_uids
         all_ou_pairs = get_orgunit_uids_for_user(user)
@@ -57,7 +47,6 @@ def fetch_program_data_for_user(
     ps_dict = dhis2_data.get("programStages", {})
     dhis2_ou_names = dhis2_data.get("orgUnitNames", {})
 
-    # Merge local OU names with DHIS2 OU names
     final_ou_names = {**dhis2_ou_names, **ou_names}
 
     if not patients:
@@ -66,11 +55,10 @@ def fetch_program_data_for_user(
         )
         return {"program_info": program_info}
 
-    # Helper: map UID -> name
     def map_org_name(uid: str) -> str:
         return final_ou_names.get(uid, "Unknown OrgUnit")
 
-    # --- TEI DataFrame ---
+    # TEI DataFrame
     tei_df = pd.json_normalize(
         patients,
         record_path=["attributes"],
@@ -83,7 +71,7 @@ def fetch_program_data_for_user(
     if not tei_df.empty:
         tei_df["orgUnit_name"] = tei_df["tei_orgUnit"].apply(map_org_name)
 
-    # --- Enrollment DataFrame ---
+    # Enrollment DataFrame
     enr_df = pd.json_normalize(
         patients,
         record_path=["enrollments"],
@@ -96,7 +84,7 @@ def fetch_program_data_for_user(
     if not enr_df.empty:
         enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
 
-    # --- Events DataFrame ---
+    # Events DataFrame
     events_list = []
     for tei in patients:
         tei_id = tei.get("trackedEntityInstance")
@@ -131,7 +119,7 @@ def fetch_program_data_for_user(
 
     evt_df = pd.DataFrame(events_list)
 
-    # --- Handle period labeling ---
+    # Handle period labeling
     if not evt_df.empty and "eventDate" in evt_df.columns:
         evt_df["event_date"] = pd.to_datetime(evt_df["eventDate"], errors="coerce")
         if period_label == "Daily":
@@ -143,7 +131,7 @@ def fetch_program_data_for_user(
         else:
             evt_df["period"] = evt_df["event_date"].dt.to_period("Y").astype(str)
 
-    # --- Convert enrollment dates ---
+    # Convert enrollment dates
     if not enr_df.empty and "enrollmentDate" in enr_df.columns:
         enr_df["enrollmentDate"] = pd.to_datetime(
             enr_df["enrollmentDate"], errors="coerce"
@@ -162,31 +150,44 @@ def fetch_odk_data_for_user(
     user: dict, form_id: str = None
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
-    Fetch ODK form data and return the CSV exactly as it is in the system.
-
-    Args:
-        user: User dictionary (for future role-based access control)
-        form_id: Specific form ID to fetch. If None, fetches all forms.
-
-    Returns:
-        Dictionary containing ODK form dataframes
+    Fetch ODK form data filtered by user's access level.
+    Preserves all columns exactly as they are from ODK.
     """
     odk_data = {}
 
     try:
         if form_id:
-            # Fetch specific form
             df = fetch_form_csv(form_id)
+            if not df.empty and user:
+                from utils.odk_api import filter_by_region
+
+                user_role = user.get("role", "")
+                if user_role == "regional" and user.get("region_id"):
+                    df = filter_by_region(df, user.get("region_id"))
+                    logging.info(
+                        f"Applied regional filtering for form {form_id}, region_id: {user.get('region_id')}"
+                    )
+                elif user_role == "national":
+                    logging.info(
+                        f"✅ National user - NO filtering for form {form_id} - returning ALL data"
+                    )
+                # No else - national users get all data without filtering
+
             if not df.empty:
                 odk_data[form_id] = df
-                logging.info(f"Retrieved ODK form '{form_id}' with {len(df)} records")
+                logging.info(
+                    f"Retrieved ODK form '{form_id}' with {len(df)} records and {len(df.columns)} columns"
+                )
             else:
                 logging.warning(f"No data found for ODK form '{form_id}'")
         else:
-            # Fetch all forms
-            form_dfs = fetch_all_forms_as_dataframes()
+            form_dfs = fetch_all_forms_as_dataframes(user)
             odk_data.update(form_dfs)
-            logging.info(f"Retrieved {len(form_dfs)} ODK forms")
+
+            user_role = user.get("role", "unknown") if user else "none"
+            logging.info(
+                f"✅ Retrieved {len(form_dfs)} ODK forms for user role: {user_role}"
+            )
 
     except Exception as e:
         logging.error(f"Error fetching ODK data: {e}")
@@ -203,27 +204,15 @@ def fetch_combined_data_for_user(
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
     Fetch both DHIS2 program data and ODK form data for a user.
-
-    Args:
-        user: User dictionary with role and access info
-        program_uid: Specific program UID to fetch data for
-        facility_uids: Optional list of facility UIDs to filter by
-        period_label: Period aggregation level
-        odk_form_id: Specific ODK form ID to fetch. If None, fetches all forms.
-
-    Returns:
-        Combined dictionary with both DHIS2 and ODK data
     """
     result = {}
 
-    # Fetch DHIS2 data if program_uid provided
     if program_uid:
         dhis2_data = fetch_program_data_for_user(
             user, program_uid, facility_uids, period_label
         )
         result.update(dhis2_data)
 
-    # Always fetch ODK data
     odk_data = fetch_odk_data_for_user(user, odk_form_id)
     result.update(odk_data)
 
@@ -231,12 +220,7 @@ def fetch_combined_data_for_user(
 
 
 def list_available_odk_forms() -> List[dict]:
-    """
-    List all available ODK forms in the project.
-
-    Returns:
-        List of form metadata dictionaries
-    """
+    """List all available ODK forms in the project."""
     try:
         forms = list_forms()
         return forms
