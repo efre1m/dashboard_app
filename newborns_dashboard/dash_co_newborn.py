@@ -9,23 +9,35 @@ from newborns_dashboard.kmc_coverage import (
     render_kmc_facility_comparison_chart,
     render_kmc_region_comparison_chart,
 )
+from newborns_dashboard.kpi_cpap import (
+    compute_cpap_kpi,
+    render_cpap_trend_chart,
+    render_cpap_facility_comparison_chart,
+    render_cpap_region_comparison_chart,
+)
 
-# KPI mapping for KMC coverage only
+# KPI mapping for KMC coverage and CPAP coverage
 KPI_MAPPING = {
     "LBW KMC Coverage (%)": {
         "title": "LBW KMC Coverage (%)",
         "numerator_name": "KMC Cases",
         "denominator_name": "Total LBW Newborns",
     },
+    "CPAP Coverage for RDS (%)": {
+        "title": "CPAP Coverage for RDS (%)",
+        "numerator_name": "CPAP Cases",
+        "denominator_name": "Total RDS Newborns",
+    },
 }
 
-# Only KMC coverage KPI
-KPI_OPTIONS = ["LBW KMC Coverage (%)"]
+# Both KMC and CPAP KPIs
+KPI_OPTIONS = ["LBW KMC Coverage (%)", "CPAP Coverage for RDS (%)"]
 
 # KPI Grouping for Tab Navigation
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
+        "CPAP Coverage for RDS (%)",
     ],
 }
 
@@ -87,8 +99,8 @@ def render_kpi_tab_navigation():
     selected_kpi = st.session_state.selected_kpi_neonatal
 
     with tab1:
-        # Only KMC Coverage KPI
-        (col1,) = st.columns(1)
+        # Both KMC Coverage and CPAP Coverage KPIs
+        col1, col2 = st.columns(2)
 
         with col1:
             if st.button(
@@ -100,6 +112,19 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "LBW KMC Coverage (%)"
+
+        with col2:
+            if st.button(
+                "💨 CPAP Coverage",
+                key="cpap_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "CPAP Coverage for RDS (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "CPAP Coverage for RDS (%)"
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_kpi_neonatal:
@@ -147,6 +172,39 @@ def render_trend_chart_section(
             facility_uids,
         )
 
+    elif kpi_selection == "CPAP Coverage for RDS (%)":
+        period_data = []
+        for period in filtered_events["period"].unique():
+            period_df = filtered_events[filtered_events["period"] == period]
+            period_display = (
+                period_df["period_display"].iloc[0] if not period_df.empty else period
+            )
+            cpap_data = compute_cpap_kpi(period_df, facility_uids)
+
+            period_data.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": cpap_data["cpap_rate"],
+                    "CPAP Cases": cpap_data["cpap_count"],
+                    "Total RDS Newborns": cpap_data["total_rds"],
+                }
+            )
+
+        group = pd.DataFrame(period_data)
+        render_cpap_trend_chart(
+            group,
+            "period_display",
+            "value",
+            "CPAP Coverage for RDS (%)",
+            bg_color,
+            text_color,
+            display_names,
+            "CPAP Cases",
+            "Total RDS Newborns",
+            facility_uids,
+        )
+
 
 def render_comparison_chart(
     kpi_selection,
@@ -177,6 +235,19 @@ def render_comparison_chart(
                 numerator_name="KMC Cases",
                 denominator_name="Total LBW Newborns",
             )
+        elif kpi_selection == "CPAP Coverage for RDS (%)":
+            render_cpap_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                value_col="value",
+                title="CPAP Coverage for RDS (%)",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name="CPAP Cases",
+                denominator_name="Total RDS Newborns",
+            )
 
     else:  # region comparison (only for national)
         if kpi_selection == "LBW KMC Coverage (%)":
@@ -192,6 +263,20 @@ def render_comparison_chart(
                 facilities_by_region=facilities_by_region,
                 numerator_name="KMC Cases",
                 denominator_name="Total LBW Newborns",
+            )
+        elif kpi_selection == "CPAP Coverage for RDS (%)":
+            render_cpap_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                value_col="value",
+                title="CPAP Coverage for RDS (%)",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                region_mapping={},
+                facilities_by_region=facilities_by_region,
+                numerator_name="CPAP Cases",
+                denominator_name="Total RDS Newborns",
             )
 
 
