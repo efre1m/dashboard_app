@@ -643,6 +643,241 @@ def render_summary_dashboard(
             unsafe_allow_html=True,
         )
 
+        # ================ FACILITY COMPARISON TABLE - TRANSPOSED LAYOUT ================
+    st.markdown("---")
+    st.markdown("### 📊 Mothers & Newborns by facility")
+
+    # Calculate facility comparison data - ALWAYS ALL FACILITIES
+    facility_comparison_data = calculate_facility_comparison_data(
+        maternal_tei_df, newborn_tei_df, facility_mapping
+    )
+
+    # Create the comparison table data
+    if facility_comparison_data:
+        # Prepare data for the table - TRANSPOSED LAYOUT
+        facilities = list(facility_comparison_data.keys())
+
+        # Calculate totals
+        total_mothers = sum(
+            data["mothers"] for data in facility_comparison_data.values()
+        )
+        total_newborns = sum(
+            data["newborns"] for data in facility_comparison_data.values()
+        )
+
+        # Create transposed table structure WITHOUT HEADER ROW
+        transposed_data = []
+
+        # Add each facility as a row
+        for i, facility in enumerate(facilities, 1):
+            transposed_data.append(
+                {
+                    "No": i,
+                    "Facility Name": facility,
+                    "Admitted Mothers": f"{facility_comparison_data[facility]['mothers']:,}",
+                    "Admitted Newborns": f"{facility_comparison_data[facility]['newborns']:,}",
+                }
+            )
+
+        # Add TOTAL row at the bottom
+        transposed_data.append(
+            {
+                "No": "",
+                "Facility Name": "TOTAL",
+                "Admitted Mothers": f"{total_mothers:,}",
+                "Admitted Newborns": f"{total_newborns:,}",
+            }
+        )
+
+        # Convert to DataFrame
+        transposed_df = pd.DataFrame(transposed_data)
+
+        # Display the styled table - USING EXACT SAME STYLING AS PREVIOUS TABLES
+        st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
+        st.markdown(
+            transposed_df.style.set_table_attributes(
+                'class="summary-table newborn-table"'
+            )
+            .hide(axis="index")
+            .set_properties(**{"text-align": "left"})
+            .set_table_styles(
+                [
+                    {
+                        "selector": "thead th",
+                        "props": [("color", "white"), ("font-weight", "600")],
+                    },
+                    {
+                        "selector": "tbody td",
+                        "props": [("border-bottom", "1px solid #f0f0f0")],
+                    },
+                    {
+                        "selector": "tbody tr:last-child td",
+                        "props": [("border-bottom", "none")],
+                    },
+                    # Center align number column
+                    {
+                        "selector": "td:first-child",
+                        "props": [
+                            ("text-align", "center"),
+                            ("font-weight", "600"),
+                            ("color", "#666"),
+                        ],
+                    },
+                    # Center align the numbers columns
+                    {
+                        "selector": "td:nth-child(3), td:nth-child(4)",
+                        "props": [("text-align", "center")],
+                    },
+                    # Style the TOTAL row - same as previous
+                    {
+                        "selector": "tbody tr:last-child td",
+                        "props": [
+                            ("font-weight", "700"),
+                            ("background-color", "#f8f9fa"),
+                            ("color", "#2c3e50"),
+                        ],
+                    },
+                    # Header styling for number columns
+                    {
+                        "selector": "th:nth-child(3), th:nth-child(4)",
+                        "props": [("text-align", "center")],
+                    },
+                ]
+            )
+            .to_html(),
+            unsafe_allow_html=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Add info about filtered facilities
+        total_facilities_in_region = len(facility_mapping)
+        facilities_with_data = len(facility_comparison_data)
+        st.markdown(
+            f"<small>📋 Showing {facilities_with_data} facilities with data (out of {total_facilities_in_region} total in {region_name})</small>",
+            unsafe_allow_html=True,
+        )
+
+        # Add download button for facility data
+        st.markdown("---")
+        col1, col2 = st.columns([3, 1])
+
+        with col2:
+            # Prepare download data
+            download_data = []
+            for facility_short, data in facility_comparison_data.items():
+                download_data.append(
+                    {
+                        "Facility Name": facility_short,
+                        "Full Facility Name": data["full_name"],
+                        "Admitted Mothers": data["mothers"],
+                        "Admitted Newborns": data["newborns"],
+                    }
+                )
+
+            # Add total row
+            download_data.append(
+                {
+                    "Facility Name": "TOTAL",
+                    "Full Facility Name": "TOTAL",
+                    "Admitted Mothers": total_mothers,
+                    "Admitted Newborns": total_newborns,
+                }
+            )
+
+            download_df = pd.DataFrame(download_data)
+            facility_csv = download_df.to_csv(index=False)
+
+            st.download_button(
+                "📥 Download Facility Data",
+                data=facility_csv,
+                file_name=f"facility_comparison_{region_name.replace(' ', '_')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+    else:
+        st.info("No facility data available for comparison.")
+
+
+def calculate_facility_comparison_data(
+    maternal_tei_df, newborn_tei_df, facility_mapping
+):
+    """Calculate facility comparison data for ALL facilities in the region, regardless of user selection"""
+    facility_data = {}
+
+    # Always use ALL facilities in the region, ignore user selection
+    facilities_to_include = list(facility_mapping.keys())
+
+    # Iterate through each facility
+    for facility_name in facilities_to_include:
+        if facility_name in facility_mapping:
+            facility_uid = facility_mapping[facility_name]
+
+            # Count mothers in this facility
+            maternal_count = count_unique_teis_filtered(
+                maternal_tei_df, [facility_uid], "tei_orgUnit"
+            )
+
+            # Count newborns in this facility
+            newborn_count = count_unique_teis_filtered(
+                newborn_tei_df, [facility_uid], "tei_orgUnit"
+            )
+
+            # Only include facilities with data (at least one mother or newborn)
+            if maternal_count > 0 or newborn_count > 0:
+                # Shorten facility name if too long
+                short_name = shorten_facility_name(facility_name)
+                facility_data[short_name] = {
+                    "mothers": maternal_count,
+                    "newborns": newborn_count,
+                    "full_name": facility_name,
+                }
+
+    return facility_data
+
+
+def shorten_facility_name(facility_name):
+    """Shorten facility name aggressively for compact display"""
+    # Remove common facility type words completely
+    remove_words = [
+        "Health Center",
+        "HC",
+        "Hospital",
+        "Hosp",
+        "Clinic",
+        "Health Facility",
+        "Health Post",
+        "Dispensary",
+        "Medical Center",
+        "Medical",
+        "Centre",
+        "Center",
+    ]
+
+    short_name = facility_name
+    for word in remove_words:
+        short_name = short_name.replace(word, "").strip()
+
+    # Remove extra spaces, commas, and special characters
+    short_name = " ".join(short_name.split())
+    short_name = short_name.replace(" ,", ",").replace(",", "").strip(" -")
+
+    # Aggressive shortening: take first 2-3 words max
+    words = short_name.split()
+    if len(words) > 2:
+        short_name = " ".join(words[:2])
+
+    # Final length check
+    if len(short_name) > 20:
+        short_name = short_name[:18] + ".."
+
+    # If empty after processing, use first 15 chars of original
+    if not short_name:
+        short_name = (
+            facility_name[:15] + ".." if len(facility_name) > 15 else facility_name
+        )
+
+    return short_name
+
 
 def render_maternal_dashboard(
     user,

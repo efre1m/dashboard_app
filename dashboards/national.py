@@ -676,8 +676,186 @@ def render_summary_dashboard(
             unsafe_allow_html=True,
         )
 
+        # ================ REGIONAL COMPARISON TABLE - TRANSPOSED LAYOUT ================
+    st.markdown("---")
+    st.markdown("### 📊 Mothers & Newborns by region")
 
-# In national.py - Update the render_maternal_dashboard function
+    # Calculate regional comparison data
+    regional_comparison_data = calculate_regional_comparison_data(
+        maternal_tei_df, newborn_tei_df, facilities_by_region, facility_mapping
+    )
+
+    # Create the comparison table data
+    if regional_comparison_data:
+        # Prepare data for the table
+        regions = list(regional_comparison_data.keys())
+
+        # Calculate totals
+        total_mothers = sum(
+            data["mothers"] for data in regional_comparison_data.values()
+        )
+        total_newborns = sum(
+            data["newborns"] for data in regional_comparison_data.values()
+        )
+
+        # Create transposed table structure WITHOUT HEADER ROW
+        transposed_data = []
+
+        # Add each region as a row
+        for i, region in enumerate(regions, 1):
+            transposed_data.append(
+                {
+                    "No": i,
+                    "Region Name": region,
+                    "Admitted Mothers": f"{regional_comparison_data[region]['mothers']:,}",
+                    "Admitted Newborns": f"{regional_comparison_data[region]['newborns']:,}",
+                }
+            )
+
+        # Add TOTAL row at the bottom
+        transposed_data.append(
+            {
+                "No": "",
+                "Region Name": "TOTAL",
+                "Admitted Mothers": f"{total_mothers:,}",
+                "Admitted Newborns": f"{total_newborns:,}",
+            }
+        )
+
+        # Convert to DataFrame
+        transposed_df = pd.DataFrame(transposed_data)
+
+        # Display the styled table - USING EXACT SAME STYLING AS PREVIOUS TABLES
+        st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
+        st.markdown(
+            transposed_df.style.set_table_attributes(
+                'class="summary-table newborn-table"'
+            )
+            .hide(axis="index")
+            .set_properties(**{"text-align": "left"})
+            .set_table_styles(
+                [
+                    {
+                        "selector": "thead th",
+                        "props": [("color", "white"), ("font-weight", "600")],
+                    },
+                    {
+                        "selector": "tbody td",
+                        "props": [("border-bottom", "1px solid #f0f0f0")],
+                    },
+                    {
+                        "selector": "tbody tr:last-child td",
+                        "props": [("border-bottom", "none")],
+                    },
+                    # Center align number column
+                    {
+                        "selector": "td:first-child",
+                        "props": [
+                            ("text-align", "center"),
+                            ("font-weight", "600"),
+                            ("color", "#666"),
+                        ],
+                    },
+                    # Center align the numbers columns
+                    {
+                        "selector": "td:nth-child(3), td:nth-child(4)",
+                        "props": [("text-align", "center")],
+                    },
+                    # Style the TOTAL row - same as previous
+                    {
+                        "selector": "tbody tr:last-child td",
+                        "props": [
+                            ("font-weight", "700"),
+                            ("background-color", "#f8f9fa"),
+                            ("color", "#2c3e50"),
+                        ],
+                    },
+                    # Header styling for number columns
+                    {
+                        "selector": "th:nth-child(3), th:nth-child(4)",
+                        "props": [("text-align", "center")],
+                    },
+                ]
+            )
+            .to_html(),
+            unsafe_allow_html=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Add info about regions with data
+        total_regions_in_country = len(facilities_by_region)
+        regions_with_data = len(regional_comparison_data)
+        st.markdown(
+            f"<small>📋 Showing {regions_with_data} regions with data (out of {total_regions_in_country} total in {country_name})</small>",
+            unsafe_allow_html=True,
+        )
+
+        # Add download button for regional data
+        st.markdown("---")
+        col1, col2 = st.columns([3, 1])
+
+        with col2:
+            # Prepare download data
+            download_data = []
+            for region, data in regional_comparison_data.items():
+                download_data.append(
+                    {
+                        "Region": region,
+                        "Admitted Mothers": data["mothers"],
+                        "Admitted Newborns": data["newborns"],
+                    }
+                )
+
+            # Add total row
+            download_data.append(
+                {
+                    "Region": "TOTAL",
+                    "Admitted Mothers": total_mothers,
+                    "Admitted Newborns": total_newborns,
+                }
+            )
+
+            download_df = pd.DataFrame(download_data)
+            regional_csv = download_df.to_csv(index=False)
+
+            st.download_button(
+                "📥 Download Regional Data",
+                data=regional_csv,
+                file_name=f"regional_comparison_{country_name.replace(' ', '_')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+    else:
+        st.info("No regional data available for comparison.")
+
+
+def calculate_regional_comparison_data(
+    maternal_tei_df, newborn_tei_df, facilities_by_region, facility_mapping
+):
+    """Calculate regional comparison data for mothers and newborns"""
+    regional_data = {}
+
+    # Iterate through each region and its facilities
+    for region_name, facilities in facilities_by_region.items():
+        # Get facility UIDs for this region
+        region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
+
+        # Count mothers in this region
+        maternal_count = count_unique_teis_filtered(
+            maternal_tei_df, region_facility_uids, "tei_orgUnit"
+        )
+
+        # Count newborns in this region
+        newborn_count = count_unique_teis_filtered(
+            newborn_tei_df, region_facility_uids, "tei_orgUnit"
+        )
+
+        regional_data[region_name] = {
+            "mothers": maternal_count,
+            "newborns": newborn_count,
+        }
+
+    return regional_data
 
 
 def render_maternal_dashboard(
