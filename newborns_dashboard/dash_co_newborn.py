@@ -15,8 +15,14 @@ from newborns_dashboard.kpi_cpap import (
     render_cpap_facility_comparison_chart,
     render_cpap_region_comparison_chart,
 )
+from newborns_dashboard.kpi_hypothermia import (
+    compute_hypothermia_kpi,
+    render_hypothermia_trend_chart,
+    render_hypothermia_facility_comparison_chart,
+    render_hypothermia_region_comparison_chart,
+)
 
-# KPI mapping for KMC coverage and CPAP coverage
+# KPI mapping for KMC coverage, CPAP coverage, and Hypothermia
 KPI_MAPPING = {
     "LBW KMC Coverage (%)": {
         "title": "LBW KMC Coverage (%)",
@@ -28,16 +34,28 @@ KPI_MAPPING = {
         "numerator_name": "CPAP Cases",
         "denominator_name": "Total RDS Newborns",
     },
+    "Hypothermia on Admission (%)": {
+        "title": "Hypothermia on Admission (%)",
+        "numerator_name": "Hypothermia Cases",
+        "denominator_name": "Total Admissions",
+    },
 }
 
-# Both KMC and CPAP KPIs
-KPI_OPTIONS = ["LBW KMC Coverage (%)", "CPAP Coverage for RDS (%)"]
+# All KPI options including Hypothermia
+KPI_OPTIONS = [
+    "LBW KMC Coverage (%)",
+    "CPAP Coverage for RDS (%)",
+    "Hypothermia on Admission (%)",
+]
 
-# KPI Grouping for Tab Navigation
+# KPI Grouping for Tab Navigation - Hypothermia added to "Newborn Complications" group
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
         "CPAP Coverage for RDS (%)",
+    ],
+    "Newborn Complications": [
+        "Hypothermia on Admission (%)",
     ],
 }
 
@@ -93,13 +111,13 @@ def render_kpi_tab_navigation():
     if "selected_kpi_neonatal" not in st.session_state:
         st.session_state.selected_kpi_neonatal = "LBW KMC Coverage (%)"
 
-    # Create single tab for Newborn Care
-    tab1 = st.tabs(["👶 **Newborn Care**"])[0]
+    # Create tabs for both groups
+    tab1, tab2 = st.tabs(["👶 **Newborn Care**", "🩺 **Newborn Complications**"])
 
     selected_kpi = st.session_state.selected_kpi_neonatal
 
     with tab1:
-        # Both KMC Coverage and CPAP Coverage KPIs
+        # Newborn Care KPIs
         col1, col2 = st.columns(2)
 
         with col1:
@@ -125,6 +143,23 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "CPAP Coverage for RDS (%)"
+
+    with tab2:
+        # Newborn Complications KPIs
+        (col1,) = st.columns(1)
+
+        with col1:
+            if st.button(
+                "🌡️ Hypothermia on Admission",
+                key="hypothermia_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Hypothermia on Admission (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Hypothermia on Admission (%)"
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_kpi_neonatal:
@@ -205,6 +240,39 @@ def render_trend_chart_section(
             facility_uids,
         )
 
+    elif kpi_selection == "Hypothermia on Admission (%)":
+        period_data = []
+        for period in filtered_events["period"].unique():
+            period_df = filtered_events[filtered_events["period"] == period]
+            period_display = (
+                period_df["period_display"].iloc[0] if not period_df.empty else period
+            )
+            hypothermia_data = compute_hypothermia_kpi(period_df, facility_uids)
+
+            period_data.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": hypothermia_data["hypothermia_rate"],
+                    "Hypothermia Cases": hypothermia_data["hypothermia_count"],
+                    "Total Admissions": hypothermia_data["total_admissions"],
+                }
+            )
+
+        group = pd.DataFrame(period_data)
+        render_hypothermia_trend_chart(
+            group,
+            "period_display",
+            "value",
+            "Hypothermia on Admission (%)",
+            bg_color,
+            text_color,
+            display_names,
+            "Hypothermia Cases",
+            "Total Admissions",
+            facility_uids,
+        )
+
 
 def render_comparison_chart(
     kpi_selection,
@@ -248,6 +316,19 @@ def render_comparison_chart(
                 numerator_name="CPAP Cases",
                 denominator_name="Total RDS Newborns",
             )
+        elif kpi_selection == "Hypothermia on Admission (%)":
+            render_hypothermia_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                value_col="value",
+                title="Hypothermia on Admission (%)",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name="Hypothermia Cases",
+                denominator_name="Total Admissions",
+            )
 
     else:  # region comparison (only for national)
         if kpi_selection == "LBW KMC Coverage (%)":
@@ -277,6 +358,20 @@ def render_comparison_chart(
                 facilities_by_region=facilities_by_region,
                 numerator_name="CPAP Cases",
                 denominator_name="Total RDS Newborns",
+            )
+        elif kpi_selection == "Hypothermia on Admission (%)":
+            render_hypothermia_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                value_col="value",
+                title="Hypothermia on Admission (%)",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                region_mapping={},
+                facilities_by_region=facilities_by_region,
+                numerator_name="Hypothermia Cases",
+                denominator_name="Total Admissions",
             )
 
 
