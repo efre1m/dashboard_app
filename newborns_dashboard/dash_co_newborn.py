@@ -1,4 +1,4 @@
-# common_dash_neonatal.py
+# dash_co.py
 import pandas as pd
 import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
@@ -71,12 +71,21 @@ def get_kpi_config(kpi_selection):
 
 
 def render_kpi_tab_navigation():
-    """Render professional tab navigation for Neonatal KPI selection"""
+    """Render professional tab navigation for Neonatal KPI selection with smaller buttons"""
 
-    # Custom CSS for professional tab styling
+    # Custom CSS for smaller, more compact button styling
     st.markdown(
         """
     <style>
+    /* Make KPI buttons much smaller like normal buttons */
+    div.stButton > button {
+        padding: 0.2rem 0.6rem !important;
+        font-size: 0.8rem !important;
+        height: auto !important;
+        min-height: 1.8rem !important;
+        margin: 0.05rem !important;
+    }
+    
     div.stButton > button[kind="primary"] {
         background-color: #1f77b4 !important;
         color: white !important;
@@ -117,12 +126,12 @@ def render_kpi_tab_navigation():
     selected_kpi = st.session_state.selected_kpi_neonatal
 
     with tab1:
-        # Newborn Care KPIs
+        # Newborn Care KPIs - smaller layout
         col1, col2 = st.columns(2)
 
         with col1:
             if st.button(
-                "📊 KMC Coverage",
+                "KMC Coverage",
                 key="kmc_btn",
                 use_container_width=True,
                 type=(
@@ -133,7 +142,7 @@ def render_kpi_tab_navigation():
 
         with col2:
             if st.button(
-                "💨 CPAP Coverage",
+                "CPAP Coverage",
                 key="cpap_btn",
                 use_container_width=True,
                 type=(
@@ -145,12 +154,12 @@ def render_kpi_tab_navigation():
                 selected_kpi = "CPAP Coverage for RDS (%)"
 
     with tab2:
-        # Newborn Complications KPIs
-        (col1,) = st.columns(1)
+        # Newborn Complications KPIs - centered single button
+        col1, col2, col3 = st.columns([1, 2, 1])
 
-        with col1:
+        with col2:
             if st.button(
-                "🌡️ Hypothermia on Admission",
+                "Hypothermia",
                 key="hypothermia_btn",
                 use_container_width=True,
                 type=(
@@ -241,36 +250,15 @@ def render_trend_chart_section(
         )
 
     elif kpi_selection == "Hypothermia on Admission (%)":
-        period_data = []
-        for period in filtered_events["period"].unique():
-            period_df = filtered_events[filtered_events["period"] == period]
-            period_display = (
-                period_df["period_display"].iloc[0] if not period_df.empty else period
-            )
-            hypothermia_data = compute_hypothermia_kpi(period_df, facility_uids)
-
-            period_data.append(
-                {
-                    "period": period,
-                    "period_display": period_display,
-                    "value": hypothermia_data["hypothermia_rate"],
-                    "Hypothermia Cases": hypothermia_data["hypothermia_count"],
-                    "Total Admissions": hypothermia_data["total_admissions"],
-                }
-            )
-
-        group = pd.DataFrame(period_data)
+        # Use the filtered events directly for hypothermia calculation
+        # The KPI function will handle period-based calculation internally
         render_hypothermia_trend_chart(
-            group,
+            filtered_events,
             "period_display",
-            "value",
             "Hypothermia on Admission (%)",
             bg_color,
             text_color,
-            display_names,
-            "Hypothermia Cases",
-            "Total Admissions",
-            facility_uids,
+            facility_uids=facility_uids,
         )
 
 
@@ -285,9 +273,7 @@ def render_comparison_chart(
     text_color,
     is_national=False,
 ):
-    """Render comparison charts for both national and regional views - ONLY LINE CHARTS"""
-
-    kpi_config = get_kpi_config(kpi_selection)
+    """Render comparison charts for both national and regional views"""
 
     if comparison_mode == "facility":
         if kpi_selection == "LBW KMC Coverage (%)":
@@ -295,7 +281,7 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 value_col="value",
-                title="LBW KMC Coverage (%)",
+                title="LBW KMC Coverage (%) - Facility Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 facility_names=display_names,
@@ -308,7 +294,7 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 value_col="value",
-                title="CPAP Coverage for RDS (%)",
+                title="CPAP Coverage for RDS (%) - Facility Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 facility_names=display_names,
@@ -320,14 +306,11 @@ def render_comparison_chart(
             render_hypothermia_facility_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
-                value_col="value",
-                title="Hypothermia on Admission (%)",
+                title="Hypothermia on Admission (%) - Facility Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 facility_names=display_names,
                 facility_uids=facility_uids,
-                numerator_name="Hypothermia Cases",
-                denominator_name="Total Admissions",
             )
 
     else:  # region comparison (only for national)
@@ -336,7 +319,7 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 value_col="value",
-                title="LBW KMC Coverage (%)",
+                title="LBW KMC Coverage (%) - Region Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 region_names=display_names,
@@ -350,7 +333,7 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 value_col="value",
-                title="CPAP Coverage for RDS (%)",
+                title="CPAP Coverage for RDS (%) - Region Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 region_names=display_names,
@@ -363,15 +346,11 @@ def render_comparison_chart(
             render_hypothermia_region_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
-                value_col="value",
-                title="Hypothermia on Admission (%)",
+                title="Hypothermia on Admission (%) - Region Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 region_names=display_names,
-                region_mapping={},
                 facilities_by_region=facilities_by_region,
-                numerator_name="Hypothermia Cases",
-                denominator_name="Total Admissions",
             )
 
 

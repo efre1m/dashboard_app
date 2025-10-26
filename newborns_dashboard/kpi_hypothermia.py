@@ -10,7 +10,6 @@ from utils.kpi_utils import auto_text_color
 
 # ---------------- Hypothermia KPI Constants ----------------
 TEMPERATURE_ON_ADMISSION_UID = "gZi9y12E9i7"  # Temperature on admission (°C)
-DATE_OF_ADMISSION_UID = "UOmhJkyAK6h"  # Date of Admission
 HYPOTHERMIA_THRESHOLD = 36.5  # in degree Celcius
 
 
@@ -18,8 +17,6 @@ HYPOTHERMIA_THRESHOLD = 36.5  # in degree Celcius
 def compute_hypothermia_numerator(df, facility_uids=None):
     """
     Compute numerator for hypothermia KPI: Count of newborns with temperature < 36.5°C on admission
-
-    Formula: Count where Temperature on admission < 36.5
     """
     if df is None or df.empty:
         return 0
@@ -42,7 +39,7 @@ def compute_hypothermia_numerator(df, facility_uids=None):
     # Convert temperature values to numeric, coercing errors to NaN
     temp_events["temp_value"] = pd.to_numeric(temp_events["value"], errors="coerce")
 
-    # Count newborns with temperature < 36.5°C
+    # Count unique newborns with temperature < 36.5°C
     hypothermia_cases = temp_events[temp_events["temp_value"] < HYPOTHERMIA_THRESHOLD][
         "tei_id"
     ].nunique()
@@ -50,79 +47,51 @@ def compute_hypothermia_numerator(df, facility_uids=None):
     return hypothermia_cases
 
 
-def compute_hypothermia_denominator(df, facility_uids=None):
-    """
-    Compute denominator for hypothermia KPI: Total count of newborns admitted
-
-    Formula: Count where Date of Admission is present
-    """
-    if df is None or df.empty:
-        return 0
-
-    # Filter by facilities if specified
-    if facility_uids and not isinstance(facility_uids, list):
-        facility_uids = [facility_uids]
-
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
-
-    # Count newborns with admission date (each date corresponds to a single newborn admission)
-    admitted_newborns = df[
-        (df["dataElement_uid"] == DATE_OF_ADMISSION_UID) & df["value"].notna()
-    ]["tei_id"].nunique()
-
-    return admitted_newborns
-
-
 def compute_hypothermia_kpi(df, facility_uids=None):
     """
     Compute hypothermia KPI for the given dataframe
+    Both numerator and denominator use the same filtered event data
 
     Formula: Hypothermia on Admission Rate (%) =
-             (Newborns with temperature < 36.5°C on admission) ÷ (Total newborns admitted) × 100
-
-    Returns:
-        Dictionary with hypothermia metrics
+             (Newborns with temperature < 36.5°C during period) ÷
+             (Total admitted newborns with events during period) × 100
     """
-    # Handle case where df might be None or not a DataFrame
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return {
             "hypothermia_rate": 0.0,
             "hypothermia_count": 0,
-            "total_admissions": 0,
+            "total_admitted_with_events": 0,
         }
 
     # Filter by facilities if specified
     if facility_uids:
-        # Handle both single facility UID and list of UIDs
         if not isinstance(facility_uids, list):
             facility_uids = [facility_uids]
         df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Count hypothermia cases (numerator)
+    # Count hypothermia cases (numerator) - filters for temperature events
     hypothermia_count = compute_hypothermia_numerator(df, facility_uids)
 
-    # Count total admissions (denominator)
-    total_admissions = compute_hypothermia_denominator(df, facility_uids)
+    # Count total newborns in period (denominator) - ALL TEIs in filtered data
+    total_admitted_with_events = df["tei_id"].nunique()
 
     # Calculate hypothermia rate
     hypothermia_rate = (
-        (hypothermia_count / total_admissions * 100) if total_admissions > 0 else 0.0
+        (hypothermia_count / total_admitted_with_events * 100)
+        if total_admitted_with_events > 0
+        else 0.0
     )
 
     return {
         "hypothermia_rate": float(hypothermia_rate),
         "hypothermia_count": int(hypothermia_count),
-        "total_admissions": int(total_admissions),
+        "total_admitted_with_events": int(total_admitted_with_events),
     }
 
 
 def compute_hypothermia_trend_data(df, period_col="period_display", facility_uids=None):
     """
     Compute hypothermia trend data by period
-
-    Returns:
-        DataFrame with columns: period_display, total_admissions, hypothermia_count, hypothermia_rate
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -144,8 +113,10 @@ def compute_hypothermia_trend_data(df, period_col="period_display", facility_uid
         trend_data.append(
             {
                 period_col: period,
-                "total_admissions": hypothermia_data["total_admissions"],
                 "hypothermia_count": hypothermia_data["hypothermia_count"],
+                "total_admitted_with_events": hypothermia_data[
+                    "total_admitted_with_events"
+                ],
                 "hypothermia_rate": hypothermia_data["hypothermia_rate"],
             }
         )
@@ -157,13 +128,9 @@ def compute_hypothermia_trend_data(df, period_col="period_display", facility_uid
 def render_hypothermia_trend_chart(
     df,
     period_col="period_display",
-    value_col="hypothermia_rate",
     title="Hypothermia on Admission Trend",
     bg_color="#FFFFFF",
     text_color=None,
-    facility_names=None,
-    numerator_name="Hypothermia Cases",
-    denominator_name="Total Admissions",
     facility_uids=None,
 ):
     """Render a LINE CHART ONLY for hypothermia rate trend"""
@@ -175,21 +142,30 @@ def render_hypothermia_trend_chart(
         st.info("⚠️ No data available for the selected period.")
         return
 
-    df = df.copy()
-    df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
+    # Compute trend data
+    trend_df = compute_hypothermia_trend_data(df, period_col, facility_uids)
+
+    if trend_df.empty:
+        st.info("⚠️ No hypothermia data available for the selected period.")
+        return
+
+    trend_df = trend_df.copy()
+    trend_df["hypothermia_rate"] = pd.to_numeric(
+        trend_df["hypothermia_rate"], errors="coerce"
+    ).fillna(0)
 
     # Create line chart
     fig = px.line(
-        df,
+        trend_df,
         x=period_col,
-        y=value_col,
+        y="hypothermia_rate",
         markers=True,
         line_shape="linear",
         title=title,
         height=400,
     )
 
-    # Update traces for line chart - SIMPLIFIED HOVER
+    # Update traces for line chart
     fig.update_traces(
         line=dict(width=3),
         marker=dict(size=7),
@@ -222,9 +198,9 @@ def render_hypothermia_trend_chart(
     st.plotly_chart(fig, use_container_width=True)
 
     # Show trend indicator
-    if len(df) > 1:
-        last_value = df[value_col].iloc[-1]
-        prev_value = df[value_col].iloc[-2]
+    if len(trend_df) > 1:
+        last_value = trend_df["hypothermia_rate"].iloc[-1]
+        prev_value = trend_df["hypothermia_rate"].iloc[-2]
         trend_symbol = (
             "▲"
             if last_value > prev_value
@@ -240,37 +216,57 @@ def render_hypothermia_trend_chart(
             unsafe_allow_html=True,
         )
 
-    # Summary table
-    st.subheader(f"📋 {title} Summary Table")
-    summary_df = df.copy().reset_index(drop=True)
-    summary_df = summary_df[[period_col, numerator_name, denominator_name, value_col]]
+    # Summary table - PROPER COLUMN NAMES
+    st.subheader("📋 Hypothermia Trend Summary Table")
+    summary_df = trend_df.copy().reset_index(drop=True)
 
     # Calculate overall value
-    total_numerator = summary_df[numerator_name].sum()
-    total_denominator = summary_df[denominator_name].sum()
+    total_numerator = summary_df["hypothermia_count"].sum()
+    total_denominator = summary_df["total_admitted_with_events"].sum()
     overall_value = (
         (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
     )
 
     overall_row = pd.DataFrame(
         {
-            period_col: [f"Overall {title}"],
-            numerator_name: [total_numerator],
-            denominator_name: [total_denominator],
-            value_col: [overall_value],
+            period_col: ["Overall"],
+            "hypothermia_count": [total_numerator],
+            "total_admitted_with_events": [total_denominator],
+            "hypothermia_rate": [overall_value],
         }
     )
 
     summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
-    summary_table.insert(0, "No", range(1, len(summary_table) + 1))
+
+    # Create display dataframe with proper column names
+    display_columns = {
+        period_col: "Period",
+        "hypothermia_count": "Hypothermia Cases",
+        "total_admitted_with_events": "Total Admitted Newborns with Events",
+        "hypothermia_rate": "Hypothermia Rate (%)",
+    }
+
+    # Rename columns for display
+    summary_table_display = summary_table.rename(columns=display_columns)
+
+    # Reorder columns
+    column_order = [
+        "Period",
+        "Hypothermia Cases",
+        "Total Admitted Newborns with Events",
+        "Hypothermia Rate (%)",
+    ]
+    summary_table_display = summary_table_display[column_order]
+
+    summary_table_display.insert(0, "No", range(1, len(summary_table_display) + 1))
 
     # Format table
     styled_table = (
-        summary_table.style.format(
+        summary_table_display.style.format(
             {
-                value_col: "{:.1f}%",
-                numerator_name: "{:,.0f}",
-                denominator_name: "{:,.0f}",
+                "Hypothermia Rate (%)": "{:.1f}%",
+                "Hypothermia Cases": "{:,.0f}",
+                "Total Admitted Newborns with Events": "{:,.0f}",
             }
         )
         .set_table_attributes('class="summary-table"')
@@ -280,11 +276,11 @@ def render_hypothermia_trend_chart(
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
 
     # Download button
-    csv = summary_table.to_csv(index=False)
+    csv = summary_table_display.to_csv(index=False)
     st.download_button(
         label="Download CSV",
         data=csv,
-        file_name=f"{title.lower().replace(' ', '_')}_summary.csv",
+        file_name="hypothermia_trend_summary.csv",
         mime="text/csv",
     )
 
@@ -292,14 +288,11 @@ def render_hypothermia_trend_chart(
 def render_hypothermia_facility_comparison_chart(
     df,
     period_col="period_display",
-    value_col="hypothermia_rate",
     title="Hypothermia on Admission - Facility Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
     facility_uids=None,
-    numerator_name="Hypothermia Cases",
-    denominator_name="Total Admissions",
 ):
     """Render facility comparison with BOTH LINE AND BAR CHART options for hypothermia rate"""
     if text_color is None:
@@ -350,6 +343,10 @@ def render_hypothermia_facility_comparison_chart(
                             "period_display": period_display,
                             "Facility": facility_uid_to_name[facility_uid],
                             "value": hypothermia_data["hypothermia_rate"],
+                            "hypothermia_count": hypothermia_data["hypothermia_count"],
+                            "total_admitted_with_events": hypothermia_data[
+                                "total_admitted_with_events"
+                            ],
                         }
                     )
 
@@ -371,7 +368,7 @@ def render_hypothermia_facility_comparison_chart(
             category_orders={"period_display": all_periods},
         )
 
-        # Update traces - SIMPLIFIED HOVER: Only show facility name and rate
+        # Update traces
         fig.update_traces(
             line=dict(width=3),
             marker=dict(size=7),
@@ -390,6 +387,10 @@ def render_hypothermia_facility_comparison_chart(
                     {
                         "Facility": facility_uid_to_name[facility_uid],
                         "value": hypothermia_data["hypothermia_rate"],
+                        "hypothermia_count": hypothermia_data["hypothermia_count"],
+                        "total_admitted_with_events": hypothermia_data[
+                            "total_admitted_with_events"
+                        ],
                     }
                 )
 
@@ -409,7 +410,7 @@ def render_hypothermia_facility_comparison_chart(
             color="Facility",
         )
 
-        # Update traces for bar chart - SIMPLIFIED HOVER: Only show facility name and rate
+        # Update traces for bar chart
         fig.update_traces(
             hovertemplate="<b>%{x}</b><br>Hypothermia Rate: %{y:.2f}%<extra></extra>",
         )
@@ -441,7 +442,7 @@ def render_hypothermia_facility_comparison_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Facility comparison table
+    # Facility comparison table - PROPER COLUMN NAMES
     st.subheader("📋 Facility Comparison Summary")
     facility_table_data = []
 
@@ -453,8 +454,10 @@ def render_hypothermia_facility_comparison_chart(
                 {
                     "Facility Name": facility_name,
                     "Hypothermia Cases": hypothermia_data["hypothermia_count"],
-                    "Total Admissions": hypothermia_data["total_admissions"],
-                    "Hypothermia Rate (%)": hypothermia_data["hypothermia_rate"],
+                    "Total Admitted Newborns with Events": hypothermia_data[
+                        "total_admitted_with_events"
+                    ],
+                    "Hypothermia Rate": hypothermia_data["hypothermia_rate"],
                 }
             )
 
@@ -466,7 +469,7 @@ def render_hypothermia_facility_comparison_chart(
 
     # Calculate overall
     total_numerator = facility_table_df["Hypothermia Cases"].sum()
-    total_denominator = facility_table_df["Total Admissions"].sum()
+    total_denominator = facility_table_df["Total Admitted Newborns with Events"].sum()
     overall_value = (
         (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
     )
@@ -474,13 +477,23 @@ def render_hypothermia_facility_comparison_chart(
     overall_row = {
         "Facility Name": "Overall",
         "Hypothermia Cases": total_numerator,
-        "Total Admissions": total_denominator,
-        "Hypothermia Rate (%)": overall_value,
+        "Total Admitted Newborns with Events": total_denominator,
+        "Hypothermia Rate": overall_value,
     }
 
     facility_table_df = pd.concat(
         [facility_table_df, pd.DataFrame([overall_row])], ignore_index=True
     )
+
+    # Reorder columns
+    column_order = [
+        "Facility Name",
+        "Hypothermia Cases",
+        "Total Admitted Newborns with Events",
+        "Hypothermia Rate",
+    ]
+    facility_table_df = facility_table_df[column_order]
+
     facility_table_df.insert(0, "No", range(1, len(facility_table_df) + 1))
 
     # Format table
@@ -488,8 +501,8 @@ def render_hypothermia_facility_comparison_chart(
         facility_table_df.style.format(
             {
                 "Hypothermia Cases": "{:,.0f}",
-                "Total Admissions": "{:,.0f}",
-                "Hypothermia Rate (%)": "{:.2f}%",
+                "Total Admitted Newborns with Events": "{:,.0f}",
+                "Hypothermia Rate": "{:.2f}%",
             }
         )
         .set_table_attributes('class="summary-table"')
@@ -511,15 +524,11 @@ def render_hypothermia_facility_comparison_chart(
 def render_hypothermia_region_comparison_chart(
     df,
     period_col="period_display",
-    value_col="hypothermia_rate",
     title="Hypothermia on Admission - Region Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     region_names=None,
-    region_mapping=None,
     facilities_by_region=None,
-    numerator_name="Hypothermia Cases",
-    denominator_name="Total Admissions",
 ):
     """Render region comparison with BOTH LINE AND BAR CHART options for hypothermia rate"""
     if text_color is None:
@@ -570,6 +579,12 @@ def render_hypothermia_region_comparison_chart(
                                 "period_display": period_display,
                                 "Region": region_name,
                                 "value": hypothermia_data["hypothermia_rate"],
+                                "hypothermia_count": hypothermia_data[
+                                    "hypothermia_count"
+                                ],
+                                "total_admitted_with_events": hypothermia_data[
+                                    "total_admitted_with_events"
+                                ],
                             }
                         )
 
@@ -591,7 +606,7 @@ def render_hypothermia_region_comparison_chart(
             category_orders={"period_display": all_periods},
         )
 
-        # Update traces - SIMPLIFIED HOVER: Only show region name and rate
+        # Update traces
         fig.update_traces(
             line=dict(width=3),
             marker=dict(size=7),
@@ -618,6 +633,10 @@ def render_hypothermia_region_comparison_chart(
                         {
                             "Region": region_name,
                             "value": hypothermia_data["hypothermia_rate"],
+                            "hypothermia_count": hypothermia_data["hypothermia_count"],
+                            "total_admitted_with_events": hypothermia_data[
+                                "total_admitted_with_events"
+                            ],
                         }
                     )
 
@@ -637,7 +656,7 @@ def render_hypothermia_region_comparison_chart(
             color="Region",
         )
 
-        # Update traces for bar chart - SIMPLIFIED HOVER: Only show region name and rate
+        # Update traces for bar chart
         fig.update_traces(
             hovertemplate="<b>%{x}</b><br>Hypothermia Rate: %{y:.2f}%<extra></extra>",
         )
@@ -669,7 +688,7 @@ def render_hypothermia_region_comparison_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Region comparison table
+    # Region comparison table - PROPER COLUMN NAMES
     st.subheader("📋 Region Comparison Summary")
     region_table_data = []
 
@@ -689,8 +708,10 @@ def render_hypothermia_region_comparison_chart(
                     {
                         "Region Name": region_name,
                         "Hypothermia Cases": hypothermia_data["hypothermia_count"],
-                        "Total Admissions": hypothermia_data["total_admissions"],
-                        "Hypothermia Rate (%)": hypothermia_data["hypothermia_rate"],
+                        "Total Admitted Newborns with Events": hypothermia_data[
+                            "total_admitted_with_events"
+                        ],
+                        "Hypothermia Rate": hypothermia_data["hypothermia_rate"],
                     }
                 )
 
@@ -702,7 +723,7 @@ def render_hypothermia_region_comparison_chart(
 
     # Calculate overall
     total_numerator = region_table_df["Hypothermia Cases"].sum()
-    total_denominator = region_table_df["Total Admissions"].sum()
+    total_denominator = region_table_df["Total Admitted Newborns with Events"].sum()
     overall_value = (
         (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
     )
@@ -710,13 +731,23 @@ def render_hypothermia_region_comparison_chart(
     overall_row = {
         "Region Name": "Overall",
         "Hypothermia Cases": total_numerator,
-        "Total Admissions": total_denominator,
-        "Hypothermia Rate (%)": overall_value,
+        "Total Admitted Newborns with Events": total_denominator,
+        "Hypothermia Rate": overall_value,
     }
 
     region_table_df = pd.concat(
         [region_table_df, pd.DataFrame([overall_row])], ignore_index=True
     )
+
+    # Reorder columns
+    column_order = [
+        "Region Name",
+        "Hypothermia Cases",
+        "Total Admitted Newborns with Events",
+        "Hypothermia Rate",
+    ]
+    region_table_df = region_table_df[column_order]
+
     region_table_df.insert(0, "No", range(1, len(region_table_df) + 1))
 
     # Format table
@@ -724,8 +755,8 @@ def render_hypothermia_region_comparison_chart(
         region_table_df.style.format(
             {
                 "Hypothermia Cases": "{:,.0f}",
-                "Total Admissions": "{:,.0f}",
-                "Hypothermia Rate (%)": "{:.2f}%",
+                "Total Admitted Newborns with Events": "{:,.0f}",
+                "Hypothermia Rate": "{:.2f}%",
             }
         )
         .set_table_attributes('class="summary-table"')
