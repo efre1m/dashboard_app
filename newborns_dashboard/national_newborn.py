@@ -251,6 +251,8 @@ def render_newborn_dashboard(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
+    st.session_state.newborn_events_df = events_df.copy()
+
     render_connection_status(events_df, user=user)
 
     # Calculate total counts

@@ -32,6 +32,7 @@ from utils.status import (
 )
 
 from utils.odk_dashboard import display_odk_dashboard
+from dashboards.data_quality_tracking import render_data_quality_tracking
 
 # Initialize status system
 initialize_status_system()
@@ -892,6 +893,8 @@ def render_maternal_dashboard(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
+    st.session_state.maternal_events_df = events_df.copy()
+
     render_connection_status(events_df, user=user)
 
     # Calculate total counts
@@ -1437,12 +1440,13 @@ def render():
     )
 
     # CREATE PROFESSIONAL TABS IN MAIN AREA
-    tab1, tab2, tab3, tab4 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             "🤰 **Maternal Inpatient Data**",
             "👶 **Newborn Inpatient Data**",
             "📊 **Summary Dashboard**",
             "📋 **Integrated Mentorship Data**",
+            "🔍 **Data Quality Tracking**",
         ]
     )
 
@@ -1487,3 +1491,7 @@ def render():
     with tab4:
         # NEW: ODK Forms Dashboard Tab
         display_odk_dashboard(user)
+
+    with tab5:
+        # NEW: Data Quality Tracking Tab
+        render_data_quality_tracking(user)
