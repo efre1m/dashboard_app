@@ -252,6 +252,7 @@ def render_newborn_dashboard(
     events_df = normalize_event_dates(events_df)
 
     st.session_state.newborn_events_df = events_df.copy()
+    st.session_state.newborn_tei_df = tei_df.copy()
 
     render_connection_status(events_df, user=user)
 

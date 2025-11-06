@@ -14,14 +14,25 @@ def render_data_quality_tracking(user):
     )
 
     # Check if data is available
-    maternal_data_available = (
+    maternal_events_available = (
         "maternal_events_df" in st.session_state
         and not st.session_state.maternal_events_df.empty
     )
-    newborn_data_available = (
+    maternal_tei_available = (
+        "maternal_tei_df" in st.session_state
+        and not st.session_state.maternal_tei_df.empty
+    )
+    newborn_events_available = (
         "newborn_events_df" in st.session_state
         and not st.session_state.newborn_events_df.empty
     )
+    newborn_tei_available = (
+        "newborn_tei_df" in st.session_state
+        and not st.session_state.newborn_tei_df.empty
+    )
+
+    maternal_data_available = maternal_events_available and maternal_tei_available
+    newborn_data_available = newborn_events_available and newborn_tei_available
 
     if not maternal_data_available and not newborn_data_available:
         st.warning(

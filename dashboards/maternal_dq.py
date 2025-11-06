@@ -70,12 +70,13 @@ def get_region_from_facility(facility_name):
 
 
 def check_maternal_outliers(events_df):
-    """Check for outliers in maternal critical data elements"""
+    """Check for outliers in maternal critical data elements - COMPLETE WORKFLOW"""
     if events_df.empty:
         return pd.DataFrame()
 
     outliers = []
 
+    # STEP 1: Process events data to find outliers
     for data_element_uid, element_info in MATERNAL_CRITICAL_ELEMENTS.items():
         element_name = element_info["name"]
         min_val, max_val = element_info["impossible_range"]
@@ -100,6 +101,7 @@ def check_maternal_outliers(events_df):
                 )
                 outlier_rows = numeric_rows[outlier_mask]
 
+                # STEP 2: For each outlier, get patient names from TEI DataFrame
                 for _, row in outlier_rows.iterrows():
                     outlier_value = row["numeric_value"]
 
@@ -108,10 +110,15 @@ def check_maternal_outliers(events_df):
                     else:
                         issue_type = f"Too High (> {max_val} {unit})"
 
-                    # Get proper patient name using TEI API
+                    # STEP 3: Get TEI ID from events data
                     tei_id = row.get("tei_id")
-                    patient_name = get_patient_name_from_tei(tei_id, "maternal")
 
+                    # STEP 4: Map TEI ID to patient names using TEI DataFrame
+                    first_name, father_name = get_patient_name_from_tei(
+                        tei_id, "maternal"
+                    )
+
+                    # Get other event details
                     facility_name = row.get("orgUnit_name", "Unknown Facility")
                     region = get_region_from_facility(facility_name)
                     program_stage = row.get(
@@ -121,9 +128,11 @@ def check_maternal_outliers(events_df):
                         "event_date", row.get("eventDate", "Unknown Date")
                     )
 
+                    # STEP 5: Add to outliers DataFrame - NO PATIENT NAME COLUMN
                     outliers.append(
                         {
-                            "Patient Name": patient_name,
+                            "First Name": first_name,
+                            "Father Name": father_name,
                             "Region": region,
                             "Facility": facility_name,
                             "Program Stage": program_stage,
@@ -137,15 +146,36 @@ def check_maternal_outliers(events_df):
                         }
                     )
 
+    # STEP 6: Return complete outliers DataFrame
     return pd.DataFrame(outliers)
 
 
 def render_maternal_data_quality():
     """Render Maternal Data Quality Analysis using data from session state"""
 
+    # Check if both events and TEI data are available
+    if (
+        "maternal_events_df" not in st.session_state
+        or st.session_state.maternal_events_df.empty
+    ):
+        st.warning(
+            "⚠️ No maternal events data available. Please visit the Maternal Dashboard first."
+        )
+        return
+
+    if (
+        "maternal_tei_df" not in st.session_state
+        or st.session_state.maternal_tei_df.empty
+    ):
+        st.warning(
+            "⚠️ No maternal patient data available. Please visit the Maternal Dashboard first."
+        )
+        return
+
+    # STEP 1: Get events data
     events_df = st.session_state.maternal_events_df
 
-    # Check for outliers
+    # STEP 2: Check for outliers (complete workflow)
     with st.spinner("🔍 Analyzing maternal data quality..."):
         outliers_df = check_maternal_outliers(events_df)
 
@@ -155,7 +185,7 @@ def render_maternal_data_quality():
 
     st.error(f"🚨 Found {len(outliers_df)} data quality issues")
 
-    # Professional Filter Section with same style as LBW tables
+    # STEP 3: Display filters
     st.markdown("### 🔍 Filter Issues")
 
     # Create filter container
@@ -199,7 +229,7 @@ def render_maternal_data_quality():
                 key="maternal_element_filter",
             )
 
-    # Apply filters
+    # STEP 4: Apply filters
     filtered_df = outliers_df.copy()
 
     if selected_region != "All Regions":
@@ -215,17 +245,18 @@ def render_maternal_data_quality():
         st.info("No data quality issues match the selected filters.")
         return
 
-    # Display the main table with professional styling (same as LBW tables)
+    # STEP 5: Display the main table
     st.markdown("### 📋 Data Quality Issues")
 
     # Prepare table data with numbering
     display_df = filtered_df.copy().reset_index(drop=True)
     display_df.insert(0, "No", range(1, len(display_df) + 1))
 
-    # Select columns to display
+    # Select columns to display - NO PATIENT NAME COLUMN
     display_columns = [
         "No",
-        "Patient Name",
+        "First Name",
+        "Father Name",
         "Region",
         "Facility",
         "Program Stage",
@@ -237,7 +268,7 @@ def render_maternal_data_quality():
         "Event Date",
     ]
 
-    # Apply custom CSS for professional table styling (same as summary tables)
+    # Apply custom CSS for professional table styling
     st.markdown(
         """
     <style>
@@ -317,7 +348,7 @@ def render_maternal_data_quality():
     st.markdown(styled_table.to_html(), unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Download button
+    # STEP 6: Download button
     csv = filtered_df.to_csv(index=False)
     st.download_button(
         "📥 Download Data Quality Report",

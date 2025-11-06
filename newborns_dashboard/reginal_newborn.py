@@ -153,6 +153,10 @@ def render_newborn_dashboard(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
+    # STORE NEWBORN EVENTS IN SESSION STATE
+    st.session_state.newborn_events_df = events_df.copy()
+    st.session_state.newborn_tei_df = tei_df.copy()
+
     # Filter data to only show selected facilities' data
     if facility_uids and not events_df.empty:
         events_df = events_df[events_df["orgUnit"].isin(facility_uids)]
