@@ -343,26 +343,138 @@ def render_kpi_tab_navigation():
 def render_trend_chart_section(
     kpi_selection, filtered_events, facility_uids, display_names, bg_color, text_color
 ):
-    """Render the trend chart based on KPI selection - same logic in both files"""
+    """Render the trend chart based on KPI selection - FIXED to prevent double-counting"""
 
-    if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
-        group = (
-            filtered_events.groupby(["period", "period_display"], as_index=False)
-            .apply(
-                lambda x: pd.Series(
-                    {
-                        "value": compute_kpis(x, facility_uids)["ippcar"],
-                        "FP Acceptances": compute_kpis(x, facility_uids)[
-                            "fp_acceptance"
-                        ],
-                        "Total Deliveries": compute_kpis(x, facility_uids)[
-                            "total_deliveries"
-                        ],
-                    }
-                )
-            )
-            .reset_index(drop=True)
+    # ✅ FIX: Track mothers across periods to prevent double-counting
+    counted_mothers = set()
+    period_data = []
+
+    # Process periods in chronological order
+    sorted_periods = sorted(filtered_events["period"].unique())
+
+    for period in sorted_periods:
+        period_df = filtered_events[filtered_events["period"] == period]
+        period_display = (
+            period_df["period_display"].iloc[0] if not period_df.empty else period
         )
+
+        # ✅ Get mothers in this period who haven't been counted yet
+        period_mothers = set(period_df["tei_id"].unique())
+        new_mothers = period_mothers - counted_mothers
+
+        if (
+            kpi_selection
+            == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
+        ):
+            # ✅ Count only NEW mothers for this period
+            if new_mothers:
+                # Filter to only new mothers in this period
+                new_mothers_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                kpi_data = compute_kpis(new_mothers_df, facility_uids)
+            else:
+                kpi_data = {"ippcar": 0, "fp_acceptance": 0, "total_deliveries": 0}
+
+            period_data.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": kpi_data["ippcar"],
+                    "FP Acceptances": kpi_data["fp_acceptance"],
+                    "Total Deliveries": kpi_data["total_deliveries"],
+                }
+            )
+
+        elif kpi_selection == "Stillbirth Rate (per 1000 births)":
+            # ✅ Count only NEW mothers for this period
+            if new_mothers:
+                new_mothers_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                kpi_data = compute_kpis(new_mothers_df, facility_uids)
+            else:
+                kpi_data = {"stillbirth_rate": 0, "stillbirths": 0, "total_births": 0}
+
+            period_data.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": kpi_data["stillbirth_rate"],
+                    "Stillbirths": kpi_data["stillbirths"],
+                    "Total Births": kpi_data["total_births"],
+                }
+            )
+
+        elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
+            # ✅ Count only NEW mothers for this period
+            if new_mothers:
+                new_mothers_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                kpi_data = compute_kpis(new_mothers_df, facility_uids)
+            else:
+                kpi_data = {
+                    "pnc_coverage": 0,
+                    "early_pnc": 0,
+                    "total_deliveries_pnc": 0,
+                }
+
+            period_data.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": kpi_data["pnc_coverage"],
+                    "Early PNC (≤48 hrs)": kpi_data["early_pnc"],
+                    "Total Deliveries": kpi_data["total_deliveries_pnc"],
+                }
+            )
+
+        elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
+            # ✅ Count only NEW mothers for this period
+            if new_mothers:
+                new_mothers_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                kpi_data = compute_kpis(new_mothers_df, facility_uids)
+            else:
+                kpi_data = {
+                    "maternal_death_rate": 0,
+                    "maternal_deaths": 0,
+                    "live_births": 0,
+                }
+
+            period_data.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": kpi_data["maternal_death_rate"],
+                    "Maternal Deaths": kpi_data["maternal_deaths"],
+                    "Live Births": kpi_data["live_births"],
+                }
+            )
+
+        elif kpi_selection == "C-Section Rate (%)":
+            # ✅ Count only NEW mothers for this period
+            if new_mothers:
+                new_mothers_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                kpi_data = compute_kpis(new_mothers_df, facility_uids)
+            else:
+                kpi_data = {
+                    "csection_rate": 0,
+                    "csection_deliveries": 0,
+                    "total_deliveries_cs": 0,
+                }
+
+            period_data.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": kpi_data["csection_rate"],
+                    "C-Sections": kpi_data["csection_deliveries"],
+                    "Total Deliveries": kpi_data["total_deliveries_cs"],
+                }
+            )
+
+        # ✅ Update counted mothers for next period
+        counted_mothers.update(new_mothers)
+
+    group = pd.DataFrame(period_data)
+
+    # Now render the chart with the corrected data
+    if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
         render_trend_chart(
             group,
             "period_display",
@@ -375,21 +487,7 @@ def render_trend_chart_section(
             "Total Deliveries",
             facility_uids,
         )
-
     elif kpi_selection == "Stillbirth Rate (per 1000 births)":
-        group = (
-            filtered_events.groupby(["period", "period_display"], as_index=False)
-            .apply(
-                lambda x: pd.Series(
-                    {
-                        "value": compute_kpis(x, facility_uids)["stillbirth_rate"],
-                        "Stillbirths": compute_kpis(x, facility_uids)["stillbirths"],
-                        "Total Births": compute_kpis(x, facility_uids)["total_births"],
-                    }
-                )
-            )
-            .reset_index(drop=True)
-        )
         render_trend_chart(
             group,
             "period_display",
@@ -402,25 +500,7 @@ def render_trend_chart_section(
             "Total Births",
             facility_uids,
         )
-
     elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-        group = (
-            filtered_events.groupby(["period", "period_display"], as_index=False)
-            .apply(
-                lambda x: pd.Series(
-                    {
-                        "value": compute_kpis(x, facility_uids)["pnc_coverage"],
-                        "Early PNC (≤48 hrs)": compute_kpis(x, facility_uids)[
-                            "early_pnc"
-                        ],
-                        "Total Deliveries": compute_kpis(x, facility_uids)[
-                            "total_deliveries_pnc"
-                        ],
-                    }
-                )
-            )
-            .reset_index(drop=True)
-        )
         render_trend_chart(
             group,
             "period_display",
@@ -433,23 +513,7 @@ def render_trend_chart_section(
             "Total Deliveries",
             facility_uids,
         )
-
     elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
-        group = (
-            filtered_events.groupby(["period", "period_display"], as_index=False)
-            .apply(
-                lambda x: pd.Series(
-                    {
-                        "value": compute_kpis(x, facility_uids)["maternal_death_rate"],
-                        "Maternal Deaths": compute_kpis(x, facility_uids)[
-                            "maternal_deaths"
-                        ],
-                        "Live Births": compute_kpis(x, facility_uids)["live_births"],
-                    }
-                )
-            )
-            .reset_index(drop=True)
-        )
         render_trend_chart(
             group,
             "period_display",
@@ -462,37 +526,7 @@ def render_trend_chart_section(
             "Live Births",
             facility_uids,
         )
-
     elif kpi_selection == "C-Section Rate (%)":
-        group = (
-            filtered_events.groupby(["period", "period_display"], as_index=False)
-            .apply(
-                lambda x: pd.Series(
-                    {
-                        "value": compute_kpis(x, facility_uids)["csection_rate"],
-                        "C-Sections": compute_kpis(x, facility_uids)[
-                            "csection_deliveries"
-                        ],
-                        "Total Deliveries": compute_kpis(x, facility_uids)[
-                            "total_deliveries_cs"
-                        ],  # FIXED
-                    }
-                )
-            )
-            .reset_index(drop=True)
-        )
-
-        if group.empty:
-            group = pd.DataFrame(
-                {
-                    "period": [],
-                    "period_display": [],
-                    "value": [],
-                    "C-Sections": [],
-                    "Total Deliveries": [],  # FIXED
-                }
-            )
-
         render_trend_chart(
             group,
             "period_display",
@@ -506,24 +540,45 @@ def render_trend_chart_section(
             facility_uids,
         )
 
+    # Handle specialized KPIs (PPH, Uterotonic) - FIXED to prevent double-counting
     elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-        group = (
-            filtered_events.groupby(["period", "period_display"], as_index=False)
-            .apply(
-                lambda x: pd.Series(
-                    {
-                        "value": compute_pph_kpi(x, facility_uids)["pph_rate"],
-                        "PPH Cases": compute_pph_kpi(x, facility_uids)["pph_count"],
-                        "Total Deliveries": compute_pph_kpi(x, facility_uids)[
-                            "total_deliveries"
-                        ],
-                    }
-                )
+        # ✅ FIX: Apply same mother tracking logic for PPH
+        counted_mothers_pph = set()
+        period_data_pph = []
+
+        for period in sorted_periods:
+            period_df = filtered_events[filtered_events["period"] == period]
+            period_display = (
+                period_df["period_display"].iloc[0] if not period_df.empty else period
             )
-            .reset_index(drop=True)
-        )
+
+            # ✅ Get mothers in this period who haven't been counted yet
+            period_mothers = set(period_df["tei_id"].unique())
+            new_mothers = period_mothers - counted_mothers_pph
+
+            if new_mothers:
+                # Filter to only new mothers in this period
+                new_mothers_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                pph_data = compute_pph_kpi(new_mothers_df, facility_uids)
+            else:
+                pph_data = {"pph_rate": 0, "pph_count": 0, "total_deliveries": 0}
+
+            period_data_pph.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": pph_data["pph_rate"],
+                    "PPH Cases": pph_data["pph_count"],
+                    "Total Deliveries": pph_data["total_deliveries"],
+                }
+            )
+
+            # ✅ Update counted mothers for next period
+            counted_mothers_pph.update(new_mothers)
+
+        group_pph = pd.DataFrame(period_data_pph)
         render_pph_trend_chart(
-            group,
+            group_pph,
             "period_display",
             "value",
             "PPH Rate (%)",
@@ -536,16 +591,39 @@ def render_trend_chart_section(
         )
 
     elif kpi_selection == "Delivered women who received uterotonic (%)":
-        period_data = []
-        for period in filtered_events["period"].unique():
+        # ✅ FIX: Apply same mother tracking logic for Uterotonic
+        counted_mothers_ut = set()
+        period_data_ut = []
+
+        for period in sorted_periods:
             period_df = filtered_events[filtered_events["period"] == period]
             period_display = (
                 period_df["period_display"].iloc[0] if not period_df.empty else period
             )
-            kpi_data = compute_uterotonic_kpi(period_df, facility_uids)
-            total_deliveries = kpi_data["total_deliveries"]
 
-            period_data.append(
+            # ✅ Get mothers in this period who haven't been counted yet
+            period_mothers = set(period_df["tei_id"].unique())
+            new_mothers = period_mothers - counted_mothers_ut
+
+            if new_mothers:
+                # Filter to only new mothers in this period
+                new_mothers_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                kpi_data = compute_uterotonic_kpi(new_mothers_df, facility_uids)
+                total_deliveries = kpi_data["total_deliveries"]
+            else:
+                kpi_data = {
+                    "uterotonic_rate": 0,
+                    "uterotonic_count": 0,
+                    "total_deliveries": 0,
+                    "uterotonic_types": {
+                        "Ergometrine": 0,
+                        "Oxytocin": 0,
+                        "Misoprostol": 0,
+                    },
+                }
+                total_deliveries = 0
+
+            period_data_ut.append(
                 {
                     "period": period,
                     "period_display": period_display,
@@ -585,9 +663,12 @@ def render_trend_chart_section(
                 }
             )
 
-        group = pd.DataFrame(period_data)
+            # ✅ Update counted mothers for next period
+            counted_mothers_ut.update(new_mothers)
+
+        group_ut = pd.DataFrame(period_data_ut)
         render_uterotonic_trend_chart(
-            group,
+            group_ut,
             "period_display",
             "value",
             "Uterotonic Administration Rate (%)",
@@ -600,6 +681,7 @@ def render_trend_chart_section(
         )
 
     elif kpi_selection == "ARV Prophylaxis Rate (%)":
+        # ARV doesn't use total_deliveries, so keep original logic
         period_data = []
         for period in filtered_events["period"].unique():
             period_df = filtered_events[filtered_events["period"] == period]
@@ -633,6 +715,7 @@ def render_trend_chart_section(
         )
 
     elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
+        # LBW doesn't use total_deliveries, so keep original logic
         period_data = []
         for period in filtered_events["period"].unique():
             period_df = filtered_events[filtered_events["period"] == period]

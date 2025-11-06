@@ -140,14 +140,20 @@ def compute_birth_counts(df, facility_uids=None):
         if facility_uids:
             df = df[df["orgUnit"].isin(facility_uids)]
 
+        # Filter out placeholder events for calculation
+        if "has_actual_event" in df.columns:
+            actual_events_df = df[df["has_actual_event"] == True]
+        else:
+            actual_events_df = df
+
         # Initialize counts
         total_births = 0
         live_births = 0
         stillbirths = 0
 
         # Process each mother (tracked by tei_id)
-        for tei_id in df["tei_id"].unique():
-            mother_df = df[df["tei_id"] == tei_id]
+        for tei_id in actual_events_df["tei_id"].unique():
+            mother_df = actual_events_df[actual_events_df["tei_id"] == tei_id]
 
             # Get number of newborns - this should represent the total babies born
             newborns_records = mother_df[
@@ -249,7 +255,7 @@ def compute_total_deliveries(df, facility_uids=None):
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 
-    # Original computation logic
+    # NEW LOGIC: Count unique mothers (TEIs) in the events data
     if df is None or df.empty:
         result = 0
     else:
@@ -257,14 +263,8 @@ def compute_total_deliveries(df, facility_uids=None):
         if facility_uids:
             df = df[df["orgUnit"].isin(facility_uids)]
 
-        deliveries = df[
-            (df["dataElement_uid"] == DELIVERY_TYPE_UID) & df["value"].notna()
-        ]
-        if deliveries.empty:
-            deliveries = df[
-                (df["dataElement_uid"] == DELIVERY_MODE_UID) & df["value"].notna()
-            ]
-        result = deliveries["tei_id"].nunique()
+        # Count unique mothers (TEIs) - ALL TEIs are now in events_df
+        result = df["tei_id"].nunique()
 
     # Store result in cache
     st.session_state.kpi_cache[cache_key] = result
@@ -288,10 +288,16 @@ def compute_fp_acceptance(df, facility_uids=None):
         if facility_uids:
             df = df[df["orgUnit"].isin(facility_uids)]
 
+        # Filter out placeholder events for numerator calculation
+        if "has_actual_event" in df.columns:
+            actual_events_df = df[df["has_actual_event"] == True]
+        else:
+            actual_events_df = df
+
         # Use CODE values instead of IDs
-        result = df[
-            (df["dataElement_uid"] == FP_ACCEPTANCE_UID)
-            & (df["value"].isin(FP_ACCEPTED_CODES))
+        result = actual_events_df[
+            (actual_events_df["dataElement_uid"] == FP_ACCEPTANCE_UID)
+            & (actual_events_df["value"].isin(FP_ACCEPTED_CODES))
         ]["tei_id"].nunique()
 
     st.session_state.kpi_cache[cache_key] = result
@@ -342,11 +348,18 @@ def compute_early_pnc_coverage(df, facility_uids=None):
         if facility_uids:
             df = df[df["orgUnit"].isin(facility_uids)]
 
+        # Filter out placeholder events for numerator calculation
+        if "has_actual_event" in df.columns:
+            actual_events_df = df[df["has_actual_event"] == True]
+        else:
+            actual_events_df = df
+
+        # Use the SAME total deliveries logic for consistency
         total_deliveries = compute_total_deliveries(df, facility_uids)
 
-        early_pnc = df[
-            (df["dataElement_uid"] == PNC_TIMING_UID)
-            & (df["value"].isin(PNC_EARLY_CODES))
+        early_pnc = actual_events_df[
+            (actual_events_df["dataElement_uid"] == PNC_TIMING_UID)
+            & (actual_events_df["value"].isin(PNC_EARLY_CODES))
         ]["tei_id"].nunique()
 
         coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
@@ -373,7 +386,13 @@ def compute_maternal_death_rate(df, facility_uids=None):
         if facility_uids:
             df = df[df["orgUnit"].isin(facility_uids)]
 
-        dfx = df.copy()
+        # Filter out placeholder events for calculation
+        if "has_actual_event" in df.columns:
+            actual_events_df = df[df["has_actual_event"] == True]
+        else:
+            actual_events_df = df
+
+        dfx = actual_events_df.copy()
         dfx["event_date"] = pd.to_datetime(dfx["event_date"], errors="coerce")
         dfx = dfx[dfx["event_date"].notna()]
 
@@ -418,14 +437,20 @@ def compute_csection_rate(df, facility_uids=None):
         if facility_uids:
             df = df[df["orgUnit"].isin(facility_uids)]
 
-        csection_deliveries = df[
-            (df["dataElement_uid"] == DELIVERY_TYPE_UID)
-            & (df["value"] == CSECTION_CODE)
+        # Filter out placeholder events for numerator calculation
+        if "has_actual_event" in df.columns:
+            actual_events_df = df[df["has_actual_event"] == True]
+        else:
+            actual_events_df = df
+
+        csection_deliveries = actual_events_df[
+            (actual_events_df["dataElement_uid"] == DELIVERY_TYPE_UID)
+            & (actual_events_df["value"] == CSECTION_CODE)
         ]["tei_id"].nunique()
-        total_deliveries = df[
-            (df["dataElement_uid"] == DELIVERY_TYPE_UID)
-            & (df["value"].isin([SVD_CODE, CSECTION_CODE]))
-        ]["tei_id"].nunique()
+
+        # Use the SAME total deliveries logic for consistency
+        total_deliveries = compute_total_deliveries(df, facility_uids)
+
         rate = (
             (csection_deliveries / total_deliveries * 100)
             if total_deliveries > 0
@@ -453,7 +478,9 @@ def compute_kpis(df, facility_uids=None):
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
 
+    # Use consistent total deliveries across all KPIs
     total_deliveries = compute_total_deliveries(df, facility_uids)
+
     fp_acceptance = compute_fp_acceptance(df, facility_uids)
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
 
@@ -484,13 +511,13 @@ def compute_kpis(df, facility_uids=None):
         "total_births": int(total_births),
         "pnc_coverage": float(pnc_coverage),
         "early_pnc": int(early_pnc),
-        "total_deliveries_pnc": int(total_deliveries_pnc),
+        "total_deliveries_pnc": int(total_deliveries),  # Use consistent count
         "maternal_death_rate": float(maternal_death_rate),
         "maternal_deaths": int(maternal_deaths),
         "live_births": int(live_births),
         "csection_rate": float(csection_rate),
         "csection_deliveries": int(csection_deliveries),
-        "total_deliveries_cs": int(total_deliveries_cs),
+        "total_deliveries_cs": int(total_deliveries),  # Use consistent count
     }
 
     # Cache the results

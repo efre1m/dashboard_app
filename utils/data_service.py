@@ -84,8 +84,13 @@ def fetch_program_data_for_user(
     if not enr_df.empty:
         enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
 
-    # Events DataFrame
+    # Events DataFrame - FIXED: Include ALL TEIs even if they have no events
     events_list = []
+
+    # Track all TEI IDs to ensure we include everyone
+    all_tei_ids = {tei.get("trackedEntityInstance") for tei in patients}
+
+    # First, process all actual events
     for tei in patients:
         tei_id = tei.get("trackedEntityInstance")
         tei_org_unit = tei.get("orgUnit")
@@ -114,8 +119,44 @@ def fetch_program_data_for_user(
                             de_dict.get(dv.get("dataElement"), dv.get("dataElement")),
                         ),
                         "value": dv.get("value"),
+                        "has_actual_event": True,  # Mark as real event
                     }
                     events_list.append(event_data)
+
+    # Second, create placeholder events for TEIs without any events
+    teis_with_events = {event["tei_id"] for event in events_list}
+    teis_without_events = all_tei_ids - teis_with_events
+
+    logging.info(
+        f"📊 TEI Statistics: Total={len(all_tei_ids)}, With Events={len(teis_with_events)}, Without Events={len(teis_without_events)}"
+    )
+
+    for tei_id in teis_without_events:
+        # Find the TEI to get orgUnit info
+        tei_data = next(
+            (tei for tei in patients if tei.get("trackedEntityInstance") == tei_id),
+            None,
+        )
+        if tei_data:
+            # Use enrollment date as event date if available
+            event_date = None
+            if tei_data.get("enrollments"):
+                event_date = tei_data["enrollments"][0].get("enrollmentDate")
+
+            placeholder_event = {
+                "tei_id": tei_id,
+                "event": f"placeholder_{tei_id}",
+                "programStage_uid": "NO_EVENTS",
+                "programStageName": "No Events Recorded",
+                "orgUnit": tei_data.get("orgUnit"),
+                "orgUnit_name": map_org_name(tei_data.get("orgUnit")),
+                "eventDate": event_date,
+                "dataElement_uid": "NO_EVENTS",
+                "dataElementName": "No Data Elements",
+                "value": "NO_EVENTS",
+                "has_actual_event": False,  # Mark as placeholder
+            }
+            events_list.append(placeholder_event)
 
     evt_df = pd.DataFrame(events_list)
 

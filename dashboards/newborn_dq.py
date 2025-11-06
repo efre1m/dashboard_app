@@ -8,7 +8,7 @@ from utils.patient_mapping import get_patient_name_from_tei
 NEWBORN_CRITICAL_ELEMENTS = {
     "CzIgD0rsk52": {
         "name": "Birth Weight",
-        "impossible_range": (400, 6000),
+        "impossible_range": (400, 8000),
         "unit": "grams",
     },
     "yxWUMt3sCil": {

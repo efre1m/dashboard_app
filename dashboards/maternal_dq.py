@@ -28,7 +28,7 @@ MATERNAL_CRITICAL_ELEMENTS = {
     },
     "QUlJEvzGcQK": {
         "name": "Birth Weight",
-        "impossible_range": (500, 6000),
+        "impossible_range": (500, 8000),
         "unit": "grams",
     },
     "khlYIOsLWhU": {
