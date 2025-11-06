@@ -917,7 +917,7 @@ def render_maternal_dashboard(
 
     render_connection_status(copied_events_df, user=user)
 
-    # MAIN HEADING for Maternal program - FOLLOWING NATIONAL.PY PATTERN FOR FACILITY DISPLAY
+    # MAIN HEADING for Maternal program
     if selected_facilities == ["All Facilities"]:
         st.markdown(
             f'<div class="main-header">🤰 Maternal Inpatient Data - {region_name}</div>',
@@ -929,40 +929,18 @@ def render_maternal_dashboard(
             unsafe_allow_html=True,
         )
     else:
-        # Display facility names separated by comma - EXACTLY LIKE NATIONAL.PY
         facilities_display = ", ".join(selected_facilities)
         st.markdown(
             f'<div class="main-header">🤰 Maternal Inpatient Data - {facilities_display}</div>',
             unsafe_allow_html=True,
         )
 
-    # ---------------- KPI CARDS ----------------
-    if copied_events_df.empty or "event_date" not in copied_events_df.columns:
-        st.markdown(
-            f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available. KPIs and charts are hidden.</div>',
-            unsafe_allow_html=True,
-        )
-        return
+    # Create a container for KPI cards at the top
+    kpi_container = st.container()
 
-    # 🔒 Always show REGIONAL KPI values (ignore facility filters)
-    all_facility_uids = list(facility_mapping.values())  # all facilities in this region
-
-    # Use the REGION name for display (not country)
-    display_name = region_name
-
-    # Pass user_id into KPI card renderer so it can save/load previous values
-    user_id = str(user.get("id", user.get("username", "default_user")))
-
-    # Render KPI cards (locked to regional level)
-    render_kpi_cards(
-        copied_events_df,  # full dataset (already unfiltered copy)
-        all_facility_uids,  # force ALL facilities in region
-        display_name,  # always show region name
-        user_id=user_id,
-    )
-
-    # ---------------- Controls & Time Filter ----------------
+    # ---------------- FILTERS IN COLUMN STRUCTURE ----------------
     col_chart, col_ctrl = st.columns([3, 1])
+
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
 
@@ -973,45 +951,59 @@ def render_maternal_dashboard(
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply simple filters
+    # Apply filters to get data
     filtered_events = apply_simple_filters(copied_events_df, filters, facility_uids)
-
-    # Store for gauge charts
     st.session_state["filtered_events"] = filtered_events.copy()
 
-    # Get variables from filters for later use
-    bg_color = filters["bg_color"]
-    text_color = filters["text_color"]
+    # ---------------- KPI CARDS IN THE TOP CONTAINER ----------------
+    with kpi_container:
+        if filtered_events.empty or "event_date" not in filtered_events.columns:
+            st.markdown(
+                f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for selected filters. KPIs and charts are hidden.</div>',
+                unsafe_allow_html=True,
+            )
+            return
 
-    # ---------------- KPI Trend Charts ----------------
-    if filtered_events.empty:
-        st.markdown(
-            f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for the selected period. Charts are hidden.</div>',
-            unsafe_allow_html=True,
+        # Determine display name based on actual selection
+        if selected_facilities == ["All Facilities"]:
+            display_name = region_name
+        elif len(selected_facilities) == 1:
+            display_name = selected_facilities[0]
+        else:
+            display_name = ", ".join(selected_facilities)
+
+        user_id = str(user.get("id", user.get("username", "default_user")))
+
+        # ✅ KPI CARDS AT THE TOP WITH FILTERED DATA
+        render_kpi_cards(
+            filtered_events,
+            display_name,
+            user_id=user_id,
         )
-        return
 
+    # ---------------- CHARTS BELOW ----------------
+    bg_color = filters["bg_color"]
     text_color = get_text_color(bg_color)
 
     with col_chart:
-        # NEW: Use KPI tab navigation instead of filters["kpi_selection"]
+        # Use KPI tab navigation
         selected_kpi = render_kpi_tab_navigation()
 
         if view_mode == "Facility Comparison" and len(selected_facilities) > 1:
             st.markdown(
-                f'<div class="section-header">📈 {selected_kpi} - Facility Comparison - Maternal Inpatient Data</div>',  # Use selected_kpi instead of kpi_selection
+                f'<div class="section-header">📈 {selected_kpi} - Facility Comparison - Maternal Inpatient Data</div>',
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             # Use common comparison chart function
             render_comparison_chart(
-                kpi_selection=selected_kpi,  # Use selected_kpi here
+                kpi_selection=selected_kpi,
                 filtered_events=filtered_events,
                 comparison_mode="facility",
                 display_names=facility_names,
                 facility_uids=facility_uids,
-                facilities_by_region=None,  # Not used in facility mode
+                facilities_by_region=None,
                 bg_color=bg_color,
                 text_color=text_color,
                 is_national=False,
@@ -1019,14 +1011,14 @@ def render_maternal_dashboard(
 
         else:
             st.markdown(
-                f'<div class="section-header">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',  # Use selected_kpi here
+                f'<div class="section-header">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             # Use common trend chart function
             render_trend_chart_section(
-                selected_kpi,  # Use selected_kpi here
+                selected_kpi,
                 filtered_events,
                 facility_uids,
                 facility_names,
@@ -1038,7 +1030,7 @@ def render_maternal_dashboard(
 
         # Use common additional analytics function
         render_additional_analytics(
-            selected_kpi,  # Use selected_kpi here
+            selected_kpi,
             filtered_events,
             facility_uids,
             bg_color,

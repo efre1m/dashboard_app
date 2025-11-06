@@ -865,7 +865,7 @@ def render_maternal_dashboard(
     country_name,
     facilities_by_region,
     facility_mapping,
-    view_mode="Normal Trend",  # Add view_mode parameter
+    view_mode="Normal Trend",
 ):
     """Render Maternal Inpatient Data dashboard content"""
     # Fetch DHIS2 data for Maternal program
@@ -959,28 +959,12 @@ def render_maternal_dashboard(
             f"**📊 Displaying data from {selected_facilities_count} facilities across {len(display_names)} regions**"
         )
 
-    # ---------------- KPI CARDS ----------------
-    if events_df.empty or "event_date" not in events_df.columns:
-        st.markdown(
-            f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available. KPIs and charts are hidden.</div>',
-            unsafe_allow_html=True,
-        )
-        return
+    # Create a container for KPI cards at the top
+    kpi_container = st.container()
 
-    # 🔒 Always national view for KPI cards
-    display_name = country_name
-    user_id = str(user.get("id", user.get("username", "default_user")))
-    all_facility_uids = list(facility_mapping.values())
-
-    render_kpi_cards(
-        events_df,
-        all_facility_uids,
-        display_name,
-        user_id=user_id,
-    )
-
-    # ---------------- Controls & Time Filter ----------------
+    # ---------------- FILTERS IN COLUMN STRUCTURE ----------------
     col_chart, col_ctrl = st.columns([3, 1])
+
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
         filters = render_simple_filter_controls(
@@ -988,23 +972,40 @@ def render_maternal_dashboard(
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply simple filters - FIXED: Use events_df instead of filtered_events
+    # Apply filters to get data
     filtered_events = apply_simple_filters(events_df, filters, facility_uids)
     st.session_state["filtered_events"] = filtered_events.copy()
     st.session_state["last_applied_selection"] = True
 
-    # Get variables from filters for later use
-    bg_color = filters["bg_color"]
-    text_color = filters["text_color"]
+    # ---------------- KPI CARDS IN THE TOP CONTAINER ----------------
+    with kpi_container:
+        if filtered_events.empty or "event_date" not in filtered_events.columns:
+            st.markdown(
+                f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for selected filters. KPIs and charts are hidden.</div>',
+                unsafe_allow_html=True,
+            )
+            return
 
-    # ---------------- KPI Trend Charts ----------------
-    if filtered_events.empty:
-        st.markdown(
-            f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for the selected period. Charts are hidden.</div>',
-            unsafe_allow_html=True,
+        # Get location display name for KPI cards
+        location_name, location_type = get_location_display_name(
+            st.session_state.filter_mode,
+            st.session_state.selected_regions,
+            st.session_state.selected_facilities,
+            country_name,
         )
-        return
 
+        display_name = location_name
+        user_id = str(user.get("id", user.get("username", "default_user")))
+
+        # ✅ KPI CARDS AT THE TOP WITH FILTERED DATA
+        render_kpi_cards(
+            filtered_events,
+            display_name,
+            user_id=user_id,
+        )
+
+    # ---------------- CHARTS BELOW ----------------
+    bg_color = filters["bg_color"]
     text_color = get_text_color(bg_color)
 
     with col_chart:

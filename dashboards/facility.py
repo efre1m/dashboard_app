@@ -687,85 +687,70 @@ def render_maternal_dashboard(user, program_uid, facility_name, facility_uid):
         unsafe_allow_html=True,
     )
 
-    # ---------------- KPI CARDS ----------------
-    if copied_events_df.empty or "event_date" not in copied_events_df.columns:
-        st.markdown(
-            f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available. KPIs and charts are hidden.</div>',
-            unsafe_allow_html=True,
-        )
-        return
+    # Create a container for KPI cards at the top
+    kpi_container = st.container()
 
-    # Pass user_id into KPI card renderer
-    user_id = str(user.get("id", user.get("username", "Unknown User")))
-
-    # Use single facility UID (not list) for facility-level view
-    render_kpi_cards(
-        copied_events_df,
-        facility_uid,  # Single facility UID (not list)
-        facility_name,
-        user_id=user_id,
-    )
-
-    # ---------------- Controls & Time Filter ----------------
+    # ---------------- FILTERS IN COLUMN STRUCTURE ----------------
     col_chart, col_ctrl = st.columns([3, 1])
+
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-
-        # Use simple filter controls
         filters = render_simple_filter_controls(
             copied_events_df, container=col_ctrl, context="facility_maternal"
         )
-
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply simple filters with single facility UID
+    # Apply filters to get data
     filtered_events = apply_simple_filters(copied_events_df, filters, facility_uid)
-
-    # Store for gauge charts
     st.session_state["filtered_events"] = filtered_events.copy()
 
-    # Get variables from filters for later use
-    bg_color = filters["bg_color"]
-    text_color = filters["text_color"]
+    # ---------------- KPI CARDS IN THE TOP CONTAINER ----------------
+    with kpi_container:
+        if filtered_events.empty or "event_date" not in filtered_events.columns:
+            st.markdown(
+                f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for selected filters. KPIs and charts are hidden.</div>',
+                unsafe_allow_html=True,
+            )
+            return
 
-    # ---------------- KPI Trend Charts ----------------
-    if filtered_events.empty:
-        st.markdown(
-            f'<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for the selected period. Charts are hidden.</div>',
-            unsafe_allow_html=True,
+        user_id = str(user.get("id", user.get("username", "Unknown User")))
+
+        # ✅ KPI CARDS AT THE TOP WITH FILTERED DATA
+        render_kpi_cards(
+            filtered_events,
+            facility_name,
+            user_id=user_id,
         )
-        return
 
-    text_color = get_text_color(bg_color)
+    # ---------------- CHARTS BELOW ----------------
+    text_color = get_text_color(filters["bg_color"])
 
     with col_chart:
-        # NEW: Use KPI tab navigation instead of filters["kpi_selection"]
+        # Use KPI tab navigation
         selected_kpi = render_kpi_tab_navigation()
 
         st.markdown(
-            f'<div class="section-header">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',  # Use selected_kpi instead of kpi_selection
+            f'<div class="section-header">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',
             unsafe_allow_html=True,
         )
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
-        # Use common trend chart function with single facility
         render_trend_chart_section(
-            selected_kpi,  # Use selected_kpi here
+            selected_kpi,
             filtered_events,
-            facility_uid,  # Single facility UID
-            facility_name,  # Single facility name
-            bg_color,
+            facility_uid,
+            facility_name,
+            filters["bg_color"],
             text_color,
         )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Use common additional analytics function
         render_additional_analytics(
-            selected_kpi,  # Use selected_kpi here
+            selected_kpi,
             filtered_events,
             facility_uid,
-            bg_color,
+            filters["bg_color"],
             text_color,
         )
 

@@ -293,16 +293,15 @@ def get_location_name_for_file(user: dict) -> str:
 
 # ---------------- KPI Card Rendering ----------------
 def render_kpi_cards(
-    events_df,
-    facility_uids=None,
+    filtered_events_df,  # CHANGED: Now accepts filtered data
     location_name="Location",
     user_id="default_user",
     user=None,
 ):
     """
-    Render KPI cards component with trend indicators that persist until refresh or logout.
+    Render KPI cards component with trend indicators that respect ALL user filters.
     """
-    if events_df.empty or "event_date" not in events_df.columns:
+    if filtered_events_df.empty or "event_date" not in filtered_events_df.columns:
         st.markdown(
             '<div class="no-data-warning">⚠️ No data available. KPIs and charts are hidden.</div>',
             unsafe_allow_html=True,
@@ -312,8 +311,9 @@ def render_kpi_cards(
     # Initialize session state for this user
     initialize_kpi_session_state(user_id)
 
-    # Compute KPIs for the selected facilities
-    kpis = compute_kpis(events_df, facility_uids)
+    # Compute KPIs for the FILTERED data (no additional filtering needed)
+    kpis = compute_kpis(filtered_events_df)  # REMOVED facility_uids parameter
+
     if not isinstance(kpis, dict):
         st.error("Error computing KPI. Please check data.")
         return
