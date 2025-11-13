@@ -1,18 +1,31 @@
+# Core Data Science & Visualization
 streamlit>=1.37.0
-requests>=2.31.0
 pandas>=2.2.2
+numpy>=1.26.0
 plotly>=5.23.0
-openpyxl>=3.1.5
-XlsxWriter>=3.2.0
-psycopg2-binary>=2.9.9
-bcrypt>=4.1.3
-python-dotenv>=1.0.1
 seaborn>=0.13.2
 matplotlib>=3.9.0
-numpy>=1.26.0
 
-# 🔹 Additions
+# Database & API
+requests>=2.31.0
+psycopg2-binary>=2.9.9
+sqlalchemy>=2.0.30
+
+# Security & Authentication
+bcrypt>=4.1.3
+cryptography>=42.0.8
+pyjwt>=2.8.0
+python-dotenv>=1.0.1
+
+# Excel & File Operations
+openpyxl>=3.1.5
+XlsxWriter>=3.2.0
+
+# Utilities & Performance
 typing-extensions>=4.12.2
 urllib3>=2.2.2
 orjson>=3.10.7
 cffi>=1.17.0
+pytz>=2024.1
+python-dateutil>=2.8.2
+tenacity>=8.2.3
