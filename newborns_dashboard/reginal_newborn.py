@@ -4,7 +4,6 @@ import pandas as pd
 import logging
 import concurrent.futures
 import requests
-from components.kpi_card import render_kpi_cards
 from newborns_dashboard.kmc_coverage import compute_kmc_kpi
 from utils.data_service import fetch_program_data_for_user
 
@@ -34,16 +33,75 @@ logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
 
 
-@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def fetch_cached_data(user, program_uid):
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(fetch_program_data_for_user, user, program_uid)
-        return future.result(timeout=180)
+# Performance optimization: Pre-load essential data with user-specific caching
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False, max_entries=5)
+def fetch_shared_program_data(user, program_uid):
+    """Optimized shared cache for program data - user-specific"""
+    if not program_uid:
+        return None
+    try:
+        return fetch_program_data_for_user(user, program_uid)
+    except Exception as e:
+        logging.error(f"Error fetching data for program {program_uid}: {e}")
+        return None
+
+
+def get_shared_program_data_optimized(user, program_uid):
+    """Optimized data loading with user-specific caching"""
+    # Create user-specific session state keys
+    user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
+    newborn_loaded_key = f"newborn_data_loaded_{user_key}"
+    newborn_data_key = f"newborn_data_{user_key}"
+
+    # Initialize session state for newborn data - user-specific
+    if newborn_loaded_key not in st.session_state:
+        st.session_state[newborn_loaded_key] = False
+        st.session_state[newborn_data_key] = None
+
+    # Load data if not already loaded
+    if not st.session_state[newborn_loaded_key]:
+        with st.spinner("🚀 Loading newborn data..."):
+            try:
+                st.session_state[newborn_data_key] = fetch_shared_program_data(
+                    user, program_uid
+                )
+                st.session_state[newborn_loaded_key] = True
+            except Exception as e:
+                logging.error(f"Error loading newborn data: {e}")
+                st.error("Newborn data loading failed. Please try refreshing.")
+
+    return st.session_state[newborn_data_key]
+
+
+def clear_newborn_cache(user=None):
+    """Clear newborn data cache - user-specific"""
+    if user:
+        # Clear specific user cache
+        user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
+        newborn_loaded_key = f"newborn_data_loaded_{user_key}"
+        newborn_data_key = f"newborn_data_{user_key}"
+
+        st.session_state[newborn_loaded_key] = False
+        st.session_state[newborn_data_key] = None
+    else:
+        # Clear all user caches (fallback)
+        keys_to_clear = [
+            key
+            for key in st.session_state.keys()
+            if key.startswith("newborn_data_loaded_") or key.startswith("newborn_data_")
+        ]
+        for key in keys_to_clear:
+            if key.startswith("newborn_data_loaded_"):
+                st.session_state[key] = False
+            else:
+                st.session_state[key] = None
+
+    clear_cache()
 
 
 def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUnit"):
     """Count unique TEIs from tei_df filtered by facility UIDs"""
-    if tei_df.empty:
+    if tei_df.empty or not facility_uids:
         return 0
 
     # Filter TEI dataframe by the selected facility UIDs
@@ -62,8 +120,10 @@ def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUn
         return filtered_tei["tei_id"].nunique()
     elif "trackedEntityInstance" in filtered_tei.columns:
         return filtered_tei["trackedEntityInstance"].nunique()
+    elif "tei" in filtered_tei.columns:
+        return filtered_tei["tei"].nunique()
     else:
-        return 0
+        return len(filtered_tei)
 
 
 def get_earliest_date(df, date_column):
@@ -116,6 +176,29 @@ def get_location_display_name(selected_facilities, region_name):
         return ", ".join(selected_facilities), "Facilities"
 
 
+def filter_data_by_facilities(data_dict, facility_uids):
+    """Filter all dataframes in a data dictionary by facility UIDs - FOLLOWING REGIONAL.PY PATTERN"""
+    if not data_dict or not facility_uids:
+        return data_dict
+
+    filtered_data = {}
+
+    for key, df in data_dict.items():
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            # Filter based on available organization unit columns
+            if "orgUnit" in df.columns:
+                filtered_df = df[df["orgUnit"].isin(facility_uids)].copy()
+            elif "tei_orgUnit" in df.columns:
+                filtered_df = df[df["tei_orgUnit"].isin(facility_uids)].copy()
+            else:
+                filtered_df = df.copy()  # No filtering possible
+            filtered_data[key] = filtered_df
+        else:
+            filtered_data[key] = df
+
+    return filtered_data
+
+
 def render_newborn_dashboard(
     user,
     program_uid,
@@ -128,59 +211,44 @@ def render_newborn_dashboard(
 ):
     """Render Newborn Care Form dashboard content following regional maternal dashboard pattern"""
 
-    # Fetch DHIS2 data for Newborn program
-    with st.spinner(f"Fetching Newborn Care Data..."):
-        try:
-            dfs = fetch_cached_data(user, program_uid)
-            update_last_sync_time()
-        except concurrent.futures.TimeoutError:
-            st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
-            return
-        except requests.RequestException as e:
-            st.error(f"⚠️ DHIS2 request failed: {e}")
-            return
-        except Exception as e:
-            st.error(f"⚠️ Unexpected error: {e}")
-            return
+    # Use optimized shared data loading with user-specific caching
+    newborn_data = get_shared_program_data_optimized(user, program_uid)
 
-    tei_df = dfs.get("tei", pd.DataFrame())
-    enrollments_df = dfs.get("enrollments", pd.DataFrame())
-    events_df = dfs.get("events", pd.DataFrame())
-    raw_json = dfs.get("raw_json", [])
-    program_info = dfs.get("program_info", {})
+    if not newborn_data:
+        st.error("⚠️ Newborn data not available")
+        return
+
+    # FILTER DATA BY SELECTED FACILITIES - FOLLOWING REGIONAL.PY PATTERN
+    if facility_uids:
+        newborn_data = filter_data_by_facilities(newborn_data, facility_uids)
+
+    # Extract dataframes efficiently
+    tei_df = newborn_data.get("tei", pd.DataFrame())
+    enrollments_df = newborn_data.get("enrollments", pd.DataFrame())
+    events_df = newborn_data.get("events", pd.DataFrame())
 
     # Normalize dates using common functions
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
-    # STORE NEWBORN EVENTS IN SESSION STATE
-    st.session_state.newborn_events_df = events_df.copy()
-    st.session_state.newborn_tei_df = tei_df.copy()
-
-    # Filter data to only show selected facilities' data
-    if facility_uids and not events_df.empty:
-        events_df = events_df[events_df["orgUnit"].isin(facility_uids)]
-
     render_connection_status(events_df, user=user)
 
     # MAIN HEADING for Newborn program - FOLLOWING REGIONAL.PY PATTERN FOR FACILITY DISPLAY
     if selected_facilities == ["All Facilities"]:
-        st.markdown(
-            f'<div class="main-header">👶 Newborn Care Form - {region_name}</div>',
-            unsafe_allow_html=True,
-        )
+        header_title = f"👶 Newborn Care Form - {region_name}"
+        header_subtitle = f"all {len(facility_mapping)} facilities"
     elif len(selected_facilities) == 1:
-        st.markdown(
-            f'<div class="main-header">👶 Newborn Care Form - {selected_facilities[0]}</div>',
-            unsafe_allow_html=True,
-        )
+        header_title = f"👶 Newborn Care Form - {selected_facilities[0]}"
+        header_subtitle = "1 facility"
     else:
-        # Display facility names separated by comma - EXACTLY LIKE REGIONAL.PY
-        facilities_display = ", ".join(selected_facilities)
-        st.markdown(
-            f'<div class="main-header">👶 Newborn Care Form - {facilities_display}</div>',
-            unsafe_allow_html=True,
-        )
+        header_title = "👶 Newborn Care Form - Multiple Facilities"
+        header_subtitle = f"{len(selected_facilities)} facilities"
+
+    st.markdown(
+        f'<div class="main-header" style="margin-bottom: 0.3rem;">{header_title}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(f"**📊 Displaying data from {header_subtitle}**")
 
     # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])
@@ -198,11 +266,19 @@ def render_newborn_dashboard(
     filtered_events = apply_simple_filters(events_df, filters, facility_uids)
 
     # Store for gauge charts
-    st.session_state["filtered_events"] = filtered_events.copy()
+    st.session_state["newborn_filtered_events"] = filtered_events.copy()
+
+    # Check for empty data - NO KPI CARDS
+    if filtered_events.empty or "event_date" not in filtered_events.columns:
+        st.markdown(
+            '<div class="no-data-warning">⚠️ No Newborn Care Data available for selected filters.</div>',
+            unsafe_allow_html=True,
+        )
+        return
 
     # Get variables from filters for later use
     bg_color = filters["bg_color"]
-    text_color = filters["text_color"]
+    text_color = get_text_color(bg_color)
 
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:
@@ -212,19 +288,16 @@ def render_newborn_dashboard(
         )
         return
 
-    text_color = get_text_color(bg_color)
-
     with col_chart:
         # Use KPI tab navigation FROM NEONATAL
         selected_kpi = render_kpi_tab_navigation()
 
-        # Use the passed view_mode parameter
+        # Use the passed view_mode parameter - FOLLOWING REGIONAL.PY PATTERN
         if view_mode == "Facility Comparison" and len(selected_facilities) > 1:
             st.markdown(
-                f'<div class="section-header">📈 {selected_kpi} - Facility Comparison - Newborn Care Form</div>',
+                f'<div class="section-header" style="margin: 0.3rem 0;">📈 {selected_kpi} - Facility Comparison - Newborn Care Form</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             # Use render_comparison_chart FROM NEONATAL
             render_comparison_chart(
@@ -240,10 +313,9 @@ def render_newborn_dashboard(
             )
         else:
             st.markdown(
-                f'<div class="section-header">📈 {selected_kpi} Trend - Newborn Care Form</div>',
+                f'<div class="section-header" style="margin: 0.3rem 0;">📈 {selected_kpi} Trend - Newborn Care Form</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
             # Use render_trend_chart_section FROM NEONATAL
             render_trend_chart_section(
@@ -255,4 +327,54 @@ def render_newborn_dashboard(
                 text_color,
             )
 
-            st.markdown("</div>", unsafe_allow_html=True)
+
+def render_newborn_summary(
+    user, region_name, selected_facilities, facility_mapping, newborn_data
+):
+    """Render newborn summary for the summary dashboard tab"""
+    if not newborn_data:
+        return {
+            "total_admitted": 0,
+            "kmc_coverage_rate": 0.0,
+            "kmc_cases": 0,
+            "total_lbw": 0,
+            "start_date": "N/A",
+        }
+
+    # Get facility UIDs
+    if selected_facilities == ["All Facilities"]:
+        facility_uids = list(facility_mapping.values())
+    else:
+        facility_uids = [
+            facility_mapping[f] for f in selected_facilities if f in facility_mapping
+        ]
+
+    # FILTER DATA BY SELECTED FACILITIES
+    if facility_uids:
+        newborn_data = filter_data_by_facilities(newborn_data, facility_uids)
+
+    # Extract dataframes
+    tei_df = newborn_data.get("tei", pd.DataFrame())
+    events_df = newborn_data.get("events", pd.DataFrame())
+    enrollments_df = newborn_data.get("enrollments", pd.DataFrame())
+
+    # Normalize dates
+    enrollments_df = normalize_enrollment_dates(enrollments_df)
+
+    # Calculate indicators
+    newborn_indicators = calculate_newborn_indicators(events_df, facility_uids)
+
+    # Get filtered TEI count
+    newborn_tei_count = count_unique_teis_filtered(tei_df, facility_uids, "tei_orgUnit")
+    newborn_indicators["total_admitted"] = newborn_tei_count
+
+    # Get earliest date
+    newborn_start_date = get_earliest_date(enrollments_df, "enrollmentDate")
+
+    return {
+        "total_admitted": newborn_tei_count,
+        "kmc_coverage_rate": newborn_indicators["kmc_coverage_rate"],
+        "kmc_cases": newborn_indicators["kmc_cases"],
+        "total_lbw": newborn_indicators["total_lbw"],
+        "start_date": newborn_start_date,
+    }
