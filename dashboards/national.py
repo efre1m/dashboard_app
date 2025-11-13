@@ -40,10 +40,12 @@ logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
 
 
-# Performance optimization: Pre-load essential data
+# Performance optimization: Pre-load essential data with user-specific caching
 @st.cache_data(ttl=3600, show_spinner=False)  # 1 hour cache for static data
 def get_static_data(user):
-    """Cache static data that doesn't change often"""
+    """Cache static data that doesn't change often - user-specific"""
+    user_identifier = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
+
     facilities_by_region = get_facilities_grouped_by_region(user)
     facility_mapping = get_facility_mapping_for_user(user)
     programs = get_all_programs()
@@ -53,13 +55,16 @@ def get_static_data(user):
         "facilities_by_region": facilities_by_region,
         "facility_mapping": facility_mapping,
         "program_uid_map": program_uid_map,
+        "user_identifier": user_identifier,
     }
 
 
-# Optimized shared cache with better memory management
-@st.cache_data(ttl=CACHE_TTL, show_spinner=False, max_entries=2)
+# Optimized shared cache with user-specific keys
+@st.cache_data(
+    ttl=CACHE_TTL, show_spinner=False, max_entries=5
+)  # Increased for multiple users
 def fetch_shared_program_data(user, program_uid):
-    """Optimized shared cache for program data"""
+    """Optimized shared cache for program data - user-specific"""
     if not program_uid:
         return None
     try:
@@ -70,18 +75,24 @@ def fetch_shared_program_data(user, program_uid):
 
 
 def get_shared_program_data_optimized(user, program_uid_map):
-    """Optimized data loading with parallel execution"""
+    """Optimized data loading with parallel execution and user-specific caching"""
     maternal_program_uid = program_uid_map.get("Maternal Inpatient Data")
     newborn_program_uid = program_uid_map.get("Newborn Care Form")
 
-    # Initialize session state for shared data
-    if "shared_data_loaded" not in st.session_state:
-        st.session_state.shared_data_loaded = False
-        st.session_state.shared_maternal_data = None
-        st.session_state.shared_newborn_data = None
+    # Create user-specific session state keys
+    user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
+    shared_loaded_key = f"shared_data_loaded_{user_key}"
+    shared_maternal_key = f"shared_maternal_data_{user_key}"
+    shared_newborn_key = f"shared_newborn_data_{user_key}"
+
+    # Initialize session state for shared data - user-specific
+    if shared_loaded_key not in st.session_state:
+        st.session_state[shared_loaded_key] = False
+        st.session_state[shared_maternal_key] = None
+        st.session_state[shared_newborn_key] = None
 
     # Load data in parallel if not already loaded
-    if not st.session_state.shared_data_loaded:
+    if not st.session_state[shared_loaded_key]:
         with st.spinner("🚀 Loading dashboard data..."):
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 # Submit both data fetching tasks
@@ -104,35 +115,57 @@ def get_shared_program_data_optimized(user, program_uid_map):
                 # Get results with timeout
                 try:
                     if maternal_future:
-                        st.session_state.shared_maternal_data = maternal_future.result(
+                        st.session_state[shared_maternal_key] = maternal_future.result(
                             timeout=120
                         )
                     if newborn_future:
-                        st.session_state.shared_newborn_data = newborn_future.result(
+                        st.session_state[shared_newborn_key] = newborn_future.result(
                             timeout=120
                         )
 
-                    st.session_state.shared_data_loaded = True
+                    st.session_state[shared_loaded_key] = True
                 except concurrent.futures.TimeoutError:
                     logging.error("Data loading timeout")
                     st.error("Data loading timeout. Please try refreshing.")
 
     return {
-        "maternal": st.session_state.shared_maternal_data,
-        "newborn": st.session_state.shared_newborn_data,
+        "maternal": st.session_state[shared_maternal_key],
+        "newborn": st.session_state[shared_newborn_key],
     }
 
 
-def clear_shared_cache():
-    """Clear shared data cache"""
-    st.session_state.shared_data_loaded = False
-    st.session_state.shared_maternal_data = None
-    st.session_state.shared_newborn_data = None
+def clear_shared_cache(user=None):
+    """Clear shared data cache - user-specific"""
+    if user:
+        # Clear specific user cache
+        user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
+        shared_loaded_key = f"shared_data_loaded_{user_key}"
+        shared_maternal_key = f"shared_maternal_data_{user_key}"
+        shared_newborn_key = f"shared_newborn_data_{user_key}"
+
+        st.session_state[shared_loaded_key] = False
+        st.session_state[shared_maternal_key] = None
+        st.session_state[shared_newborn_key] = None
+    else:
+        # Clear all user caches (fallback)
+        keys_to_clear = [
+            key
+            for key in st.session_state.keys()
+            if key.startswith("shared_data_loaded_")
+            or key.startswith("shared_maternal_data_")
+            or key.startswith("shared_newborn_data_")
+        ]
+        for key in keys_to_clear:
+            if key.startswith("shared_data_loaded_"):
+                st.session_state[key] = False
+            else:
+                st.session_state[key] = None
+
     clear_cache()
 
 
 def initialize_session_state():
-    """Optimized session state initialization"""
+    """Optimized session state initialization with user tracking"""
     session_vars = {
         "refresh_trigger": False,
         "selected_facilities": [],
@@ -150,16 +183,31 @@ def initialize_session_state():
         "kpi_cache": {},
         "selected_program_uid": None,
         "selected_program_name": "Maternal Inpatient Data",
-        "shared_data_loaded": False,
-        "shared_maternal_data": None,
-        "shared_newborn_data": None,
         "static_data_loaded": False,
-        "facility_filter_applied": False,  # NEW: Track if facility filter is applied
+        "facility_filter_applied": False,
+        "current_user_identifier": None,  # Track current user
+        "user_changed": False,  # Flag to detect user changes
     }
 
     for key, default_value in session_vars.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
+
+    # Check if user has changed
+    current_user = st.session_state.get("user", {})
+    new_user_identifier = f"{current_user.get('username', 'unknown')}_{current_user.get('role', 'unknown')}"
+
+    if st.session_state.current_user_identifier != new_user_identifier:
+        st.session_state.user_changed = True
+        st.session_state.current_user_identifier = new_user_identifier
+        # Clear user-specific data when user changes
+        st.session_state.static_data_loaded = False
+        st.session_state.selected_regions = []
+        st.session_state.selected_facilities = []
+        st.session_state.selection_applied = True
+        st.session_state.facility_filter_applied = False
+    else:
+        st.session_state.user_changed = False
 
 
 # Initialize session state at the very beginning
@@ -967,6 +1015,13 @@ def render():
     # Re-initialize session state for safety
     initialize_session_state()
 
+    # Show user change notification if needed
+    if st.session_state.get("user_changed", False):
+        st.sidebar.info("👤 User changed - loading fresh data...")
+        # Clear caches for the new user
+        current_user = st.session_state.get("user", {})
+        clear_shared_cache(current_user)
+
     # Load optimized CSS with minimal gaps
     st.markdown(
         """
@@ -1081,7 +1136,7 @@ def render():
     # Refresh Data Button - ULTRA COMPACT
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
         st.cache_data.clear()
-        clear_shared_cache()
+        clear_shared_cache(user)  # Clear specific user cache
         st.session_state.refresh_trigger = not st.session_state.refresh_trigger
         st.session_state.selection_applied = True
         st.session_state.facility_filter_applied = False  # Reset filter flag
@@ -1089,7 +1144,9 @@ def render():
 
     # ================ OPTIMIZED DATA LOADING ================
     # Get static data (cached for 1 hour)
-    if not st.session_state.get("static_data_loaded", False):
+    if not st.session_state.get("static_data_loaded", False) or st.session_state.get(
+        "user_changed", False
+    ):
         with st.sidebar:
             with st.spinner("🚀 Loading facility data..."):
                 static_data = get_static_data(user)
@@ -1099,6 +1156,7 @@ def render():
                 st.session_state.facility_mapping = static_data["facility_mapping"]
                 st.session_state.program_uid_map = static_data["program_uid_map"]
                 st.session_state.static_data_loaded = True
+                st.session_state.user_changed = False  # Reset user change flag
 
     facilities_by_region = st.session_state.facilities_by_region
     facility_mapping = st.session_state.facility_mapping
@@ -1264,9 +1322,12 @@ def render():
         else:
             st.error("Maternal data not available")
 
+    # In your national.py - MODIFY the newborn tab section:
+
     with tab2:
         newborn_data = shared_data["newborn"]
         if newborn_data:
+            # PASS the already-loaded newborn data to avoid duplicate fetching
             render_newborn_dashboard(
                 user,
                 program_uid_map.get("Newborn Care Form"),
@@ -1274,6 +1335,7 @@ def render():
                 facilities_by_region,
                 facility_mapping,
                 view_mode=view_mode,
+                shared_newborn_data=newborn_data,  # ← ADD THIS LINE
             )
         else:
             st.error("Newborn data not available")

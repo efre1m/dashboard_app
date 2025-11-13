@@ -2,8 +2,6 @@
 import streamlit as st
 import pandas as pd
 import logging
-import concurrent.futures
-import requests
 from newborns_dashboard.kmc_coverage import compute_kmc_kpi
 from utils.data_service import fetch_program_data_for_user
 
@@ -33,10 +31,12 @@ logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
 
 
-# User-specific caching for newborn data
+# User-specific caching for newborn data (only used as fallback)
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False, max_entries=5)
 def fetch_cached_data(user, program_uid):
-    """Fetch cached data with user-specific caching"""
+    """Fetch cached data with user-specific caching - FALLBACK ONLY"""
+    import concurrent.futures
+
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future = executor.submit(fetch_program_data_for_user, user, program_uid)
         return future.result(timeout=180)
@@ -151,41 +151,6 @@ def filter_data_by_facilities(data_dict, facility_uids):
     return filtered_data
 
 
-def clear_newborn_cache(user=None):
-    """Clear newborn-specific cache - user-specific"""
-    if user:
-        # Clear specific user cache for newborn data
-        user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
-        newborn_loaded_key = f"newborn_data_loaded_{user_key}"
-        newborn_events_key = f"newborn_events_data_{user_key}"
-        newborn_tei_key = f"newborn_tei_data_{user_key}"
-
-        # Clear session state
-        for key in [newborn_loaded_key, newborn_events_key, newborn_tei_key]:
-            if key in st.session_state:
-                st.session_state[key] = None
-
-    # Clear streamlit cache
-    clear_cache()
-
-
-def initialize_newborn_session_state():
-    """Initialize newborn-specific session state with user tracking"""
-    current_user = st.session_state.get("user", {})
-    user_key = f"{current_user.get('username', 'unknown')}_{current_user.get('role', 'unknown')}"
-
-    newborn_vars = {
-        f"newborn_data_loaded_{user_key}": False,
-        f"newborn_events_data_{user_key}": None,
-        f"newborn_tei_data_{user_key}": None,
-        "newborn_filtered_events": pd.DataFrame(),
-    }
-
-    for key, default_value in newborn_vars.items():
-        if key not in st.session_state:
-            st.session_state[key] = default_value
-
-
 def update_facility_selection(
     filter_mode,
     selected_regions,
@@ -227,64 +192,36 @@ def render_newborn_dashboard(
     facilities_by_region,
     facility_mapping,
     view_mode="Normal Trend",
+    shared_newborn_data=None,  # ← NEW PARAMETER: Accept shared data from national.py
 ):
-    """Render Newborn Care Form dashboard content following maternal dashboard pattern"""
+    """Render Newborn Care Form dashboard using shared data to avoid duplicate API calls"""
 
-    # Initialize newborn session state
-    initialize_newborn_session_state()
+    # Use shared data if provided (from national.py), otherwise use fallback caching
+    if shared_newborn_data is not None:
+        # USE THE SHARED DATA - NO DUPLICATE FETCHING
+        newborn_data = shared_newborn_data
+        logging.info("✅ Using shared newborn data from national dashboard")
+    else:
+        # Fallback: Only fetch if called independently (not from national dashboard)
+        logging.info("🔄 Fetching newborn data independently (fallback)")
+        newborn_data = fetch_cached_data(user, program_uid)
 
-    # Create user-specific keys
-    user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
-    newborn_loaded_key = f"newborn_data_loaded_{user_key}"
-    newborn_events_key = f"newborn_events_data_{user_key}"
-    newborn_tei_key = f"newborn_tei_data_{user_key}"
+    if not newborn_data:
+        st.error("⚠️ Newborn data not available")
+        return
 
-    # Fetch DHIS2 data for Newborn program with user-specific caching
-    if not st.session_state.get(newborn_loaded_key, False):
-        with st.spinner(f"🚀 Loading Newborn Care Data..."):
-            try:
-                dfs = fetch_cached_data(user, program_uid)
-                update_last_sync_time()
-
-                # Store in user-specific session state
-                st.session_state[newborn_events_key] = dfs.get("events", pd.DataFrame())
-                st.session_state[newborn_tei_key] = dfs.get("tei", pd.DataFrame())
-                st.session_state[newborn_loaded_key] = True
-
-            except concurrent.futures.TimeoutError:
-                st.error("⚠️ DHIS2 data could not be fetched within 3 minutes.")
-                return
-            except requests.RequestException as e:
-                st.error(f"⚠️ DHIS2 request failed: {e}")
-                return
-            except Exception as e:
-                st.error(f"⚠️ Unexpected error: {e}")
-                return
-
-    # Get data from user-specific session state
-    tei_df = st.session_state.get(newborn_tei_key, pd.DataFrame())
-    events_df = st.session_state.get(newborn_events_key, pd.DataFrame())
-
-    # Get other data directly if needed
-    try:
-        dfs = (
-            fetch_cached_data(user, program_uid)
-            if events_df.empty
-            else {
-                "tei": tei_df,
-                "events": events_df,
-                "enrollments": pd.DataFrame(),  # Placeholder if needed
-                "raw_json": [],
-                "program_info": {},
-            }
-        )
-        enrollments_df = dfs.get("enrollments", pd.DataFrame())
-    except:
-        enrollments_df = pd.DataFrame()
+    # Extract dataframes efficiently
+    tei_df = newborn_data.get("tei", pd.DataFrame())
+    enrollments_df = newborn_data.get("enrollments", pd.DataFrame())
+    events_df = newborn_data.get("events", pd.DataFrame())
 
     # Normalize dates using common functions
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
+
+    # Store in session state for data quality tracking
+    st.session_state.newborn_events_df = events_df.copy()
+    st.session_state.newborn_tei_df = tei_df.copy()
 
     # ---------------- Use SHARED Session State from Maternal Dashboard ----------------
     filter_mode = st.session_state.get("filter_mode", "All Facilities")
@@ -302,18 +239,10 @@ def render_newborn_dashboard(
 
     # FILTER DATA BY SELECTED FACILITIES
     if facility_uids and st.session_state.get("facility_filter_applied", False):
-        newborn_data = {
-            "events": events_df,
-            "tei": tei_df,
-            "enrollments": enrollments_df,
-        }
-        filtered_newborn_data = filter_data_by_facilities(newborn_data, facility_uids)
-        events_df = filtered_newborn_data.get("events", pd.DataFrame())
-        tei_df = filtered_newborn_data.get("tei", pd.DataFrame())
-
-    # STORE NEWBORN EVENTS IN SESSION STATE (user-specific)
-    st.session_state[newborn_events_key] = events_df.copy()
-    st.session_state[newborn_tei_key] = tei_df.copy()
+        newborn_data = filter_data_by_facilities(newborn_data, facility_uids)
+        # Update dataframes after filtering
+        events_df = newborn_data.get("events", pd.DataFrame())
+        tei_df = newborn_data.get("tei", pd.DataFrame())
 
     render_connection_status(events_df, user=user)
 
@@ -378,7 +307,7 @@ def render_newborn_dashboard(
 
     # Get variables from filters for later use
     bg_color = filters["bg_color"]
-    text_color = filters["text_color"]
+    text_color = get_text_color(bg_color)
 
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:
@@ -387,8 +316,6 @@ def render_newborn_dashboard(
             unsafe_allow_html=True,
         )
         return
-
-    text_color = get_text_color(bg_color)
 
     with col_chart:
         # Use KPI tab navigation FROM NEONATAL
