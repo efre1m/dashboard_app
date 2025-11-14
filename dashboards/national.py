@@ -4,6 +4,7 @@ import pandas as pd
 import logging
 import concurrent.futures
 import asyncio
+import time
 from components.kpi_card import render_kpi_cards
 from utils.kpi_lbw import compute_lbw_kpi
 from newborns_dashboard.national_newborn import render_newborn_dashboard
@@ -38,6 +39,22 @@ initialize_status_system()
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
+
+
+# Performance monitoring decorator
+def timing_decorator(func):
+    """Decorator to measure function execution time"""
+
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        if execution_time > 1.0:  # Only log slow operations
+            logging.warning(f"⏰ {func.__name__} took {execution_time:.2f} seconds")
+        return result
+
+    return wrapper
 
 
 # Performance optimization: Pre-load essential data with user-specific caching
@@ -165,7 +182,7 @@ def clear_shared_cache(user=None):
 
 
 def initialize_session_state():
-    """Optimized session state initialization with user tracking"""
+    """Optimized session state initialization with KPI sharing for BOTH maternal and newborn"""
     session_vars = {
         "refresh_trigger": False,
         "selected_facilities": [],
@@ -185,8 +202,15 @@ def initialize_session_state():
         "selected_program_name": "Maternal Inpatient Data",
         "static_data_loaded": False,
         "facility_filter_applied": False,
-        "current_user_identifier": None,  # Track current user
-        "user_changed": False,  # Flag to detect user changes
+        "current_user_identifier": None,
+        "user_changed": False,
+        # ✅ ADD THESE FOR KPI SHARING (BOTH MATERNAL AND NEWBORN):
+        "last_computed_kpis": None,  # Maternal KPIs
+        "last_computed_facilities": None,  # Current facility selection
+        "last_computed_timestamp": None,  # When KPIs were computed
+        "last_computed_newborn_kpis": None,  # Newborn KPIs
+        "last_computed_newborn_timestamp": None,
+        "summary_kpi_cache": {},  # Cache for summary dashboard KPIs
     }
 
     for key, default_value in session_vars.items():
@@ -206,6 +230,9 @@ def initialize_session_state():
         st.session_state.selected_facilities = []
         st.session_state.selection_applied = True
         st.session_state.facility_filter_applied = False
+        st.session_state.last_computed_kpis = None
+        st.session_state.last_computed_newborn_kpis = None
+        st.session_state.summary_kpi_cache = {}
     else:
         st.session_state.user_changed = False
 
@@ -248,67 +275,6 @@ def get_earliest_date(df, date_column):
         )
     except Exception:
         return "N/A"
-
-
-def calculate_maternal_indicators(maternal_events_df, facility_uids):
-    """Optimized maternal indicators calculation"""
-    if maternal_events_df.empty:
-        return {
-            "total_deliveries": 0,
-            "maternal_deaths": 0,
-            "maternal_death_rate": 0.0,
-            "live_births": 0,
-            "stillbirths": 0,
-            "total_births": 0,
-            "stillbirth_rate": 0.0,
-            "low_birth_weight_rate": 0.0,
-            "low_birth_weight_count": 0,
-        }
-
-    # Use compute_kpis for basic maternal indicators
-    kpi_data = compute_kpis(maternal_events_df, facility_uids)
-
-    total_deliveries = kpi_data.get("total_deliveries", 0)
-    maternal_deaths = kpi_data.get("maternal_deaths", 0)
-    live_births = kpi_data.get("live_births", 0)
-    stillbirths = kpi_data.get("stillbirths", 0)
-    total_births = kpi_data.get("total_births", 0)
-
-    # Use compute_lbw_kpi specifically for low birth weight data
-    lbw_data = compute_lbw_kpi(maternal_events_df, facility_uids)
-    low_birth_weight_count = lbw_data.get("lbw_count", 0)
-    total_weighed = lbw_data.get("total_weighed", total_births)
-    low_birth_weight_rate = lbw_data.get("lbw_rate", 0.0)
-
-    # Calculate rates
-    maternal_death_rate = (
-        (maternal_deaths / live_births * 100000) if live_births > 0 else 0.0
-    )
-    stillbirth_rate = (stillbirths / total_births * 1000) if total_births > 0 else 0.0
-
-    # If lbw_rate is 0 but we have data, calculate it manually
-    if low_birth_weight_rate == 0 and total_weighed > 0:
-        low_birth_weight_rate = (low_birth_weight_count / total_weighed) * 100
-
-    return {
-        "total_deliveries": total_deliveries,
-        "maternal_deaths": maternal_deaths,
-        "maternal_death_rate": round(maternal_death_rate, 2),
-        "live_births": live_births,
-        "stillbirths": stillbirths,
-        "total_births": total_births,
-        "stillbirth_rate": round(stillbirth_rate, 2),
-        "low_birth_weight_rate": round(low_birth_weight_rate, 2),
-        "low_birth_weight_count": low_birth_weight_count,
-    }
-
-
-def calculate_newborn_indicators(newborn_events_df, facility_uids):
-    """Optimized newborn indicators calculation"""
-    if newborn_events_df.empty:
-        return {"total_admitted": 0, "nmr": "N/A"}
-
-    return {"total_admitted": 0, "nmr": "N/A"}
 
 
 def get_location_display_name(
@@ -356,10 +322,35 @@ def filter_data_by_facilities(data_dict, facility_uids):
     return filtered_data
 
 
+@timing_decorator
+def calculate_regional_comparison_data(
+    maternal_tei_df, newborn_tei_df, facilities_by_region, facility_mapping
+):
+    """Optimized regional comparison data calculation"""
+    regional_data = {}
+
+    for region_name, facilities in facilities_by_region.items():
+        region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
+
+        maternal_count = count_unique_teis_filtered(
+            maternal_tei_df, region_facility_uids, "tei_orgUnit"
+        )
+        newborn_count = count_unique_teis_filtered(
+            newborn_tei_df, region_facility_uids, "tei_orgUnit"
+        )
+
+        regional_data[region_name] = {
+            "mothers": maternal_count,
+            "newborns": newborn_count,
+        }
+
+    return regional_data
+
+
 def render_summary_dashboard_shared(
     user, country_name, facilities_by_region, facility_mapping, shared_data
 ):
-    """Optimized Summary Dashboard rendering"""
+    """OPTIMIZED Summary Dashboard - REUSES pre-computed data from BOTH maternal and newborn tabs"""
 
     # Use columns for better layout control with minimal gaps
     col_title, col_space = st.columns([4, 1])
@@ -371,10 +362,6 @@ def render_summary_dashboard_shared(
         st.markdown(
             "**Comprehensive overview of maternal and newborn health indicators**"
         )
-
-    # Get programs for UID mapping
-    programs = get_all_programs()
-    program_uid_map = {p["program_name"]: p["program_uid"] for p in programs}
 
     # Get facility selection
     filter_mode = st.session_state.get("filter_mode", "All Facilities")
@@ -395,7 +382,7 @@ def render_summary_dashboard_shared(
         filter_mode, selected_regions, selected_facilities, country_name
     )
 
-    # Use shared data - APPLY FACILITY FILTERING
+    # Use shared data
     maternal_data = shared_data["maternal"]
     newborn_data = shared_data["newborn"]
 
@@ -403,55 +390,181 @@ def render_summary_dashboard_shared(
         st.error("No data available for summary dashboard")
         return
 
-    # FILTER DATA BY SELECTED FACILITIES
-    if facility_uids and st.session_state.get("facility_filter_applied", False):
-        maternal_data = filter_data_by_facilities(maternal_data, facility_uids)
-        newborn_data = filter_data_by_facilities(newborn_data, facility_uids)
+    # ✅ OPTIMIZED: Create cache key for summary data
+    cache_key = f"summary_{location_name}_{len(facility_uids)}_{hash(str(selected_regions))}_{hash(str(selected_facilities))}"
 
-    # Extract dataframes efficiently
-    maternal_tei_df = (
-        maternal_data.get("tei", pd.DataFrame()) if maternal_data else pd.DataFrame()
-    )
-    maternal_events_df = (
-        maternal_data.get("events", pd.DataFrame()) if maternal_data else pd.DataFrame()
-    )
-    newborn_tei_df = (
-        newborn_data.get("tei", pd.DataFrame()) if newborn_data else pd.DataFrame()
-    )
-    newborn_events_df = (
-        newborn_data.get("events", pd.DataFrame()) if newborn_data else pd.DataFrame()
-    )
+    # ✅ OPTIMIZED: Check if we have cached summary data
+    if (
+        cache_key in st.session_state.summary_kpi_cache
+        and time.time() - st.session_state.summary_kpi_cache[cache_key]["timestamp"]
+        < 300
+    ):  # 5 minute cache
 
-    # Normalize dates efficiently
-    newborn_enrollments_df = normalize_enrollment_dates(
-        newborn_data.get("enrollments", pd.DataFrame())
-        if newborn_data
-        else pd.DataFrame()
-    )
-    maternal_enrollments_df = normalize_enrollment_dates(
-        maternal_data.get("enrollments", pd.DataFrame())
-        if maternal_data
-        else pd.DataFrame()
-    )
+        summary_data = st.session_state.summary_kpi_cache[cache_key]["data"]
+        logging.info("✅ USING CACHED summary data")
+    else:
+        # Compute summary data (minimal computation)
+        with st.spinner("🔄 Computing summary statistics..."):
+            # Extract dataframes WITHOUT recomputing KPIs
+            maternal_tei_df = (
+                maternal_data.get("tei", pd.DataFrame())
+                if maternal_data
+                else pd.DataFrame()
+            )
+            newborn_tei_df = (
+                newborn_data.get("tei", pd.DataFrame())
+                if newborn_data
+                else pd.DataFrame()
+            )
 
-    # Calculate indicators in parallel (conceptually)
-    maternal_indicators = calculate_maternal_indicators(
-        maternal_events_df, facility_uids
-    )
-    newborn_indicators = calculate_newborn_indicators(newborn_events_df, facility_uids)
+            # Get enrollment dates
+            newborn_enrollments_df = normalize_enrollment_dates(
+                newborn_data.get("enrollments", pd.DataFrame())
+                if newborn_data
+                else pd.DataFrame()
+            )
+            maternal_enrollments_df = normalize_enrollment_dates(
+                maternal_data.get("enrollments", pd.DataFrame())
+                if maternal_data
+                else pd.DataFrame()
+            )
 
-    # Get filtered TEI counts
-    maternal_tei_count = count_unique_teis_filtered(
-        maternal_tei_df, facility_uids, "tei_orgUnit"
-    )
-    newborn_tei_count = count_unique_teis_filtered(
-        newborn_tei_df, facility_uids, "tei_orgUnit"
-    )
-    newborn_indicators["total_admitted"] = newborn_tei_count
+            # ✅ OPTIMIZED: Get TEI counts (cheap operation)
+            maternal_tei_count = count_unique_teis_filtered(
+                maternal_tei_df, facility_uids, "tei_orgUnit"
+            )
+            newborn_tei_count = count_unique_teis_filtered(
+                newborn_tei_df, facility_uids, "tei_orgUnit"
+            )
 
-    # Get earliest dates
-    newborn_start_date = get_earliest_date(newborn_enrollments_df, "enrollmentDate")
-    maternal_start_date = get_earliest_date(maternal_enrollments_df, "enrollmentDate")
+            # ✅ OPTIMIZED: Get dates (cheap operation)
+            newborn_start_date = get_earliest_date(
+                newborn_enrollments_df, "enrollmentDate"
+            )
+            maternal_start_date = get_earliest_date(
+                maternal_enrollments_df, "enrollmentDate"
+            )
+
+            # ✅ OPTIMIZED: Regional comparison (cheap operation)
+            regional_comparison_data = calculate_regional_comparison_data(
+                maternal_tei_df, newborn_tei_df, facilities_by_region, facility_mapping
+            )
+
+            # ✅ OPTIMIZED: REUSE pre-computed MATERNAL KPIs from maternal dashboard
+            if (
+                st.session_state.get("last_computed_kpis")
+                and st.session_state.get("last_computed_facilities") == facility_uids
+                and time.time() - st.session_state.get("last_computed_timestamp", 0)
+                < 300
+            ):  # 5 minute cache
+
+                kpi_data = st.session_state.last_computed_kpis
+                logging.info(
+                    "✅ REUSING pre-computed MATERNAL KPIs from maternal dashboard"
+                )
+            else:
+                # Fallback: minimal computation using filtered events if available
+                if (
+                    st.session_state.get("filtered_events") is not None
+                    and not st.session_state.filtered_events.empty
+                ):
+                    kpi_data = compute_kpis(
+                        st.session_state.filtered_events, facility_uids
+                    )
+                else:
+                    maternal_events_df = (
+                        maternal_data.get("events", pd.DataFrame())
+                        if maternal_data
+                        else pd.DataFrame()
+                    )
+                    kpi_data = compute_kpis(maternal_events_df, facility_uids)
+                logging.info("🔄 Computing MATERNAL KPIs for summary (fallback)")
+
+            # Extract KPI values from pre-computed data
+            maternal_indicators = {
+                "total_deliveries": kpi_data.get("total_deliveries", 0),
+                "maternal_deaths": kpi_data.get("maternal_deaths", 0),
+                "maternal_death_rate": kpi_data.get("maternal_death_rate", 0.0),
+                "live_births": kpi_data.get("live_births", 0),
+                "stillbirths": kpi_data.get("stillbirths", 0),
+                "total_births": kpi_data.get("total_births", 0),
+                "stillbirth_rate": kpi_data.get("stillbirth_rate", 0.0),
+            }
+
+            # For LBW, use minimal computation
+            lbw_events_df = (
+                st.session_state.filtered_events
+                if st.session_state.get("filtered_events") is not None
+                else maternal_data.get("events", pd.DataFrame())
+            )
+            lbw_data = compute_lbw_kpi(lbw_events_df, facility_uids)
+
+            maternal_indicators.update(
+                {
+                    "low_birth_weight_rate": lbw_data.get("lbw_rate", 0.0),
+                    "low_birth_weight_count": lbw_data.get("lbw_count", 0),
+                }
+            )
+
+            # ✅ OPTIMIZED: REUSE pre-computed NEWBORN KPIs from newborn dashboard
+            if (
+                st.session_state.get("last_computed_newborn_kpis")
+                and time.time()
+                - st.session_state.get("last_computed_newborn_timestamp", 0)
+                < 300
+            ):  # 5 minute cache
+
+                newborn_kpi_data = st.session_state.last_computed_newborn_kpis
+                logging.info(
+                    "✅ REUSING pre-computed NEWBORN KPIs from newborn dashboard"
+                )
+            else:
+                # Fallback: minimal computation for newborn data
+                newborn_events_df = (
+                    newborn_data.get("events", pd.DataFrame())
+                    if newborn_data
+                    else pd.DataFrame()
+                )
+                newborn_kpi_data = {
+                    "kmc_coverage_rate": 0.0,  # Placeholder - would compute if needed
+                    "kmc_cases": 0,
+                    "total_lbw": 0,
+                }
+                logging.info("🔄 Using placeholder NEWBORN KPIs for summary")
+
+            # Newborn indicators (reusing pre-computed data)
+            newborn_indicators = {
+                "total_admitted": newborn_tei_count,
+                "nmr": "N/A",  # Placeholder
+                "kmc_coverage_rate": newborn_kpi_data.get("kmc_coverage_rate", 0.0),
+                "kmc_cases": newborn_kpi_data.get("kmc_cases", 0),
+                "total_lbw": newborn_kpi_data.get("total_lbw", 0),
+            }
+
+            summary_data = {
+                "maternal_indicators": maternal_indicators,
+                "newborn_indicators": newborn_indicators,
+                "maternal_tei_count": maternal_tei_count,
+                "newborn_tei_count": newborn_tei_count,
+                "newborn_start_date": newborn_start_date,
+                "maternal_start_date": maternal_start_date,
+                "regional_comparison_data": regional_comparison_data,
+            }
+
+            # Cache the computed data
+            st.session_state.summary_kpi_cache[cache_key] = {
+                "data": summary_data,
+                "timestamp": time.time(),
+            }
+
+    # Extract data for rendering
+    maternal_indicators = summary_data["maternal_indicators"]
+    newborn_indicators = summary_data["newborn_indicators"]
+    maternal_tei_count = summary_data["maternal_tei_count"]
+    newborn_tei_count = summary_data["newborn_tei_count"]
+    newborn_start_date = summary_data["newborn_start_date"]
+    maternal_start_date = summary_data["maternal_start_date"]
+    regional_comparison_data = summary_data["regional_comparison_data"]
 
     # Apply optimized table styling with reduced gaps
     st.markdown(
@@ -517,13 +630,13 @@ def render_summary_dashboard_shared(
             "Total Admitted Newborns": [newborn_tei_count],
             "NMR": [f"{newborn_indicators['nmr']}"],
             "Stillbirth Rate": [
-                f"{maternal_indicators['stillbirth_rate']} per 1000 births"
+                f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births"
             ],
             "Live Births": [maternal_indicators["live_births"]],
             "Stillbirths": [maternal_indicators["stillbirths"]],
             "Total Births": [maternal_indicators["total_births"]],
             "Low Birth Weight Rate": [
-                f"{maternal_indicators['low_birth_weight_rate']}%"
+                f"{maternal_indicators['low_birth_weight_rate']:.2f}%"
             ],
         }
         newborn_df = pd.DataFrame(newborn_data_download)
@@ -554,11 +667,11 @@ def render_summary_dashboard_shared(
             location_name,
             f"{newborn_tei_count:,}",
             f"{newborn_indicators['nmr']}",
-            f"{maternal_indicators['stillbirth_rate']} per 1000 births",
+            f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
             f"{maternal_indicators['live_births']:,}",
             f"{maternal_indicators['stillbirths']:,}",
             f"{maternal_indicators['total_births']:,}",
-            f"{maternal_indicators['low_birth_weight_rate']}%",
+            f"{maternal_indicators['low_birth_weight_rate']:.2f}%",
         ],
     }
 
@@ -587,7 +700,7 @@ def render_summary_dashboard_shared(
             "Total Admitted Mothers": [maternal_tei_count],
             "Total Deliveries": [maternal_indicators["total_deliveries"]],
             "Maternal Death Rate": [
-                f"{maternal_indicators['maternal_death_rate']} per 100,000 births"
+                f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births"
             ],
         }
         maternal_df = pd.DataFrame(maternal_data_download)
@@ -614,7 +727,7 @@ def render_summary_dashboard_shared(
             location_name,
             f"{maternal_tei_count:,}",
             f"{maternal_indicators['total_deliveries']:,}",
-            f"{maternal_indicators['maternal_death_rate']} per 100,000 births",
+            f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births",
         ],
     }
 
@@ -684,10 +797,6 @@ def render_summary_dashboard_shared(
     # Regional comparison table
     st.markdown("---")
     st.markdown("### 📊 Mothers & Newborns by region")
-
-    regional_comparison_data = calculate_regional_comparison_data(
-        maternal_tei_df, newborn_tei_df, facilities_by_region, facility_mapping
-    )
 
     if regional_comparison_data:
         regions = list(regional_comparison_data.keys())
@@ -763,30 +872,6 @@ def render_summary_dashboard_shared(
             )
     else:
         st.info("No regional data available for comparison.")
-
-
-def calculate_regional_comparison_data(
-    maternal_tei_df, newborn_tei_df, facilities_by_region, facility_mapping
-):
-    """Optimized regional comparison data calculation"""
-    regional_data = {}
-
-    for region_name, facilities in facilities_by_region.items():
-        region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
-
-        maternal_count = count_unique_teis_filtered(
-            maternal_tei_df, region_facility_uids, "tei_orgUnit"
-        )
-        newborn_count = count_unique_teis_filtered(
-            newborn_tei_df, region_facility_uids, "tei_orgUnit"
-        )
-
-        regional_data[region_name] = {
-            "mothers": maternal_count,
-            "newborns": newborn_count,
-        }
-
-    return regional_data
 
 
 def render_maternal_dashboard_shared(
@@ -919,7 +1004,14 @@ def render_maternal_dashboard_shared(
         )
 
         user_id = str(user.get("id", user.get("username", "default_user")))
-        render_kpi_cards(filtered_events, location_name, user_id=user_id)
+
+        # ✅ STORE computed KPIs for reuse in summary tab
+        kpi_data = render_kpi_cards(filtered_events, location_name, user_id=user_id)
+
+        # Save for summary dashboard to reuse
+        st.session_state.last_computed_kpis = kpi_data
+        st.session_state.last_computed_facilities = facility_uids
+        st.session_state.last_computed_timestamp = time.time()
 
     # Charts section with optimized rendering
     bg_color = filters["bg_color"]
@@ -1140,6 +1232,9 @@ def render():
         st.session_state.refresh_trigger = not st.session_state.refresh_trigger
         st.session_state.selection_applied = True
         st.session_state.facility_filter_applied = False  # Reset filter flag
+        st.session_state.last_computed_kpis = None
+        st.session_state.last_computed_newborn_kpis = None
+        st.session_state.summary_kpi_cache = {}
         st.rerun()
 
     # ================ OPTIMIZED DATA LOADING ================
@@ -1322,8 +1417,6 @@ def render():
         else:
             st.error("Maternal data not available")
 
-    # In your national.py - MODIFY the newborn tab section:
-
     with tab2:
         newborn_data = shared_data["newborn"]
         if newborn_data:
@@ -1335,7 +1428,7 @@ def render():
                 facilities_by_region,
                 facility_mapping,
                 view_mode=view_mode,
-                shared_newborn_data=newborn_data,  # ← ADD THIS LINE
+                shared_newborn_data=newborn_data,
             )
         else:
             st.error("Newborn data not available")

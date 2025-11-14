@@ -1218,6 +1218,7 @@ def render():
                 view_mode=view_mode,
                 facility_mapping=facility_mapping,
                 facility_names=facility_names,
+                shared_newborn_data=newborn_data,  # ← ADD THIS LINE
             )
         else:
             st.error("Newborn data not available")

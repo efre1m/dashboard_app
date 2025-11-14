@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import logging
+import time
 from newborns_dashboard.kmc_coverage import compute_kmc_kpi
 from utils.data_service import fetch_program_data_for_user
 
@@ -79,31 +80,6 @@ def get_earliest_date(df, date_column):
         return earliest_date.strftime("%Y-%m-%d")
     except:
         return "N/A"
-
-
-def calculate_newborn_indicators(newborn_events_df, facility_uids):
-    """Calculate newborn indicators using appropriate KPI functions"""
-    if newborn_events_df.empty:
-        return {
-            "total_admitted": 0,
-            "kmc_coverage_rate": 0.0,
-            "kmc_cases": 0,
-            "total_lbw": 0,
-        }
-
-    # Use compute_kmc_kpi for KMC coverage indicators
-    kmc_data = compute_kmc_kpi(newborn_events_df, facility_uids)
-
-    kmc_coverage_rate = kmc_data.get("kmc_rate", 0.0)
-    kmc_cases = kmc_data.get("kmc_count", 0)
-    total_lbw = kmc_data.get("total_lbw", 0)
-
-    return {
-        "total_admitted": 0,  # Will be set from filtered TEI count
-        "kmc_coverage_rate": round(kmc_coverage_rate, 2),
-        "kmc_cases": kmc_cases,
-        "total_lbw": total_lbw,
-    }
 
 
 def get_location_display_name(
@@ -192,7 +168,7 @@ def render_newborn_dashboard(
     facilities_by_region,
     facility_mapping,
     view_mode="Normal Trend",
-    shared_newborn_data=None,  # ← NEW PARAMETER: Accept shared data from national.py
+    shared_newborn_data=None,
 ):
     """Render Newborn Care Form dashboard using shared data to avoid duplicate API calls"""
 
@@ -316,6 +292,20 @@ def render_newborn_dashboard(
             unsafe_allow_html=True,
         )
         return
+
+    # ✅ COMPUTE and STORE newborn KPIs for reuse in summary dashboard
+    kmc_data = compute_kmc_kpi(filtered_events, facility_uids)
+
+    # ✅ STORE computed newborn KPIs for reuse in summary tab
+    newborn_kpis = {
+        "kmc_coverage_rate": kmc_data.get("kmc_rate", 0.0),
+        "kmc_cases": kmc_data.get("kmc_count", 0),
+        "total_lbw": kmc_data.get("total_lbw", 0),
+    }
+
+    st.session_state.last_computed_newborn_kpis = newborn_kpis
+    st.session_state.last_computed_newborn_timestamp = time.time()
+    logging.info("✅ STORED newborn KPIs for summary dashboard reuse")
 
     with col_chart:
         # Use KPI tab navigation FROM NEONATAL

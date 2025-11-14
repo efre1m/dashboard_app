@@ -2,10 +2,7 @@
 import streamlit as st
 import pandas as pd
 import logging
-import concurrent.futures
-import requests
 from newborns_dashboard.kmc_coverage import compute_kmc_kpi
-from utils.data_service import fetch_program_data_for_user
 
 # IMPORT FROM NEONATAL DASH CO, NOT MATERNAL DASH_CO
 from newborns_dashboard.dash_co_newborn import (
@@ -31,72 +28,6 @@ initialize_status_system()
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
-
-
-# Performance optimization: Pre-load essential data with user-specific caching
-@st.cache_data(ttl=CACHE_TTL, show_spinner=False, max_entries=5)
-def fetch_shared_program_data(user, program_uid):
-    """Optimized shared cache for program data - user-specific"""
-    if not program_uid:
-        return None
-    try:
-        return fetch_program_data_for_user(user, program_uid)
-    except Exception as e:
-        logging.error(f"Error fetching data for program {program_uid}: {e}")
-        return None
-
-
-def get_shared_program_data_optimized(user, program_uid):
-    """Optimized data loading with user-specific caching"""
-    # Create user-specific session state keys
-    user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
-    newborn_loaded_key = f"newborn_data_loaded_{user_key}"
-    newborn_data_key = f"newborn_data_{user_key}"
-
-    # Initialize session state for newborn data - user-specific
-    if newborn_loaded_key not in st.session_state:
-        st.session_state[newborn_loaded_key] = False
-        st.session_state[newborn_data_key] = None
-
-    # Load data if not already loaded
-    if not st.session_state[newborn_loaded_key]:
-        with st.spinner("🚀 Loading newborn data..."):
-            try:
-                st.session_state[newborn_data_key] = fetch_shared_program_data(
-                    user, program_uid
-                )
-                st.session_state[newborn_loaded_key] = True
-            except Exception as e:
-                logging.error(f"Error loading newborn data: {e}")
-                st.error("Newborn data loading failed. Please try refreshing.")
-
-    return st.session_state[newborn_data_key]
-
-
-def clear_newborn_cache(user=None):
-    """Clear newborn data cache - user-specific"""
-    if user:
-        # Clear specific user cache
-        user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
-        newborn_loaded_key = f"newborn_data_loaded_{user_key}"
-        newborn_data_key = f"newborn_data_{user_key}"
-
-        st.session_state[newborn_loaded_key] = False
-        st.session_state[newborn_data_key] = None
-    else:
-        # Clear all user caches (fallback)
-        keys_to_clear = [
-            key
-            for key in st.session_state.keys()
-            if key.startswith("newborn_data_loaded_") or key.startswith("newborn_data_")
-        ]
-        for key in keys_to_clear:
-            if key.startswith("newborn_data_loaded_"):
-                st.session_state[key] = False
-            else:
-                st.session_state[key] = None
-
-    clear_cache()
 
 
 def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUnit"):
@@ -199,6 +130,40 @@ def filter_data_by_facilities(data_dict, facility_uids):
     return filtered_data
 
 
+def update_facility_selection(
+    filter_mode,
+    selected_regions,
+    selected_facilities,
+    facilities_by_region,
+    facility_mapping,
+):
+    """Update facility selection based on current mode and selections"""
+    if filter_mode == "All Facilities":
+        facility_uids = list(facility_mapping.values())
+        display_names = ["All Facilities"]
+        comparison_mode = "facility"
+    elif filter_mode == "By Region" and selected_regions:
+        facility_uids, display_names = [], selected_regions
+        for region in selected_regions:
+            if region in facilities_by_region:
+                for fac_name, fac_uid in facilities_by_region[region]:
+                    facility_uids.append(fac_uid)
+        comparison_mode = "region"
+    elif filter_mode == "By Facility" and selected_facilities:
+        facility_uids = [
+            facility_mapping[f] for f in selected_facilities if f in facility_mapping
+        ]
+        display_names = selected_facilities
+        comparison_mode = "facility"
+    else:
+        # Default fallback - all facilities
+        facility_uids = list(facility_mapping.values())
+        display_names = ["All Facilities"]
+        comparison_mode = "facility"
+
+    return facility_uids, display_names, comparison_mode
+
+
 def render_newborn_dashboard(
     user,
     program_uid,
@@ -208,11 +173,20 @@ def render_newborn_dashboard(
     view_mode,
     facility_mapping,
     facility_names,
+    shared_newborn_data=None,  # ← NEW PARAMETER: Accept shared data from regional.py
 ):
-    """Render Newborn Care Form dashboard content following regional maternal dashboard pattern"""
+    """Render Newborn Care Form dashboard using shared data to avoid duplicate API calls"""
 
-    # Use optimized shared data loading with user-specific caching
-    newborn_data = get_shared_program_data_optimized(user, program_uid)
+    # Use shared data if provided (from regional.py), otherwise show error
+    if shared_newborn_data is not None:
+        # USE THE SHARED DATA - NO DUPLICATE FETCHING
+        newborn_data = shared_newborn_data
+        logging.info("✅ Using shared newborn data from regional dashboard")
+    else:
+        # No fallback - data should come from regional dashboard
+        logging.error("❌ No shared newborn data provided")
+        st.error("⚠️ Newborn data not available - please refresh the dashboard")
+        return
 
     if not newborn_data:
         st.error("⚠️ Newborn data not available")
@@ -231,7 +205,15 @@ def render_newborn_dashboard(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
+    # Store in session state for data quality tracking
+    st.session_state.newborn_events_df = events_df.copy()
+    st.session_state.newborn_tei_df = tei_df.copy()
+
     render_connection_status(events_df, user=user)
+
+    # Calculate total counts
+    total_facilities = len(facility_mapping)
+    total_regions = 1  # Regional dashboard only shows one region
 
     # MAIN HEADING for Newborn program - FOLLOWING REGIONAL.PY PATTERN FOR FACILITY DISPLAY
     if selected_facilities == ["All Facilities"]:
