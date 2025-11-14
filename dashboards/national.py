@@ -1318,10 +1318,14 @@ def render():
 
         elif st.session_state.filter_mode == "By Facility":
             st.markdown("**Select facilities:**")
+
+            # Create a working copy to avoid direct modification during iteration
+            updated_facilities = temp_selected_facilities.copy()
+
             for region_name, facilities in facilities_by_region.items():
                 total_count = len(facilities)
                 selected_count = sum(
-                    1 for fac, _ in facilities if fac in temp_selected_facilities
+                    1 for fac, _ in facilities if fac in updated_facilities
                 )
 
                 icon = (
@@ -1329,44 +1333,54 @@ def render():
                     if selected_count == total_count
                     else "⚠️" if selected_count > 0 else "○"
                 )
+
                 with st.expander(
                     f"{icon} {region_name} ({selected_count}/{total_count})",
                     expanded=False,
                 ):
-                    all_selected = all(
-                        fac in temp_selected_facilities for fac, _ in facilities
-                    )
-                    select_all = st.checkbox(
-                        f"Select all",
-                        value=all_selected,
-                        key=f"select_all_{region_name}",
+                    # Check if all facilities in this region are currently selected
+                    all_currently_selected = all(
+                        fac in updated_facilities for fac, _ in facilities
                     )
 
-                    if select_all and not all_selected:
-                        temp_selected_facilities.extend(
-                            [
-                                fac
-                                for fac, _ in facilities
-                                if fac not in temp_selected_facilities
-                            ]
-                        )
-                    elif not select_all and all_selected:
-                        temp_selected_facilities = [
-                            f
-                            for f in temp_selected_facilities
-                            if not any(f == fac for fac, _ in facilities)
-                        ]
+                    # Select all checkbox - FIXED VERSION
+                    select_all_checked = st.checkbox(
+                        "Select all facilities in this region",
+                        value=all_currently_selected,
+                        key=f"select_all_fixed_{region_name}",  # Changed key to avoid conflicts
+                    )
 
+                    # Handle select all logic
+                    if select_all_checked:
+                        # Add all facilities from this region that aren't already selected
+                        for fac_name, _ in facilities:
+                            if fac_name not in updated_facilities:
+                                updated_facilities.append(fac_name)
+                    else:
+                        # If unchecking select all, remove all facilities from this region
+                        if all_currently_selected:
+                            for fac_name, _ in facilities:
+                                if fac_name in updated_facilities:
+                                    updated_facilities.remove(fac_name)
+
+                    # Individual facility checkboxes
                     for fac_name, _ in facilities:
-                        checked = st.checkbox(
+                        is_currently_selected = fac_name in updated_facilities
+                        facility_checked = st.checkbox(
                             fac_name,
-                            value=fac_name in temp_selected_facilities,
-                            key=f"fac_{region_name}_{fac_name}",
+                            value=is_currently_selected,
+                            key=f"fac_fixed_{region_name}_{fac_name}",  # Changed key to avoid conflicts
                         )
-                        if checked and fac_name not in temp_selected_facilities:
-                            temp_selected_facilities.append(fac_name)
-                        elif not checked and fac_name in temp_selected_facilities:
-                            temp_selected_facilities.remove(fac_name)
+
+                        # Handle individual facility selection
+                        if facility_checked and not is_currently_selected:
+                            updated_facilities.append(fac_name)
+                        elif not facility_checked and is_currently_selected:
+                            if fac_name in updated_facilities:
+                                updated_facilities.remove(fac_name)
+
+            # Update the main selection list
+            temp_selected_facilities = updated_facilities
 
         selection_submitted = st.form_submit_button(
             "✅ Apply", use_container_width=True
