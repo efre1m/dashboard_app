@@ -116,14 +116,14 @@ def render_kpi_tab_navigation():
         unsafe_allow_html=True,
     )
 
-    # Initialize session state for KPI selection
-    if "selected_kpi_neonatal" not in st.session_state:
-        st.session_state.selected_kpi_neonatal = "LBW KMC Coverage (%)"
+    # ✅ FIX: CHANGE ONLY THIS LINE - make the session key UNIQUE
+    if "selected_kpi_NEWBORN_ONLY" not in st.session_state:
+        st.session_state.selected_kpi_NEWBORN_ONLY = "LBW KMC Coverage (%)"
 
     # Create tabs for both groups
     tab1, tab2 = st.tabs(["👶 **Newborn Care**", "🩺 **Newborn Complications**"])
 
-    selected_kpi = st.session_state.selected_kpi_neonatal
+    selected_kpi = st.session_state.selected_kpi_NEWBORN_ONLY
 
     with tab1:
         # Newborn Care KPIs - smaller layout
@@ -170,12 +170,12 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Hypothermia on Admission (%)"
 
-    # Update session state with final selection
-    if selected_kpi != st.session_state.selected_kpi_neonatal:
-        st.session_state.selected_kpi_neonatal = selected_kpi
+    # ✅ FIX: CHANGE THIS LINE TOO - use the same UNIQUE key
+    if selected_kpi != st.session_state.selected_kpi_NEWBORN_ONLY:
+        st.session_state.selected_kpi_NEWBORN_ONLY = selected_kpi
         st.rerun()
 
-    return st.session_state.selected_kpi_neonatal
+    return st.session_state.selected_kpi_NEWBORN_ONLY
 
 
 def render_trend_chart_section(

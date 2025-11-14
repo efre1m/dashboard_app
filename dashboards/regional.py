@@ -480,13 +480,13 @@ def render_summary_dashboard_shared(
             "Total Admitted Newborns": [newborn_tei_count],
             "NMR": [f"{newborn_indicators['nmr']}"],
             "Stillbirth Rate": [
-                f"{maternal_indicators['stillbirth_rate']} per 1000 births"
+                f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births"
             ],
             "Live Births": [maternal_indicators["live_births"]],
             "Stillbirths": [maternal_indicators["stillbirths"]],
             "Total Births": [maternal_indicators["total_births"]],
             "Low Birth Weight Rate": [
-                f"{maternal_indicators['low_birth_weight_rate']}%"
+                f"{maternal_indicators['low_birth_weight_rate']:.2f}%"
             ],
         }
         newborn_df = pd.DataFrame(newborn_data_download)
@@ -521,7 +521,7 @@ def render_summary_dashboard_shared(
             f"{maternal_indicators['live_births']:,}",
             f"{maternal_indicators['stillbirths']:,}",
             f"{maternal_indicators['total_births']:,}",
-            f"{maternal_indicators['low_birth_weight_rate']}%",
+            f"{maternal_indicators['low_birth_weight_rate']}:.2f%",
         ],
     }
 
@@ -550,7 +550,7 @@ def render_summary_dashboard_shared(
             "Total Admitted Mothers": [maternal_tei_count],
             "Total Deliveries": [maternal_indicators["total_deliveries"]],
             "Maternal Death Rate": [
-                f"{maternal_indicators['maternal_death_rate']} per 100,000 births"
+                f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births"
             ],
         }
         maternal_df = pd.DataFrame(maternal_data_download)
@@ -577,7 +577,7 @@ def render_summary_dashboard_shared(
             location_name,
             f"{maternal_tei_count:,}",
             f"{maternal_indicators['total_deliveries']:,}",
-            f"{maternal_indicators['maternal_death_rate']} per 100,000 births",
+            f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births",
         ],
     }
 
