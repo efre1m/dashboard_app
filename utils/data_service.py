@@ -1,9 +1,15 @@
 # utils/data_service.py
-from typing import Optional, Dict, List, Union
+from typing import Optional, Dict, List, Union, Set
 import pandas as pd
 import logging
 from utils.queries import get_orgunit_uids_for_user, get_program_by_uid
-from utils.dhis2 import fetch_dhis2_data_for_ous
+from utils.dhis2 import (
+    fetch_dhis2_data_for_ous,
+    REQUIRED_DATA_ELEMENTS,
+    MATERNAL_HEALTH_ELEMENTS,
+    NEWBORN_HEALTH_ELEMENTS,
+    DATA_ELEMENT_NAMES,
+)
 from utils.odk_api import fetch_all_forms_as_dataframes, fetch_form_csv, list_forms
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -16,7 +22,9 @@ def fetch_program_data_for_user(
     period_label: str = "Monthly",
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
-    Fetch DHIS2 program data for a given user and return structured DataFrames.
+    Fetch DHIS2 program data optimized for ALL required KPI data elements.
+    Processes only the data elements needed for ALL KPIs including PPH, Uterotonic,
+    Maternal Health, and Newborn Health indicators.
     """
     if not program_uid:
         logging.warning("No program UID provided.")
@@ -41,11 +49,23 @@ def fetch_program_data_for_user(
         return {}
 
     user_role = user.get("role", "")
-    dhis2_data = fetch_dhis2_data_for_ous(program_uid, ou_uids, user_role)
+
+    # Use optimized fetch with ALL required data elements
+    logging.info(
+        f"🚀 OPTIMIZED FETCH: Using {len(REQUIRED_DATA_ELEMENTS)} required data elements"
+    )
+    logging.info(f"📋 Maternal Health elements: {len(MATERNAL_HEALTH_ELEMENTS)}")
+    logging.info(f"📋 Newborn Health elements: {len(NEWBORN_HEALTH_ELEMENTS)}")
+
+    dhis2_data = fetch_dhis2_data_for_ous(
+        program_uid, ou_uids, user_role, required_elements=REQUIRED_DATA_ELEMENTS
+    )
+
     patients = dhis2_data.get("patients", [])
     de_dict = dhis2_data.get("dataElements", {})
     ps_dict = dhis2_data.get("programStages", {})
     dhis2_ou_names = dhis2_data.get("orgUnitNames", {})
+    optimization_stats = dhis2_data.get("optimization_stats", {})
 
     final_ou_names = {**dhis2_ou_names, **ou_names}
 
@@ -58,7 +78,7 @@ def fetch_program_data_for_user(
     def map_org_name(uid: str) -> str:
         return final_ou_names.get(uid, "Unknown OrgUnit")
 
-    # TEI DataFrame
+    # TEI DataFrame - ALL TEIs INCLUDED
     tei_df = pd.json_normalize(
         patients,
         record_path=["attributes"],
@@ -71,7 +91,7 @@ def fetch_program_data_for_user(
     if not tei_df.empty:
         tei_df["orgUnit_name"] = tei_df["tei_orgUnit"].apply(map_org_name)
 
-    # Enrollment DataFrame
+    # Enrollment DataFrame - ALL enrollments included
     enr_df = pd.json_normalize(
         patients,
         record_path=["enrollments"],
@@ -84,55 +104,69 @@ def fetch_program_data_for_user(
     if not enr_df.empty:
         enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
 
-    # Events DataFrame - FIXED: Include ALL TEIs even if they have no events
+    # Events DataFrame - Process ONLY required data elements
     events_list = []
+    required_events_count = 0
 
-    # Track all TEI IDs to ensure we include everyone
+    # Track all TEI IDs
     all_tei_ids = {tei.get("trackedEntityInstance") for tei in patients}
 
-    # First, process all actual events
+    # Process only events with required data elements
     for tei in patients:
         tei_id = tei.get("trackedEntityInstance")
         tei_org_unit = tei.get("orgUnit")
+
         for enrollment in tei.get("enrollments", []):
             for event in enrollment.get("events", []):
                 event_orgUnit = (
                     event.get("orgUnit") or enrollment.get("orgUnit") or tei_org_unit
                 )
-                for dv in event.get("dataValues", []):
-                    event_data = {
-                        "tei_id": tei_id,
-                        "event": event.get("event"),
-                        "programStage_uid": event.get("programStage"),
-                        "programStageName": event.get(
-                            "programStageName",
-                            ps_dict.get(
-                                event.get("programStage"), event.get("programStage")
-                            ),
-                        ),
-                        "orgUnit": event_orgUnit,
-                        "orgUnit_name": map_org_name(event_orgUnit),
-                        "eventDate": event.get("eventDate"),
-                        "dataElement_uid": dv.get("dataElement"),
-                        "dataElementName": dv.get(
-                            "dataElementName",
-                            de_dict.get(dv.get("dataElement"), dv.get("dataElement")),
-                        ),
-                        "value": dv.get("value"),
-                        "has_actual_event": True,  # Mark as real event
-                    }
-                    events_list.append(event_data)
+                event_date = event.get("eventDate")
 
-    # Second, create placeholder events for TEIs without any events
+                # Process only required data elements
+                for dv in event.get("dataValues", []):
+                    data_element_uid = dv.get("dataElement")
+                    data_value = dv.get("value")
+
+                    # Only process if it's a required element
+                    if data_element_uid in REQUIRED_DATA_ELEMENTS:
+                        data_element_name = DATA_ELEMENT_NAMES.get(
+                            data_element_uid,
+                            de_dict.get(data_element_uid, data_element_uid),
+                        )
+
+                        event_data = {
+                            "tei_id": tei_id,
+                            "event": event.get("event"),
+                            "programStage_uid": event.get("programStage"),
+                            "programStageName": event.get(
+                                "programStageName",
+                                ps_dict.get(
+                                    event.get("programStage"), event.get("programStage")
+                                ),
+                            ),
+                            "orgUnit": event_orgUnit,
+                            "orgUnit_name": map_org_name(event_orgUnit),
+                            "eventDate": event_date,
+                            "dataElement_uid": data_element_uid,
+                            "dataElementName": data_element_name,
+                            "value": data_value,
+                            "has_actual_event": True,
+                        }
+                        events_list.append(event_data)
+                        required_events_count += 1
+
+    # Create minimal placeholders only for TEIs with no events at all
     teis_with_events = {event["tei_id"] for event in events_list}
     teis_without_events = all_tei_ids - teis_with_events
 
     logging.info(
-        f"📊 TEI Statistics: Total={len(all_tei_ids)}, With Events={len(teis_with_events)}, Without Events={len(teis_without_events)}"
+        f"📊 EVENT STATISTICS: Total TEIs={len(all_tei_ids)}, With Events={len(teis_with_events)}, Without Events={len(teis_without_events)}"
     )
+    logging.info(f"📈 Required data events collected: {required_events_count}")
 
+    # Create one placeholder per TEI without events (not per data element)
     for tei_id in teis_without_events:
-        # Find the TEI to get orgUnit info
         tei_data = next(
             (tei for tei in patients if tei.get("trackedEntityInstance") == tei_id),
             None,
@@ -151,10 +185,10 @@ def fetch_program_data_for_user(
                 "orgUnit": tei_data.get("orgUnit"),
                 "orgUnit_name": map_org_name(tei_data.get("orgUnit")),
                 "eventDate": event_date,
-                "dataElement_uid": "NO_EVENTS",
-                "dataElementName": "No Data Elements",
-                "value": "NO_EVENTS",
-                "has_actual_event": False,  # Mark as placeholder
+                "dataElement_uid": "NO_DATA",
+                "dataElementName": "No Data Available",
+                "value": "",
+                "has_actual_event": False,
             }
             events_list.append(placeholder_event)
 
@@ -163,14 +197,50 @@ def fetch_program_data_for_user(
     # Handle period labeling
     if not evt_df.empty and "eventDate" in evt_df.columns:
         evt_df["event_date"] = pd.to_datetime(evt_df["eventDate"], errors="coerce")
+        has_date_mask = evt_df["event_date"].notna()
+
         if period_label == "Daily":
-            evt_df["period"] = evt_df["event_date"].dt.date
+            evt_df.loc[has_date_mask, "period"] = evt_df.loc[
+                has_date_mask, "event_date"
+            ].dt.date.astype(str)
+            evt_df.loc[has_date_mask, "period_display"] = evt_df.loc[
+                has_date_mask, "event_date"
+            ].dt.strftime("%Y-%m-%d")
+            evt_df.loc[has_date_mask, "period_sort"] = evt_df.loc[
+                has_date_mask, "event_date"
+            ].dt.strftime("%Y%m%d")
         elif period_label == "Monthly":
-            evt_df["period"] = evt_df["event_date"].dt.to_period("M").astype(str)
+            evt_df.loc[has_date_mask, "period"] = (
+                evt_df.loc[has_date_mask, "event_date"].dt.to_period("M").astype(str)
+            )
+            evt_df.loc[has_date_mask, "period_display"] = evt_df.loc[
+                has_date_mask, "event_date"
+            ].dt.strftime("%b %Y")
+            evt_df.loc[has_date_mask, "period_sort"] = evt_df.loc[
+                has_date_mask, "event_date"
+            ].dt.strftime("%Y%m")
         elif period_label == "Quarterly":
-            evt_df["period"] = evt_df["event_date"].dt.to_period("Q").astype(str)
+            evt_df.loc[has_date_mask, "period"] = (
+                evt_df.loc[has_date_mask, "event_date"].dt.to_period("Q").astype(str)
+            )
+            evt_df.loc[has_date_mask, "period_display"] = (
+                evt_df.loc[has_date_mask, "event_date"].dt.to_period("Q").astype(str)
+            )
+            evt_df.loc[has_date_mask, "period_sort"] = (
+                evt_df.loc[has_date_mask, "event_date"].dt.year.astype(str)
+                + "Q"
+                + evt_df.loc[has_date_mask, "event_date"].dt.quarter.astype(str)
+            )
         else:
-            evt_df["period"] = evt_df["event_date"].dt.to_period("Y").astype(str)
+            evt_df.loc[has_date_mask, "period"] = (
+                evt_df.loc[has_date_mask, "event_date"].dt.to_period("Y").astype(str)
+            )
+            evt_df.loc[has_date_mask, "period_display"] = evt_df.loc[
+                has_date_mask, "event_date"
+            ].dt.strftime("%Y")
+            evt_df.loc[has_date_mask, "period_sort"] = evt_df.loc[
+                has_date_mask, "event_date"
+            ].dt.year.astype(str)
 
     # Convert enrollment dates
     if not enr_df.empty and "enrollmentDate" in enr_df.columns:
@@ -178,22 +248,63 @@ def fetch_program_data_for_user(
             enr_df["enrollmentDate"], errors="coerce"
         )
 
+    # Data verification - Check key data elements by category
+    if not evt_df.empty:
+        # MATERNAL HEALTH DATA VERIFICATION
+        maternal_data = evt_df[evt_df["dataElement_uid"].isin(MATERNAL_HEALTH_ELEMENTS)]
+        maternal_real_data = maternal_data[maternal_data["has_actual_event"] == True]
+
+        # Key Maternal elements
+        pph_data = evt_df[evt_df["dataElement_uid"] == "CJiTafFo0TS"]
+        pph_real_data = pph_data[pph_data["has_actual_event"] == True]
+
+        delivery_data = evt_df[evt_df["dataElement_uid"] == "lphtwP2ViZU"]
+        delivery_real_data = delivery_data[delivery_data["has_actual_event"] == True]
+
+        uterotonic_data = evt_df[evt_df["dataElement_uid"] == "yVRLuRU943e"]
+        uterotonic_real_data = uterotonic_data[
+            uterotonic_data["has_actual_event"] == True
+        ]
+
+        # NEWBORN HEALTH DATA VERIFICATION
+        newborn_data = evt_df[evt_df["dataElement_uid"].isin(NEWBORN_HEALTH_ELEMENTS)]
+        newborn_real_data = newborn_data[newborn_data["has_actual_event"] == True]
+
+        logging.info(f"✅ MATERNAL HEALTH DATA:")
+        logging.info(f"   📊 Total Maternal records: {len(maternal_real_data)}")
+        logging.info(f"   🩸 PPH records: {len(pph_real_data)} real")
+        logging.info(f"   👶 Delivery records: {len(delivery_real_data)} real")
+        logging.info(f"   💊 Uterotonic records: {len(uterotonic_real_data)} real")
+
+        logging.info(f"✅ NEWBORN HEALTH DATA:")
+        logging.info(f"   📊 Total Newborn records: {len(newborn_real_data)}")
+
+        # Log sample values for key indicators
+        if not pph_real_data.empty:
+            pph_values = pph_real_data["value"].value_counts()
+            logging.info(f"   🔍 PPH value distribution: {dict(pph_values.head())}")
+
+        if not uterotonic_real_data.empty:
+            uterotonic_values = uterotonic_real_data["value"].value_counts()
+            logging.info(
+                f"   💊 Uterotonic value distribution: {dict(uterotonic_values.head())}"
+            )
+
     return {
         "program_info": program_info,
         "raw_json": patients,
         "tei": tei_df,
         "enrollments": enr_df,
         "events": evt_df,
+        "optimization_stats": optimization_stats,
     }
 
 
+# Rest of the functions remain the same...
 def fetch_odk_data_for_user(
     user: dict, form_id: str = None
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
-    """
-    Fetch ODK form data filtered by user's access level.
-    Preserves all columns exactly as they are from ODK.
-    """
+    """Fetch ODK form data filtered by user's access level."""
     odk_data = {}
 
     try:
@@ -212,7 +323,6 @@ def fetch_odk_data_for_user(
                     logging.info(
                         f"✅ National user - NO filtering for form {form_id} - returning ALL data"
                     )
-                # No else - national users get all data without filtering
 
             if not df.empty:
                 odk_data[form_id] = df

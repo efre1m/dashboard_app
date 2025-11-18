@@ -1,4 +1,3 @@
-# common_dash.py
 import pandas as pd
 import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
@@ -577,125 +576,131 @@ def _render_kpi_chart(
     kpi_selection, group, bg_color, text_color, display_names, facility_uids
 ):
     """Render the appropriate chart based on KPI selection - FIXED to use specialized functions"""
-    if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "IPPCAR (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "FP Acceptances",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "Stillbirth Rate (per 1000 births)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Stillbirth Rate (per 1000 births)",
-            bg_color,
-            text_color,
-            display_names,
-            "Stillbirths",
-            "Total Births",
-            facility_uids,
-        )
-    elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Early PNC Coverage (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "Early PNC (≤48 hrs)",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Maternal Death Rate (per 100,000 births)",
-            bg_color,
-            text_color,
-            display_names,
-            "Maternal Deaths",
-            "Live Births",
-            facility_uids,
-        )
-    elif kpi_selection == "C-Section Rate (%)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "C-Section Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "C-Sections",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-        # ✅ FIX: Use specialized PPH trend chart
-        render_pph_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "PPH Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "PPH Cases",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "Delivered women who received uterotonic (%)":
-        # ✅ FIX: Use specialized Uterotonic trend chart
-        render_uterotonic_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Uterotonic Administration Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "Uterotonic Cases",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "ARV Prophylaxis Rate (%)":
-        render_arv_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "ARV Prophylaxis Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "ARV Cases",
-            "HIV-Exposed Infants",
-            facility_uids,
-        )
-    elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-        render_lbw_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Low Birth Weight Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "LBW Cases (<2500g)",
-            "Total Weighed Births",
-            facility_uids,
-        )
+    try:
+        if (
+            kpi_selection
+            == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
+        ):
+            render_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "IPPCAR (%)",
+                bg_color,
+                text_color,
+                display_names,
+                "FP Acceptances",
+                "Total Deliveries",
+                facility_uids,
+            )
+        elif kpi_selection == "Stillbirth Rate (per 1000 births)":
+            render_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "Stillbirth Rate (per 1000 births)",
+                bg_color,
+                text_color,
+                display_names,
+                "Stillbirths",
+                "Total Births",
+                facility_uids,
+            )
+        elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
+            render_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "Early PNC Coverage (%)",
+                bg_color,
+                text_color,
+                display_names,
+                "Early PNC (≤48 hrs)",
+                "Total Deliveries",
+                facility_uids,
+            )
+        elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
+            render_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "Maternal Death Rate (per 100,000 births)",
+                bg_color,
+                text_color,
+                display_names,
+                "Maternal Deaths",
+                "Live Births",
+                facility_uids,
+            )
+        elif kpi_selection == "C-Section Rate (%)":
+            render_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "C-Section Rate (%)",
+                bg_color,
+                text_color,
+                display_names,
+                "C-Sections",
+                "Total Deliveries",
+                facility_uids,
+            )
+        elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+            # ✅ FIX: Use specialized PPH trend chart
+            render_pph_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "PPH Rate (%)",
+                bg_color,
+                text_color,
+                display_names,
+                "PPH Cases",
+                "Total Deliveries",
+                facility_uids,
+            )
+        elif kpi_selection == "Delivered women who received uterotonic (%)":
+            # ✅ FIX: Use specialized Uterotonic trend chart
+            render_uterotonic_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "Uterotonic Administration Rate (%)",
+                bg_color,
+                text_color,
+                display_names,
+                "Uterotonic Cases",
+                "Total Deliveries",
+                facility_uids,
+            )
+        elif kpi_selection == "ARV Prophylaxis Rate (%)":
+            render_arv_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "ARV Prophylaxis Rate (%)",
+                bg_color,
+                text_color,
+                display_names,
+                "ARV Cases",
+                "HIV-Exposed Infants",
+                facility_uids,
+            )
+        elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
+            render_lbw_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "Low Birth Weight Rate (%)",
+                bg_color,
+                text_color,
+                display_names,
+                "LBW Cases (<2500g)",
+                "Total Weighed Births",
+                facility_uids,
+            )
+    except Exception as e:
+        st.error(f"Error rendering chart for {kpi_selection}: {str(e)}")
 
 
 def _get_default_kpi_data(kpi_selection):
@@ -726,177 +731,24 @@ def _get_default_kpi_data(kpi_selection):
             "csection_deliveries": 0,
             "total_deliveries_cs": 0,
         },
+        "Postpartum Hemorrhage (PPH) Rate (%)": {
+            "pph_rate": 0.0,
+            "pph_count": 0,
+            "total_deliveries": 0,
+        },
+        "Delivered women who received uterotonic (%)": {
+            "uterotonic_rate": 0.0,
+            "uterotonic_count": 0,
+            "total_deliveries": 0,
+            "uterotonic_types": {
+                "Ergometrine": 0,
+                "Oxytocin": 0,
+                "Misoprostol": 0,
+                "total": 0,
+            },
+        },
     }
     return defaults.get(kpi_selection, {})
-
-
-def _create_period_row(kpi_selection, period, period_display, kpi_data):
-    """Create a standardized period row based on KPI type"""
-    if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
-        return {
-            "period": period,
-            "period_display": period_display,
-            "value": kpi_data["ippcar"],
-            "FP Acceptances": kpi_data["fp_acceptance"],
-            "Total Deliveries": kpi_data["total_deliveries"],
-        }
-    elif kpi_selection == "Stillbirth Rate (per 1000 births)":
-        return {
-            "period": period,
-            "period_display": period_display,
-            "value": kpi_data["stillbirth_rate"],
-            "Stillbirths": kpi_data["stillbirths"],
-            "Total Births": kpi_data["total_births"],
-        }
-    elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-        return {
-            "period": period,
-            "period_display": period_display,
-            "value": kpi_data["pnc_coverage"],
-            "Early PNC (≤48 hrs)": kpi_data["early_pnc"],
-            "Total Deliveries": kpi_data["total_deliveries_pnc"],
-        }
-    elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
-        return {
-            "period": period,
-            "period_display": period_display,
-            "value": kpi_data["maternal_death_rate"],
-            "Maternal Deaths": kpi_data["maternal_deaths"],
-            "Live Births": kpi_data["live_births"],
-        }
-    elif kpi_selection == "C-Section Rate (%)":
-        return {
-            "period": period,
-            "period_display": period_display,
-            "value": kpi_data["csection_rate"],
-            "C-Sections": kpi_data["csection_deliveries"],
-            "Total Deliveries": kpi_data["total_deliveries_cs"],
-        }
-    return {}
-
-
-def _render_kpi_chart(
-    kpi_selection, group, bg_color, text_color, display_names, facility_uids
-):
-    """Render the appropriate chart based on KPI selection"""
-    if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "IPPCAR (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "FP Acceptances",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "Stillbirth Rate (per 1000 births)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Stillbirth Rate (per 1000 births)",
-            bg_color,
-            text_color,
-            display_names,
-            "Stillbirths",
-            "Total Births",
-            facility_uids,
-        )
-    elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Early PNC Coverage (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "Early PNC (≤48 hrs)",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "Institutional Maternal Death Rate (per 100,000 births)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Maternal Death Rate (per 100,000 births)",
-            bg_color,
-            text_color,
-            display_names,
-            "Maternal Deaths",
-            "Live Births",
-            facility_uids,
-        )
-    elif kpi_selection == "C-Section Rate (%)":
-        render_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "C-Section Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "C-Sections",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-        render_pph_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "PPH Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "PPH Cases",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "Delivered women who received uterotonic (%)":
-        # Note: Uterotonic uses specialized computation in the main function
-        render_uterotonic_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Uterotonic Administration Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "Uterotonic Cases",
-            "Total Deliveries",
-            facility_uids,
-        )
-    elif kpi_selection == "ARV Prophylaxis Rate (%)":
-        render_arv_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "ARV Prophylaxis Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "ARV Cases",
-            "HIV-Exposed Infants",
-            facility_uids,
-        )
-    elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-        render_lbw_trend_chart(
-            group,
-            "period_display",
-            "value",
-            "Low Birth Weight Rate (%)",
-            bg_color,
-            text_color,
-            display_names,
-            "LBW Cases (<2500g)",
-            "Total Weighed Births",
-            facility_uids,
-        )
 
 
 def render_comparison_chart(
