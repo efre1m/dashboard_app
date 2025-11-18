@@ -1,4 +1,4 @@
-# dash_co.py
+# dash_co_newborn.py
 import pandas as pd
 import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
@@ -116,14 +116,14 @@ def render_kpi_tab_navigation():
         unsafe_allow_html=True,
     )
 
-    # ✅ FIX: CHANGE ONLY THIS LINE - make the session key UNIQUE
-    if "selected_kpi_NEWBORN_ONLY" not in st.session_state:
-        st.session_state.selected_kpi_NEWBORN_ONLY = "LBW KMC Coverage (%)"
+    # ✅ FIX: UNIQUE session state key for newborn dashboard only
+    if "selected_kpi_NEWBORN_DASHBOARD" not in st.session_state:
+        st.session_state.selected_kpi_NEWBORN_DASHBOARD = "LBW KMC Coverage (%)"
 
     # Create tabs for both groups
     tab1, tab2 = st.tabs(["👶 **Newborn Care**", "🩺 **Newborn Complications**"])
 
-    selected_kpi = st.session_state.selected_kpi_NEWBORN_ONLY
+    selected_kpi = st.session_state.selected_kpi_NEWBORN_DASHBOARD
 
     with tab1:
         # Newborn Care KPIs - smaller layout
@@ -132,7 +132,7 @@ def render_kpi_tab_navigation():
         with col1:
             if st.button(
                 "KMC Coverage",
-                key="kmc_btn",
+                key="kmc_btn_newborn",  # ✅ Unique key
                 use_container_width=True,
                 type=(
                     "primary" if selected_kpi == "LBW KMC Coverage (%)" else "secondary"
@@ -143,7 +143,7 @@ def render_kpi_tab_navigation():
         with col2:
             if st.button(
                 "CPAP Coverage",
-                key="cpap_btn",
+                key="cpap_btn_newborn",  # ✅ Unique key
                 use_container_width=True,
                 type=(
                     "primary"
@@ -160,7 +160,7 @@ def render_kpi_tab_navigation():
         with col2:
             if st.button(
                 "Hypothermia",
-                key="hypothermia_btn",
+                key="hypothermia_btn_newborn",  # ✅ Unique key
                 use_container_width=True,
                 type=(
                     "primary"
@@ -170,16 +170,22 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Hypothermia on Admission (%)"
 
-    # ✅ FIX: CHANGE THIS LINE TOO - use the same UNIQUE key
-    if selected_kpi != st.session_state.selected_kpi_NEWBORN_ONLY:
-        st.session_state.selected_kpi_NEWBORN_ONLY = selected_kpi
+    # ✅ FIX: Use the UNIQUE session state key
+    if selected_kpi != st.session_state.selected_kpi_NEWBORN_DASHBOARD:
+        st.session_state.selected_kpi_NEWBORN_DASHBOARD = selected_kpi
         st.rerun()
 
-    return st.session_state.selected_kpi_NEWBORN_ONLY
+    return st.session_state.selected_kpi_NEWBORN_DASHBOARD
 
 
 def render_trend_chart_section(
-    kpi_selection, filtered_events, facility_uids, display_names, bg_color, text_color
+    kpi_selection,
+    filtered_events,
+    facility_uids,
+    display_names,
+    bg_color,
+    text_color,
+    tei_df=None,
 ):
     """Render the trend chart based on KPI selection - ONLY LINE CHART"""
 
@@ -250,8 +256,7 @@ def render_trend_chart_section(
         )
 
     elif kpi_selection == "Hypothermia on Admission (%)":
-        # Use the filtered events directly for hypothermia calculation
-        # The KPI function will handle period-based calculation internally
+        # ✅ FIX: Pass TEI dataframe to prevent overcounting
         render_hypothermia_trend_chart(
             filtered_events,
             "period_display",
@@ -259,6 +264,7 @@ def render_trend_chart_section(
             bg_color,
             text_color,
             facility_uids=facility_uids,
+            tei_df=tei_df,  # ✅ Pass TEI dataframe
         )
 
 
@@ -272,6 +278,7 @@ def render_comparison_chart(
     bg_color,
     text_color,
     is_national=False,
+    tei_df=None,  # ✅ Added TEI dataframe parameter
 ):
     """Render comparison charts for both national and regional views"""
 
@@ -303,6 +310,7 @@ def render_comparison_chart(
                 denominator_name="Total RDS Newborns",
             )
         elif kpi_selection == "Hypothermia on Admission (%)":
+            # ✅ FIX: Pass TEI dataframe to prevent overcounting
             render_hypothermia_facility_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
@@ -311,6 +319,7 @@ def render_comparison_chart(
                 text_color=text_color,
                 facility_names=display_names,
                 facility_uids=facility_uids,
+                tei_df=tei_df,  # ✅ Pass TEI dataframe
             )
 
     else:  # region comparison (only for national)
@@ -343,6 +352,7 @@ def render_comparison_chart(
                 denominator_name="Total RDS Newborns",
             )
         elif kpi_selection == "Hypothermia on Admission (%)":
+            # ✅ FIX: Pass TEI dataframe to prevent overcounting
             render_hypothermia_region_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
@@ -351,6 +361,7 @@ def render_comparison_chart(
                 text_color=text_color,
                 region_names=display_names,
                 facilities_by_region=facilities_by_region,
+                tei_df=tei_df,  # ✅ Pass TEI dataframe
             )
 
 
@@ -491,9 +502,9 @@ def render_simple_filter_controls(events_df, container=None, context="neonatal")
     )
     filters["text_color"] = auto_text_color(filters["bg_color"])
 
-    # Add a placeholder for kpi_selection to maintain compatibility
+    # ✅ FIX: Use the correct newborn session state key
     filters["kpi_selection"] = st.session_state.get(
-        "selected_kpi_neonatal", "LBW KMC Coverage (%)"
+        "selected_kpi_NEWBORN_DASHBOARD", "LBW KMC Coverage (%)"
     )
 
     return filters

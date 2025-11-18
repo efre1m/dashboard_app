@@ -195,9 +195,19 @@ def render_newborn_dashboard(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
+    events_df.to_csv("maternal_events.csv", index=False)
+
     # Store in session state for data quality tracking
     st.session_state.newborn_events_df = events_df.copy()
     st.session_state.newborn_tei_df = tei_df.copy()
+
+    # ✅ DEBUG: Log what we're storing
+    logging.info(
+        f"✅ STORED newborn data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
+    )
+    logging.info(
+        f"✅ Newborn events has_actual_event values: {events_df['has_actual_event'].value_counts().to_dict() if 'has_actual_event' in events_df.columns else 'NO COLUMN'}"
+    )
 
     # ---------------- Use SHARED Session State from Maternal Dashboard ----------------
     filter_mode = st.session_state.get("filter_mode", "All Facilities")
@@ -268,6 +278,39 @@ def render_newborn_dashboard(
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
 
+    # ✅ ADD PROGRESS INDICATOR (same pattern as maternal)
+    progress_container = st.empty()
+    with progress_container.container():
+        st.markdown("---")
+        st.markdown("### 📈 Preparing Newborn Dashboard...")
+
+        progress_col1, progress_col2 = st.columns([3, 1])
+
+        with progress_col1:
+            st.markdown(
+                """
+            <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
+            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing Data</h4>
+            <p style="margin: 5px 0; font-size: 14px;">• Computing newborn KPIs and indicators...</p>
+            <p style="margin: 5px 0; font-size: 14px;">• Generating charts and visualizations...</p>
+            <p style="margin: 5px 0; font-size: 14px;">• Preparing data tables...</p>
+            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 2-4 minutes</p>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        with progress_col2:
+            st.markdown(
+                """
+            <div style="text-align: center; padding: 10px;">
+            <div style="font-size: 24px;">⏳</div>
+            <div style="font-size: 12px; margin-top: 5px;">Processing</div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
     # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])
     with col_ctrl:
@@ -287,6 +330,7 @@ def render_newborn_dashboard(
 
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:
+        progress_container.empty()
         st.markdown(
             f'<div class="no-data-warning">⚠️ No Newborn Care Data available for the selected period. Charts are hidden.</div>',
             unsafe_allow_html=True,
@@ -329,6 +373,7 @@ def render_newborn_dashboard(
                 bg_color=bg_color,
                 text_color=text_color,
                 is_national=True,
+                tei_df=tei_df,
             )
         else:
             st.markdown(
@@ -344,4 +389,8 @@ def render_newborn_dashboard(
                 display_names,
                 bg_color,
                 text_color,
+                tei_df=tei_df,
             )
+
+    # ✅ CLEAR PROGRESS when done
+    progress_container.empty()

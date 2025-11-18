@@ -47,20 +47,20 @@ def compute_hypothermia_numerator(df, facility_uids=None):
     return hypothermia_cases
 
 
-def compute_hypothermia_kpi(df, facility_uids=None):
+def compute_hypothermia_kpi(df, facility_uids=None, tei_df=None):
     """
     Compute hypothermia KPI for the given dataframe
-    Both numerator and denominator use the same filtered event data
+    Uses unique TEI count from the filtered events dataframe for denominator
 
     Formula: Hypothermia on Admission Rate (%) =
              (Newborns with temperature < 36.5°C during period) ÷
-             (Total admitted newborns with events during period) × 100
+             (Total admitted newborns in period) × 100
     """
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return {
             "hypothermia_rate": 0.0,
             "hypothermia_count": 0,
-            "total_admitted_with_events": 0,
+            "total_admitted_newborns": 0,
         }
 
     # Filter by facilities if specified
@@ -72,26 +72,28 @@ def compute_hypothermia_kpi(df, facility_uids=None):
     # Count hypothermia cases (numerator) - filters for temperature events
     hypothermia_count = compute_hypothermia_numerator(df, facility_uids)
 
-    # Count total newborns in period (denominator) - ALL TEIs in filtered data
-    total_admitted_with_events = df["tei_id"].nunique()
+    # ✅ FIX: Count unique TEIs in THIS PERIOD only (not total)
+    total_admitted_newborns = df["tei_id"].nunique()
 
     # Calculate hypothermia rate
     hypothermia_rate = (
-        (hypothermia_count / total_admitted_with_events * 100)
-        if total_admitted_with_events > 0
+        (hypothermia_count / total_admitted_newborns * 100)
+        if total_admitted_newborns > 0
         else 0.0
     )
 
     return {
         "hypothermia_rate": float(hypothermia_rate),
         "hypothermia_count": int(hypothermia_count),
-        "total_admitted_with_events": int(total_admitted_with_events),
+        "total_admitted_newborns": int(total_admitted_newborns),
     }
 
 
-def compute_hypothermia_trend_data(df, period_col="period_display", facility_uids=None):
+def compute_hypothermia_trend_data(
+    df, period_col="period_display", facility_uids=None, tei_df=None
+):
     """
-    Compute hypothermia trend data by period
+    Compute hypothermia trend data by period - COUNT UNIQUE NEWBORNS PER PERIOD
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -106,17 +108,43 @@ def compute_hypothermia_trend_data(df, period_col="period_display", facility_uid
 
     trend_data = []
 
-    for period in df[period_col].unique():
+    # ✅ FIX: Track counted newborns across periods to prevent double-counting
+    counted_newborns = set()
+
+    for period in sorted(df[period_col].unique()):
         period_df = df[df[period_col] == period]
-        hypothermia_data = compute_hypothermia_kpi(period_df, facility_uids)
+        period_display = (
+            period_df["period_display"].iloc[0] if not period_df.empty else period
+        )
+
+        # ✅ FIX: Get newborns in this period who haven't been counted yet
+        period_newborns = set(period_df["tei_id"].unique())
+        new_newborns = period_newborns - counted_newborns
+
+        if new_newborns:
+            # Filter to only new newborns in this period
+            new_newborns_df = period_df[period_df["tei_id"].isin(new_newborns)]
+
+            # Compute KPI for only the new newborns in this period
+            hypothermia_data = compute_hypothermia_kpi(
+                new_newborns_df, facility_uids, tei_df
+            )
+
+            # ✅ Update counted newborns for next period
+            counted_newborns.update(new_newborns)
+        else:
+            # No new newborns in this period
+            hypothermia_data = {
+                "hypothermia_rate": 0.0,
+                "hypothermia_count": 0,
+                "total_admitted_newborns": 0,
+            }
 
         trend_data.append(
             {
-                period_col: period,
+                period_col: period_display,
                 "hypothermia_count": hypothermia_data["hypothermia_count"],
-                "total_admitted_with_events": hypothermia_data[
-                    "total_admitted_with_events"
-                ],
+                "total_admitted_newborns": hypothermia_data["total_admitted_newborns"],
                 "hypothermia_rate": hypothermia_data["hypothermia_rate"],
             }
         )
@@ -132,6 +160,7 @@ def render_hypothermia_trend_chart(
     bg_color="#FFFFFF",
     text_color=None,
     facility_uids=None,
+    tei_df=None,
 ):
     """Render a LINE CHART ONLY for hypothermia rate trend"""
     if text_color is None:
@@ -142,8 +171,8 @@ def render_hypothermia_trend_chart(
         st.info("⚠️ No data available for the selected period.")
         return
 
-    # Compute trend data
-    trend_df = compute_hypothermia_trend_data(df, period_col, facility_uids)
+    # Compute trend data with proper period-based counting
+    trend_df = compute_hypothermia_trend_data(df, period_col, facility_uids, tei_df)
 
     if trend_df.empty:
         st.info("⚠️ No hypothermia data available for the selected period.")
@@ -220,9 +249,9 @@ def render_hypothermia_trend_chart(
     st.subheader("📋 Hypothermia Trend Summary Table")
     summary_df = trend_df.copy().reset_index(drop=True)
 
-    # Calculate overall value
+    # Calculate overall value - SUM of numerators and denominators
     total_numerator = summary_df["hypothermia_count"].sum()
-    total_denominator = summary_df["total_admitted_with_events"].sum()
+    total_denominator = summary_df["total_admitted_newborns"].sum()
     overall_value = (
         (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
     )
@@ -231,7 +260,7 @@ def render_hypothermia_trend_chart(
         {
             period_col: ["Overall"],
             "hypothermia_count": [total_numerator],
-            "total_admitted_with_events": [total_denominator],
+            "total_admitted_newborns": [total_denominator],
             "hypothermia_rate": [overall_value],
         }
     )
@@ -242,7 +271,7 @@ def render_hypothermia_trend_chart(
     display_columns = {
         period_col: "Period",
         "hypothermia_count": "Hypothermia Cases",
-        "total_admitted_with_events": "Total Admitted Newborns with Events",
+        "total_admitted_newborns": "Total Admitted Newborns",
         "hypothermia_rate": "Hypothermia Rate (%)",
     }
 
@@ -253,7 +282,7 @@ def render_hypothermia_trend_chart(
     column_order = [
         "Period",
         "Hypothermia Cases",
-        "Total Admitted Newborns with Events",
+        "Total Admitted Newborns",
         "Hypothermia Rate (%)",
     ]
     summary_table_display = summary_table_display[column_order]
@@ -266,7 +295,7 @@ def render_hypothermia_trend_chart(
             {
                 "Hypothermia Rate (%)": "{:.1f}%",
                 "Hypothermia Cases": "{:,.0f}",
-                "Total Admitted Newborns with Events": "{:,.0f}",
+                "Total Admitted Newborns": "{:,.0f}",
             }
         )
         .set_table_attributes('class="summary-table"')
@@ -293,6 +322,7 @@ def render_hypothermia_facility_comparison_chart(
     text_color=None,
     facility_names=None,
     facility_uids=None,
+    tei_df=None,
 ):
     """Render facility comparison with BOTH LINE AND BAR CHART options for hypothermia rate"""
     if text_color is None:
@@ -309,6 +339,11 @@ def render_hypothermia_facility_comparison_chart(
     # Create mapping
     facility_uid_to_name = dict(zip(facility_uids, facility_names))
 
+    # ✅ FIX: Generate unique key for radio button
+    import hashlib
+
+    key_suffix = hashlib.md5(str(facility_uids).encode()).hexdigest()[:8]
+
     # Chart options with radio button
     chart_options = ["Line Chart", "Bar Chart"]
     chart_type = st.radio(
@@ -316,7 +351,7 @@ def render_hypothermia_facility_comparison_chart(
         options=chart_options,
         index=0,
         horizontal=True,
-        key=f"chart_type_facility_comparison_{str(facility_uids)}",
+        key=f"chart_type_facility_comparison_{key_suffix}",  # ✅ Unique key
     )
 
     if chart_type == "Line Chart":
@@ -334,9 +369,9 @@ def render_hypothermia_facility_comparison_chart(
                 facility_period_df = period_df[period_df["orgUnit"] == facility_uid]
 
                 if not facility_period_df.empty:
-                    # Compute KPI for this specific facility and period
+                    # Compute KPI for this specific facility and period with proper counting
                     hypothermia_data = compute_hypothermia_kpi(
-                        facility_period_df, [facility_uid]
+                        facility_period_df, [facility_uid], tei_df
                     )
                     time_series_data.append(
                         {
@@ -344,8 +379,8 @@ def render_hypothermia_facility_comparison_chart(
                             "Facility": facility_uid_to_name[facility_uid],
                             "value": hypothermia_data["hypothermia_rate"],
                             "hypothermia_count": hypothermia_data["hypothermia_count"],
-                            "total_admitted_with_events": hypothermia_data[
-                                "total_admitted_with_events"
+                            "total_admitted_newborns": hypothermia_data[
+                                "total_admitted_newborns"
                             ],
                         }
                     )
@@ -382,14 +417,16 @@ def render_hypothermia_facility_comparison_chart(
             # Use ALL data for this facility (not filtered by period)
             facility_df = df[df["orgUnit"] == facility_uid]
             if not facility_df.empty:
-                hypothermia_data = compute_hypothermia_kpi(facility_df, [facility_uid])
+                hypothermia_data = compute_hypothermia_kpi(
+                    facility_df, [facility_uid], tei_df
+                )
                 bar_data.append(
                     {
                         "Facility": facility_uid_to_name[facility_uid],
                         "value": hypothermia_data["hypothermia_rate"],
                         "hypothermia_count": hypothermia_data["hypothermia_count"],
-                        "total_admitted_with_events": hypothermia_data[
-                            "total_admitted_with_events"
+                        "total_admitted_newborns": hypothermia_data[
+                            "total_admitted_newborns"
                         ],
                     }
                 )
@@ -449,13 +486,15 @@ def render_hypothermia_facility_comparison_chart(
     for facility_name, facility_uid in zip(facility_names, facility_uids):
         facility_df = df[df["orgUnit"] == facility_uid]
         if not facility_df.empty:
-            hypothermia_data = compute_hypothermia_kpi(facility_df, [facility_uid])
+            hypothermia_data = compute_hypothermia_kpi(
+                facility_df, [facility_uid], tei_df
+            )
             facility_table_data.append(
                 {
                     "Facility Name": facility_name,
                     "Hypothermia Cases": hypothermia_data["hypothermia_count"],
-                    "Total Admitted Newborns with Events": hypothermia_data[
-                        "total_admitted_with_events"
+                    "Total Admitted Newborns": hypothermia_data[
+                        "total_admitted_newborns"
                     ],
                     "Hypothermia Rate": hypothermia_data["hypothermia_rate"],
                 }
@@ -469,7 +508,7 @@ def render_hypothermia_facility_comparison_chart(
 
     # Calculate overall
     total_numerator = facility_table_df["Hypothermia Cases"].sum()
-    total_denominator = facility_table_df["Total Admitted Newborns with Events"].sum()
+    total_denominator = facility_table_df["Total Admitted Newborns"].sum()
     overall_value = (
         (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
     )
@@ -477,7 +516,7 @@ def render_hypothermia_facility_comparison_chart(
     overall_row = {
         "Facility Name": "Overall",
         "Hypothermia Cases": total_numerator,
-        "Total Admitted Newborns with Events": total_denominator,
+        "Total Admitted Newborns": total_denominator,
         "Hypothermia Rate": overall_value,
     }
 
@@ -489,7 +528,7 @@ def render_hypothermia_facility_comparison_chart(
     column_order = [
         "Facility Name",
         "Hypothermia Cases",
-        "Total Admitted Newborns with Events",
+        "Total Admitted Newborns",
         "Hypothermia Rate",
     ]
     facility_table_df = facility_table_df[column_order]
@@ -501,7 +540,7 @@ def render_hypothermia_facility_comparison_chart(
         facility_table_df.style.format(
             {
                 "Hypothermia Cases": "{:,.0f}",
-                "Total Admitted Newborns with Events": "{:,.0f}",
+                "Total Admitted Newborns": "{:,.0f}",
                 "Hypothermia Rate": "{:.2f}%",
             }
         )
@@ -529,6 +568,7 @@ def render_hypothermia_region_comparison_chart(
     text_color=None,
     region_names=None,
     facilities_by_region=None,
+    tei_df=None,
 ):
     """Render region comparison with BOTH LINE AND BAR CHART options for hypothermia rate"""
     if text_color is None:
@@ -538,6 +578,11 @@ def render_hypothermia_region_comparison_chart(
         st.info("⚠️ No regions selected for comparison.")
         return
 
+    # ✅ FIX: Generate unique key for radio button
+    import hashlib
+
+    key_suffix = hashlib.md5(str(region_names).encode()).hexdigest()[:8]
+
     # Chart options with radio button
     chart_options = ["Line Chart", "Bar Chart"]
     chart_type = st.radio(
@@ -545,7 +590,7 @@ def render_hypothermia_region_comparison_chart(
         options=chart_options,
         index=0,
         horizontal=True,
-        key=f"chart_type_region_comparison_{str(region_names)}",
+        key=f"chart_type_region_comparison_{key_suffix}",  # ✅ Unique key
     )
 
     if chart_type == "Line Chart":
@@ -570,9 +615,9 @@ def render_hypothermia_region_comparison_chart(
                     ]
 
                     if not region_period_df.empty:
-                        # Compute KPI for this specific region and period
+                        # Compute KPI for this specific region and period with proper counting
                         hypothermia_data = compute_hypothermia_kpi(
-                            region_period_df, region_facility_uids
+                            region_period_df, region_facility_uids, tei_df
                         )
                         time_series_data.append(
                             {
@@ -582,8 +627,8 @@ def render_hypothermia_region_comparison_chart(
                                 "hypothermia_count": hypothermia_data[
                                     "hypothermia_count"
                                 ],
-                                "total_admitted_with_events": hypothermia_data[
-                                    "total_admitted_with_events"
+                                "total_admitted_newborns": hypothermia_data[
+                                    "total_admitted_newborns"
                                 ],
                             }
                         )
@@ -627,15 +672,15 @@ def render_hypothermia_region_comparison_chart(
 
                 if not region_df.empty:
                     hypothermia_data = compute_hypothermia_kpi(
-                        region_df, region_facility_uids
+                        region_df, region_facility_uids, tei_df
                     )
                     bar_data.append(
                         {
                             "Region": region_name,
                             "value": hypothermia_data["hypothermia_rate"],
                             "hypothermia_count": hypothermia_data["hypothermia_count"],
-                            "total_admitted_with_events": hypothermia_data[
-                                "total_admitted_with_events"
+                            "total_admitted_newborns": hypothermia_data[
+                                "total_admitted_newborns"
                             ],
                         }
                     )
@@ -702,14 +747,14 @@ def render_hypothermia_region_comparison_chart(
 
             if not region_df.empty:
                 hypothermia_data = compute_hypothermia_kpi(
-                    region_df, region_facility_uids
+                    region_df, region_facility_uids, tei_df
                 )
                 region_table_data.append(
                     {
                         "Region Name": region_name,
                         "Hypothermia Cases": hypothermia_data["hypothermia_count"],
-                        "Total Admitted Newborns with Events": hypothermia_data[
-                            "total_admitted_with_events"
+                        "Total Admitted Newborns": hypothermia_data[
+                            "total_admitted_newborns"
                         ],
                         "Hypothermia Rate": hypothermia_data["hypothermia_rate"],
                     }
@@ -723,7 +768,7 @@ def render_hypothermia_region_comparison_chart(
 
     # Calculate overall
     total_numerator = region_table_df["Hypothermia Cases"].sum()
-    total_denominator = region_table_df["Total Admitted Newborns with Events"].sum()
+    total_denominator = region_table_df["Total Admitted Newborns"].sum()
     overall_value = (
         (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
     )
@@ -731,7 +776,7 @@ def render_hypothermia_region_comparison_chart(
     overall_row = {
         "Region Name": "Overall",
         "Hypothermia Cases": total_numerator,
-        "Total Admitted Newborns with Events": total_denominator,
+        "Total Admitted Newborns": total_denominator,
         "Hypothermia Rate": overall_value,
     }
 
@@ -743,7 +788,7 @@ def render_hypothermia_region_comparison_chart(
     column_order = [
         "Region Name",
         "Hypothermia Cases",
-        "Total Admitted Newborns with Events",
+        "Total Admitted Newborns",
         "Hypothermia Rate",
     ]
     region_table_df = region_table_df[column_order]
@@ -755,7 +800,7 @@ def render_hypothermia_region_comparison_chart(
         region_table_df.style.format(
             {
                 "Hypothermia Cases": "{:,.0f}",
-                "Total Admitted Newborns with Events": "{:,.0f}",
+                "Total Admitted Newborns": "{:,.0f}",
                 "Hypothermia Rate": "{:.2f}%",
             }
         )
