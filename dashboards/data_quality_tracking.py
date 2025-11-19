@@ -45,33 +45,6 @@ def check_data_availability():
         and not st.session_state.newborn_tei_df.empty
     )
 
-    # Log detailed information
-    if maternal_events_available:
-        maternal_events = st.session_state.maternal_events_df
-        logging.info(f"📊 Maternal events data: {len(maternal_events)} rows")
-        if "has_actual_event" in maternal_events.columns:
-            event_counts = maternal_events["has_actual_event"].value_counts()
-            logging.info(
-                f"   - has_actual_event distribution: True={event_counts.get(True, 0)}, False={event_counts.get(False, 0)}"
-            )
-        else:
-            logging.warning("   - ❌ No 'has_actual_event' column in maternal events!")
-    else:
-        logging.warning("❌ No maternal events data available")
-
-    if newborn_events_available:
-        newborn_events = st.session_state.newborn_events_df
-        logging.info(f"📊 Newborn events data: {len(newborn_events)} rows")
-        if "has_actual_event" in newborn_events.columns:
-            event_counts = newborn_events["has_actual_event"].value_counts()
-            logging.info(
-                f"   - has_actual_event distribution: True={event_counts.get(True, 0)}, False={event_counts.get(False, 0)}"
-            )
-        else:
-            logging.warning("   - ❌ No 'has_actual_event' column in newborn events!")
-    else:
-        logging.warning("❌ No newborn events data available")
-
     return {
         "maternal": maternal_events_available and maternal_tei_available,
         "newborn": newborn_events_available and newborn_tei_available,
@@ -123,16 +96,6 @@ def render_data_quality_tracking(user):
 
     with tab1:
         if maternal_data_available:
-            # ✅ DEBUG: Show data info
-            maternal_events = st.session_state.maternal_events_df
-            st.info(f"📊 Analyzing {len(maternal_events)} maternal events")
-            if "has_actual_event" in maternal_events.columns:
-                false_count = (maternal_events["has_actual_event"] == False).sum()
-                true_count = (maternal_events["has_actual_event"] == True).sum()
-                st.write(
-                    f"🔍 Events with actual data: {true_count}, Placeholders: {false_count}"
-                )
-
             render_maternal_data_quality()
         else:
             st.warning(
@@ -148,16 +111,6 @@ def render_data_quality_tracking(user):
 
     with tab2:
         if newborn_data_available:
-            # ✅ DEBUG: Show data info
-            newborn_events = st.session_state.newborn_events_df
-            st.info(f"📊 Analyzing {len(newborn_events)} newborn events")
-            if "has_actual_event" in newborn_events.columns:
-                false_count = (newborn_events["has_actual_event"] == False).sum()
-                true_count = (newborn_events["has_actual_event"] == True).sum()
-                st.write(
-                    f"🔍 Events with actual data: {true_count}, Placeholders: {false_count}"
-                )
-
             render_newborn_data_quality()
         else:
             st.warning(
@@ -170,8 +123,3 @@ def render_data_quality_tracking(user):
             3. Return to this tab
             """
             )
-
-    # Add refresh button
-    st.markdown("---")
-    if st.button("🔄 Refresh Data Quality Analysis", use_container_width=True):
-        st.rerun()

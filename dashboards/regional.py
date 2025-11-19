@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import logging
 import concurrent.futures
+import time
 from components.kpi_card import render_kpi_cards
 from newborns_dashboard.reginal_newborn import render_newborn_dashboard
 from utils.data_service import fetch_program_data_for_user
@@ -59,9 +60,7 @@ def get_static_data(user):
 
 
 # Optimized shared cache with user-specific keys
-@st.cache_data(
-    ttl=CACHE_TTL, show_spinner=False, max_entries=5
-)  # Increased max_entries for multiple users
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False, max_entries=5)
 def fetch_shared_program_data(user, program_uid):
     """Optimized shared cache for program data - user-specific"""
     if not program_uid:
@@ -73,8 +72,8 @@ def fetch_shared_program_data(user, program_uid):
         return None
 
 
-def get_shared_program_data_optimized(user, program_uid_map):
-    """Optimized data loading with parallel execution and user-specific caching"""
+def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
+    """Smart data loading with 30-minute auto-refresh and user-specific caching"""
     maternal_program_uid = program_uid_map.get("Maternal Inpatient Data")
     newborn_program_uid = program_uid_map.get("Newborn Care Form")
 
@@ -83,16 +82,45 @@ def get_shared_program_data_optimized(user, program_uid_map):
     shared_loaded_key = f"shared_data_loaded_{user_key}"
     shared_maternal_key = f"shared_maternal_data_{user_key}"
     shared_newborn_key = f"shared_newborn_data_{user_key}"
+    shared_timestamp_key = f"shared_data_timestamp_{user_key}"
 
-    # Initialize session state for shared data - user-specific
-    if shared_loaded_key not in st.session_state:
+    current_time = time.time()
+
+    # ✅ Check if cache has expired (30 minutes = 1800 seconds)
+    cache_expired = False
+    if shared_timestamp_key in st.session_state:
+        time_elapsed = current_time - st.session_state[shared_timestamp_key]
+        cache_expired = time_elapsed > 1800  # 30 minutes
+        if cache_expired:
+            logging.info(
+                f"🔄 Cache expired after {time_elapsed:.0f} seconds, fetching fresh data"
+            )
+
+    # ✅ Check if user changed (force fresh data)
+    user_changed = st.session_state.get("user_changed", False)
+
+    # ✅ Determine if we need fresh data
+    need_fresh_data = (
+        not st.session_state.get(shared_loaded_key, False)  # First load
+        or cache_expired  # Cache expired
+        or user_changed  # User changed
+        or st.session_state.get("refresh_trigger", False)  # Manual refresh
+    )
+
+    if need_fresh_data:
+        logging.info(
+            "🔄 Fetching FRESH data (cache expired, user changed, or manual refresh)"
+        )
+
+        # Clear existing cache
         st.session_state[shared_loaded_key] = False
         st.session_state[shared_maternal_key] = None
         st.session_state[shared_newborn_key] = None
 
-    # Load data in parallel if not already loaded
-    if not st.session_state[shared_loaded_key]:
-        with st.spinner("🚀 Loading dashboard data..."):
+        # Load fresh data in parallel - ONLY show spinner if requested
+        spinner_text = "🚀 Loading dashboard data..." if show_spinner else None
+
+        def load_data():
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 maternal_future = (
                     executor.submit(
@@ -101,7 +129,6 @@ def get_shared_program_data_optimized(user, program_uid_map):
                     if maternal_program_uid
                     else None
                 )
-
                 newborn_future = (
                     executor.submit(
                         fetch_shared_program_data, user, newborn_program_uid
@@ -122,9 +149,73 @@ def get_shared_program_data_optimized(user, program_uid_map):
                         )
 
                     st.session_state[shared_loaded_key] = True
+                    st.session_state[shared_timestamp_key] = (
+                        current_time  # Update timestamp
+                    )
+
+                    # ✅ STORE in main cached_shared_data for easy access
+                    st.session_state.cached_shared_data = {
+                        "maternal": st.session_state[shared_maternal_key],
+                        "newborn": st.session_state[shared_newborn_key],
+                    }
+
+                    # Log fresh data stats
+                    maternal_tei_count = (
+                        len(
+                            st.session_state[shared_maternal_key].get(
+                                "tei", pd.DataFrame()
+                            )
+                        )
+                        if st.session_state[shared_maternal_key]
+                        else 0
+                    )
+                    newborn_tei_count = (
+                        len(
+                            st.session_state[shared_newborn_key].get(
+                                "tei", pd.DataFrame()
+                            )
+                        )
+                        if st.session_state[shared_newborn_key]
+                        else 0
+                    )
+                    logging.info(
+                        f"✅ FRESH DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs"
+                    )
+
+                    # Reset refresh trigger and user changed flags
+                    st.session_state.refresh_trigger = False
+                    st.session_state.user_changed = False
+
                 except concurrent.futures.TimeoutError:
                     logging.error("Data loading timeout")
+                    return False
+            return True
+
+        # Show spinner only if requested
+        if show_spinner:
+            with st.spinner(spinner_text):
+                success = load_data()
+                if not success:
                     st.error("Data loading timeout. Please try refreshing.")
+        else:
+            success = load_data()
+
+    else:
+        # ✅ Use cached data
+        maternal_tei_count = (
+            len(st.session_state[shared_maternal_key].get("tei", pd.DataFrame()))
+            if st.session_state[shared_maternal_key]
+            else 0
+        )
+        newborn_tei_count = (
+            len(st.session_state[shared_newborn_key].get("tei", pd.DataFrame()))
+            if st.session_state[shared_newborn_key]
+            else 0
+        )
+        time_elapsed = current_time - st.session_state[shared_timestamp_key]
+        logging.info(
+            f"✅ USING CACHED DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs ({time_elapsed:.0f}s old)"
+        )
 
     return {
         "maternal": st.session_state[shared_maternal_key],
@@ -135,37 +226,40 @@ def get_shared_program_data_optimized(user, program_uid_map):
 def clear_shared_cache(user=None):
     """Clear shared data cache - user-specific"""
     if user:
-        # Clear specific user cache
         user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
         shared_loaded_key = f"shared_data_loaded_{user_key}"
         shared_maternal_key = f"shared_maternal_data_{user_key}"
         shared_newborn_key = f"shared_newborn_data_{user_key}"
+        shared_timestamp_key = f"shared_data_timestamp_{user_key}"
 
         st.session_state[shared_loaded_key] = False
         st.session_state[shared_maternal_key] = None
         st.session_state[shared_newborn_key] = None
+        if shared_timestamp_key in st.session_state:
+            del st.session_state[shared_timestamp_key]
+
+        logging.info("🧹 Cleared user-specific cache")
     else:
-        # Clear all user caches (fallback)
+        # Clear all user caches
         keys_to_clear = [
             key
             for key in st.session_state.keys()
             if key.startswith("shared_data_loaded_")
             or key.startswith("shared_maternal_data_")
             or key.startswith("shared_newborn_data_")
+            or key.startswith("shared_data_timestamp_")
         ]
         for key in keys_to_clear:
-            if key.startswith("shared_data_loaded_"):
-                st.session_state[key] = False
-            else:
-                st.session_state[key] = None
+            del st.session_state[key]
+        logging.info("🧹 Cleared ALL shared caches")
 
     clear_cache()
 
 
 def initialize_session_state():
-    """Optimized session state initialization with user tracking"""
+    """Optimized session state initialization with proper tab isolation"""
     session_vars = {
-        "refresh_trigger": False,
+        "refresh_trigger": False,  # ✅ Added for manual refresh tracking
         "selected_facilities": ["All Facilities"],
         "current_facility_uids": [],
         "current_display_names": ["All Facilities"],
@@ -180,12 +274,30 @@ def initialize_session_state():
         "selected_program_uid": None,
         "selected_program_name": "Maternal Inpatient Data",
         "static_data_loaded": False,
-        # ADD THESE CRITICAL SESSION STATE VARIABLES:
+        "facility_filter_applied": False,
+        "current_user_identifier": None,
+        "user_changed": False,
+        # KPI sharing
+        "last_computed_kpis": None,
+        "last_computed_facilities": None,
+        "last_computed_timestamp": None,
+        "last_computed_newborn_kpis": None,
+        "last_computed_newborn_timestamp": None,
+        "summary_kpi_cache": {},
+        # ✅ FIXED: Proper tab tracking
+        "active_tab": "maternal",
+        "data_initialized": False,
+        "tab_initialized": {
+            "maternal": False,
+            "newborn": False,
+            "summary": False,
+            "mentorship": False,
+            "data_quality": False,
+        },
+        # Regional specific
         "facilities": [],
         "facility_mapping": {},
         "program_uid_map": {},
-        "current_user_identifier": None,  # Track current user
-        "user_changed": False,  # Flag to detect user changes
     }
 
     for key, default_value in session_vars.items():
@@ -203,6 +315,14 @@ def initialize_session_state():
         st.session_state.static_data_loaded = False
         st.session_state.selected_facilities = ["All Facilities"]
         st.session_state.selection_applied = True
+        st.session_state.facility_filter_applied = False
+        st.session_state.last_computed_kpis = None
+        st.session_state.last_computed_newborn_kpis = None
+        st.session_state.summary_kpi_cache = {}
+        st.session_state.data_initialized = False
+        # Reset all tab states
+        for tab in st.session_state.tab_initialized.keys():
+            st.session_state.tab_initialized[tab] = False
     else:
         st.session_state.user_changed = False
 
@@ -216,7 +336,6 @@ def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUn
     if tei_df.empty or not facility_uids:
         return 0
 
-    # Use vectorized operations for better performance
     if org_unit_column in tei_df.columns:
         filtered_tei = tei_df[tei_df[org_unit_column].isin(facility_uids)]
     else:
@@ -226,7 +345,6 @@ def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUn
             else tei_df
         )
 
-    # Count unique TEIs efficiently
     id_column = (
         "tei_id" if "tei_id" in filtered_tei.columns else "trackedEntityInstance"
     )
@@ -344,7 +462,14 @@ def filter_data_by_facilities(data_dict, facility_uids):
 def render_summary_dashboard_shared(
     user, region_name, facility_mapping, selected_facilities, shared_data
 ):
-    """Optimized Summary Dashboard rendering"""
+    """OPTIMIZED Summary Dashboard - Only runs when tab is active"""
+
+    # ✅ FIXED: Only run if this is the active tab
+    if st.session_state.active_tab != "summary":
+        return
+
+    logging.info("🔄 Summary dashboard rendering")
+
     # Get location display name
     location_name, location_type = get_location_display_name(
         selected_facilities, region_name
@@ -358,7 +483,7 @@ def render_summary_dashboard_shared(
             facility_mapping[f] for f in selected_facilities if f in facility_mapping
         ]
 
-    # Use shared data - APPLY FACILITY FILTERING
+    # Use shared data
     maternal_data = shared_data["maternal"]
     newborn_data = shared_data["newborn"]
 
@@ -366,107 +491,125 @@ def render_summary_dashboard_shared(
         st.error("No data available for summary dashboard")
         return
 
-    # FILTER DATA BY SELECTED FACILITIES
-    if facility_uids:
-        maternal_data = filter_data_by_facilities(maternal_data, facility_uids)
-        newborn_data = filter_data_by_facilities(newborn_data, facility_uids)
+    # Create cache key for summary data
+    cache_key = f"summary_{location_name}_{len(facility_uids)}"
 
-    # Extract dataframes efficiently
-    maternal_tei_df = (
-        maternal_data.get("tei", pd.DataFrame()) if maternal_data else pd.DataFrame()
-    )
-    maternal_events_df = (
-        maternal_data.get("events", pd.DataFrame()) if maternal_data else pd.DataFrame()
-    )
-    newborn_tei_df = (
-        newborn_data.get("tei", pd.DataFrame()) if newborn_data else pd.DataFrame()
-    )
-    newborn_events_df = (
-        newborn_data.get("events", pd.DataFrame()) if newborn_data else pd.DataFrame()
-    )
+    # Check if we have cached summary data
+    if (
+        cache_key in st.session_state.summary_kpi_cache
+        and time.time() - st.session_state.summary_kpi_cache[cache_key]["timestamp"]
+        < 300
+    ):
+        summary_data = st.session_state.summary_kpi_cache[cache_key]["data"]
+        logging.info("✅ USING CACHED summary data")
+    else:
+        # Compute summary data
+        with st.spinner("🔄 Computing summary statistics..."):
+            # Extract dataframes
+            maternal_tei_df = (
+                maternal_data.get("tei", pd.DataFrame())
+                if maternal_data
+                else pd.DataFrame()
+            )
+            maternal_events_df = (
+                maternal_data.get("events", pd.DataFrame())
+                if maternal_data
+                else pd.DataFrame()
+            )
+            newborn_tei_df = (
+                newborn_data.get("tei", pd.DataFrame())
+                if newborn_data
+                else pd.DataFrame()
+            )
 
-    # Normalize dates efficiently
-    newborn_enrollments_df = normalize_enrollment_dates(
-        newborn_data.get("enrollments", pd.DataFrame())
-        if newborn_data
-        else pd.DataFrame()
-    )
-    maternal_enrollments_df = normalize_enrollment_dates(
-        maternal_data.get("enrollments", pd.DataFrame())
-        if maternal_data
-        else pd.DataFrame()
-    )
+            # Get enrollment dates
+            newborn_enrollments_df = normalize_enrollment_dates(
+                newborn_data.get("enrollments", pd.DataFrame())
+                if newborn_data
+                else pd.DataFrame()
+            )
+            maternal_enrollments_df = normalize_enrollment_dates(
+                maternal_data.get("enrollments", pd.DataFrame())
+                if maternal_data
+                else pd.DataFrame()
+            )
 
-    # Calculate indicators
-    maternal_indicators = calculate_maternal_indicators(
-        maternal_events_df, facility_uids
-    )
-    newborn_indicators = calculate_newborn_indicators(newborn_events_df, facility_uids)
+            # Get TEI counts
+            maternal_tei_count = count_unique_teis_filtered(
+                maternal_tei_df, facility_uids, "tei_orgUnit"
+            )
+            newborn_tei_count = count_unique_teis_filtered(
+                newborn_tei_df, facility_uids, "tei_orgUnit"
+            )
 
-    # Get filtered TEI counts
-    maternal_tei_count = count_unique_teis_filtered(
-        maternal_tei_df, facility_uids, "tei_orgUnit"
-    )
-    newborn_tei_count = count_unique_teis_filtered(
-        newborn_tei_df, facility_uids, "tei_orgUnit"
-    )
-    newborn_indicators["total_admitted"] = newborn_tei_count
+            # Get dates
+            newborn_start_date = get_earliest_date(
+                newborn_enrollments_df, "enrollmentDate"
+            )
+            maternal_start_date = get_earliest_date(
+                maternal_enrollments_df, "enrollmentDate"
+            )
 
-    # Get earliest dates
-    newborn_start_date = get_earliest_date(newborn_enrollments_df, "enrollmentDate")
-    maternal_start_date = get_earliest_date(maternal_enrollments_df, "enrollmentDate")
+            # Calculate indicators
+            maternal_indicators = calculate_maternal_indicators(
+                maternal_events_df, facility_uids
+            )
+            newborn_indicators = calculate_newborn_indicators(
+                newborn_data.get("events", pd.DataFrame()), facility_uids
+            )
+            newborn_indicators["total_admitted"] = newborn_tei_count
 
-    # Apply optimized table styling with reduced gaps
+            # Facility comparison
+            facility_comparison_data = calculate_facility_comparison_data(
+                maternal_tei_df, newborn_tei_df, facility_mapping
+            )
+
+            summary_data = {
+                "maternal_indicators": maternal_indicators,
+                "newborn_indicators": newborn_indicators,
+                "maternal_tei_count": maternal_tei_count,
+                "newborn_tei_count": newborn_tei_count,
+                "newborn_start_date": newborn_start_date,
+                "maternal_start_date": maternal_start_date,
+                "facility_comparison_data": facility_comparison_data,
+            }
+
+            # Cache the computed data
+            st.session_state.summary_kpi_cache[cache_key] = {
+                "data": summary_data,
+                "timestamp": time.time(),
+            }
+
+    # Extract data for rendering
+    maternal_indicators = summary_data["maternal_indicators"]
+    newborn_indicators = summary_data["newborn_indicators"]
+    maternal_tei_count = summary_data["maternal_tei_count"]
+    newborn_tei_count = summary_data["newborn_tei_count"]
+    newborn_start_date = summary_data["newborn_start_date"]
+    maternal_start_date = summary_data["maternal_start_date"]
+    facility_comparison_data = summary_data["facility_comparison_data"]
+
+    # Apply optimized table styling
     st.markdown(
         """
     <style>
-    .summary-table-container {
-        border-radius: 8px;
-        overflow: hidden;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        margin: 0.5rem 0;
-        border: 1px solid #e0e0e0;
-    }
-    .summary-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-    }
-    .summary-table thead tr {
-        background: linear-gradient(135deg, #1f77b4, #1668a1);
-    }
-    .summary-table th {
-        color: white;
-        padding: 10px 12px;
-        text-align: left;
-        font-weight: 600;
-        font-size: 13px;
-        border: none;
-    }
-    .summary-table td {
-        padding: 8px 12px;
-        border-bottom: 1px solid #f0f0f0;
-        font-size: 13px;
-        background-color: white;
-    }
+    .summary-table-container { border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 0.5rem 0; border: 1px solid #e0e0e0; }
+    .summary-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .summary-table thead tr { background: linear-gradient(135deg, #1f77b4, #1668a1); }
+    .summary-table th { color: white; padding: 10px 12px; text-align: left; font-weight: 600; font-size: 13px; border: none; }
+    .summary-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; background-color: white; }
     .summary-table tbody tr:last-child td { border-bottom: none; }
     .summary-table tbody tr:hover td { background-color: #f8f9fa; }
     .newborn-table thead tr { background: linear-gradient(135deg, #1f77b4, #1668a1) !important; }
     .maternal-table thead tr { background: linear-gradient(135deg, #2ca02c, #228b22) !important; }
     .summary-table td:first-child { font-weight: 600; color: #666; text-align: center; }
     .summary-table th:first-child { text-align: center; }
-    
-    /* Reduced gap styling */
-    .main-header { margin-bottom: 0.3rem !important; }
-    .section-header { margin: 0.3rem 0 !important; }
-    .stMarkdown { margin-bottom: 0.2rem !important; }
-    .element-container { margin-bottom: 0.3rem !important; }
     </style>
     """,
         unsafe_allow_html=True,
     )
 
-    # Create overview tables with minimal gaps
+    # Create overview tables
     st.markdown("---")
 
     # Newborn Overview Table
@@ -517,11 +660,11 @@ def render_summary_dashboard_shared(
             location_name,
             f"{newborn_tei_count:,}",
             f"{newborn_indicators['nmr']}",
-            f"{maternal_indicators['stillbirth_rate']} per 1000 births",
+            f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
             f"{maternal_indicators['live_births']:,}",
             f"{maternal_indicators['stillbirths']:,}",
             f"{maternal_indicators['total_births']:,}",
-            f"{maternal_indicators['low_birth_weight_rate']}:.2f%",
+            f"{maternal_indicators['low_birth_weight_rate']:.2f}%",
         ],
     }
 
@@ -594,11 +737,10 @@ def render_summary_dashboard_shared(
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Quick Statistics with optimized styling
+    # Quick Statistics
     st.markdown("---")
     st.markdown("### 📈 Quick Statistics")
 
-    # Create metric cards with reduced spacing
     col1, col2, col3, col4 = st.columns(4)
     metrics = [
         (
@@ -647,10 +789,6 @@ def render_summary_dashboard_shared(
     # Facility comparison table
     st.markdown("---")
     st.markdown("### 📊 Mothers & Newborns by facility")
-
-    facility_comparison_data = calculate_facility_comparison_data(
-        maternal_tei_df, newborn_tei_df, facility_mapping
-    )
 
     if facility_comparison_data:
         facilities = list(facility_comparison_data.keys())
@@ -806,7 +944,14 @@ def render_maternal_dashboard_shared(
     facility_mapping=None,
     facility_names=None,
 ):
-    """Optimized Maternal Dashboard rendering"""
+    """Optimized Maternal Dashboard rendering - Only runs when tab is active"""
+
+    # ✅ FIXED: Only run if this is the active tab
+    if st.session_state.active_tab != "maternal":
+        return
+
+    logging.info("🔄 Maternal dashboard rendering")
+
     if not maternal_data:
         st.error("No maternal data available")
         return
@@ -820,18 +965,25 @@ def render_maternal_dashboard_shared(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
-    # FILTER DATA BY SELECTED FACILITIES
-    if facility_uids:
-        maternal_data = filter_data_by_facilities(maternal_data, facility_uids)
-        # Update dataframes after filtering
-        tei_df = maternal_data.get("tei", pd.DataFrame())
-        events_df = maternal_data.get("events", pd.DataFrame())
-
     # Store in session state for quick access
     st.session_state.maternal_events_df = events_df.copy()
     st.session_state.maternal_tei_df = tei_df.copy()
 
+    # ✅ DEBUG: Log what we're storing
+    logging.info(
+        f"✅ STORED maternal data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
+    )
+    logging.info(
+        f"✅ Maternal events has_actual_event values: {events_df['has_actual_event'].value_counts().to_dict() if 'has_actual_event' in events_df.columns else 'NO COLUMN'}"
+    )
+
     render_connection_status(events_df, user=user)
+
+    # FILTER DATA BY SELECTED FACILITIES
+    if facility_uids and st.session_state.get("facility_filter_applied", False):
+        maternal_data = filter_data_by_facilities(maternal_data, facility_uids)
+        tei_df = maternal_data.get("tei", pd.DataFrame())
+        events_df = maternal_data.get("events", pd.DataFrame())
 
     # Update session state
     st.session_state.current_facility_uids = facility_uids
@@ -855,6 +1007,41 @@ def render_maternal_dashboard_shared(
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
 
+    # ✅ IMPROVED: Single progress container with better messaging
+    progress_container = st.empty()
+    with progress_container.container():
+        st.markdown("---")
+
+        # Progress steps
+        st.markdown("### 📈 Preparing Dashboard...")
+
+        progress_col1, progress_col2 = st.columns([3, 1])
+
+        with progress_col1:
+            st.markdown(
+                """
+            <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
+            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing Data</h4>
+            <p style="margin: 5px 0; font-size: 14px;">• Computing KPIs and indicators...</p>
+            <p style="margin: 5px 0; font-size: 14px;">• Generating charts and visualizations...</p>
+            <p style="margin: 5px 0; font-size: 14px;">• Preparing data tables...</p>
+            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 2-4 minutes depending on data size</p>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        with progress_col2:
+            st.markdown(
+                """
+            <div style="text-align: center; padding: 10px;">
+            <div style="font-size: 24px;">⏳</div>
+            <div style="font-size: 12px; margin-top: 5px;">Processing</div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
     # Create containers for better performance
     kpi_container = st.container()
 
@@ -876,6 +1063,7 @@ def render_maternal_dashboard_shared(
     # KPI Cards with filtered data
     with kpi_container:
         if filtered_events.empty or "event_date" not in filtered_events.columns:
+            progress_container.empty()
             st.markdown(
                 '<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for selected filters.</div>',
                 unsafe_allow_html=True,
@@ -887,7 +1075,17 @@ def render_maternal_dashboard_shared(
         )
 
         user_id = str(user.get("id", user.get("username", "default_user")))
-        render_kpi_cards(filtered_events, location_name, user_id=user_id)
+
+        # ✅ STORE computed KPIs for reuse in summary tab
+        kpi_data = render_kpi_cards(filtered_events, location_name, user_id=user_id)
+
+        # Save for summary dashboard to reuse
+        st.session_state.last_computed_kpis = kpi_data
+        st.session_state.last_computed_facilities = facility_uids
+        st.session_state.last_computed_timestamp = time.time()
+
+    # ✅ CLEAR THE PROGRESS INDICATOR ONCE KPI CARDS ARE DONE
+    progress_container.empty()
 
     # Charts section with optimized rendering
     bg_color = filters["bg_color"]
@@ -950,85 +1148,28 @@ def render():
     # Show user change notification if needed
     if st.session_state.get("user_changed", False):
         st.sidebar.info("👤 User changed - loading fresh data...")
-        # Clear caches for the new user
         current_user = st.session_state.get("user", {})
         clear_shared_cache(current_user)
 
-    # Load optimized CSS with minimal gaps
+    # Load optimized CSS
     st.markdown(
         """
     <style>
-    /* Ultra-compact styling for maximum performance */
-    .main-header { 
-        font-size: 1.5rem !important; 
-        font-weight: 700 !important;
-        margin-bottom: 0.2rem !important;
-        padding-bottom: 0.2rem !important;
-    }
-    .section-header {
-        font-size: 1.2rem !important;
-        margin: 0.2rem 0 !important;
-        padding: 0.3rem 0 !important;
-    }
-    .stMarkdown {
-        margin-bottom: 0.1rem !important;
-    }
-    .element-container {
-        margin-bottom: 0.2rem !important;
-    }
-    .stButton button {
-        margin-bottom: 0.2rem !important;
-    }
-    .stRadio > div {
-        padding-top: 0.1rem !important;
-        padding-bottom: 0.1rem !important;
-    }
-    .stForm {
-        margin-bottom: 0.3rem !important;
-    }
-    hr {
-        margin: 0.3rem 0 !important;
-    }
-    .user-info {
-        margin-bottom: 0.3rem !important;
-        font-size: 0.9rem;
-    }
-    
-    /* Compact sidebar */
-    .sidebar .sidebar-content {
-        padding: 1rem 0.5rem !important;
-    }
-    
-    /* Metric cards compact */
-    .metric-card {
-        min-height: 100px !important;
-        padding: 12px !important;
-        margin: 5px !important;
-    }
-    .metric-value {
-        font-size: 1.5rem !important;
-        margin: 5px 0 !important;
-    }
-    .metric-label {
-        font-size: 0.8rem !important;
-        margin-bottom: 2px !important;
-    }
-    .metric-help {
-        font-size: 0.65rem !important;
-        margin-top: 2px !important;
-    }
-    
-    /* Table compact */
-    .summary-table th, .summary-table td {
-        padding: 6px 8px !important;
-        font-size: 12px !important;
-    }
-    
-    /* Make ALL checkbox labels black and compact */
-    .stCheckbox label {
-        color: #000000 !important;
-        font-size: 0.9rem !important;
-    }
+    .main-header { font-size: 1.5rem !important; font-weight: 700 !important; margin-bottom: 0.2rem !important; }
+    .section-header { font-size: 1.2rem !important; margin: 0.2rem 0 !important; padding: 0.3rem 0 !important; }
+    .stMarkdown { margin-bottom: 0.1rem !important; }
+    .element-container { margin-bottom: 0.2rem !important; }
+    .stButton button { margin-bottom: 0.2rem !important; }
+    .stRadio > div { padding-top: 0.1rem !important; padding-bottom: 0.1rem !important; }
+    .stForm { margin-bottom: 0.3rem !important; }
+    hr { margin: 0.3rem 0 !important; }
+    .user-info { margin-bottom: 0.3rem !important; font-size: 0.9rem; }
+    .metric-card { min-height: 100px !important; padding: 12px !important; margin: 5px !important; }
+    .metric-value { font-size: 1.5rem !important; margin: 5px 0 !important; }
+    .metric-label { font-size: 0.8rem !important; margin-bottom: 2px !important; }
+    .metric-help { font-size: 0.65rem !important; margin-top: 2px !important; }
+    .summary-table th, .summary-table td { padding: 6px 8px !important; font-size: 12px !important; }
+    .stCheckbox label { color: #000000 !important; font-size: 0.9rem !important; }
     </style>
     """,
         unsafe_allow_html=True,
@@ -1037,6 +1178,12 @@ def render():
     # Load additional CSS files if they exist
     try:
         with open("utils/facility.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except Exception:
+        pass
+
+    try:
+        with open("utils/national.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except Exception:
         pass
@@ -1059,40 +1206,79 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Refresh Data Button - ULTRA COMPACT
+    # Refresh Data Button
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
         st.cache_data.clear()
-        clear_shared_cache(user)  # Clear specific user cache
-        st.session_state.refresh_trigger = not st.session_state.refresh_trigger
+        clear_shared_cache(user)
+        st.session_state.refresh_trigger = True  # ✅ Set refresh trigger
         st.session_state.selection_applied = True
+        st.session_state.facility_filter_applied = False
+        st.session_state.last_computed_kpis = None
+        st.session_state.last_computed_newborn_kpis = None
+        st.session_state.summary_kpi_cache = {}
+        st.session_state.data_initialized = False
+
+        # Clear data signature to force fresh computation
+        current_user_key = (
+            f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
+        )
+        data_changed_key = f"data_signature_{current_user_key}"
+        if data_changed_key in st.session_state:
+            del st.session_state[data_changed_key]
+
+        for tab in st.session_state.tab_initialized.keys():
+            st.session_state.tab_initialized[tab] = False
         st.rerun()
 
     # ================ OPTIMIZED DATA LOADING ================
-    # Get static data (cached for 1 hour) - FIXED: Use safe access
+    # Get static data (cached for 1 hour)
     if not st.session_state.get("static_data_loaded", False) or st.session_state.get(
         "user_changed", False
     ):
         with st.sidebar:
             with st.spinner("🚀 Loading facility data..."):
                 static_data = get_static_data(user)
-                # SAFELY initialize session state variables
-                st.session_state.facilities = static_data.get("facilities", [])
-                st.session_state.facility_mapping = static_data.get(
-                    "facility_mapping", {}
-                )
-                st.session_state.program_uid_map = static_data.get(
-                    "program_uid_map", {}
-                )
+                st.session_state.facilities = static_data["facilities"]
+                st.session_state.facility_mapping = static_data["facility_mapping"]
+                st.session_state.program_uid_map = static_data["program_uid_map"]
                 st.session_state.static_data_loaded = True
-                st.session_state.user_changed = False  # Reset user change flag
+                st.session_state.user_changed = False
 
-    # SAFELY access session state variables with defaults
-    facilities = st.session_state.get("facilities", [])
-    facility_mapping = st.session_state.get("facility_mapping", {})
-    program_uid_map = st.session_state.get("program_uid_map", {})
+    facilities = st.session_state.facilities
+    facility_mapping = st.session_state.facility_mapping
+    program_uid_map = st.session_state.program_uid_map
 
-    # Auto-load shared data in background
-    shared_data = get_shared_program_data_optimized(user, program_uid_map)
+    # ✅ FIX: SINGLE DATA LOADING - Only load once and store in variable
+    if not st.session_state.get("data_initialized", False):
+        # First time or fresh data needed
+        with st.spinner("🚀 Loading dashboard data..."):
+            shared_data = get_shared_program_data_optimized(
+                user, program_uid_map, show_spinner=False
+            )
+            st.session_state.data_initialized = True
+            st.session_state.cached_shared_data = (
+                shared_data  # ✅ Store in session state
+            )
+            logging.info("✅ Initial data loading complete")
+    else:
+        # Use cached data from session state - no loading needed
+        shared_data = st.session_state.cached_shared_data
+        logging.info("✅ Using cached shared data from session state")
+
+    # ✅ Add cache status indicator in sidebar
+    if st.session_state.get("data_initialized", False):
+        user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
+        timestamp_key = f"shared_data_timestamp_{user_key}"
+
+        if timestamp_key in st.session_state:
+            time_elapsed = time.time() - st.session_state[timestamp_key]
+            minutes_old = int(time_elapsed // 60)
+            seconds_old = int(time_elapsed % 60)
+
+            if minutes_old < 30:
+                st.sidebar.info(f"🔄 Data: {minutes_old}m {seconds_old}s old")
+            else:
+                st.sidebar.warning(f"🔄 Data: {minutes_old}m old (will auto-refresh)")
 
     # ================ COMPACT FACILITY SELECTION ================
     st.sidebar.markdown("---")
@@ -1135,6 +1321,7 @@ def render():
         if selection_submitted:
             st.session_state.selected_facilities = selected_facilities
             st.session_state.selection_applied = True
+            st.session_state.facility_filter_applied = True
             st.rerun()
 
     # Display selection summary
@@ -1179,7 +1366,7 @@ def render():
             label_visibility="collapsed",
         )
 
-    # ================ OPTIMIZED TABS ================
+    # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             "🤰 **Maternal**",
@@ -1191,6 +1378,11 @@ def render():
     )
 
     with tab1:
+        # Update active tab only if this tab is clicked
+        if st.session_state.active_tab != "maternal":
+            st.session_state.active_tab = "maternal"
+            logging.info("🔄 Switched to Maternal tab")
+
         maternal_data = shared_data["maternal"]
         if maternal_data:
             render_maternal_dashboard_shared(
@@ -1207,6 +1399,10 @@ def render():
             st.error("Maternal data not available")
 
     with tab2:
+        if st.session_state.active_tab != "newborn":
+            st.session_state.active_tab = "newborn"
+            logging.info("🔄 Switched to Newborn tab")
+
         newborn_data = shared_data["newborn"]
         if newborn_data:
             render_newborn_dashboard(
@@ -1218,12 +1414,16 @@ def render():
                 view_mode=view_mode,
                 facility_mapping=facility_mapping,
                 facility_names=facility_names,
-                shared_newborn_data=newborn_data,  # ← ADD THIS LINE
+                shared_newborn_data=newborn_data,
             )
         else:
             st.error("Newborn data not available")
 
     with tab3:
+        if st.session_state.active_tab != "summary":
+            st.session_state.active_tab = "summary"
+            logging.info("🔄 Switched to Summary tab")
+
         render_summary_dashboard_shared(
             user,
             region_name,
@@ -1233,7 +1433,18 @@ def render():
         )
 
     with tab4:
+        if st.session_state.active_tab != "mentorship":
+            st.session_state.active_tab = "mentorship"
+            logging.info("🔄 Switched to Mentorship tab")
+
         display_odk_dashboard(user)
 
     with tab5:
+        if st.session_state.active_tab != "data_quality":
+            st.session_state.active_tab = "data_quality"
+            logging.info("🔄 Switched to Data Quality tab")
+
         render_data_quality_tracking(user)
+
+    # Log current active tab state
+    logging.info(f"📊 Current active tab: {st.session_state.active_tab}")

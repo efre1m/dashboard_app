@@ -324,14 +324,6 @@ def render_outliers_tab():
 
     st.dataframe(display_df[display_columns], use_container_width=True)
 
-    csv = filtered_df.to_csv(index=False)
-    st.download_button(
-        "Download",
-        data=csv,
-        file_name="maternal_outliers.csv",
-        use_container_width=True,
-    )
-
 
 def render_missing_events_tab():
     """Render the missing events analysis tab"""
@@ -387,14 +379,6 @@ def render_missing_events_tab():
     ]
 
     st.dataframe(display_df[display_columns], use_container_width=True)
-
-    csv = filtered_df.to_csv(index=False)
-    st.download_button(
-        "Download",
-        data=csv,
-        file_name="maternal_missing_events.csv",
-        use_container_width=True,
-    )
 
 
 def render_missing_elements_tab():
@@ -453,11 +437,3 @@ def render_missing_elements_tab():
     ]
 
     st.dataframe(display_df[display_columns], use_container_width=True)
-
-    csv = filtered_df.to_csv(index=False)
-    st.download_button(
-        "Download",
-        data=csv,
-        file_name="maternal_missing_elements.csv",
-        use_container_width=True,
-    )

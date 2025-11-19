@@ -195,8 +195,6 @@ def render_newborn_dashboard(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
-    events_df.to_csv("maternal_events.csv", index=False)
-
     # Store in session state for data quality tracking
     st.session_state.newborn_events_df = events_df.copy()
     st.session_state.newborn_tei_df = tei_df.copy()

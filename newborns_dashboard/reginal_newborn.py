@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import logging
+import time
 from newborns_dashboard.kmc_coverage import compute_kmc_kpi
 
 # IMPORT FROM NEONATAL DASH CO, NOT MATERNAL DASH_CO
@@ -177,6 +178,12 @@ def render_newborn_dashboard(
 ):
     """Render Newborn Care Form dashboard using shared data to avoid duplicate API calls"""
 
+    # ✅ FIXED: Only run if this is the active tab
+    if st.session_state.active_tab != "newborn":
+        return
+
+    logging.info("🔄 Newborn dashboard rendering")
+
     # Use shared data if provided (from regional.py), otherwise show error
     if shared_newborn_data is not None:
         # USE THE SHARED DATA - NO DUPLICATE FETCHING
@@ -209,6 +216,14 @@ def render_newborn_dashboard(
     st.session_state.newborn_events_df = events_df.copy()
     st.session_state.newborn_tei_df = tei_df.copy()
 
+    # ✅ DEBUG: Log what we're storing
+    logging.info(
+        f"✅ STORED newborn data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
+    )
+    logging.info(
+        f"✅ Newborn events has_actual_event values: {events_df['has_actual_event'].value_counts().to_dict() if 'has_actual_event' in events_df.columns else 'NO COLUMN'}"
+    )
+
     render_connection_status(events_df, user=user)
 
     # Calculate total counts
@@ -232,6 +247,39 @@ def render_newborn_dashboard(
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
 
+    # ✅ ADD PROGRESS INDICATOR (same pattern as national newborn)
+    progress_container = st.empty()
+    with progress_container.container():
+        st.markdown("---")
+        st.markdown("### 📈 Preparing Newborn Dashboard...")
+
+        progress_col1, progress_col2 = st.columns([3, 1])
+
+        with progress_col1:
+            st.markdown(
+                """
+            <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
+            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing Data</h4>
+            <p style="margin: 5px 0; font-size: 14px;">• Computing newborn KPIs and indicators...</p>
+            <p style="margin: 5px 0; font-size: 14px;">• Generating charts and visualizations...</p>
+            <p style="margin: 5px 0; font-size: 14px;">• Preparing data tables...</p>
+            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 2-4 minutes</p>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        with progress_col2:
+            st.markdown(
+                """
+            <div style="text-align: center; padding: 10px;">
+            <div style="font-size: 24px;">⏳</div>
+            <div style="font-size: 12px; margin-top: 5px;">Processing</div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
     # ---------------- Controls & Time Filter ----------------
     col_chart, col_ctrl = st.columns([3, 1])
     with col_ctrl:
@@ -252,6 +300,7 @@ def render_newborn_dashboard(
 
     # Check for empty data - NO KPI CARDS
     if filtered_events.empty or "event_date" not in filtered_events.columns:
+        progress_container.empty()
         st.markdown(
             '<div class="no-data-warning">⚠️ No Newborn Care Data available for selected filters.</div>',
             unsafe_allow_html=True,
@@ -264,11 +313,26 @@ def render_newborn_dashboard(
 
     # ---------------- KPI Trend Charts ----------------
     if filtered_events.empty:
+        progress_container.empty()
         st.markdown(
             f'<div class="no-data-warning">⚠️ No Newborn Care Data available for the selected period. Charts are hidden.</div>',
             unsafe_allow_html=True,
         )
         return
+
+    # ✅ COMPUTE and STORE newborn KPIs for reuse in summary dashboard
+    kmc_data = compute_kmc_kpi(filtered_events, facility_uids)
+
+    # ✅ STORE computed newborn KPIs for reuse in summary tab
+    newborn_kpis = {
+        "kmc_coverage_rate": kmc_data.get("kmc_rate", 0.0),
+        "kmc_cases": kmc_data.get("kmc_count", 0),
+        "total_lbw": kmc_data.get("total_lbw", 0),
+    }
+
+    st.session_state.last_computed_newborn_kpis = newborn_kpis
+    st.session_state.last_computed_newborn_timestamp = time.time()
+    logging.info("✅ STORED newborn KPIs for summary dashboard reuse")
 
     with col_chart:
         # Use KPI tab navigation FROM NEONATAL
@@ -308,6 +372,9 @@ def render_newborn_dashboard(
                 bg_color,
                 text_color,
             )
+
+    # ✅ CLEAR PROGRESS when done
+    progress_container.empty()
 
 
 def render_newborn_summary(
