@@ -331,8 +331,26 @@ def initialize_session_state():
 initialize_session_state()
 
 
+def count_unique_teis_from_events(events_df, facility_uids, org_unit_column="orgUnit"):
+    """Count unique TEIs from events dataframe (same as national.py)"""
+    if events_df.empty or not facility_uids:
+        return 0
+
+    # Filter events by facility UIDs
+    if org_unit_column in events_df.columns:
+        filtered_events = events_df[events_df[org_unit_column].isin(facility_uids)]
+    else:
+        filtered_events = events_df
+
+    # Count unique TEI IDs from events
+    if "tei_id" in filtered_events.columns:
+        return filtered_events["tei_id"].nunique()
+    else:
+        return 0
+
+
 def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUnit"):
-    """Optimized TEI counting"""
+    """Optimized TEI counting from TEI dataframe (for backward compatibility)"""
     if tei_df.empty or not facility_uids:
         return 0
 
@@ -505,19 +523,14 @@ def render_summary_dashboard_shared(
     else:
         # Compute summary data
         with st.spinner("🔄 Computing summary statistics..."):
-            # Extract dataframes
-            maternal_tei_df = (
-                maternal_data.get("tei", pd.DataFrame())
-                if maternal_data
-                else pd.DataFrame()
-            )
+            # Extract dataframes - use events for TEI counting (same as national.py)
             maternal_events_df = (
                 maternal_data.get("events", pd.DataFrame())
                 if maternal_data
                 else pd.DataFrame()
             )
-            newborn_tei_df = (
-                newborn_data.get("tei", pd.DataFrame())
+            newborn_events_df = (
+                newborn_data.get("events", pd.DataFrame())
                 if newborn_data
                 else pd.DataFrame()
             )
@@ -534,12 +547,12 @@ def render_summary_dashboard_shared(
                 else pd.DataFrame()
             )
 
-            # Get TEI counts
-            maternal_tei_count = count_unique_teis_filtered(
-                maternal_tei_df, facility_uids, "tei_orgUnit"
+            # Get TEI counts FROM EVENTS (same as national.py)
+            maternal_tei_count = count_unique_teis_from_events(
+                maternal_events_df, facility_uids, "orgUnit"
             )
-            newborn_tei_count = count_unique_teis_filtered(
-                newborn_tei_df, facility_uids, "tei_orgUnit"
+            newborn_tei_count = count_unique_teis_from_events(
+                newborn_events_df, facility_uids, "orgUnit"
             )
 
             # Get dates
@@ -555,13 +568,13 @@ def render_summary_dashboard_shared(
                 maternal_events_df, facility_uids
             )
             newborn_indicators = calculate_newborn_indicators(
-                newborn_data.get("events", pd.DataFrame()), facility_uids
+                newborn_events_df, facility_uids
             )
             newborn_indicators["total_admitted"] = newborn_tei_count
 
-            # Facility comparison
+            # Facility comparison - use events for counting
             facility_comparison_data = calculate_facility_comparison_data(
-                maternal_tei_df, newborn_tei_df, facility_mapping
+                maternal_events_df, newborn_events_df, facility_mapping
             )
 
             summary_data = {
@@ -867,17 +880,18 @@ def render_summary_dashboard_shared(
 
 
 def calculate_facility_comparison_data(
-    maternal_tei_df, newborn_tei_df, facility_mapping
+    maternal_events_df, newborn_events_df, facility_mapping
 ):
-    """Optimized facility comparison data calculation"""
+    """Optimized facility comparison data calculation using events data"""
     facility_data = {}
 
     for facility_name, facility_uid in facility_mapping.items():
-        maternal_count = count_unique_teis_filtered(
-            maternal_tei_df, [facility_uid], "tei_orgUnit"
+        # Count TEIs from events data (same as national.py)
+        maternal_count = count_unique_teis_from_events(
+            maternal_events_df, [facility_uid], "orgUnit"
         )
-        newborn_count = count_unique_teis_filtered(
-            newborn_tei_df, [facility_uid], "tei_orgUnit"
+        newborn_count = count_unique_teis_from_events(
+            newborn_events_df, [facility_uid], "orgUnit"
         )
 
         # Only include facilities with data
