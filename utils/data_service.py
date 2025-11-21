@@ -2,6 +2,7 @@
 from typing import Optional, Dict, List, Union, Set
 import pandas as pd
 import logging
+import os
 from utils.queries import get_orgunit_uids_for_user, get_program_by_uid
 from utils.dhis2 import (
     fetch_dhis2_data_for_ous,
@@ -13,6 +14,184 @@ from utils.dhis2 import (
 from utils.odk_api import fetch_all_forms_as_dataframes, fetch_form_csv, list_forms
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+
+def integrate_maternal_csv_data(evt_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Smart integration of maternal CSV data:
+    1. For TEIs with placeholder events in DHIS2 → replace with CSV data
+    2. For TEIs with actual events in DHIS2 → check event IDs:
+       - If same event ID exists in CSV → replace DHIS2 event with CSV event
+       - If different event IDs → keep both (CSV might have additional events)
+    3. If both DHIS2 and CSV have placeholder events → prioritize CSV data
+    4. Add any new TEIs from CSV that don't exist in DHIS2
+    """
+    import os
+
+    # Debug: Show current working directory and file paths
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(current_dir, "maternal_data_long_format.csv")
+
+    logging.info(f"🔍 Looking for CSV at: {csv_path}")
+    logging.info(f"🔍 Current directory: {current_dir}")
+    logging.info(f"🔍 File exists: {os.path.exists(csv_path)}")
+
+    if not os.path.exists(csv_path):
+        logging.info("No maternal CSV file found - using DHIS2 data only")
+        return evt_df
+
+    try:
+        csv_df = pd.read_csv(csv_path)
+        logging.info(
+            f"✅ Loaded maternal CSV data: {len(csv_df)} rows, {len(csv_df['tei_id'].unique())} unique TEIs"
+        )
+
+        if csv_df.empty:
+            logging.info("CSV file is empty - using DHIS2 data only")
+            return evt_df
+
+        # Get unique TEI IDs from both sources
+        csv_tei_ids = (
+            set(csv_df["tei_id"].unique()) if "tei_id" in csv_df.columns else set()
+        )
+        dhis2_tei_ids = (
+            set(evt_df["tei_id"].unique()) if "tei_id" in evt_df.columns else set()
+        )
+
+        logging.info(
+            f"📊 TEI Statistics: DHIS2={len(dhis2_tei_ids)}, CSV={len(csv_tei_ids)}"
+        )
+
+        # Identify placeholder vs actual events in both sources
+        # Note: Assuming CSV data always has actual events (has_actual_event = True)
+        # If CSV doesn't have this column, we'll add it
+        if "has_actual_event" not in csv_df.columns:
+            csv_df["has_actual_event"] = True
+
+        # STRATEGY 1: Handle TEIs that exist in both sources
+        common_teis = csv_tei_ids.intersection(dhis2_tei_ids)
+
+        teis_to_remove_from_dhis2 = set()
+
+        for tei_id in common_teis:
+            # Get events for this TEI from both sources
+            dhis2_tei_events = evt_df[evt_df["tei_id"] == tei_id]
+            csv_tei_events = csv_df[csv_df["tei_id"] == tei_id]
+
+            # Check if DHIS2 has ANY placeholder events for this TEI
+            dhis2_has_placeholders = any(dhis2_tei_events["has_actual_event"] == False)
+            dhis2_has_actual_events = any(dhis2_tei_events["has_actual_event"] == True)
+
+            # Check if CSV has placeholder events for this TEI
+            csv_has_placeholders = any(csv_tei_events["has_actual_event"] == False)
+            csv_has_actual_events = any(csv_tei_events["has_actual_event"] == True)
+
+            # STRATEGY 1A: Both have placeholders → prioritize CSV
+            if dhis2_has_placeholders and csv_has_placeholders:
+                logging.info(
+                    f"🔄 TEI {tei_id}: Both sources have placeholders - prioritizing CSV data"
+                )
+                teis_to_remove_from_dhis2.add(tei_id)
+
+            # STRATEGY 1B: DHIS2 has placeholders, CSV has actual events → replace with CSV
+            elif dhis2_has_placeholders and csv_has_actual_events:
+                logging.info(
+                    f"🔄 TEI {tei_id}: Replacing DHIS2 placeholder with CSV actual events"
+                )
+                teis_to_remove_from_dhis2.add(tei_id)
+
+            # STRATEGY 1C: Both have actual events → handle event by event
+            elif dhis2_has_actual_events and csv_has_actual_events:
+                # Get event IDs from both sources
+                dhis2_event_ids = set(dhis2_tei_events["event"].unique())
+                csv_event_ids = set(csv_tei_events["event"].unique())
+
+                # Find overlapping event IDs (same events in both sources)
+                overlapping_events = dhis2_event_ids.intersection(csv_event_ids)
+
+                if overlapping_events:
+                    logging.info(
+                        f"🔄 TEI {tei_id}: Replacing {len(overlapping_events)} overlapping events"
+                    )
+                    # Remove DHIS2 events that overlap with CSV events
+                    evt_df = evt_df[
+                        ~(
+                            (evt_df["tei_id"] == tei_id)
+                            & (evt_df["event"].isin(overlapping_events))
+                        )
+                    ]
+
+                # Note: Events with different IDs will be kept in both sources
+                new_events_in_csv = csv_event_ids - dhis2_event_ids
+                if new_events_in_csv:
+                    logging.info(
+                        f"📥 TEI {tei_id}: Adding {len(new_events_in_csv)} new events from CSV"
+                    )
+
+            # STRATEGY 1D: DHIS2 has actual events, CSV has placeholders → unusual case, log it
+            elif dhis2_has_actual_events and csv_has_placeholders:
+                logging.warning(
+                    f"⚠️ TEI {tei_id}: DHIS2 has actual events but CSV has placeholders - keeping both"
+                )
+
+            # STRATEGY 1E: Mixed cases - more detailed logging
+            else:
+                logging.info(
+                    f"🔍 TEI {tei_id}: Mixed case - DHIS2(placeholders:{dhis2_has_placeholders}, actual:{dhis2_has_actual_events}), "
+                    f"CSV(placeholders:{csv_has_placeholders}, actual:{csv_has_actual_events})"
+                )
+
+        # Remove TEIs that should be completely replaced by CSV
+        if teis_to_remove_from_dhis2:
+            logging.info(
+                f"🗑️ Removing {len(teis_to_remove_from_dhis2)} TEIs from DHIS2 (replaced by CSV)"
+            )
+            evt_df = evt_df[~evt_df["tei_id"].isin(teis_to_remove_from_dhis2)]
+
+        # STRATEGY 2: Add completely new TEIs from CSV (not in DHIS2 at all)
+        new_teis_in_csv = csv_tei_ids - dhis2_tei_ids
+        if new_teis_in_csv:
+            logging.info(
+                f"🆕 Adding {len(new_teis_in_csv)} completely new TEIs from CSV"
+            )
+            # Log some examples of new TEIs being added
+            new_teis_sample = list(new_teis_in_csv)[:5]  # Show first 5 as examples
+            for tei_id in new_teis_sample:
+                tei_events = csv_df[csv_df["tei_id"] == tei_id]
+                has_actual = any(tei_events["has_actual_event"] == True)
+                has_placeholder = any(tei_events["has_actual_event"] == False)
+                logging.info(
+                    f"   ➕ New TEI {tei_id}: events={len(tei_events)}, actual_events={has_actual}, placeholders={has_placeholder}"
+                )
+
+        # Add all CSV data (this includes: replaced events, new events for existing TEIs, and new TEIs)
+        original_count = len(evt_df)
+        evt_df = pd.concat([evt_df, csv_df], ignore_index=True)
+        final_count = len(evt_df)
+
+        logging.info(f"✅ FINAL INTEGRATION COMPLETE:")
+        logging.info(f"   📈 Before integration: {original_count} rows")
+        logging.info(f"   📈 After integration: {final_count} rows")
+        logging.info(f"   📈 Net change: {final_count - original_count} rows")
+        logging.info(f"   👥 Unique TEIs: {len(evt_df['tei_id'].unique())}")
+
+        # Verify the integration
+        integrated_tei_ids = set(evt_df["tei_id"].unique())
+        integrated_with_actual_events = len(evt_df[evt_df["has_actual_event"] == True])
+        integrated_with_placeholders = len(evt_df[evt_df["has_actual_event"] == False])
+
+        logging.info(f"✅ INTEGRATION VERIFICATION:")
+        logging.info(f"   📊 Total TEIs: {len(integrated_tei_ids)}")
+        logging.info(f"   📊 Rows with actual events: {integrated_with_actual_events}")
+        logging.info(f"   📊 Rows with placeholders: {integrated_with_placeholders}")
+
+    except Exception as e:
+        logging.error(f"Failed to integrate CSV data: {e}")
+        import traceback
+
+        logging.error(traceback.format_exc())
+
+    return evt_df
 
 
 def fetch_program_data_for_user(
@@ -34,6 +213,10 @@ def fetch_program_data_for_user(
     if not program_info:
         logging.warning(f"Program with UID {program_uid} not found in database.")
         return {}
+
+    # ✅ SIMPLE CHECK: If program UID is maternal, integrate CSV data
+    if program_uid == "aLoraiFNkng":
+        logging.info("🔄 Maternal program detected - will integrate CSV data")
 
     if facility_uids:
         ou_uids = facility_uids
@@ -194,6 +377,11 @@ def fetch_program_data_for_user(
 
     evt_df = pd.DataFrame(events_list)
 
+    # ✅ SMART CSV INTEGRATION FOR MATERNAL PROGRAM
+    if program_uid == "aLoraiFNkng":
+        logging.info("🔄 Integrating CSV data for maternal program")
+        evt_df = integrate_maternal_csv_data(evt_df)
+
     # Handle period labeling
     if not evt_df.empty and "eventDate" in evt_df.columns:
         evt_df["event_date"] = pd.to_datetime(evt_df["eventDate"], errors="coerce")
@@ -300,7 +488,6 @@ def fetch_program_data_for_user(
     }
 
 
-# Rest of the functions remain the same...
 def fetch_odk_data_for_user(
     user: dict, form_id: str = None
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:

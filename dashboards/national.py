@@ -160,26 +160,34 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                     }
 
                     # Log fresh data stats
-                    maternal_tei_count = (
-                        len(
-                            st.session_state[shared_maternal_key].get(
-                                "tei", pd.DataFrame()
-                            )
+                    maternal_events_df = (
+                        st.session_state[shared_maternal_key].get(
+                            "events", pd.DataFrame()
                         )
                         if st.session_state[shared_maternal_key]
+                        else pd.DataFrame()
+                    )
+                    newborn_events_df = (
+                        st.session_state[shared_newborn_key].get(
+                            "events", pd.DataFrame()
+                        )
+                        if st.session_state[shared_newborn_key]
+                        else pd.DataFrame()
+                    )
+
+                    maternal_tei_count = (
+                        maternal_events_df["tei_id"].nunique()
+                        if not maternal_events_df.empty
                         else 0
                     )
                     newborn_tei_count = (
-                        len(
-                            st.session_state[shared_newborn_key].get(
-                                "tei", pd.DataFrame()
-                            )
-                        )
-                        if st.session_state[shared_newborn_key]
+                        newborn_events_df["tei_id"].nunique()
+                        if not newborn_events_df.empty
                         else 0
                     )
+
                     logging.info(
-                        f"✅ FRESH DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs"
+                        f"✅ FRESH DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs (from events)"
                     )
 
                     # Reset refresh trigger and user changed flags
@@ -201,20 +209,30 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
             success = load_data()
 
     else:
-        # ✅ Use cached data
-        maternal_tei_count = (
-            len(st.session_state[shared_maternal_key].get("tei", pd.DataFrame()))
+        # ✅ Use cached data - count TEIs from events
+        maternal_events_df = (
+            st.session_state[shared_maternal_key].get("events", pd.DataFrame())
             if st.session_state[shared_maternal_key]
+            else pd.DataFrame()
+        )
+        newborn_events_df = (
+            st.session_state[shared_newborn_key].get("events", pd.DataFrame())
+            if st.session_state[shared_newborn_key]
+            else pd.DataFrame()
+        )
+
+        maternal_tei_count = (
+            maternal_events_df["tei_id"].nunique()
+            if not maternal_events_df.empty
             else 0
         )
         newborn_tei_count = (
-            len(st.session_state[shared_newborn_key].get("tei", pd.DataFrame()))
-            if st.session_state[shared_newborn_key]
-            else 0
+            newborn_events_df["tei_id"].nunique() if not newborn_events_df.empty else 0
         )
+
         time_elapsed = current_time - st.session_state[shared_timestamp_key]
         logging.info(
-            f"✅ USING CACHED DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs ({time_elapsed:.0f}s old)"
+            f"✅ USING CACHED DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs (from events) ({time_elapsed:.0f}s old)"
         )
 
     return {
@@ -330,24 +348,18 @@ def initialize_session_state():
 initialize_session_state()
 
 
-def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUnit"):
-    """Optimized TEI counting"""
-    if tei_df.empty or not facility_uids:
+def count_unique_teis_from_events(events_df, facility_uids=None):
+    """Count unique TEI IDs from events DataFrame - UPDATED to use events instead of TEI df"""
+    if events_df.empty or "tei_id" not in events_df.columns:
         return 0
 
-    if org_unit_column in tei_df.columns:
-        filtered_tei = tei_df[tei_df[org_unit_column].isin(facility_uids)]
+    # Filter by facility if specified
+    if facility_uids and "orgUnit" in events_df.columns:
+        filtered_events = events_df[events_df["orgUnit"].isin(facility_uids)]
     else:
-        filtered_tei = (
-            tei_df[tei_df["orgUnit"].isin(facility_uids)]
-            if "orgUnit" in tei_df.columns
-            else tei_df
-        )
+        filtered_events = events_df
 
-    id_column = (
-        "tei_id" if "tei_id" in filtered_tei.columns else "trackedEntityInstance"
-    )
-    return filtered_tei[id_column].nunique() if id_column in filtered_tei.columns else 0
+    return filtered_events["tei_id"].nunique()
 
 
 def get_earliest_date(df, date_column):
@@ -408,18 +420,21 @@ def filter_data_by_facilities(data_dict, facility_uids):
 
 
 def calculate_regional_comparison_data(
-    maternal_tei_df, newborn_tei_df, facilities_by_region, facility_mapping
+    maternal_events_df, newborn_events_df, facilities_by_region, facility_mapping
 ):
-    """Optimized regional comparison data calculation"""
+    """Optimized regional comparison data calculation using events data"""
     regional_data = {}
     for region_name, facilities in facilities_by_region.items():
         region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
-        maternal_count = count_unique_teis_filtered(
-            maternal_tei_df, region_facility_uids, "tei_orgUnit"
+
+        # Count TEIs from events data instead of TEI data
+        maternal_count = count_unique_teis_from_events(
+            maternal_events_df, region_facility_uids
         )
-        newborn_count = count_unique_teis_filtered(
-            newborn_tei_df, region_facility_uids, "tei_orgUnit"
+        newborn_count = count_unique_teis_from_events(
+            newborn_events_df, region_facility_uids
         )
+
         regional_data[region_name] = {
             "mothers": maternal_count,
             "newborns": newborn_count,
@@ -490,14 +505,14 @@ def render_summary_dashboard_shared(
     else:
         # Compute summary data
         with st.spinner("🔄 Computing summary statistics..."):
-            # Extract dataframes
-            maternal_tei_df = (
-                maternal_data.get("tei", pd.DataFrame())
+            # Extract events dataframes (not TEI dataframes)
+            maternal_events_df = (
+                maternal_data.get("events", pd.DataFrame())
                 if maternal_data
                 else pd.DataFrame()
             )
-            newborn_tei_df = (
-                newborn_data.get("tei", pd.DataFrame())
+            newborn_events_df = (
+                newborn_data.get("events", pd.DataFrame())
                 if newborn_data
                 else pd.DataFrame()
             )
@@ -514,12 +529,12 @@ def render_summary_dashboard_shared(
                 else pd.DataFrame()
             )
 
-            # Get TEI counts
-            maternal_tei_count = count_unique_teis_filtered(
-                maternal_tei_df, facility_uids, "tei_orgUnit"
+            # ✅ UPDATED: Count TEIs from events data instead of TEI data
+            maternal_tei_count = count_unique_teis_from_events(
+                maternal_events_df, facility_uids
             )
-            newborn_tei_count = count_unique_teis_filtered(
-                newborn_tei_df, facility_uids, "tei_orgUnit"
+            newborn_tei_count = count_unique_teis_from_events(
+                newborn_events_df, facility_uids
             )
 
             # Get dates
@@ -530,9 +545,12 @@ def render_summary_dashboard_shared(
                 maternal_enrollments_df, "enrollmentDate"
             )
 
-            # Regional comparison
+            # Regional comparison - using events data
             regional_comparison_data = calculate_regional_comparison_data(
-                maternal_tei_df, newborn_tei_df, facilities_by_region, facility_mapping
+                maternal_events_df,
+                newborn_events_df,
+                facilities_by_region,
+                facility_mapping,
             )
 
             # Use pre-computed KPIs
@@ -554,11 +572,6 @@ def render_summary_dashboard_shared(
                         st.session_state.filtered_events, facility_uids
                     )
                 else:
-                    maternal_events_df = (
-                        maternal_data.get("events", pd.DataFrame())
-                        if maternal_data
-                        else pd.DataFrame()
-                    )
                     kpi_data = compute_kpis(maternal_events_df, facility_uids)
                 logging.info("🔄 Computing MATERNAL KPIs for summary")
 
@@ -577,7 +590,7 @@ def render_summary_dashboard_shared(
             lbw_events_df = (
                 st.session_state.filtered_events
                 if st.session_state.get("filtered_events") is not None
-                else maternal_data.get("events", pd.DataFrame())
+                else maternal_events_df
             )
             lbw_data = compute_lbw_kpi(lbw_events_df, facility_uids)
             maternal_indicators.update(
@@ -939,6 +952,8 @@ def render_maternal_dashboard_shared(
     tei_df = maternal_data.get("tei", pd.DataFrame())
     enrollments_df = maternal_data.get("enrollments", pd.DataFrame())
     events_df = maternal_data.get("events", pd.DataFrame())
+
+    events_df.to_csv("debug_maternal_events_raw.csv", index=False)
 
     # Normalize dates efficiently
     enrollments_df = normalize_enrollment_dates(enrollments_df)
