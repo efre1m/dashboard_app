@@ -953,8 +953,6 @@ def render_maternal_dashboard_shared(
     enrollments_df = maternal_data.get("enrollments", pd.DataFrame())
     events_df = maternal_data.get("events", pd.DataFrame())
 
-    events_df.to_csv("debug_maternal_events_raw.csv", index=False)
-
     # Normalize dates efficiently
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
