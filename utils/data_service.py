@@ -286,7 +286,7 @@ def fetch_program_data_for_user(
     if not enr_df.empty:
         enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
 
-    # Define program stage to data element mapping
+    # Define program stage to data element mapping - UPDATED WITH INSTRUMENTAL DELIVERY
     PROGRAM_STAGE_MAPPING = {
         "mdw5BoS50mb": {  # Delivery summary
             "data_elements": [
@@ -308,6 +308,10 @@ def fetch_program_data_for_user(
         "DLVsIxjhwMj": {  # Discharge Summary
             "data_elements": ["TjQOcW6tm8k"],
             "program_stage_name": "Discharge Summary",
+        },
+        "bwk9bBfYcsD": {  # Instrumental Delivery form - NEW
+            "data_elements": ["K8BCYRU1TUP"],  # Instrumental delivery data element
+            "program_stage_name": "Instrumental Delivery form",
         },
     }
 
@@ -349,7 +353,7 @@ def fetch_program_data_for_user(
                 event_date = event.get("eventDate")
                 program_stage_uid = event.get("programStage")
 
-                # Mark that this TEI has an event for this program stage
+                # Mark that this TEI has an event for this program stage UID
                 tei_program_stage_events.add((tei_id, program_stage_uid))
 
                 program_stage_name = event.get(
@@ -390,9 +394,9 @@ def fetch_program_data_for_user(
     for tei_id in all_tei_ids:
         tei_info = tei_info_map.get(tei_id, {})
 
-        # Check each required program stage
+        # Check each required program stage by UID
         for program_stage_uid, stage_info in PROGRAM_STAGE_MAPPING.items():
-            # Check if this TEI has ANY event for this program stage
+            # Check if this TEI has ANY event for this program stage UID
             has_event_for_stage = (
                 tei_id,
                 program_stage_uid,

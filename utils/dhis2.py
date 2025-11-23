@@ -26,6 +26,8 @@ MATERNAL_HEALTH_ELEMENTS = {
     "H7J2SxBpObS",  # ARV Rx for Newborn (By type) pp
     # Birth Weight (Maternal context - recorded at birth)
     "QUlJEvzGcQK",  # Birth Weight (grams)
+    # Assisted Delivery Indicator - NEW
+    "K8BCYRU1TUP",  # Instrumental delivery (Assisted Delivery KPI)
 }
 
 NEWBORN_HEALTH_ELEMENTS = {
@@ -61,6 +63,8 @@ DATA_ELEMENT_NAMES = {
     "H7J2SxBpObS": "ARV Rx for Newborn (By type) pp",
     # Birth Weight
     "QUlJEvzGcQK": "Birth Weight (grams)",
+    # Assisted Delivery - NEW
+    "K8BCYRU1TUP": "Instrumental delivery",
     # Newborn Health
     "QK7Fi6OwtDC": "KMC Administered",
     "yxWUMt3sCil": "Weight on admission",
