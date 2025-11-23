@@ -286,8 +286,8 @@ def fetch_program_data_for_user(
     if not enr_df.empty:
         enr_df["orgUnit_name"] = enr_df["tei_orgUnit"].apply(map_org_name)
 
-    # Define program stage to data element mapping - UPDATED WITH INSTRUMENTAL DELIVERY
-    PROGRAM_STAGE_MAPPING = {
+    # Define program stage to data element mapping for BOTH maternal and newborn
+    MATERNAL_PROGRAM_STAGE_MAPPING = {
         "mdw5BoS50mb": {  # Delivery summary
             "data_elements": [
                 "lphtwP2ViZU",
@@ -309,11 +309,45 @@ def fetch_program_data_for_user(
             "data_elements": ["TjQOcW6tm8k"],
             "program_stage_name": "Discharge Summary",
         },
-        "bwk9bBfYcsD": {  # Instrumental Delivery form - NEW
-            "data_elements": ["K8BCYRU1TUP"],  # Instrumental delivery data element
+        "bwk9bBfYcsD": {  # Instrumental Delivery form
+            "data_elements": ["K8BCYRU1TUP"],
             "program_stage_name": "Instrumental Delivery form",
         },
     }
+
+    NEWBORN_PROGRAM_STAGE_MAPPING = {
+        "l39SlVGlQGs": {  # Admission Information
+            "data_elements": [
+                "UOmhJkyAK6h",  # Date of Admission
+                "yxWUMt3sCil",  # Weight on admission
+                "T30GbTiVgFR",  # First Reason for Admission
+                "OpHw2X58x5i",  # Second Reason for Admission
+                "gJH6PkYI6IV",  # Third Reason for Admission
+            ],
+            "program_stage_name": "Admission Information",
+        },
+        "j0HI2eJjvbj": {  # Observations And Nursing Care 1
+            "data_elements": [
+                "gZi9y12E9i7",  # Temperature on admission
+            ],
+            "program_stage_name": "Observations And Nursing Care 1",
+        },
+        "ed8ErpgTCwx": {  # Interventions
+            "data_elements": [
+                "QK7Fi6OwtDC",  # KMC Administered
+                "wlHEf9FdmJM",  # CPAP Administered
+            ],
+            "program_stage_name": "Interventions",
+        },
+    }
+
+    # Select the appropriate program stage mapping based on program UID
+    if program_uid == "aLoraiFNkng":  # Maternal program
+        PROGRAM_STAGE_MAPPING = MATERNAL_PROGRAM_STAGE_MAPPING
+        logging.info("📋 Using MATERNAL program stage mapping")
+    else:  # Newborn program (or any other)
+        PROGRAM_STAGE_MAPPING = NEWBORN_PROGRAM_STAGE_MAPPING
+        logging.info("📋 Using NEWBORN program stage mapping")
 
     # Events DataFrame - CORRECTED APPROACH: Check TEI-ProgramStage combinations
     events_list = []
@@ -337,10 +371,9 @@ def fetch_program_data_for_user(
         }
 
     # Track which TEI-ProgramStage combinations have actual events
-    # Format: {(tei_id, program_stage_uid): True}
     tei_program_stage_events = set()
 
-    # Process actual events from DHIS2
+    # Process actual events from DHIS2 - RETURN ALL REQUIRED ELEMENTS REGARDLESS OF VALUE
     for tei in patients:
         tei_id = tei.get("trackedEntityInstance")
         tei_org_unit = tei.get("orgUnit")
@@ -361,35 +394,42 @@ def fetch_program_data_for_user(
                     ps_dict.get(program_stage_uid, program_stage_uid),
                 )
 
-                # Process only required data elements
-                for dv in event.get("dataValues", []):
-                    data_element_uid = dv.get("dataElement")
-                    data_value = dv.get("value")
+                # Get all required data elements for this program stage
+                stage_required_elements = PROGRAM_STAGE_MAPPING.get(
+                    program_stage_uid, {}
+                ).get("data_elements", [])
 
-                    # Only process if it's a required element
-                    if data_element_uid in REQUIRED_DATA_ELEMENTS:
-                        data_element_name = DATA_ELEMENT_NAMES.get(
-                            data_element_uid,
-                            de_dict.get(data_element_uid, data_element_uid),
-                        )
+                # Process ALL required data elements for this program stage
+                for data_element_uid in stage_required_elements:
+                    # Find the data value for this element (if it exists)
+                    data_value = ""
+                    for dv in event.get("dataValues", []):
+                        if dv.get("dataElement") == data_element_uid:
+                            data_value = dv.get("value", "")
+                            break
 
-                        event_data = {
-                            "tei_id": tei_id,
-                            "event": event.get("event"),
-                            "programStage_uid": program_stage_uid,
-                            "programStageName": program_stage_name,
-                            "orgUnit": event_orgUnit,
-                            "orgUnit_name": map_org_name(event_orgUnit),
-                            "eventDate": event_date,
-                            "dataElement_uid": data_element_uid,
-                            "dataElementName": data_element_name,
-                            "value": data_value,
-                            "has_actual_event": True,
-                        }
-                        events_list.append(event_data)
-                        required_events_count += 1
+                    data_element_name = DATA_ELEMENT_NAMES.get(
+                        data_element_uid,
+                        de_dict.get(data_element_uid, data_element_uid),
+                    )
 
-    # CORRECTED: Create placeholder events only for TEI-ProgramStage combinations that have NO events
+                    event_data = {
+                        "tei_id": tei_id,
+                        "event": event.get("event"),
+                        "programStage_uid": program_stage_uid,
+                        "programStageName": program_stage_name,
+                        "orgUnit": event_orgUnit,
+                        "orgUnit_name": map_org_name(event_orgUnit),
+                        "eventDate": event_date,
+                        "dataElement_uid": data_element_uid,
+                        "dataElementName": data_element_name,
+                        "value": data_value,  # Will be empty if no value recorded
+                        "has_actual_event": True,
+                    }
+                    events_list.append(event_data)
+                    required_events_count += 1
+
+    # Create placeholder events for TEI-ProgramStage combinations that have NO events
     placeholder_count = 0
     for tei_id in all_tei_ids:
         tei_info = tei_info_map.get(tei_id, {})
@@ -408,29 +448,26 @@ def fetch_program_data_for_user(
 
                 # Create one placeholder row for EACH data element in this program stage
                 for data_element_uid in stage_info["data_elements"]:
-                    if (
-                        data_element_uid in REQUIRED_DATA_ELEMENTS
-                    ):  # Double check it's required
-                        data_element_name = DATA_ELEMENT_NAMES.get(
-                            data_element_uid,
-                            de_dict.get(data_element_uid, data_element_uid),
-                        )
+                    data_element_name = DATA_ELEMENT_NAMES.get(
+                        data_element_uid,
+                        de_dict.get(data_element_uid, data_element_uid),
+                    )
 
-                        placeholder_event = {
-                            "tei_id": tei_id,
-                            "event": f"placeholder_{tei_id}_{program_stage_uid}",
-                            "programStage_uid": program_stage_uid,
-                            "programStageName": stage_info["program_stage_name"],
-                            "orgUnit": tei_info.get("orgUnit"),
-                            "orgUnit_name": map_org_name(tei_info.get("orgUnit")),
-                            "eventDate": event_date,
-                            "dataElement_uid": data_element_uid,
-                            "dataElementName": data_element_name,
-                            "value": "",  # Empty value for missing data
-                            "has_actual_event": False,
-                        }
-                        events_list.append(placeholder_event)
-                        placeholder_count += 1
+                    placeholder_event = {
+                        "tei_id": tei_id,
+                        "event": f"placeholder_{tei_id}_{program_stage_uid}",
+                        "programStage_uid": program_stage_uid,
+                        "programStageName": stage_info["program_stage_name"],
+                        "orgUnit": tei_info.get("orgUnit"),
+                        "orgUnit_name": map_org_name(tei_info.get("orgUnit")),
+                        "eventDate": event_date,
+                        "dataElement_uid": data_element_uid,
+                        "dataElementName": data_element_name,
+                        "value": "",  # Empty value for missing data
+                        "has_actual_event": False,
+                    }
+                    events_list.append(placeholder_event)
+                    placeholder_count += 1
 
     evt_df = pd.DataFrame(events_list)
 
@@ -453,7 +490,7 @@ def fetch_program_data_for_user(
     logging.info(f"   📈 Required data events collected: {required_events_count}")
     logging.info(f"   📝 Placeholder events created: {placeholder_count}")
 
-    # ✅ SMART CSV INTEGRATION FOR MATERNAL PROGRAM
+    # ✅ SMART CSV INTEGRATION FOR MATERNAL PROGRAM ONLY
     if program_uid == "aLoraiFNkng":
         logging.info("🔄 Integrating CSV data for maternal program")
         evt_df = integrate_maternal_csv_data(evt_df)

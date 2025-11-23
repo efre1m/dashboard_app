@@ -36,6 +36,12 @@ from utils.kpi_assisted import (
     render_assisted_facility_comparison_chart,
     render_assisted_region_comparison_chart,
 )
+from utils.kpi_svd import (
+    compute_svd_kpi,
+    render_svd_trend_chart,
+    render_svd_facility_comparison_chart,
+    render_svd_region_comparison_chart,
+)
 from utils.kpi_utils import (
     render_trend_chart,
     render_facility_comparison_chart,
@@ -94,6 +100,11 @@ KPI_MAPPING = {
         "numerator_name": "Assisted Deliveries",
         "denominator_name": "Total Deliveries",  # ← CHANGED
     },
+    "Normal Vaginal Delivery (SVD) Rate (%)": {
+        "title": "Normal Vaginal Delivery Rate (%)",
+        "numerator_name": "SVD Deliveries",
+        "denominator_name": "Total Deliveries",
+    },
 }
 
 # KPI Grouping for Tab Navigation
@@ -113,6 +124,7 @@ KPI_GROUPS = {
         "Early Postnatal Care (PNC) Coverage (%)",
         "ARV Prophylaxis Rate (%)",
         "Assisted Delivery Rate (%)",
+        "Normal Vaginal Delivery (SVD) Rate (%)",
     ],
 }
 
@@ -139,6 +151,7 @@ KPI_OPTIONS = [
     "ARV Prophylaxis Rate (%)",
     "Low Birth Weight (LBW) Rate (%)",
     "Assisted Delivery Rate (%)",
+    "Normal Vaginal Delivery (SVD) Rate (%)",
 ]
 
 
@@ -357,6 +370,18 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Assisted Delivery Rate (%)"
 
+            if st.button(
+                "📊 Normal Vaginal Delivery",
+                key="svd_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Normal Vaginal Delivery (SVD) Rate (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Normal Vaginal Delivery (SVD) Rate (%)"
+
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_kpi:
         st.session_state.selected_kpi = selected_kpi
@@ -381,6 +406,7 @@ def render_trend_chart_section(
         "Postpartum Hemorrhage (PPH) Rate (%)",
         "Delivered women who received uterotonic (%)",
         "Assisted Delivery Rate (%)",
+        "Normal Vaginal Delivery (SVD) Rate (%)",
     ]:
         # ✅ FIX: Track mothers across periods to prevent double-counting for delivery-based KPIs
         counted_mothers = set()
@@ -409,6 +435,9 @@ def render_trend_chart_section(
                     kpi_data = compute_assisted_delivery_kpi(
                         new_mothers_df, facility_uids
                     )
+                elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+                    kpi_data = compute_svd_kpi(new_mothers_df, facility_uids)
+
                 else:
                     kpi_data = compute_kpis(new_mothers_df, facility_uids)
             else:
@@ -608,6 +637,14 @@ def _create_period_row(kpi_selection, period, period_display, kpi_data):
             "Assisted Deliveries": kpi_data["assisted_deliveries"],
             "Total Deliveries": kpi_data["total_deliveries"],
         }
+    elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+        return {
+            "period": period,
+            "period_display": period_display,
+            "value": kpi_data["svd_rate"],
+            "SVD Deliveries": kpi_data["svd_deliveries"],
+            "Total Deliveries": kpi_data["total_admissions"],
+        }
     return {}
 
 
@@ -752,6 +789,20 @@ def _render_kpi_chart(
                 "Total Deliveries",
                 facility_uids,
             )
+
+        elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+            render_svd_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "Normal Vaginal Delivery Rate (%)",
+                bg_color,
+                text_color,
+                display_names,
+                "SVD Deliveries",
+                "Total Deliveries",
+                facility_uids,
+            )
     except Exception as e:
         st.error(f"Error rendering chart for {kpi_selection}: {str(e)}")
 
@@ -804,6 +855,11 @@ def _get_default_kpi_data(kpi_selection):
             "assisted_delivery_rate": 0.0,
             "assisted_deliveries": 0,
             "total_deliveries": 0,
+        },
+        "Normal Vaginal Delivery (SVD) Rate (%)": {
+            "svd_rate": 0.0,
+            "svd_deliveries": 0,
+            "total_admissions": 0,
         },
     }
     return defaults.get(kpi_selection, {})
@@ -888,6 +944,19 @@ def render_comparison_chart(
                 facility_names=display_names,
                 facility_uids=facility_uids,
                 numerator_name="Assisted Deliveries",
+                denominator_name="Total Deliveries",
+            )
+        elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+            render_svd_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                value_col="value",
+                title="Normal Vaginal Delivery Rate (%)",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name="SVD Deliveries",
                 denominator_name="Total Deliveries",
             )
         else:
@@ -975,6 +1044,20 @@ def render_comparison_chart(
                 facilities_by_region=facilities_by_region,
                 numerator_name="Assisted Deliveries",
                 denominator_name="Total Admissions",
+            )
+        elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+            render_svd_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                value_col="value",
+                title="Normal Vaginal Delivery Rate (%)",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                region_mapping={},
+                facilities_by_region=facilities_by_region,
+                numerator_name="SVD Deliveries",
+                denominator_name="Total Deliveries",
             )
         else:
             # Use generic region comparison for other KPIs
