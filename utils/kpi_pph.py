@@ -88,11 +88,7 @@ def compute_pph_kpi(df, facility_uids=None):
 
 def compute_obstetric_condition_distribution(df, facility_uids=None):
     """
-    Compute distribution of all obstetric complications,
-    handling multiple condition codes in one record (e.g. "1,3,5" or "2;3").
-
-    Returns:
-        DataFrame with columns: condition, count, percentage
+    Compute distribution of all obstetric complications
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -111,13 +107,28 @@ def compute_obstetric_condition_distribution(df, facility_uids=None):
 
     # ---- EXPAND MULTI-CODE VALUES ----
     expanded_rows = []
+
+    # Only accept these valid codes
+    valid_codes = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
+
     for _, row in delivery_events.iterrows():
-        # Replace ";" with "," and split by comma
+        value_str = str(row["value"]).strip()
+
+        # Skip empty values, "nan", "null"
+        if (
+            not value_str
+            or value_str.lower() in ["nan", "null", ""]
+            or value_str.isspace()
+        ):
+            continue
+
+        # Split by comma or semicolon
         codes = [
             c.strip()
-            for c in str(row["value"]).replace(";", ",").split(",")
-            if c.strip()
+            for c in value_str.replace(";", ",").split(",")
+            if c.strip() and c.strip() in valid_codes  # Only keep valid codes
         ]
+
         for code in codes:
             new_row = row.copy()
             new_row["condition_code"] = code

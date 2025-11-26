@@ -957,6 +957,8 @@ def render_maternal_dashboard_shared(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
+    events_df.to_csv("maternal_events_debug_national.csv", index=False)  # DEBUG
+
     # Store in session state for quick access
     st.session_state.maternal_events_df = events_df.copy()
     st.session_state.maternal_tei_df = tei_df.copy()

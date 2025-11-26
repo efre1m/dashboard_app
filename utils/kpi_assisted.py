@@ -9,6 +9,32 @@ INSTRUMENTAL_DELIVERY_UID = "K8BCYRU1TUP"
 INSTRUMENTAL_YES_CODE = "1"
 
 
+def compute_assisted_count(df, facility_uids=None):
+    """Count Assisted Delivery occurrences - COUNT OCCURRENCES of instrumental delivery = 1"""
+    if df is None or df.empty:
+        return 0
+
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # Filter to only include instrumental delivery stage events
+    instrumental_df = df[df["programStage_uid"] == ASSISTED_DELIVERY_STAGE_UID]
+
+    if instrumental_df.empty:
+        return 0
+
+    # Count assisted deliveries using vectorized operations - COUNT OCCURRENCES
+    assisted_count = len(
+        instrumental_df[
+            (instrumental_df["dataElement_uid"] == INSTRUMENTAL_DELIVERY_UID)
+            & (instrumental_df["value"] == INSTRUMENTAL_YES_CODE)
+        ]
+    )
+
+    return assisted_count
+
+
 def compute_assisted_delivery_kpi(df, facility_uids=None):
     """
     Optimized computation for Assisted Delivery Rate
@@ -25,21 +51,8 @@ def compute_assisted_delivery_kpi(df, facility_uids=None):
     if facility_uids:
         df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Filter to only include instrumental delivery stage events - FIXED: use programStage_uid
-    instrumental_df = df[df["programStage_uid"] == ASSISTED_DELIVERY_STAGE_UID]
-
-    if instrumental_df.empty:
-        return {
-            "assisted_delivery_rate": 0.0,
-            "assisted_deliveries": 0,
-            "total_deliveries": 0,
-        }
-
-    # Count assisted deliveries using vectorized operations
-    assisted_deliveries = instrumental_df[
-        (instrumental_df["dataElement_uid"] == INSTRUMENTAL_DELIVERY_UID)
-        & (instrumental_df["value"] == INSTRUMENTAL_YES_CODE)
-    ]["tei_id"].nunique()
+    # Count assisted deliveries - COUNT OCCURRENCES
+    assisted_deliveries = compute_assisted_count(df, facility_uids)
 
     # Get total deliveries (using the same logic as other KPIs)
     total_deliveries = compute_total_deliveries(df, facility_uids)
@@ -68,7 +81,7 @@ def render_assisted_trend_chart(
     denominator_name="Total Deliveries",
     facility_uids=None,
 ):
-    """Render a simple line chart for Assisted Delivery trend"""
+    """Render trend chart for Assisted Delivery with same styling as C-section and SVD"""
     if text_color is None:
         text_color = "#000000" if bg_color == "#FFFFFF" else "#FFFFFF"
 
@@ -82,22 +95,96 @@ def render_assisted_trend_chart(
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
-    # Create simple line chart
-    fig = px.line(
-        df,
-        x=x_axis_col,
-        y=value_col,
-        markers=True,
-        line_shape="linear",
-        title=title,
-        height=400,
-    )
+    # Create the same chart options as C-section and SVD
+    chart_options = ["Line", "Bar", "Gauge"]
 
-    fig.update_traces(
-        line=dict(width=3),
-        marker=dict(size=7),
-        hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.2f}}%<extra></extra>",
-    )
+    chart_type = st.radio(
+        f"📊 Chart type for {title}",
+        options=chart_options,
+        index=0,
+        horizontal=True,
+        key=f"chart_type_assisted_{str(facility_uids)}",
+    ).lower()
+
+    # Handle gauge chart type (same as C-section and SVD)
+    if chart_type == "gauge":
+        # Compute overall KPI value from the original filtered data
+        original_filtered_events = st.session_state.get(
+            "filtered_events", pd.DataFrame()
+        )
+
+        if not original_filtered_events.empty:
+            # Compute the KPI for the entire date range
+            kpi_data = compute_assisted_delivery_kpi(
+                original_filtered_events, facility_uids
+            )
+            gauge_value = kpi_data["assisted_delivery_rate"]
+        else:
+            gauge_value = df[value_col].mean() if not df.empty else 0
+
+        # Use same gauge rendering as C-section and SVD
+        from utils.kpi_utils import render_gauge_chart
+
+        render_gauge_chart(
+            gauge_value,
+            f"{title} (Overall)",
+            bg_color,
+            text_color,
+            min_val=0,
+            max_val=100,
+            reverse_colors=False,
+        )
+        return
+
+    # Create custom hover text with numerator and denominator if available
+    hover_data = {}
+    if numerator_name in df.columns and denominator_name in df.columns:
+        hover_data = {numerator_name: True, denominator_name: True}
+
+    # Create chart based on selected type (same as C-section and SVD)
+    if chart_type == "line":
+        fig = px.line(
+            df,
+            x=x_axis_col,
+            y=value_col,
+            markers=True,
+            line_shape="linear",
+            title=title,
+            height=400,
+            hover_data=hover_data,
+        )
+    elif chart_type == "bar":
+        fig = px.bar(
+            df,
+            x=x_axis_col,
+            y=value_col,
+            title=title,
+            height=400,
+            hover_data=hover_data,
+        )
+    else:
+        fig = px.line(
+            df,
+            x=x_axis_col,
+            y=value_col,
+            markers=True,
+            line_shape="linear",
+            title=title,
+            height=400,
+            hover_data=hover_data,
+        )
+
+    # Apply same styling as C-section and SVD
+    if chart_type in ["line", "area"]:
+        fig.update_traces(
+            line=dict(width=3),
+            marker=dict(size=7),
+            hovertemplate=f"<b>%{{x}}</b><br>Assisted Delivery Rate: %{{y:.2f}}%<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>",
+        )
+    elif chart_type == "bar":
+        fig.update_traces(
+            hovertemplate=f"<b>%{{x}}</b><br>Assisted Delivery Rate: %{{y:.2f}}%<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>"
+        )
 
     fig.update_layout(
         paper_bgcolor=bg_color,
@@ -122,12 +209,29 @@ def render_assisted_trend_chart(
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
-
     st.plotly_chart(fig, use_container_width=True)
 
-    # Simple table (not styled)
-    st.subheader(f"📋 {title} Summary")
+    # Show trend analysis (same as C-section and SVD)
+    if len(df) > 1:
+        last_value = df[value_col].iloc[-1]
+        prev_value = df[value_col].iloc[-2]
+        trend_symbol = (
+            "▲"
+            if last_value > prev_value
+            else ("▼" if last_value < prev_value else "–")
+        )
+        trend_class = (
+            "trend-up"
+            if last_value > prev_value
+            else ("trend-down" if last_value < prev_value else "trend-neutral")
+        )
+        st.markdown(
+            f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.2f}% <span class="{trend_class}">{trend_symbol}</span></p>',
+            unsafe_allow_html=True,
+        )
 
+    # Enhanced summary table (same as C-section and SVD)
+    st.subheader(f"📋 {title} Summary Table")
     summary_df = df.copy().reset_index(drop=True)
 
     # Keep only relevant columns
@@ -138,7 +242,7 @@ def render_assisted_trend_chart(
     else:
         summary_df = summary_df[[x_axis_col, value_col]]
 
-    # Calculate overall value
+    # Calculate overall value using same formula as individual periods
     if numerator_name in summary_df.columns and denominator_name in summary_df.columns:
         total_numerator = summary_df[numerator_name].sum()
         total_denominator = summary_df[denominator_name].sum()
@@ -148,7 +252,7 @@ def render_assisted_trend_chart(
 
         overall_row = pd.DataFrame(
             {
-                x_axis_col: ["Overall"],
+                x_axis_col: [f"Overall {title}"],
                 numerator_name: [total_numerator],
                 denominator_name: [total_denominator],
                 value_col: [overall_value],
@@ -157,16 +261,36 @@ def render_assisted_trend_chart(
     else:
         overall_value = summary_df[value_col].mean() if not summary_df.empty else 0
         overall_row = pd.DataFrame(
-            {x_axis_col: ["Overall"], value_col: [overall_value]}
+            {x_axis_col: [f"Overall {title}"], value_col: [overall_value]}
         )
 
     summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
-
-    # Add simple row numbering
     summary_table.insert(0, "No", range(1, len(summary_table) + 1))
 
-    # Display simple table without styling
-    st.dataframe(summary_table, use_container_width=True)
+    # Format table with same styling as C-section and SVD
+    if (
+        numerator_name in summary_table.columns
+        and denominator_name in summary_table.columns
+    ):
+        styled_table = (
+            summary_table.style.format(
+                {
+                    value_col: "{:.2f}",
+                    numerator_name: "{:,.0f}",
+                    denominator_name: "{:,.0f}",
+                }
+            )
+            .set_table_attributes('class="summary-table"')
+            .hide(axis="index")
+        )
+    else:
+        styled_table = (
+            summary_table.style.format({value_col: "{:.2f}"})
+            .set_table_attributes('class="summary-table"')
+            .hide(axis="index")
+        )
+
+    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
 
     # Download button
     csv = summary_table.to_csv(index=False)
@@ -190,7 +314,7 @@ def render_assisted_facility_comparison_chart(
     numerator_name="Assisted Deliveries",
     denominator_name="Total Deliveries",
 ):
-    """Render a simple facility comparison line chart"""
+    """Render facility comparison chart with same logic as C-section and SVD"""
     if text_color is None:
         text_color = "#000000" if bg_color == "#FFFFFF" else "#FFFFFF"
 
@@ -209,7 +333,7 @@ def render_assisted_facility_comparison_chart(
     all_periods = all_periods.sort_values("period_sort")
     period_order = all_periods["period_display"].tolist()
 
-    # Prepare comparison data using vectorized operations
+    # Prepare comparison data using same approach as C-section and SVD
     comparison_data = []
 
     for period_display in period_order:
@@ -225,6 +349,8 @@ def render_assisted_facility_comparison_chart(
                         "period_display": period_display,
                         "Facility": facility_uid_to_name[facility_uid],
                         "value": kpi_value["assisted_delivery_rate"],
+                        "Assisted Deliveries": kpi_value["assisted_deliveries"],
+                        "Total Deliveries": kpi_value["total_deliveries"],
                     }
                 )
 
@@ -234,7 +360,7 @@ def render_assisted_facility_comparison_chart(
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Create comparison line chart
+    # Create comparison line chart with same styling
     fig = px.line(
         comparison_df,
         x="period_display",
@@ -280,7 +406,7 @@ def render_assisted_facility_comparison_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Simple facility comparison table
+    # Enhanced facility comparison table (same as C-section and SVD)
     st.subheader("📋 Facility Comparison Summary")
     facility_table_data = []
 
@@ -306,7 +432,7 @@ def render_assisted_facility_comparison_chart(
 
     facility_table_df = pd.DataFrame(facility_table_data)
 
-    # Calculate overall
+    # Calculate overall using same aggregation logic as C-section and SVD
     total_assisted = facility_table_df["Assisted Deliveries"].sum()
     total_deliveries = facility_table_df["Total Deliveries"].sum()
     overall_rate = (
@@ -324,11 +450,23 @@ def render_assisted_facility_comparison_chart(
         [facility_table_df, pd.DataFrame([overall_row])], ignore_index=True
     )
 
-    # Add simple row numbering
+    # Add row numbering and formatting
     facility_table_df.insert(0, "No", range(1, len(facility_table_df) + 1))
 
-    # Display simple table
-    st.dataframe(facility_table_df, use_container_width=True)
+    # Format with same styling as C-section and SVD
+    styled_table = (
+        facility_table_df.style.format(
+            {
+                "Assisted Deliveries": "{:,.0f}",
+                "Total Deliveries": "{:,.0f}",
+                "Assisted Delivery Rate (%)": "{:.2f}",
+            }
+        )
+        .set_table_attributes('class="summary-table"')
+        .hide(axis="index")
+    )
+
+    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
 
     # Download button
     csv = facility_table_df.to_csv(index=False)
@@ -353,7 +491,7 @@ def render_assisted_region_comparison_chart(
     numerator_name="Assisted Deliveries",
     denominator_name="Total Deliveries",
 ):
-    """Render a simple region comparison line chart"""
+    """Render region comparison chart with same logic as C-section and SVD"""
     if text_color is None:
         text_color = "#000000" if bg_color == "#FFFFFF" else "#FFFFFF"
 
@@ -397,6 +535,8 @@ def render_assisted_region_comparison_chart(
                         "period_display": period_display,
                         "Region": region_name,
                         "value": kpi_value["assisted_delivery_rate"],
+                        "Assisted Deliveries": kpi_value["assisted_deliveries"],
+                        "Total Deliveries": kpi_value["total_deliveries"],
                     }
                 )
 
@@ -406,7 +546,7 @@ def render_assisted_region_comparison_chart(
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Create region comparison line chart
+    # Create region comparison line chart with same styling
     fig = px.line(
         comparison_df,
         x="period_display",
@@ -452,7 +592,7 @@ def render_assisted_region_comparison_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Simple region comparison table
+    # Enhanced region comparison table (same as C-section and SVD)
     st.subheader("📋 Region Comparison Summary")
     region_table_data = []
 
@@ -480,7 +620,7 @@ def render_assisted_region_comparison_chart(
 
     region_table_df = pd.DataFrame(region_table_data)
 
-    # Calculate overall
+    # Calculate overall using same aggregation logic
     total_assisted = region_table_df["Assisted Deliveries"].sum()
     total_deliveries = region_table_df["Total Deliveries"].sum()
     overall_rate = (
@@ -498,11 +638,23 @@ def render_assisted_region_comparison_chart(
         [region_table_df, pd.DataFrame([overall_row])], ignore_index=True
     )
 
-    # Add simple row numbering
+    # Add row numbering and formatting
     region_table_df.insert(0, "No", range(1, len(region_table_df) + 1))
 
-    # Display simple table
-    st.dataframe(region_table_df, use_container_width=True)
+    # Format with same styling as C-section and SVD
+    styled_table = (
+        region_table_df.style.format(
+            {
+                "Assisted Deliveries": "{:,.0f}",
+                "Total Deliveries": "{:,.0f}",
+                "Assisted Delivery Rate (%)": "{:.2f}",
+            }
+        )
+        .set_table_attributes('class="summary-table"')
+        .hide(axis="index")
+    )
+
+    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
 
     # Download button
     csv = region_table_df.to_csv(index=False)

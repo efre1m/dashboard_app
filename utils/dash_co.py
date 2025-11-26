@@ -41,12 +41,14 @@ from utils.kpi_assisted import (
     render_assisted_trend_chart,
     render_assisted_facility_comparison_chart,
     render_assisted_region_comparison_chart,
+    compute_assisted_count,
 )
 from utils.kpi_svd import (
     compute_svd_kpi,
     render_svd_trend_chart,
     render_svd_facility_comparison_chart,
     render_svd_region_comparison_chart,
+    compute_svd_count,
 )
 from utils.kpi_utils import (
     render_trend_chart,
@@ -400,7 +402,7 @@ def render_kpi_tab_navigation():
 def render_trend_chart_section(
     kpi_selection, filtered_events, facility_uids, display_names, bg_color, text_color
 ):
-    """Render the trend chart based on KPI selection - FIXED to track mothers for denominators but count all occurrences for numerators"""
+    """Render the trend chart based on KPI selection - USE COUNT FUNCTIONS FOR ALL"""
 
     # Process periods in chronological order
     sorted_periods = sorted(filtered_events["period"].unique())
@@ -431,132 +433,164 @@ def render_trend_chart_section(
 
             if new_mothers:
                 # Create a filtered dataframe with only new mothers for denominator calculation
-                # But use ALL period data for numerator calculation
                 denominator_df = period_df[period_df["tei_id"].isin(new_mothers)]
                 numerator_df = period_df  # Use all data for counting occurrences
 
-                # Compute KPIs using the filtered denominator data
-                if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                    kpi_data = compute_pph_kpi(denominator_df, facility_uids)
-                elif kpi_selection == "Delivered women who received uterotonic (%)":
-                    kpi_data = compute_uterotonic_kpi(denominator_df, facility_uids)
-                elif kpi_selection == "Assisted Delivery Rate (%)":
-                    kpi_data = compute_assisted_delivery_kpi(
-                        denominator_df, facility_uids
-                    )
-                elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
-                    kpi_data = compute_svd_kpi(denominator_df, facility_uids)
-                else:
-                    kpi_data = compute_kpis(denominator_df, facility_uids)
+                # Compute denominators using the filtered data (to avoid double-counting)
+                denominator_kpi_data = compute_kpis(denominator_df, facility_uids)
 
-                # BUT - we need to override the numerator counts to include ALL occurrences
-                # Let's manually compute the numerators from the full period data
+                # Get total_deliveries from denominator calculation (consistent across all KPIs)
+                total_deliveries = denominator_kpi_data["total_deliveries"]
+
+                # Compute numerators from ALL data in the period (count occurrences)
                 if (
                     kpi_selection
                     == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
                 ):
-                    # Count FP acceptances from ALL data in the period
-                    actual_fp_count = compute_fp_acceptance_count(
+                    numerator_count = compute_fp_acceptance_count(
                         numerator_df, facility_uids
                     )
-                    kpi_data["fp_acceptance"] = actual_fp_count
-                    kpi_data["ippcar"] = (
-                        (actual_fp_count / kpi_data["total_deliveries"] * 100)
-                        if kpi_data["total_deliveries"] > 0
+                    rate = (
+                        (numerator_count / total_deliveries * 100)
+                        if total_deliveries > 0
                         else 0
                     )
+                    kpi_data = {
+                        "ippcar": rate,
+                        "fp_acceptance": numerator_count,
+                        "total_deliveries": total_deliveries,
+                    }
 
                 elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-                    # Count PNC from ALL data in the period
-                    actual_pnc_count = compute_early_pnc_count(
+                    numerator_count = compute_early_pnc_count(
                         numerator_df, facility_uids
                     )
-                    kpi_data["early_pnc"] = actual_pnc_count
-                    kpi_data["pnc_coverage"] = (
-                        (actual_pnc_count / kpi_data["total_deliveries_pnc"] * 100)
-                        if kpi_data["total_deliveries_pnc"] > 0
+                    rate = (
+                        (numerator_count / total_deliveries * 100)
+                        if total_deliveries > 0
                         else 0
                     )
+                    kpi_data = {
+                        "pnc_coverage": rate,
+                        "early_pnc": numerator_count,
+                        "total_deliveries_pnc": total_deliveries,
+                    }
 
                 elif kpi_selection == "C-Section Rate (%)":
-                    # Count C-sections from ALL data in the period
-                    actual_csection_count = compute_csection_count(
+                    numerator_count = compute_csection_count(
                         numerator_df, facility_uids
                     )
-                    kpi_data["csection_deliveries"] = actual_csection_count
-                    kpi_data["csection_rate"] = (
-                        (actual_csection_count / kpi_data["total_deliveries_cs"] * 100)
-                        if kpi_data["total_deliveries_cs"] > 0
+                    rate = (
+                        (numerator_count / total_deliveries * 100)
+                        if total_deliveries > 0
                         else 0
                     )
+                    kpi_data = {
+                        "csection_rate": rate,
+                        "csection_deliveries": numerator_count,
+                        "total_deliveries_cs": total_deliveries,
+                    }
 
                 elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
                     # PPH already uses occurrence counting in its specialized function
-                    pass
+                    kpi_data = compute_pph_kpi(numerator_df, facility_uids)
 
                 elif kpi_selection == "Delivered women who received uterotonic (%)":
                     # Uterotonic already uses occurrence counting in its specialized function
-                    pass
+                    kpi_data = compute_uterotonic_kpi(numerator_df, facility_uids)
 
                 elif kpi_selection == "Assisted Delivery Rate (%)":
-                    # Assisted delivery already uses occurrence counting in its specialized function
-                    pass
+                    # USE COUNT FUNCTION SAME AS C-SECTION
+                    numerator_count = compute_assisted_count(
+                        numerator_df, facility_uids
+                    )
+                    rate = (
+                        (numerator_count / total_deliveries * 100)
+                        if total_deliveries > 0
+                        else 0
+                    )
+                    kpi_data = {
+                        "assisted_delivery_rate": rate,
+                        "assisted_deliveries": numerator_count,
+                        "total_deliveries": total_deliveries,
+                    }
 
                 elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
-                    # SVD already uses occurrence counting in its specialized function
-                    pass
+                    # USE COUNT FUNCTION SAME AS C-SECTION
+                    numerator_count = compute_svd_count(numerator_df, facility_uids)
+                    rate = (
+                        (numerator_count / total_deliveries * 100)
+                        if total_deliveries > 0
+                        else 0
+                    )
+                    kpi_data = {
+                        "svd_rate": rate,
+                        "svd_deliveries": numerator_count,
+                        "total_deliveries": total_deliveries,
+                    }
 
             else:
                 # No new mothers this period - but we might still have occurrences
-                denominator_count = 0
                 numerator_df = period_df
 
                 # Get default data structure
                 kpi_data = _get_default_kpi_data(kpi_selection)
 
-                # But still count occurrences from the period data
+                # Count occurrences from the period data but rate is 0 (no denominator)
                 if (
                     kpi_selection
                     == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
                 ):
-                    actual_fp_count = compute_fp_acceptance_count(
+                    numerator_count = compute_fp_acceptance_count(
                         numerator_df, facility_uids
                     )
-                    kpi_data["fp_acceptance"] = actual_fp_count
-                    kpi_data["ippcar"] = 0  # No denominator, so rate is 0
+                    kpi_data["fp_acceptance"] = numerator_count
+                    kpi_data["ippcar"] = 0
 
                 elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-                    actual_pnc_count = compute_early_pnc_count(
+                    numerator_count = compute_early_pnc_count(
                         numerator_df, facility_uids
                     )
-                    kpi_data["early_pnc"] = actual_pnc_count
+                    kpi_data["early_pnc"] = numerator_count
                     kpi_data["pnc_coverage"] = 0
 
                 elif kpi_selection == "C-Section Rate (%)":
-                    actual_csection_count = compute_csection_count(
+                    numerator_count = compute_csection_count(
                         numerator_df, facility_uids
                     )
-                    kpi_data["csection_deliveries"] = actual_csection_count
+                    kpi_data["csection_deliveries"] = numerator_count
                     kpi_data["csection_rate"] = 0
 
-                # For specialized KPIs, use their functions but with 0 denominator
                 elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                    kpi_data = compute_pph_kpi(numerator_df, facility_uids)
-                    kpi_data["pph_rate"] = 0  # Override rate to 0 since no denominator
+                    pph_data = compute_pph_kpi(numerator_df, facility_uids)
+                    kpi_data["pph_count"] = pph_data["pph_count"]
+                    kpi_data["pph_rate"] = 0
+                    kpi_data["total_deliveries"] = 0
 
                 elif kpi_selection == "Delivered women who received uterotonic (%)":
-                    kpi_data = compute_uterotonic_kpi(numerator_df, facility_uids)
-                    kpi_data["uterotonic_rate"] = 0
-
-                elif kpi_selection == "Assisted Delivery Rate (%)":
-                    kpi_data = compute_assisted_delivery_kpi(
+                    uterotonic_data = compute_uterotonic_kpi(
                         numerator_df, facility_uids
                     )
+                    kpi_data["uterotonic_count"] = uterotonic_data["uterotonic_count"]
+                    kpi_data["uterotonic_rate"] = 0
+                    kpi_data["total_deliveries"] = 0
+                    kpi_data["uterotonic_types"] = uterotonic_data["uterotonic_types"]
+
+                elif kpi_selection == "Assisted Delivery Rate (%)":
+                    # USE COUNT FUNCTION SAME AS C-SECTION
+                    numerator_count = compute_assisted_count(
+                        numerator_df, facility_uids
+                    )
+                    kpi_data["assisted_deliveries"] = numerator_count
                     kpi_data["assisted_delivery_rate"] = 0
+                    kpi_data["total_deliveries"] = 0
 
                 elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
-                    kpi_data = compute_svd_kpi(numerator_df, facility_uids)
+                    # USE COUNT FUNCTION SAME AS C-SECTION
+                    numerator_count = compute_svd_count(numerator_df, facility_uids)
+                    kpi_data["svd_deliveries"] = numerator_count
                     kpi_data["svd_rate"] = 0
+                    kpi_data["total_deliveries"] = 0
 
             # Add period data based on KPI type
             period_row = _create_period_row(
