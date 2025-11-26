@@ -1,7 +1,13 @@
 import pandas as pd
 import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
-from utils.kpi_utils import compute_kpis, auto_text_color
+from utils.kpi_utils import (
+    compute_kpis,
+    auto_text_color,
+    compute_fp_acceptance_count,
+    compute_early_pnc_count,
+    compute_csection_count,
+)
 from utils.kpi_pph import (
     compute_pph_kpi,
     render_pph_trend_chart,
@@ -98,7 +104,7 @@ KPI_MAPPING = {
     "Assisted Delivery Rate (%)": {
         "title": "Assisted Delivery Rate (%)",
         "numerator_name": "Assisted Deliveries",
-        "denominator_name": "Total Deliveries",  # ← CHANGED
+        "denominator_name": "Total Deliveries",
     },
     "Normal Vaginal Delivery (SVD) Rate (%)": {
         "title": "Normal Vaginal Delivery Rate (%)",
@@ -393,12 +399,12 @@ def render_kpi_tab_navigation():
 def render_trend_chart_section(
     kpi_selection, filtered_events, facility_uids, display_names, bg_color, text_color
 ):
-    """Render the trend chart based on KPI selection - FIXED to use specialized functions"""
+    """Render the trend chart based on KPI selection - FIXED to track mothers for denominators but count all occurrences for numerators"""
 
     # Process periods in chronological order
     sorted_periods = sorted(filtered_events["period"].unique())
 
-    # ========== KPIs that use MOTHER TRACKING (one event per mother) ==========
+    # ========== KPIs that need mother tracking for denominators ==========
     if kpi_selection in [
         "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
         "Early Postnatal Care (PNC) Coverage (%)",
@@ -408,7 +414,7 @@ def render_trend_chart_section(
         "Assisted Delivery Rate (%)",
         "Normal Vaginal Delivery (SVD) Rate (%)",
     ]:
-        # ✅ FIX: Track mothers across periods to prevent double-counting for delivery-based KPIs
+        # Track mothers across periods to prevent double-counting in denominators
         counted_mothers = set()
         period_data = []
 
@@ -418,31 +424,138 @@ def render_trend_chart_section(
                 period_df["period_display"].iloc[0] if not period_df.empty else period
             )
 
-            # ✅ Get mothers in this period who haven't been counted yet
+            # Get mothers in this period who haven't been counted yet
             period_mothers = set(period_df["tei_id"].unique())
             new_mothers = period_mothers - counted_mothers
 
             if new_mothers:
-                # Filter to only new mothers in this period
-                new_mothers_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                # Create a filtered dataframe with only new mothers for denominator calculation
+                # But use ALL period data for numerator calculation
+                denominator_df = period_df[period_df["tei_id"].isin(new_mothers)]
+                numerator_df = period_df  # Use all data for counting occurrences
 
-                # Use specialized computation for PPH, Uterotonic, and Assisted Delivery
+                # Compute KPIs using the filtered denominator data
                 if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                    kpi_data = compute_pph_kpi(new_mothers_df, facility_uids)
+                    kpi_data = compute_pph_kpi(denominator_df, facility_uids)
                 elif kpi_selection == "Delivered women who received uterotonic (%)":
-                    kpi_data = compute_uterotonic_kpi(new_mothers_df, facility_uids)
+                    kpi_data = compute_uterotonic_kpi(denominator_df, facility_uids)
                 elif kpi_selection == "Assisted Delivery Rate (%)":
                     kpi_data = compute_assisted_delivery_kpi(
-                        new_mothers_df, facility_uids
+                        denominator_df, facility_uids
                     )
                 elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
-                    kpi_data = compute_svd_kpi(new_mothers_df, facility_uids)
-
+                    kpi_data = compute_svd_kpi(denominator_df, facility_uids)
                 else:
-                    kpi_data = compute_kpis(new_mothers_df, facility_uids)
+                    kpi_data = compute_kpis(denominator_df, facility_uids)
+
+                # BUT - we need to override the numerator counts to include ALL occurrences
+                # Let's manually compute the numerators from the full period data
+                if (
+                    kpi_selection
+                    == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
+                ):
+                    # Count FP acceptances from ALL data in the period
+                    actual_fp_count = compute_fp_acceptance_count(
+                        numerator_df, facility_uids
+                    )
+                    kpi_data["fp_acceptance"] = actual_fp_count
+                    kpi_data["ippcar"] = (
+                        (actual_fp_count / kpi_data["total_deliveries"] * 100)
+                        if kpi_data["total_deliveries"] > 0
+                        else 0
+                    )
+
+                elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
+                    # Count PNC from ALL data in the period
+                    actual_pnc_count = compute_early_pnc_count(
+                        numerator_df, facility_uids
+                    )
+                    kpi_data["early_pnc"] = actual_pnc_count
+                    kpi_data["pnc_coverage"] = (
+                        (actual_pnc_count / kpi_data["total_deliveries_pnc"] * 100)
+                        if kpi_data["total_deliveries_pnc"] > 0
+                        else 0
+                    )
+
+                elif kpi_selection == "C-Section Rate (%)":
+                    # Count C-sections from ALL data in the period
+                    actual_csection_count = compute_csection_count(
+                        numerator_df, facility_uids
+                    )
+                    kpi_data["csection_deliveries"] = actual_csection_count
+                    kpi_data["csection_rate"] = (
+                        (actual_csection_count / kpi_data["total_deliveries_cs"] * 100)
+                        if kpi_data["total_deliveries_cs"] > 0
+                        else 0
+                    )
+
+                elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+                    # PPH already uses occurrence counting in its specialized function
+                    pass
+
+                elif kpi_selection == "Delivered women who received uterotonic (%)":
+                    # Uterotonic already uses occurrence counting in its specialized function
+                    pass
+
+                elif kpi_selection == "Assisted Delivery Rate (%)":
+                    # Assisted delivery already uses occurrence counting in its specialized function
+                    pass
+
+                elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+                    # SVD already uses occurrence counting in its specialized function
+                    pass
+
             else:
-                # Default empty data
+                # No new mothers this period - but we might still have occurrences
+                denominator_count = 0
+                numerator_df = period_df
+
+                # Get default data structure
                 kpi_data = _get_default_kpi_data(kpi_selection)
+
+                # But still count occurrences from the period data
+                if (
+                    kpi_selection
+                    == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
+                ):
+                    actual_fp_count = compute_fp_acceptance_count(
+                        numerator_df, facility_uids
+                    )
+                    kpi_data["fp_acceptance"] = actual_fp_count
+                    kpi_data["ippcar"] = 0  # No denominator, so rate is 0
+
+                elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
+                    actual_pnc_count = compute_early_pnc_count(
+                        numerator_df, facility_uids
+                    )
+                    kpi_data["early_pnc"] = actual_pnc_count
+                    kpi_data["pnc_coverage"] = 0
+
+                elif kpi_selection == "C-Section Rate (%)":
+                    actual_csection_count = compute_csection_count(
+                        numerator_df, facility_uids
+                    )
+                    kpi_data["csection_deliveries"] = actual_csection_count
+                    kpi_data["csection_rate"] = 0
+
+                # For specialized KPIs, use their functions but with 0 denominator
+                elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
+                    kpi_data = compute_pph_kpi(numerator_df, facility_uids)
+                    kpi_data["pph_rate"] = 0  # Override rate to 0 since no denominator
+
+                elif kpi_selection == "Delivered women who received uterotonic (%)":
+                    kpi_data = compute_uterotonic_kpi(numerator_df, facility_uids)
+                    kpi_data["uterotonic_rate"] = 0
+
+                elif kpi_selection == "Assisted Delivery Rate (%)":
+                    kpi_data = compute_assisted_delivery_kpi(
+                        numerator_df, facility_uids
+                    )
+                    kpi_data["assisted_delivery_rate"] = 0
+
+                elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+                    kpi_data = compute_svd_kpi(numerator_df, facility_uids)
+                    kpi_data["svd_rate"] = 0
 
             # Add period data based on KPI type
             period_row = _create_period_row(
@@ -450,7 +563,7 @@ def render_trend_chart_section(
             )
             period_data.append(period_row)
 
-            # ✅ Update counted mothers for next period
+            # Update counted mothers for next period (denominator tracking only)
             counted_mothers.update(new_mothers)
 
         group = pd.DataFrame(period_data)
@@ -460,7 +573,7 @@ def render_trend_chart_section(
         "Stillbirth Rate (per 1000 births)",
         "Institutional Maternal Death Rate (per 100,000 births)",
     ]:
-        # ✅ FIX: Use ALL data in each period (no mother tracking)
+        # Use ALL data in each period (no mother tracking needed for these)
         period_data = []
 
         for period in sorted_periods:
@@ -534,7 +647,7 @@ def render_trend_chart_section(
         st.error(f"Unknown KPI selection: {kpi_selection}")
         return
 
-    # Render the appropriate chart - FIXED to use specialized functions
+    # Render the appropriate chart
     _render_kpi_chart(
         kpi_selection, group, bg_color, text_color, display_names, facility_uids
     )
