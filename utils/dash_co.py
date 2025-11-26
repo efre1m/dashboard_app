@@ -222,6 +222,7 @@ def render_kpi_tab_navigation():
             "Early Postnatal Care (PNC) Coverage (%)",
             "ARV Prophylaxis Rate (%)",
             "Assisted Delivery Rate (%)",
+            "Normal Vaginal Delivery (SVD) Rate (%)",
         ],
     }
 
@@ -756,7 +757,9 @@ def _create_period_row(kpi_selection, period, period_display, kpi_data):
             "period_display": period_display,
             "value": kpi_data["svd_rate"],
             "SVD Deliveries": kpi_data["svd_deliveries"],
-            "Total Deliveries": kpi_data["total_admissions"],
+            "Total Deliveries": kpi_data[
+                "total_deliveries"
+            ],  # Consistent with C-section
         }
     return {}
 
@@ -902,8 +905,8 @@ def _render_kpi_chart(
                 "Total Deliveries",
                 facility_uids,
             )
-
         elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+            # ✅ FIX: Use specialized SVD trend chart
             render_svd_trend_chart(
                 group,
                 "period_display",
@@ -972,7 +975,7 @@ def _get_default_kpi_data(kpi_selection):
         "Normal Vaginal Delivery (SVD) Rate (%)": {
             "svd_rate": 0.0,
             "svd_deliveries": 0,
-            "total_admissions": 0,
+            "total_deliveries": 0,  # Consistent with C-section
         },
     }
     return defaults.get(kpi_selection, {})
@@ -1156,7 +1159,7 @@ def render_comparison_chart(
                 region_mapping={},
                 facilities_by_region=facilities_by_region,
                 numerator_name="Assisted Deliveries",
-                denominator_name="Total Admissions",
+                denominator_name="Total Deliveries",
             )
         elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
             render_svd_region_comparison_chart(

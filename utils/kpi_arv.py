@@ -76,20 +76,23 @@ def compute_arv_denominator(df, facility_uids=None):
     ]["tei_id"].nunique()
 
     # Step 3: Sum number of newborns from multiple birth fields
+    # FIX: Handle empty strings and non-numeric values
+    number_of_newborns_series = hiv_positive_df[
+        hiv_positive_df["dataElement_uid"] == NUMBER_OF_NEWBORNS_UID
+    ]["value"]
+
+    # Convert to numeric, coercing errors to NaN, then fill NaN with 0
     number_of_newborns = (
-        hiv_positive_df[hiv_positive_df["dataElement_uid"] == NUMBER_OF_NEWBORNS_UID][
-            "value"
-        ]
-        .astype(float)
-        .sum()
+        pd.to_numeric(number_of_newborns_series, errors="coerce").fillna(0).sum()
     )
 
+    other_number_of_newborns_series = hiv_positive_df[
+        hiv_positive_df["dataElement_uid"] == OTHER_NUMBER_OF_NEWBORNS_UID
+    ]["value"]
+
+    # FIX: Apply the same conversion for other number of newborns
     other_number_of_newborns = (
-        hiv_positive_df[
-            hiv_positive_df["dataElement_uid"] == OTHER_NUMBER_OF_NEWBORNS_UID
-        ]["value"]
-        .astype(float)
-        .sum()
+        pd.to_numeric(other_number_of_newborns_series, errors="coerce").fillna(0).sum()
     )
 
     total_infants = number_of_newborns + other_number_of_newborns
