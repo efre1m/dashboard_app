@@ -21,6 +21,8 @@ from utils.kpi_uterotonic import (
     render_uterotonic_facility_comparison_chart,
     render_uterotonic_region_comparison_chart,
     render_uterotonic_type_pie_chart,
+    compute_uterotonic_numerator,
+    compute_uterotonic_by_type,
 )
 from utils.kpi_arv import (
     compute_arv_kpi,
@@ -496,8 +498,46 @@ def render_trend_chart_section(
                     kpi_data = compute_pph_kpi(numerator_df, facility_uids)
 
                 elif kpi_selection == "Delivered women who received uterotonic (%)":
-                    # Uterotonic already uses occurrence counting in its specialized function
-                    kpi_data = compute_uterotonic_kpi(numerator_df, facility_uids)
+                    # FIXED: Use manual calculation with mother-tracked denominator (same as C-section)
+                    numerator_count = compute_uterotonic_numerator(
+                        numerator_df, facility_uids
+                    )
+                    rate = (
+                        (numerator_count / total_deliveries * 100)
+                        if total_deliveries > 0
+                        else 0
+                    )
+
+                    # Get drug type distribution
+                    uterotonic_types = compute_uterotonic_by_type(
+                        numerator_df, facility_uids
+                    )
+
+                    kpi_data = {
+                        "uterotonic_rate": rate,
+                        "uterotonic_count": numerator_count,
+                        "total_deliveries": total_deliveries,  # This is the mother-tracked denominator
+                        "uterotonic_types": uterotonic_types,
+                        # Add drug-specific data for detailed charts
+                        "ergometrine_count": uterotonic_types["Ergometrine"],
+                        "oxytocin_count": uterotonic_types["Oxytocin"],
+                        "misoprostol_count": uterotonic_types["Misoprostol"],
+                        "ergometrine_rate": (
+                            (uterotonic_types["Ergometrine"] / total_deliveries * 100)
+                            if total_deliveries > 0
+                            else 0
+                        ),
+                        "oxytocin_rate": (
+                            (uterotonic_types["Oxytocin"] / total_deliveries * 100)
+                            if total_deliveries > 0
+                            else 0
+                        ),
+                        "misoprostol_rate": (
+                            (uterotonic_types["Misoprostol"] / total_deliveries * 100)
+                            if total_deliveries > 0
+                            else 0
+                        ),
+                    }
 
                 elif kpi_selection == "Assisted Delivery Rate (%)":
                     # USE COUNT FUNCTION SAME AS C-SECTION
@@ -568,13 +608,24 @@ def render_trend_chart_section(
                     kpi_data["total_deliveries"] = 0
 
                 elif kpi_selection == "Delivered women who received uterotonic (%)":
-                    uterotonic_data = compute_uterotonic_kpi(
+                    # FIXED: Use manual calculation with 0 denominator
+                    numerator_count = compute_uterotonic_numerator(
                         numerator_df, facility_uids
                     )
-                    kpi_data["uterotonic_count"] = uterotonic_data["uterotonic_count"]
+                    uterotonic_types = compute_uterotonic_by_type(
+                        numerator_df, facility_uids
+                    )
+
+                    kpi_data["uterotonic_count"] = numerator_count
                     kpi_data["uterotonic_rate"] = 0
                     kpi_data["total_deliveries"] = 0
-                    kpi_data["uterotonic_types"] = uterotonic_data["uterotonic_types"]
+                    kpi_data["uterotonic_types"] = uterotonic_types
+                    kpi_data["ergometrine_count"] = uterotonic_types["Ergometrine"]
+                    kpi_data["oxytocin_count"] = uterotonic_types["Oxytocin"]
+                    kpi_data["misoprostol_count"] = uterotonic_types["Misoprostol"]
+                    kpi_data["ergometrine_rate"] = 0
+                    kpi_data["oxytocin_rate"] = 0
+                    kpi_data["misoprostol_rate"] = 0
 
                 elif kpi_selection == "Assisted Delivery Rate (%)":
                     # USE COUNT FUNCTION SAME AS C-SECTION

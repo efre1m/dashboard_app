@@ -491,6 +491,10 @@ def render_summary_dashboard_shared(
         st.error("No data available for summary dashboard")
         return
 
+    # Initialize summarized data state
+    if "show_summarized_data" not in st.session_state:
+        st.session_state.show_summarized_data = False
+
     # Create cache key for summary data
     cache_key = f"summary_{location_name}_{len(facility_uids)}"
 
@@ -671,136 +675,17 @@ def render_summary_dashboard_shared(
         unsafe_allow_html=True,
     )
 
-    # Create overview tables
-    st.markdown("---")
+    # Single "View Summarized Data" Button at the top
+    if not st.session_state.show_summarized_data:
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col2:
+            if st.button(
+                "📊 View Summarized Data", use_container_width=True, type="primary"
+            ):
+                st.session_state.show_summarized_data = True
+                st.rerun()
 
-    # Newborn Overview Table
-    col_header, col_download = st.columns([3, 1])
-    with col_header:
-        st.markdown("### 👶 Newborn Care Overview")
-    with col_download:
-        newborn_data_download = {
-            "Start Date": [newborn_start_date],
-            f"{location_type}": [location_name],
-            "Total Admitted Newborns": [newborn_tei_count],
-            "NMR": [f"{newborn_indicators['nmr']}"],
-            "Stillbirth Rate": [
-                f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births"
-            ],
-            "Live Births": [maternal_indicators["live_births"]],
-            "Stillbirths": [maternal_indicators["stillbirths"]],
-            "Total Births": [maternal_indicators["total_births"]],
-            "Low Birth Weight Rate": [
-                f"{maternal_indicators['low_birth_weight_rate']:.2f}%"
-            ],
-        }
-        newborn_df = pd.DataFrame(newborn_data_download)
-        st.download_button(
-            "📥 Download Newborn Data",
-            data=newborn_df.to_csv(index=False),
-            file_name=f"newborn_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    # Create newborn table data
-    newborn_table_data = {
-        "No": list(range(1, 10)),
-        "Indicator": [
-            "Start Date",
-            location_type,
-            "Total Admitted Newborns",
-            "NMR",
-            "Stillbirth Rate",
-            "Live Births",
-            "Stillbirths",
-            "Total Births",
-            "Low Birth Weight Rate (<2500g)",
-        ],
-        "Value": [
-            newborn_start_date,
-            location_name,
-            f"{newborn_tei_count:,}",
-            f"{newborn_indicators['nmr']}",
-            f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
-            f"{maternal_indicators['live_births']:,}",
-            f"{maternal_indicators['stillbirths']:,}",
-            f"{maternal_indicators['total_births']:,}",
-            f"{maternal_indicators['low_birth_weight_rate']:.2f}%",
-        ],
-    }
-
-    newborn_table_df = pd.DataFrame(newborn_table_data)
-    st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
-    st.markdown(
-        newborn_table_df.style.set_table_attributes(
-            'class="summary-table newborn-table"'
-        )
-        .hide(axis="index")
-        .set_properties(**{"text-align": "left"})
-        .to_html(),
-        unsafe_allow_html=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Maternal Overview Table
-    st.markdown("---")
-    col_header2, col_download2 = st.columns([3, 1])
-    with col_header2:
-        st.markdown("### 🤰 Maternal Care Overview")
-    with col_download2:
-        maternal_data_download = {
-            "Start Date": [maternal_start_date],
-            f"{location_type}": [location_name],
-            "Total Admitted Mothers": [maternal_tei_count],
-            "Total Deliveries": [maternal_indicators["total_deliveries"]],
-            "Maternal Death Rate": [
-                f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births"
-            ],
-        }
-        maternal_df = pd.DataFrame(maternal_data_download)
-        st.download_button(
-            "📥 Download Maternal Data",
-            data=maternal_df.to_csv(index=False),
-            file_name=f"maternal_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    # Create maternal table data
-    maternal_table_data = {
-        "No": list(range(1, 6)),
-        "Indicator": [
-            "Start Date",
-            location_type,
-            "Total Admitted Mothers",
-            "Total Deliveries",
-            "Maternal Death Rate",
-        ],
-        "Value": [
-            maternal_start_date,
-            location_name,
-            f"{maternal_tei_count:,}",
-            f"{maternal_indicators['total_deliveries']:,}",
-            f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births",
-        ],
-    }
-
-    maternal_table_df = pd.DataFrame(maternal_table_data)
-    st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
-    st.markdown(
-        maternal_table_df.style.set_table_attributes(
-            'class="summary-table maternal-table"'
-        )
-        .hide(axis="index")
-        .set_properties(**{"text-align": "left"})
-        .to_html(),
-        unsafe_allow_html=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Quick Statistics
-    st.markdown("---")
+    # Show quick statistics always
     st.markdown("### 📈 Quick Statistics")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -848,45 +733,44 @@ def render_summary_dashboard_shared(
                 unsafe_allow_html=True,
             )
 
-    # Regional comparison table
-    st.markdown("---")
-    st.markdown("### 📊 Mothers & Newborns by region")
+    # Show all tables only when button is clicked
+    if st.session_state.show_summarized_data:
+        st.markdown("---")
 
-    if regional_comparison_data:
-        regions = list(regional_comparison_data.keys())
-        total_mothers = sum(
-            data["mothers"] for data in regional_comparison_data.values()
-        )
-        total_newborns = sum(
-            data["newborns"] for data in regional_comparison_data.values()
-        )
+        # Newborn Overview Table
+        st.markdown("### 👶 Newborn Care Overview")
 
-        # Create transposed table structure
-        transposed_data = []
-        for i, region in enumerate(regions, 1):
-            transposed_data.append(
-                {
-                    "No": i,
-                    "Region Name": region,
-                    "Admitted Mothers": f"{regional_comparison_data[region]['mothers']:,}",
-                    "Admitted Newborns": f"{regional_comparison_data[region]['newborns']:,}",
-                }
-            )
+        # Create newborn table data
+        newborn_table_data = {
+            "No": list(range(1, 10)),
+            "Indicator": [
+                "Start Date",
+                location_type,
+                "Total Admitted Newborns",
+                "NMR",
+                "Stillbirth Rate",
+                "Live Births",
+                "Stillbirths",
+                "Total Births",
+                "Low Birth Weight Rate (<2500g)",
+            ],
+            "Value": [
+                newborn_start_date,
+                location_name,
+                f"{newborn_tei_count:,}",
+                f"{newborn_indicators['nmr']}",
+                f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
+                f"{maternal_indicators['live_births']:,}",
+                f"{maternal_indicators['stillbirths']:,}",
+                f"{maternal_indicators['total_births']:,}",
+                f"{maternal_indicators['low_birth_weight_rate']:.2f}%",
+            ],
+        }
 
-        # Add TOTAL row
-        transposed_data.append(
-            {
-                "No": "",
-                "Region Name": "TOTAL",
-                "Admitted Mothers": f"{total_mothers:,}",
-                "Admitted Newborns": f"{total_newborns:,}",
-            }
-        )
-
-        transposed_df = pd.DataFrame(transposed_data)
+        newborn_table_df = pd.DataFrame(newborn_table_data)
         st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
         st.markdown(
-            transposed_df.style.set_table_attributes(
+            newborn_table_df.style.set_table_attributes(
                 'class="summary-table newborn-table"'
             )
             .hide(axis="index")
@@ -896,36 +780,173 @@ def render_summary_dashboard_shared(
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Add download button
-        st.markdown("---")
+        # Download button for newborn data
         col_info, col_download = st.columns([3, 1])
         with col_download:
-            download_data = []
-            for region, data in regional_comparison_data.items():
-                download_data.append(
-                    {
-                        "Region": region,
-                        "Admitted Mothers": data["mothers"],
-                        "Admitted Newborns": data["newborns"],
-                    }
-                )
-            download_data.append(
-                {
-                    "Region": "TOTAL",
-                    "Admitted Mothers": total_mothers,
-                    "Admitted Newborns": total_newborns,
-                }
-            )
-            download_df = pd.DataFrame(download_data)
+            newborn_data_download = {
+                "Start Date": [newborn_start_date],
+                f"{location_type}": [location_name],
+                "Total Admitted Newborns": [newborn_tei_count],
+                "NMR": [f"{newborn_indicators['nmr']}"],
+                "Stillbirth Rate": [
+                    f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births"
+                ],
+                "Live Births": [maternal_indicators["live_births"]],
+                "Stillbirths": [maternal_indicators["stillbirths"]],
+                "Total Births": [maternal_indicators["total_births"]],
+                "Low Birth Weight Rate": [
+                    f"{maternal_indicators['low_birth_weight_rate']:.2f}%"
+                ],
+            }
+            newborn_df = pd.DataFrame(newborn_data_download)
             st.download_button(
-                "📥 Download Regional Data",
-                data=download_df.to_csv(index=False),
-                file_name=f"regional_comparison_{country_name.replace(' ', '_')}.csv",
+                "📥 Download Newborn Data",
+                data=newborn_df.to_csv(index=False),
+                file_name=f"newborn_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
+
+        # Maternal Overview Table
+        st.markdown("---")
+        st.markdown("### 🤰 Maternal Care Overview")
+
+        # Create maternal table data
+        maternal_table_data = {
+            "No": list(range(1, 6)),
+            "Indicator": [
+                "Start Date",
+                location_type,
+                "Total Admitted Mothers",
+                "Total Deliveries",
+                "Maternal Death Rate",
+            ],
+            "Value": [
+                maternal_start_date,
+                location_name,
+                f"{maternal_tei_count:,}",
+                f"{maternal_indicators['total_deliveries']:,}",
+                f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births",
+            ],
+        }
+
+        maternal_table_df = pd.DataFrame(maternal_table_data)
+        st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
+        st.markdown(
+            maternal_table_df.style.set_table_attributes(
+                'class="summary-table maternal-table"'
+            )
+            .hide(axis="index")
+            .set_properties(**{"text-align": "left"})
+            .to_html(),
+            unsafe_allow_html=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Download button for maternal data
+        col_info2, col_download2 = st.columns([3, 1])
+        with col_download2:
+            maternal_data_download = {
+                "Start Date": [maternal_start_date],
+                f"{location_type}": [location_name],
+                "Total Admitted Mothers": [maternal_tei_count],
+                "Total Deliveries": [maternal_indicators["total_deliveries"]],
+                "Maternal Death Rate": [
+                    f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births"
+                ],
+            }
+            maternal_df = pd.DataFrame(maternal_data_download)
+            st.download_button(
+                "📥 Download Maternal Data",
+                data=maternal_df.to_csv(index=False),
+                file_name=f"maternal_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        # Regional comparison table
+        st.markdown("---")
+        st.markdown("### 📊 Mothers & Newborns by region")
+
+        if regional_comparison_data:
+            regions = list(regional_comparison_data.keys())
+            total_mothers = sum(
+                data["mothers"] for data in regional_comparison_data.values()
+            )
+            total_newborns = sum(
+                data["newborns"] for data in regional_comparison_data.values()
+            )
+
+            # Create transposed table structure
+            transposed_data = []
+            for i, region in enumerate(regions, 1):
+                transposed_data.append(
+                    {
+                        "No": i,
+                        "Region Name": region,
+                        "Admitted Mothers": f"{regional_comparison_data[region]['mothers']:,}",
+                        "Admitted Newborns": f"{regional_comparison_data[region]['newborns']:,}",
+                    }
+                )
+
+            # Add TOTAL row
+            transposed_data.append(
+                {
+                    "No": "",
+                    "Region Name": "TOTAL",
+                    "Admitted Mothers": f"{total_mothers:,}",
+                    "Admitted Newborns": f"{total_newborns:,}",
+                }
+            )
+
+            transposed_df = pd.DataFrame(transposed_data)
+            st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
+            st.markdown(
+                transposed_df.style.set_table_attributes(
+                    'class="summary-table newborn-table"'
+                )
+                .hide(axis="index")
+                .set_properties(**{"text-align": "left"})
+                .to_html(),
+                unsafe_allow_html=True,
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Add download button for regional data
+            col_info3, col_download3 = st.columns([3, 1])
+            with col_download3:
+                download_data = []
+                for region, data in regional_comparison_data.items():
+                    download_data.append(
+                        {
+                            "Region": region,
+                            "Admitted Mothers": data["mothers"],
+                            "Admitted Newborns": data["newborns"],
+                        }
+                    )
+                download_data.append(
+                    {
+                        "Region": "TOTAL",
+                        "Admitted Mothers": total_mothers,
+                        "Admitted Newborns": total_newborns,
+                    }
+                )
+                download_df = pd.DataFrame(download_data)
+                st.download_button(
+                    "📥 Download Regional Data",
+                    data=download_df.to_csv(index=False),
+                    file_name=f"regional_comparison_{country_name.replace(' ', '_')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+        else:
+            st.info("No regional data available for comparison.")
     else:
-        st.info("No regional data available for comparison.")
+        # Show message when summarized data is not displayed
+        st.markdown("---")
+        st.info(
+            "💡 Click the 'View Summarized Data' button above to see detailed tables and regional comparisons"
+        )
 
 
 def render_maternal_dashboard_shared(
