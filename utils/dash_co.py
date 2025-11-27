@@ -14,6 +14,7 @@ from utils.kpi_pph import (
     render_pph_facility_comparison_chart,
     render_pph_region_comparison_chart,
     render_obstetric_condition_pie_chart,
+    compute_pph_numerator,
 )
 from utils.kpi_uterotonic import (
     compute_uterotonic_kpi,
@@ -494,8 +495,18 @@ def render_trend_chart_section(
                     }
 
                 elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                    # PPH already uses occurrence counting in its specialized function
-                    kpi_data = compute_pph_kpi(numerator_df, facility_uids)
+                    # ✅ UPDATED: Use PPH count function with mother-tracked denominator
+                    numerator_count = compute_pph_numerator(numerator_df, facility_uids)
+                    rate = (
+                        (numerator_count / total_deliveries * 100)
+                        if total_deliveries > 0
+                        else 0
+                    )
+                    kpi_data = {
+                        "pph_rate": rate,
+                        "pph_count": numerator_count,
+                        "total_deliveries": total_deliveries,
+                    }
 
                 elif kpi_selection == "Delivered women who received uterotonic (%)":
                     # FIXED: Use manual calculation with mother-tracked denominator (same as C-section)
@@ -602,8 +613,9 @@ def render_trend_chart_section(
                     kpi_data["csection_rate"] = 0
 
                 elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-                    pph_data = compute_pph_kpi(numerator_df, facility_uids)
-                    kpi_data["pph_count"] = pph_data["pph_count"]
+                    # ✅ UPDATED: Use PPH count function with 0 denominator
+                    numerator_count = compute_pph_numerator(numerator_df, facility_uids)
+                    kpi_data["pph_count"] = numerator_count
                     kpi_data["pph_rate"] = 0
                     kpi_data["total_deliveries"] = 0
 

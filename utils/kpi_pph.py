@@ -86,6 +86,44 @@ def compute_pph_kpi(df, facility_uids=None):
     }
 
 
+def compute_pph_numerator(df, facility_uids=None):
+    """
+    Compute only the PPH numerator count (number of PPH cases)
+    Used in trend calculations where denominator is tracked separately
+    """
+    if df is None or df.empty:
+        return 0
+
+    # Filter by facilities if specified
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # Filter rows for the correct data element
+    cond_df = df[df["dataElement_uid"] == PPH_CONDITION_UID].copy()
+
+    # Safety check: if no such data element exists
+    if cond_df.empty or "tei_id" not in cond_df.columns:
+        return 0
+
+    # Ensure 'value' is string
+    cond_df["value"] = cond_df["value"].astype(str)
+
+    # Mark rows containing PPH code in multi-text field
+    cond_df["has_pph"] = cond_df["value"].apply(
+        lambda v: any(
+            part.strip() == PPH_CODE
+            for part in v.replace(";", ",").split(",")
+            if part.strip()
+        )
+    )
+
+    # Count unique TEIs that have PPH
+    pph_cases = cond_df[cond_df["has_pph"]]
+    pph_count = pph_cases["tei_id"].nunique()
+
+    return int(pph_count)
+
+
 def compute_obstetric_condition_distribution(df, facility_uids=None):
     """
     Compute distribution of all obstetric complications
