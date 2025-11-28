@@ -32,7 +32,7 @@ NEWBORN_REQUIRED_ELEMENTS = {
     "gZi9y12E9i7": "Temperature on admission (°C)",
     "UOmhJkyAK6h": "Date of Admission",
     "wlHEf9FdmJM": "CPAP Administered",
-    "T30GbTiVgFR": "First Reason for Admission",  # Only check first reason
+    "T30GbTiVgFR": "First Reason for Admission",
 }
 
 # Cache TTL for data quality results (1 hour)
@@ -191,7 +191,7 @@ def check_newborn_outliers(events_df, user):
 
 
 def check_missing_data_elements(events_df, user):
-    """SIMPLE CHECK: For each data element UID, check if value is empty"""
+    """OPTIMIZED CHECK: Batch process missing data elements for better performance"""
     if events_df.empty:
         return pd.DataFrame()
 
@@ -205,46 +205,74 @@ def check_missing_data_elements(events_df, user):
         logging.info("✅ Using cached newborn missing elements")
         return st.session_state[cache_key].copy()
 
-    missing_data = []
+    logging.info("🔍 Starting OPTIMIZED newborn missing data check")
 
-    # ✅ FIX: National users see all regions, regional users see only their region
+    # ✅ OPTIMIZATION 1: Pre-filter for required data elements only
+    required_uids = list(NEWBORN_REQUIRED_ELEMENTS.keys())
+    filtered_events = events_df[events_df["dataElement_uid"].isin(required_uids)].copy()
+
+    if filtered_events.empty:
+        logging.info("✅ No required data elements found in events")
+        return pd.DataFrame()
+
+    # ✅ OPTIMIZATION 2: Filter out non-empty values in one go
+    missing_mask = filtered_events["value"].isna() | (filtered_events["value"] == "")
+    missing_rows = filtered_events[missing_mask].copy()
+
+    if missing_rows.empty:
+        logging.info("✅ No missing data elements found")
+        return pd.DataFrame()
+
+    # ✅ OPTIMIZATION 3: Batch process patient names
+    unique_tei_ids = missing_rows["tei_id"].unique()
+    patient_names = {}
+
+    # Batch get patient names for all unique TEI IDs
+    for tei_id in unique_tei_ids:
+        first_name, last_name = get_patient_name_from_tei(tei_id, "newborn")
+        patient_names[tei_id] = (first_name, last_name)
+
+    # ✅ OPTIMIZATION 4: Pre-compute regions for facilities
+    unique_facilities = missing_rows["orgUnit_name"].unique()
+    facility_regions = {}
+
+    for facility in unique_facilities:
+        facility_regions[facility] = get_region_from_facility(facility)
+
+    # ✅ OPTIMIZATION 5: User region filtering
     user_region = user.get("region_name", "Unknown Region")
     is_national = is_national_user(user)
 
-    logging.info(f"🔍 Newborn missing data - Simple check started")
+    missing_data = []
 
-    # ✅ SIMPLE LOGIC: Check each required data element directly
-    for data_element_uid, element_name in NEWBORN_REQUIRED_ELEMENTS.items():
-        # Get ALL rows with this data element UID
-        element_rows = events_df[events_df["dataElement_uid"] == data_element_uid]
+    # ✅ OPTIMIZATION 6: Vectorized processing with pre-computed values
+    for _, row in missing_rows.iterrows():
+        tei_id = row.get("tei_id")
+        facility_name = row.get("orgUnit_name", "Unknown Facility")
+        region = facility_regions.get(facility_name, "Unknown Region")
 
-        # Find rows where value is empty
-        empty_rows = element_rows[
-            element_rows["value"].isna() | (element_rows["value"] == "")
-        ]
+        # Apply user region filter
+        if not is_national and region != user_region:
+            continue
 
-        # For each empty row, record the missing data element
-        for _, row in empty_rows.iterrows():
-            tei_id = row.get("tei_id")
-            first_name, last_name = get_patient_name_from_tei(tei_id, "newborn")
-            facility_name = row.get("orgUnit_name", "Unknown Facility")
-            region = get_region_from_facility(facility_name)
+        data_element_uid = row.get("dataElement_uid")
+        element_name = NEWBORN_REQUIRED_ELEMENTS.get(
+            data_element_uid, "Unknown Element"
+        )
 
-            # ✅ FIX: National users see all regions, regional users see only their region
-            if is_national or region == user_region:
-                missing_data.append(
-                    {
-                        "First Name": first_name,
-                        "Last Name": last_name,
-                        "Region": region,
-                        "Facility": facility_name,
-                        "TEI ID": tei_id,
-                        "Issue Type": "Missing Data Element",
-                        "Data Element Missing": element_name,
-                    }
-                )
+        first_name, last_name = patient_names.get(tei_id, ("Unknown", "Unknown"))
 
-    logging.info(f"✅ Newborn - Found {len(missing_data)} missing data elements")
+        missing_data.append(
+            {
+                "First Name": first_name,
+                "Last Name": last_name,
+                "Region": region,
+                "Facility": facility_name,
+                "TEI ID": tei_id,
+                "Issue Type": "Missing Data Element",
+                "Data Element Missing": element_name,
+            }
+        )
 
     result_df = pd.DataFrame(missing_data)
 
@@ -252,6 +280,7 @@ def check_missing_data_elements(events_df, user):
     st.session_state[cache_key] = result_df.copy()
     st.session_state[f"{cache_key}_timestamp"] = time.time()
 
+    logging.info(f"✅ OPTIMIZED Newborn - Found {len(result_df)} missing data elements")
     return result_df
 
 
@@ -277,7 +306,7 @@ def render_newborn_data_quality():
     )
     st.sidebar.info(f"👤 Data Quality: {user_level}")
 
-    tab1, tab2 = st.tabs(["Outliers", "Missing Data"])  # Removed Missing Events tab
+    tab1, tab2 = st.tabs(["Outliers", "Missing Data"])
 
     with tab1:
         render_outliers_tab(user)

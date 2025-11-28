@@ -3,7 +3,11 @@ from typing import Optional, Dict, List, Union, Set
 import pandas as pd
 import logging
 import os
-from utils.queries import get_orgunit_uids_for_user, get_program_by_uid
+from utils.queries import (
+    get_orgunit_uids_for_user,
+    get_program_by_uid,
+    get_facilities_for_user,
+)
 from utils.dhis2 import (
     fetch_dhis2_data_for_ous,
     REQUIRED_DATA_ELEMENTS,
@@ -16,15 +20,87 @@ from utils.odk_api import fetch_all_forms_as_dataframes, fetch_form_csv, list_fo
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def integrate_maternal_csv_data(evt_df: pd.DataFrame) -> pd.DataFrame:
+def filter_csv_data_by_user_access(csv_df: pd.DataFrame, user: dict) -> pd.DataFrame:
     """
-    Smart integration of maternal CSV data:
+    Filter CSV data based on user's access level and facility permissions.
+    """
+    if csv_df.empty:
+        return csv_df
+
+    user_role = user.get("role", "")
+
+    # Check if CSV has orgUnit_name column
+    if "orgUnit_name" not in csv_df.columns:
+        logging.warning(
+            "CSV data does not have 'orgUnit_name' column - cannot filter by facility"
+        )
+        return csv_df
+
+    if user_role == "national":
+        # National users see all facilities - no filtering needed
+        logging.info("🌍 National user - returning ALL CSV data")
+        return csv_df
+
+    elif user_role == "regional":
+        # Regional users see only facilities in their region
+        region_name = user.get("region_name", "")
+        if not region_name:
+            logging.warning("Regional user has no region_name - cannot filter CSV data")
+            return pd.DataFrame()  # Return empty if no region info
+
+        # Get facilities for this regional user
+        user_facilities = get_facilities_for_user(user)
+        facility_names_in_region = [facility[0] for facility in user_facilities]
+
+        # Filter CSV data to only include facilities in this region
+        filtered_csv = csv_df[csv_df["orgUnit_name"].isin(facility_names_in_region)]
+
+        logging.info(
+            f"🏞️ Regional user '{region_name}' - filtered CSV to {len(filtered_csv)} rows from {len(facility_names_in_region)} facilities"
+        )
+        logging.info(f"   📋 Facilities in region: {facility_names_in_region}")
+        if not filtered_csv.empty:
+            logging.info(
+                f"   📊 CSV facilities found: {filtered_csv['orgUnit_name'].unique().tolist()}"
+            )
+
+        return filtered_csv
+
+    elif user_role == "facility":
+        # Facility users see only their specific facility
+        facility_name = user.get("facility_name", "")
+        if not facility_name:
+            logging.warning(
+                "Facility user has no facility_name - cannot filter CSV data"
+            )
+            return pd.DataFrame()  # Return empty if no facility info
+
+        # Filter CSV data to only include this specific facility
+        filtered_csv = csv_df[csv_df["orgUnit_name"] == facility_name]
+
+        logging.info(
+            f"🏥 Facility user '{facility_name}' - filtered CSV to {len(filtered_csv)} rows"
+        )
+
+        return filtered_csv
+
+    else:
+        logging.warning(f"Unknown user role '{user_role}' - returning no CSV data")
+        return pd.DataFrame()
+
+
+def integrate_maternal_csv_data(
+    evt_df: pd.DataFrame, user: dict = None
+) -> pd.DataFrame:
+    """
+    Smart integration of maternal CSV data with user-based filtering:
     1. For TEIs with placeholder events in DHIS2 → replace with CSV data
     2. For TEIs with actual events in DHIS2 → check event IDs:
        - If same event ID exists in CSV → replace DHIS2 event with CSV event
        - If different event IDs → keep both (CSV might have additional events)
     3. If both DHIS2 and CSV have placeholder events → prioritize CSV data
     4. Add any new TEIs from CSV that don't exist in DHIS2
+    5. FILTER CSV DATA based on user's facility access level
     """
     import os
 
@@ -50,6 +126,15 @@ def integrate_maternal_csv_data(evt_df: pd.DataFrame) -> pd.DataFrame:
             logging.info("CSV file is empty - using DHIS2 data only")
             return evt_df
 
+        # ✅ NEW: FILTER CSV DATA BASED ON USER ACCESS LEVEL
+        if user:
+            csv_df = filter_csv_data_by_user_access(csv_df, user)
+            if csv_df.empty:
+                logging.info(
+                    "No CSV data accessible for this user - using DHIS2 data only"
+                )
+                return evt_df
+
         # Get unique TEI IDs from both sources
         csv_tei_ids = (
             set(csv_df["tei_id"].unique()) if "tei_id" in csv_df.columns else set()
@@ -63,8 +148,6 @@ def integrate_maternal_csv_data(evt_df: pd.DataFrame) -> pd.DataFrame:
         )
 
         # Identify placeholder vs actual events in both sources
-        # Note: Assuming CSV data always has actual events (has_actual_event = True)
-        # If CSV doesn't have this column, we'll add it
         if "has_actual_event" not in csv_df.columns:
             csv_df["has_actual_event"] = True
 
@@ -493,7 +576,7 @@ def fetch_program_data_for_user(
     # ✅ SMART CSV INTEGRATION FOR MATERNAL PROGRAM ONLY
     if program_uid == "aLoraiFNkng":
         logging.info("🔄 Integrating CSV data for maternal program")
-        evt_df = integrate_maternal_csv_data(evt_df)
+        evt_df = integrate_maternal_csv_data(evt_df, user)  # ✅ Pass user parameter
 
     # Handle period labeling
     if not evt_df.empty and "eventDate" in evt_df.columns:

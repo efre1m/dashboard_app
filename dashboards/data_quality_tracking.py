@@ -350,9 +350,7 @@ def render_data_quality_tracking(user):
     )
 
     # Check user changes - this will clear data for new users
-    is_new_user = check_user_change()
-    if is_new_user:
-        st.sidebar.success("👤 New user session - Analysis data cleared")
+    check_user_change()
 
     # Check data availability
     data_availability = check_data_availability()
@@ -387,39 +385,6 @@ def render_data_quality_tracking(user):
         logging.error(f"❌ Failed to create facility mapping: {e}")
         st.session_state.facility_to_region_map = {}
 
-    # User level information with detailed access info
-    is_national = is_national_user(user)
-    user_region = user.get("region_name", "Unknown Region")
-    user_role = user.get("role", "Unknown Role")
-    user_level = "National Level" if is_national else f"Regional Level ({user_region})"
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(f"**👤 User Level:** {user_level}")
-    st.sidebar.markdown(f"**🏢 Region:** {user_region}")
-    st.sidebar.markdown(f"**🎯 Role:** {user_role}")
-
-    if is_national:
-        st.sidebar.success("🌍 Viewing data from ALL regions")
-        # Show available regions for national users
-        try:
-            facilities_by_region = get_facilities_grouped_by_region(user)
-            regions_count = len(facilities_by_region)
-            st.sidebar.info(f"📊 Access to {regions_count} regions")
-        except:
-            st.sidebar.info("📊 Access to all regions")
-    else:
-        st.sidebar.success(f"📍 Viewing data only from {user_region} region")
-        # Show facilities available for this regional user
-        try:
-            facilities_by_region = get_facilities_grouped_by_region(user)
-            user_facilities = facilities_by_region.get(user_region, [])
-            facilities_count = len(user_facilities)
-            st.sidebar.info(
-                f"🏥 Access to {facilities_count} facilities in {user_region}"
-            )
-        except:
-            st.sidebar.info(f"🏥 Access to facilities in {user_region}")
-
     # Create tabs
     tab1, tab2 = st.tabs(["Maternal Data Quality", "Newborn Data Quality"])
 
@@ -430,7 +395,6 @@ def render_data_quality_tracking(user):
         render_newborn_data_quality_manual(user, newborn_data_available)
 
     # Cache management
-    st.sidebar.markdown("---")
     if st.sidebar.button("🧹 Clear All Analysis Data", use_container_width=True):
         clear_all_analysis_data()
         st.sidebar.success("All analysis data cleared!")
@@ -467,11 +431,6 @@ def render_maternal_data_quality_manual(user, data_available):
 
     filtered_events, filtered_tei = filter_data_by_user_access(
         maternal_events_df, maternal_tei_df, user
-    )
-
-    # Show data summary
-    st.info(
-        f"📊 Analyzing {len(filtered_events)} maternal events from {len(filtered_tei)} patients"
     )
 
     # Analysis controls
@@ -780,11 +739,6 @@ def render_newborn_data_quality_manual(user, data_available):
 
     filtered_events, filtered_tei = filter_data_by_user_access(
         newborn_events_df, newborn_tei_df, user
-    )
-
-    # Show data summary
-    st.info(
-        f"📊 Analyzing {len(filtered_events)} newborn events from {len(filtered_tei)} patients"
     )
 
     # Analysis controls

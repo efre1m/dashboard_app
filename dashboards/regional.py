@@ -995,13 +995,10 @@ def render_maternal_dashboard_shared(
         st.error("No maternal data available")
         return
 
-    # ✅ FIX: FILTER DATA BY SELECTED FACILITIES FIRST - BEFORE storing in session state
-    # This is what makes newborn work but maternal doesn't!
-    if facility_uids:
-        maternal_data = filter_data_by_facilities(maternal_data, facility_uids)
-        logging.info(f"✅ FILTERED maternal data for {len(facility_uids)} facilities")
+    # ✅ DATA IS ALREADY FILTERED BY USER ACCESS - NO NEED FOR ADDITIONAL FILTERING
+    # The data from fetch_program_data_for_user is already filtered for the user's region/facilities
 
-    # Efficient data extraction FROM FILTERED DATA
+    # Efficient data extraction
     tei_df = maternal_data.get("tei", pd.DataFrame())
     enrollments_df = maternal_data.get("enrollments", pd.DataFrame())
     events_df = maternal_data.get("events", pd.DataFrame())
@@ -1010,29 +1007,21 @@ def render_maternal_dashboard_shared(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
-    # ✅ FIX: Store FILTERED data in session state for data quality tracking
+    # ✅ Store data in session state for data quality tracking
     st.session_state.maternal_events_df = events_df.copy()
     st.session_state.maternal_tei_df = tei_df.copy()
 
-    # ✅ DEBUG: Log what we're storing
+    # ✅ DEBUG: Log what we're storing (data is already filtered by user access)
     logging.info(
-        f"✅ STORED FILTERED maternal data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
+        f"✅ STORED maternal data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
     )
     if not events_df.empty and "orgUnit_name" in events_df.columns:
-        facilities_after_filtering = events_df["orgUnit_name"].unique()
+        facilities_in_data = events_df["orgUnit_name"].unique()
         logging.info(
-            f"🔍 MATERNAL - Facilities AFTER filtering: {list(facilities_after_filtering)}"
+            f"🔍 MATERNAL - Facilities in data (already filtered by user access): {list(facilities_in_data)}"
         )
 
     render_connection_status(events_df, user=user)
-
-    # ✅ REMOVE THE REDUNDANT FILTERING - we already filtered above
-    # This part should be COMMENTED OUT or REMOVED:
-    # FILTER DATA BY SELECTED FACILITIES
-    # if facility_uids and st.session_state.get("facility_filter_applied", False):
-    #     maternal_data = filter_data_by_facilities(maternal_data, facility_uids)
-    #     tei_df = maternal_data.get("tei", pd.DataFrame())
-    #     events_df = maternal_data.get("events", pd.DataFrame())
 
     # Update session state
     st.session_state.current_facility_uids = facility_uids
