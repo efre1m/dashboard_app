@@ -21,8 +21,15 @@ from newborns_dashboard.kpi_hypothermia import (
     render_hypothermia_facility_comparison_chart,
     render_hypothermia_region_comparison_chart,
 )
+from newborns_dashboard.kpi_inborn import (
+    compute_inborn_kpi,
+    compute_inborn_numerator,  # ✅ IMPORT THE NUMERATOR FUNCTION
+    render_inborn_trend_chart,
+    render_inborn_facility_comparison_chart,
+    render_inborn_region_comparison_chart,
+)
 
-# KPI mapping for KMC coverage, CPAP coverage, and Hypothermia
+# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, and Inborn
 KPI_MAPPING = {
     "LBW KMC Coverage (%)": {
         "title": "LBW KMC Coverage (%)",
@@ -39,23 +46,30 @@ KPI_MAPPING = {
         "numerator_name": "Hypothermia Cases",
         "denominator_name": "Total Admissions",
     },
+    "Inborn Babies (%)": {
+        "title": "Inborn Babies (%)",
+        "numerator_name": "Inborn Cases",
+        "denominator_name": "Total Admissions",
+    },
 }
 
-# All KPI options including Hypothermia
+# All KPI options including Hypothermia and Inborn
 KPI_OPTIONS = [
     "LBW KMC Coverage (%)",
     "CPAP Coverage for RDS (%)",
     "Hypothermia on Admission (%)",
+    "Inborn Babies (%)",
 ]
 
-# KPI Grouping for Tab Navigation - Hypothermia added to "Newborn Complications" group
+# KPI Grouping for Tab Navigation - Inborn added to "Newborn Complications" group
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
         "CPAP Coverage for RDS (%)",
     ],
-    "Newborn Complications": [
+    "Admission Assessment": [
         "Hypothermia on Admission (%)",
+        "Inborn Babies (%)",
     ],
 }
 
@@ -121,7 +135,7 @@ def render_kpi_tab_navigation():
         st.session_state.selected_kpi_NEWBORN_DASHBOARD = "LBW KMC Coverage (%)"
 
     # Create tabs for both groups
-    tab1, tab2 = st.tabs(["👶 **Newborn Care**", "🩺 **Newborn Complications**"])
+    tab1, tab2 = st.tabs(["👶 **Newborn Care**", "🩺 **Admission Assessment**"])
 
     selected_kpi = st.session_state.selected_kpi_NEWBORN_DASHBOARD
 
@@ -154,10 +168,10 @@ def render_kpi_tab_navigation():
                 selected_kpi = "CPAP Coverage for RDS (%)"
 
     with tab2:
-        # Newborn Complications KPIs - centered single button
-        col1, col2, col3 = st.columns([1, 2, 1])
+        # Newborn Complications KPIs - two buttons layout
+        col1, col2 = st.columns(2)
 
-        with col2:
+        with col1:
             if st.button(
                 "Hypothermia",
                 key="hypothermia_btn_newborn",  # ✅ Unique key
@@ -170,12 +184,61 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Hypothermia on Admission (%)"
 
+        with col2:
+            if st.button(
+                "Inborn Babies",
+                key="inborn_btn_newborn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary" if selected_kpi == "Inborn Babies (%)" else "secondary"
+                ),
+            ):
+                selected_kpi = "Inborn Babies (%)"
+
     # ✅ FIX: Use the UNIQUE session state key
     if selected_kpi != st.session_state.selected_kpi_NEWBORN_DASHBOARD:
         st.session_state.selected_kpi_NEWBORN_DASHBOARD = selected_kpi
         st.rerun()
 
     return st.session_state.selected_kpi_NEWBORN_DASHBOARD
+
+
+def compute_inborn_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of inborn KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "inborn_rate": 0.0,
+            "inborn_count": 0,
+            "total_admitted_newborns": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported numerator function directly
+    inborn_count = compute_inborn_numerator(df, facility_uids)
+
+    # Count unique TEIs in the filtered dataset
+    total_admitted_newborns = df["tei_id"].nunique()
+
+    # Calculate inborn rate
+    inborn_rate = (
+        (inborn_count / total_admitted_newborns * 100)
+        if total_admitted_newborns > 0
+        else 0.0
+    )
+
+    return {
+        "inborn_rate": float(inborn_rate),
+        "inborn_count": int(inborn_count),
+        "total_admitted_newborns": int(total_admitted_newborns),
+    }
 
 
 def render_trend_chart_section(
@@ -267,6 +330,18 @@ def render_trend_chart_section(
             tei_df=tei_df,  # ✅ Pass TEI dataframe
         )
 
+    elif kpi_selection == "Inborn Babies (%)":
+        # Then render the trend chart
+        render_inborn_trend_chart(
+            filtered_events,
+            "period_display",
+            "Inborn Babies Trend Over Time",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,
+        )
+
 
 def render_comparison_chart(
     kpi_selection,
@@ -278,7 +353,7 @@ def render_comparison_chart(
     bg_color,
     text_color,
     is_national=False,
-    tei_df=None,  # ✅ Added TEI dataframe parameter
+    tei_df=None,
 ):
     """Render comparison charts for both national and regional views"""
 
@@ -319,7 +394,19 @@ def render_comparison_chart(
                 text_color=text_color,
                 facility_names=display_names,
                 facility_uids=facility_uids,
-                tei_df=tei_df,  # ✅ Pass TEI dataframe
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Inborn Babies (%)":
+            # Then render the comparison chart
+            render_inborn_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Inborn Babies (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                tei_df=tei_df,
             )
 
     else:  # region comparison (only for national)
@@ -361,7 +448,44 @@ def render_comparison_chart(
                 text_color=text_color,
                 region_names=display_names,
                 facilities_by_region=facilities_by_region,
-                tei_df=tei_df,  # ✅ Pass TEI dataframe
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Inborn Babies (%)":
+            # ✅ FIX: Show independent computation first
+            st.subheader("📊 Inborn Babies - Region Comparison")
+
+            # Compute overall data for context
+            overall_inborn_data = compute_inborn_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total Inborn Cases",
+                    value=f"{overall_inborn_data['inborn_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Admitted Newborns",
+                    value=f"{overall_inborn_data['total_admitted_newborns']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall Inborn Rate",
+                    value=f"{overall_inborn_data['inborn_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_inborn_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Inborn Babies (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                facilities_by_region=facilities_by_region,
+                tei_df=tei_df,
             )
 
 

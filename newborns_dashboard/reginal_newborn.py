@@ -216,6 +216,8 @@ def render_newborn_dashboard(
     st.session_state.newborn_events_df = events_df.copy()
     st.session_state.newborn_tei_df = tei_df.copy()
 
+    events_df.to_csv("debug_newborn_events.csv", index=False)
+
     # ✅ DEBUG: Log what we're storing
     logging.info(
         f"✅ STORED newborn data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"

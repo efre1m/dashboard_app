@@ -41,6 +41,7 @@ NEWBORN_HEALTH_ELEMENTS = {
     "T30GbTiVgFR",  # First Reason for Admission
     "OpHw2X58x5i",  # Second Reason for Admission
     "gJH6PkYI6IV",  # Third Reason for Admission
+    "aK5txmRYpVX",  # birth location
 }
 
 # Combine for complete coverage
@@ -75,6 +76,7 @@ DATA_ELEMENT_NAMES = {
     "T30GbTiVgFR": "First Reason for Admission",
     "OpHw2X58x5i": "Second Reason for Admission",
     "gJH6PkYI6IV": "Third Reason for Admission",
+    "aK5txmRYpVX": "birth location",
 }
 
 
