@@ -5,7 +5,6 @@ import logging
 import concurrent.futures
 import time
 from components.kpi_card import render_kpi_cards
-from utils.kpi_lbw import compute_lbw_kpi
 from newborns_dashboard.national_newborn import render_newborn_dashboard
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import (
@@ -25,6 +24,7 @@ from utils.dash_co import (
     render_kpi_tab_navigation,
 )
 from utils.kpi_utils import clear_cache, compute_kpis
+from utils.kpi_lbw import compute_lbw_kpi
 from utils.status import (
     render_connection_status,
     update_last_sync_time,
@@ -160,34 +160,26 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                     }
 
                     # Log fresh data stats
-                    maternal_events_df = (
-                        st.session_state[shared_maternal_key].get(
-                            "events", pd.DataFrame()
+                    maternal_tei_count = (
+                        len(
+                            st.session_state[shared_maternal_key].get(
+                                "tei", pd.DataFrame()
+                            )
                         )
                         if st.session_state[shared_maternal_key]
-                        else pd.DataFrame()
-                    )
-                    newborn_events_df = (
-                        st.session_state[shared_newborn_key].get(
-                            "events", pd.DataFrame()
-                        )
-                        if st.session_state[shared_newborn_key]
-                        else pd.DataFrame()
-                    )
-
-                    maternal_tei_count = (
-                        maternal_events_df["tei_id"].nunique()
-                        if not maternal_events_df.empty
                         else 0
                     )
                     newborn_tei_count = (
-                        newborn_events_df["tei_id"].nunique()
-                        if not newborn_events_df.empty
+                        len(
+                            st.session_state[shared_newborn_key].get(
+                                "tei", pd.DataFrame()
+                            )
+                        )
+                        if st.session_state[shared_newborn_key]
                         else 0
                     )
-
                     logging.info(
-                        f"✅ FRESH DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs (from events)"
+                        f"✅ FRESH DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs"
                     )
 
                     # Reset refresh trigger and user changed flags
@@ -209,30 +201,20 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
             success = load_data()
 
     else:
-        # ✅ Use cached data - count TEIs from events
-        maternal_events_df = (
-            st.session_state[shared_maternal_key].get("events", pd.DataFrame())
-            if st.session_state[shared_maternal_key]
-            else pd.DataFrame()
-        )
-        newborn_events_df = (
-            st.session_state[shared_newborn_key].get("events", pd.DataFrame())
-            if st.session_state[shared_newborn_key]
-            else pd.DataFrame()
-        )
-
+        # ✅ Use cached data
         maternal_tei_count = (
-            maternal_events_df["tei_id"].nunique()
-            if not maternal_events_df.empty
+            len(st.session_state[shared_maternal_key].get("tei", pd.DataFrame()))
+            if st.session_state[shared_maternal_key]
             else 0
         )
         newborn_tei_count = (
-            newborn_events_df["tei_id"].nunique() if not newborn_events_df.empty else 0
+            len(st.session_state[shared_newborn_key].get("tei", pd.DataFrame()))
+            if st.session_state[shared_newborn_key]
+            else 0
         )
-
         time_elapsed = current_time - st.session_state[shared_timestamp_key]
         logging.info(
-            f"✅ USING CACHED DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs (from events) ({time_elapsed:.0f}s old)"
+            f"✅ USING CACHED DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs ({time_elapsed:.0f}s old)"
         )
 
     return {
@@ -314,6 +296,21 @@ def initialize_session_state():
             "mentorship": False,
             "data_quality": False,
         },
+        # ✅ NEW: Track which tabs have been activated by user
+        "tab_data_loaded": {
+            "maternal": True,  # Always load maternal and newborn by default
+            "newborn": True,  # Always load newborn by default
+            "summary": False,  # Only load when user clicks button
+            "mentorship": False,  # Only load when user clicks button
+            "data_quality": True,  # Always load data quality by default
+        },
+        # ✅ NEW: Track loading state for each tab
+        "tab_loading": {
+            "summary": False,
+            "mentorship": False,
+        },
+        # ✅ NEW: Force show tables in summary dashboard
+        "show_summarized_data": True,
     }
 
     for key, default_value in session_vars.items():
@@ -340,6 +337,17 @@ def initialize_session_state():
         # Reset all tab states
         for tab in st.session_state.tab_initialized.keys():
             st.session_state.tab_initialized[tab] = False
+        # Reset data loaded flags except for default tabs
+        st.session_state.tab_data_loaded["maternal"] = True
+        st.session_state.tab_data_loaded["newborn"] = True
+        st.session_state.tab_data_loaded["summary"] = False
+        st.session_state.tab_data_loaded["mentorship"] = False
+        st.session_state.tab_data_loaded["data_quality"] = True
+        # Reset loading states
+        st.session_state.tab_loading["summary"] = False
+        st.session_state.tab_loading["mentorship"] = False
+        # Reset show tables
+        st.session_state.show_summarized_data = True
     else:
         st.session_state.user_changed = False
 
@@ -348,14 +356,70 @@ def initialize_session_state():
 initialize_session_state()
 
 
-def count_unique_teis_from_events(events_df, facility_uids=None):
-    """Count unique TEI IDs from events DataFrame - UPDATED to use events instead of TEI df"""
+# ✅ CONSISTENT COUNTING FUNCTIONS - SAME AS REGIONAL DASHBOARD
+def count_unique_newborns_consistent(
+    tei_df, facility_uids=None, org_unit_column="tei_orgUnit"
+):
+    """
+    ✅ FIX: Consistent counting of unique newborns across entire dashboard
+    Uses the same logic as regional dashboard
+    """
+    if tei_df.empty:
+        return 0
+
+    # Filter TEI dataframe by the selected facility UIDs if provided
+    if facility_uids and org_unit_column in tei_df.columns:
+        filtered_tei = tei_df[tei_df[org_unit_column].isin(facility_uids)]
+    elif facility_uids and "orgUnit" in tei_df.columns:
+        filtered_tei = tei_df[tei_df["orgUnit"].isin(facility_uids)]
+    else:
+        filtered_tei = tei_df
+
+    # Count unique newborns using the same column consistently
+    if "tei_id" in filtered_tei.columns:
+        return filtered_tei["tei_id"].nunique()
+    elif "trackedEntityInstance" in filtered_tei.columns:
+        return filtered_tei["trackedEntityInstance"].nunique()
+    else:
+        # Fallback: use index if no TEI column found
+        return filtered_tei.index.nunique()
+
+
+def count_unique_mothers_consistent(enrollments_df, facility_uids=None):
+    """
+    ✅ FIX: Consistent counting of unique mothers across entire dashboard
+    Uses the same logic as regional dashboard
+    """
+    if enrollments_df.empty:
+        return 0
+
+    # Filter enrollments by facility if provided
+    if facility_uids and "orgUnit" in enrollments_df.columns:
+        filtered_enrollments = enrollments_df[
+            enrollments_df["orgUnit"].isin(facility_uids)
+        ]
+    else:
+        filtered_enrollments = enrollments_df
+
+    # Count unique mothers using the same column consistently
+    if "tei_id" in filtered_enrollments.columns:
+        return filtered_enrollments["tei_id"].nunique()
+    elif "trackedEntityInstance" in filtered_enrollments.columns:
+        return filtered_enrollments["trackedEntityInstance"].nunique()
+    else:
+        return filtered_enrollments.index.nunique()
+
+
+def count_unique_teis_from_events(
+    events_df, facility_uids=None, org_unit_column="orgUnit"
+):
+    """Count unique TEI IDs from events DataFrame - CONSISTENT WITH REGIONAL"""
     if events_df.empty or "tei_id" not in events_df.columns:
         return 0
 
-    # Filter by facility if specified
-    if facility_uids and "orgUnit" in events_df.columns:
-        filtered_events = events_df[events_df["orgUnit"].isin(facility_uids)]
+    # Filter by facility if specified - SAME LOGIC AS REGIONAL
+    if facility_uids and org_unit_column in events_df.columns:
+        filtered_events = events_df[events_df[org_unit_column].isin(facility_uids)]
     else:
         filtered_events = events_df
 
@@ -420,36 +484,129 @@ def filter_data_by_facilities(data_dict, facility_uids):
 
 
 def calculate_regional_comparison_data(
-    maternal_events_df, newborn_events_df, facilities_by_region, facility_mapping
+    maternal_events_df,
+    newborn_events_df,
+    facilities_by_region,
+    facility_mapping,
+    maternal_enrollments_df=None,
+    newborn_tei_df=None,
 ):
-    """Optimized regional comparison data calculation using events data"""
+    """✅ FIX: Regional comparison data calculation using CONSISTENT counting"""
     regional_data = {}
+
     for region_name, facilities in facilities_by_region.items():
         region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
 
-        # Count TEIs from events data instead of TEI data
-        maternal_count = count_unique_teis_from_events(
-            maternal_events_df, region_facility_uids
-        )
-        newborn_count = count_unique_teis_from_events(
-            newborn_events_df, region_facility_uids
-        )
+        # ✅ FIX: Use consistent counting - SAME AS REGIONAL DASHBOARD
+        # Count mothers from enrollments data (consistent approach)
+        if maternal_enrollments_df is not None and not maternal_enrollments_df.empty:
+            maternal_count = count_unique_mothers_consistent(
+                maternal_enrollments_df, region_facility_uids
+            )
+        else:
+            # Fallback to events counting (like regional dashboard)
+            maternal_count = count_unique_teis_from_events(
+                maternal_events_df, region_facility_uids
+            )
+
+        # ✅ FIX: Use consistent counting - SAME AS REGIONAL DASHBOARD
+        if newborn_tei_df is not None and not newborn_tei_df.empty:
+            newborn_count = count_unique_newborns_consistent(
+                newborn_tei_df, region_facility_uids
+            )
+        else:
+            # Fallback to events counting (like regional dashboard)
+            newborn_count = count_unique_teis_from_events(
+                newborn_events_df, region_facility_uids
+            )
 
         regional_data[region_name] = {
             "mothers": maternal_count,
             "newborns": newborn_count,
         }
+
     return regional_data
+
+
+def render_loading_indicator(tab_name, icon):
+    """Render a loading indicator for tabs that are processing data"""
+    st.markdown(
+        f"""
+        <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); 
+             border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">{icon}</div>
+            <h2 style="color: #495057; margin-bottom: 1rem;">Loading {tab_name}...</h2>
+            <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+                Please wait while we process the data. This may take 1-2 minutes.
+            </p>
+            <div style="display: inline-block; padding: 10px 20px; background: #007bff; color: white; 
+                 border-radius: 25px; font-weight: bold;">
+                ⏳ Processing Data...
+            </div>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Simulate processing time
+    time.sleep(2)
+
+
+def render_tab_placeholder(tab_name, icon, tab_key, description):
+    """Render a placeholder with a button to load data for the tab"""
+    st.markdown(
+        f"""
+        <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); 
+             border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">{icon}</div>
+            <h2 style="color: #495057; margin-bottom: 1rem;">{tab_name}</h2>
+            <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+                {description}
+            </p>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button(
+            f"🚀 Load {tab_name} Data",
+            use_container_width=True,
+            type="primary",
+            key=f"load_{tab_key}_data",
+        ):
+            # Set loading state and data loaded state
+            st.session_state.tab_loading[tab_key] = True
+            st.session_state.tab_data_loaded[tab_key] = True
+            st.rerun()
 
 
 def render_summary_dashboard_shared(
     user, country_name, facilities_by_region, facility_mapping, shared_data
 ):
-    """OPTIMIZED Summary Dashboard - Only runs when tab is active"""
+    """✅ FIX: OPTIMIZED Summary Dashboard with CONSISTENT counting"""
 
-    # ✅ FIXED: Only run if this is the active tab
+    # ✅ FIXED: Only run if this is the active tab AND data is loaded
     if st.session_state.active_tab != "summary":
         return
+
+    # ✅ Check if user has clicked "View Data" button for this tab
+    if not st.session_state.tab_data_loaded["summary"]:
+        render_tab_placeholder(
+            "Summary Dashboard",
+            "📊",
+            "summary",
+            "Get comprehensive overview of maternal and newborn health indicators across all facilities",
+        )
+        return
+
+    # ✅ Show loading indicator if data is being processed
+    if st.session_state.tab_loading["summary"]:
+        render_loading_indicator("Summary Dashboard", "📊")
+        # After loading, set loading to False
+        st.session_state.tab_loading["summary"] = False
+        st.rerun()
 
     logging.info("🔄 Summary dashboard rendering")
 
@@ -491,10 +648,6 @@ def render_summary_dashboard_shared(
         st.error("No data available for summary dashboard")
         return
 
-    # Initialize summarized data state
-    if "show_summarized_data" not in st.session_state:
-        st.session_state.show_summarized_data = False
-
     # Create cache key for summary data
     cache_key = f"summary_{location_name}_{len(facility_uids)}"
 
@@ -509,7 +662,7 @@ def render_summary_dashboard_shared(
     else:
         # Compute summary data
         with st.spinner("🔄 Computing summary statistics..."):
-            # Extract events dataframes (not TEI dataframes)
+            # Extract dataframes - use consistent data sources
             maternal_events_df = (
                 maternal_data.get("events", pd.DataFrame())
                 if maternal_data
@@ -521,24 +674,29 @@ def render_summary_dashboard_shared(
                 else pd.DataFrame()
             )
 
-            # Get enrollment dates
-            newborn_enrollments_df = normalize_enrollment_dates(
-                newborn_data.get("enrollments", pd.DataFrame())
-                if newborn_data
-                else pd.DataFrame()
-            )
+            # ✅ FIX: Get TEI and enrollments data for consistent counting
             maternal_enrollments_df = normalize_enrollment_dates(
                 maternal_data.get("enrollments", pd.DataFrame())
                 if maternal_data
                 else pd.DataFrame()
             )
-
-            # ✅ UPDATED: Count TEIs from events data instead of TEI data
-            maternal_tei_count = count_unique_teis_from_events(
-                maternal_events_df, facility_uids
+            newborn_tei_df = (
+                newborn_data.get("tei", pd.DataFrame())
+                if newborn_data
+                else pd.DataFrame()
             )
-            newborn_tei_count = count_unique_teis_from_events(
-                newborn_events_df, facility_uids
+            newborn_enrollments_df = normalize_enrollment_dates(
+                newborn_data.get("enrollments", pd.DataFrame())
+                if newborn_data
+                else pd.DataFrame()
+            )
+
+            # ✅ FIX: Use consistent counting functions - SAME AS REGIONAL
+            maternal_tei_count = count_unique_mothers_consistent(
+                maternal_enrollments_df, facility_uids
+            )
+            newborn_tei_count = count_unique_newborns_consistent(
+                newborn_tei_df, facility_uids
             )
 
             # Get dates
@@ -549,12 +707,14 @@ def render_summary_dashboard_shared(
                 maternal_enrollments_df, "enrollmentDate"
             )
 
-            # Regional comparison - using events data
+            # ✅ FIX: Regional comparison - using consistent counting
             regional_comparison_data = calculate_regional_comparison_data(
                 maternal_events_df,
                 newborn_events_df,
                 facilities_by_region,
                 facility_mapping,
+                maternal_enrollments_df=maternal_enrollments_df,
+                newborn_tei_df=newborn_tei_df,
             )
 
             # Use pre-computed KPIs
@@ -618,12 +778,16 @@ def render_summary_dashboard_shared(
                     "kmc_coverage_rate": 0.0,
                     "kmc_cases": 0,
                     "total_lbw": 0,
+                    "total_newborns": newborn_tei_count,  # ✅ Add consistent count
+                    "total_mothers": maternal_tei_count,  # ✅ Add consistent count
                 }
                 logging.info("🔄 Using placeholder NEWBORN KPIs")
 
             # Newborn indicators
             newborn_indicators = {
-                "total_admitted": newborn_tei_count,
+                "total_admitted": newborn_kpi_data.get(
+                    "total_newborns", newborn_tei_count
+                ),  # ✅ Use consistent count
                 "nmr": "N/A",
                 "kmc_coverage_rate": newborn_kpi_data.get("kmc_coverage_rate", 0.0),
                 "kmc_cases": newborn_kpi_data.get("kmc_cases", 0),
@@ -633,8 +797,12 @@ def render_summary_dashboard_shared(
             summary_data = {
                 "maternal_indicators": maternal_indicators,
                 "newborn_indicators": newborn_indicators,
-                "maternal_tei_count": maternal_tei_count,
-                "newborn_tei_count": newborn_tei_count,
+                "maternal_tei_count": newborn_kpi_data.get(
+                    "total_mothers", maternal_tei_count
+                ),  # ✅ Use consistent count
+                "newborn_tei_count": newborn_kpi_data.get(
+                    "total_newborns", newborn_tei_count
+                ),  # ✅ Use consistent count
                 "newborn_start_date": newborn_start_date,
                 "maternal_start_date": maternal_start_date,
                 "regional_comparison_data": regional_comparison_data,
@@ -675,17 +843,7 @@ def render_summary_dashboard_shared(
         unsafe_allow_html=True,
     )
 
-    # Single "View Summarized Data" Button at the top
-    if not st.session_state.show_summarized_data:
-        col1, col2, col3 = st.columns([2, 1, 2])
-        with col2:
-            if st.button(
-                "📊 View Summarized Data", use_container_width=True, type="primary"
-            ):
-                st.session_state.show_summarized_data = True
-                st.rerun()
-
-    # Show quick statistics always
+    # ✅ Show quick statistics at the top
     st.markdown("### 📈 Quick Statistics")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -733,44 +891,197 @@ def render_summary_dashboard_shared(
                 unsafe_allow_html=True,
             )
 
-    # Show all tables only when button is clicked
-    if st.session_state.show_summarized_data:
-        st.markdown("---")
+    # ✅ Add data consistency check
+    total_regional_mothers = sum(
+        data["mothers"] for data in regional_comparison_data.values()
+    )
+    total_regional_newborns = sum(
+        data["newborns"] for data in regional_comparison_data.values()
+    )
 
-        # Newborn Overview Table
-        st.markdown("### 👶 Newborn Care Overview")
+    if (
+        total_regional_mothers != maternal_tei_count
+        or total_regional_newborns != newborn_tei_count
+    ):
+        st.warning(
+            f"""
+        **Data Consistency Note:**
+        - Regional mothers sum: {total_regional_mothers:,} vs Quick stats: {maternal_tei_count:,}
+        - Regional newborns sum: {total_regional_newborns:,} vs Quick stats: {newborn_tei_count:,}
+        
+        *Regional data shows facility-level counts while quick stats show overall unique counts.*
+        """
+        )
 
-        # Create newborn table data
-        newborn_table_data = {
-            "No": list(range(1, 10)),
-            "Indicator": [
-                "Start Date",
-                location_type,
-                "Total Admitted Newborns",
-                "NMR",
-                "Stillbirth Rate",
-                "Live Births",
-                "Stillbirths",
-                "Total Births",
-                "Low Birth Weight Rate (<2500g)",
+    # ✅ DIRECTLY SHOW ALL TABLES (no button needed)
+    st.markdown("---")
+
+    # Newborn Overview Table
+    st.markdown("### 👶 Newborn Care Overview")
+
+    # Create newborn table data
+    newborn_table_data = {
+        "No": list(range(1, 10)),
+        "Indicator": [
+            "Start Date",
+            location_type,
+            "Total Admitted Newborns",
+            "NMR",
+            "Stillbirth Rate",
+            "Live Births",
+            "Stillbirths",
+            "Total Births",
+            "Low Birth Weight Rate (<2500g)",
+        ],
+        "Value": [
+            newborn_start_date,
+            location_name,
+            f"{newborn_tei_count:,}",
+            f"{newborn_indicators['nmr']}",
+            f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
+            f"{maternal_indicators['live_births']:,}",
+            f"{maternal_indicators['stillbirths']:,}",
+            f"{maternal_indicators['total_births']:,}",
+            f"{maternal_indicators['low_birth_weight_rate']:.2f}%",
+        ],
+    }
+
+    newborn_table_df = pd.DataFrame(newborn_table_data)
+    st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
+    st.markdown(
+        newborn_table_df.style.set_table_attributes(
+            'class="summary-table newborn-table"'
+        )
+        .hide(axis="index")
+        .set_properties(**{"text-align": "left"})
+        .to_html(),
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Download button for newborn data
+    col_info, col_download = st.columns([3, 1])
+    with col_download:
+        newborn_data_download = {
+            "Start Date": [newborn_start_date],
+            f"{location_type}": [location_name],
+            "Total Admitted Newborns": [newborn_tei_count],
+            "NMR": [f"{newborn_indicators['nmr']}"],
+            "Stillbirth Rate": [
+                f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births"
             ],
-            "Value": [
-                newborn_start_date,
-                location_name,
-                f"{newborn_tei_count:,}",
-                f"{newborn_indicators['nmr']}",
-                f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
-                f"{maternal_indicators['live_births']:,}",
-                f"{maternal_indicators['stillbirths']:,}",
-                f"{maternal_indicators['total_births']:,}",
-                f"{maternal_indicators['low_birth_weight_rate']:.2f}%",
+            "Live Births": [maternal_indicators["live_births"]],
+            "Stillbirths": [maternal_indicators["stillbirths"]],
+            "Total Births": [maternal_indicators["total_births"]],
+            "Low Birth Weight Rate": [
+                f"{maternal_indicators['low_birth_weight_rate']:.2f}%"
             ],
         }
+        newborn_df = pd.DataFrame(newborn_data_download)
+        st.download_button(
+            "📥 Download Newborn Data",
+            data=newborn_df.to_csv(index=False),
+            file_name=f"newborn_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
-        newborn_table_df = pd.DataFrame(newborn_table_data)
+    # Maternal Overview Table
+    st.markdown("---")
+    st.markdown("### 🤰 Maternal Care Overview")
+
+    # Create maternal table data
+    maternal_table_data = {
+        "No": list(range(1, 6)),
+        "Indicator": [
+            "Start Date",
+            location_type,
+            "Total Admitted Mothers",
+            "Total Deliveries",
+            "Maternal Death Rate",
+        ],
+        "Value": [
+            maternal_start_date,
+            location_name,
+            f"{maternal_tei_count:,}",
+            f"{maternal_indicators['total_deliveries']:,}",
+            f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births",
+        ],
+    }
+
+    maternal_table_df = pd.DataFrame(maternal_table_data)
+    st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
+    st.markdown(
+        maternal_table_df.style.set_table_attributes(
+            'class="summary-table maternal-table"'
+        )
+        .hide(axis="index")
+        .set_properties(**{"text-align": "left"})
+        .to_html(),
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Download button for maternal data
+    col_info2, col_download2 = st.columns([3, 1])
+    with col_download2:
+        maternal_data_download = {
+            "Start Date": [maternal_start_date],
+            f"{location_type}": [location_name],
+            "Total Admitted Mothers": [maternal_tei_count],
+            "Total Deliveries": [maternal_indicators["total_deliveries"]],
+            "Maternal Death Rate": [
+                f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births"
+            ],
+        }
+        maternal_df = pd.DataFrame(maternal_data_download)
+        st.download_button(
+            "📥 Download Maternal Data",
+            data=maternal_df.to_csv(index=False),
+            file_name=f"maternal_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    # Regional comparison table
+    st.markdown("---")
+    st.markdown("### 📊 Mothers & Newborns by region")
+
+    if regional_comparison_data:
+        regions = list(regional_comparison_data.keys())
+        total_mothers = sum(
+            data["mothers"] for data in regional_comparison_data.values()
+        )
+        total_newborns = sum(
+            data["newborns"] for data in regional_comparison_data.values()
+        )
+
+        # Create transposed table structure
+        transposed_data = []
+        for i, region in enumerate(regions, 1):
+            transposed_data.append(
+                {
+                    "No": i,
+                    "Region Name": region,
+                    "Admitted Mothers": f"{regional_comparison_data[region]['mothers']:,}",
+                    "Admitted Newborns": f"{regional_comparison_data[region]['newborns']:,}",
+                }
+            )
+
+        # Add TOTAL row
+        transposed_data.append(
+            {
+                "No": "",
+                "Region Name": "TOTAL",
+                "Admitted Mothers": f"{total_mothers:,}",
+                "Admitted Newborns": f"{total_newborns:,}",
+            }
+        )
+
+        transposed_df = pd.DataFrame(transposed_data)
         st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
         st.markdown(
-            newborn_table_df.style.set_table_attributes(
+            transposed_df.style.set_table_attributes(
                 'class="summary-table newborn-table"'
             )
             .hide(axis="index")
@@ -780,173 +1091,35 @@ def render_summary_dashboard_shared(
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Download button for newborn data
-        col_info, col_download = st.columns([3, 1])
-        with col_download:
-            newborn_data_download = {
-                "Start Date": [newborn_start_date],
-                f"{location_type}": [location_name],
-                "Total Admitted Newborns": [newborn_tei_count],
-                "NMR": [f"{newborn_indicators['nmr']}"],
-                "Stillbirth Rate": [
-                    f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births"
-                ],
-                "Live Births": [maternal_indicators["live_births"]],
-                "Stillbirths": [maternal_indicators["stillbirths"]],
-                "Total Births": [maternal_indicators["total_births"]],
-                "Low Birth Weight Rate": [
-                    f"{maternal_indicators['low_birth_weight_rate']:.2f}%"
-                ],
-            }
-            newborn_df = pd.DataFrame(newborn_data_download)
-            st.download_button(
-                "📥 Download Newborn Data",
-                data=newborn_df.to_csv(index=False),
-                file_name=f"newborn_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-
-        # Maternal Overview Table
-        st.markdown("---")
-        st.markdown("### 🤰 Maternal Care Overview")
-
-        # Create maternal table data
-        maternal_table_data = {
-            "No": list(range(1, 6)),
-            "Indicator": [
-                "Start Date",
-                location_type,
-                "Total Admitted Mothers",
-                "Total Deliveries",
-                "Maternal Death Rate",
-            ],
-            "Value": [
-                maternal_start_date,
-                location_name,
-                f"{maternal_tei_count:,}",
-                f"{maternal_indicators['total_deliveries']:,}",
-                f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births",
-            ],
-        }
-
-        maternal_table_df = pd.DataFrame(maternal_table_data)
-        st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
-        st.markdown(
-            maternal_table_df.style.set_table_attributes(
-                'class="summary-table maternal-table"'
-            )
-            .hide(axis="index")
-            .set_properties(**{"text-align": "left"})
-            .to_html(),
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # Download button for maternal data
-        col_info2, col_download2 = st.columns([3, 1])
-        with col_download2:
-            maternal_data_download = {
-                "Start Date": [maternal_start_date],
-                f"{location_type}": [location_name],
-                "Total Admitted Mothers": [maternal_tei_count],
-                "Total Deliveries": [maternal_indicators["total_deliveries"]],
-                "Maternal Death Rate": [
-                    f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births"
-                ],
-            }
-            maternal_df = pd.DataFrame(maternal_data_download)
-            st.download_button(
-                "📥 Download Maternal Data",
-                data=maternal_df.to_csv(index=False),
-                file_name=f"maternal_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-
-        # Regional comparison table
-        st.markdown("---")
-        st.markdown("### 📊 Mothers & Newborns by region")
-
-        if regional_comparison_data:
-            regions = list(regional_comparison_data.keys())
-            total_mothers = sum(
-                data["mothers"] for data in regional_comparison_data.values()
-            )
-            total_newborns = sum(
-                data["newborns"] for data in regional_comparison_data.values()
-            )
-
-            # Create transposed table structure
-            transposed_data = []
-            for i, region in enumerate(regions, 1):
-                transposed_data.append(
-                    {
-                        "No": i,
-                        "Region Name": region,
-                        "Admitted Mothers": f"{regional_comparison_data[region]['mothers']:,}",
-                        "Admitted Newborns": f"{regional_comparison_data[region]['newborns']:,}",
-                    }
-                )
-
-            # Add TOTAL row
-            transposed_data.append(
-                {
-                    "No": "",
-                    "Region Name": "TOTAL",
-                    "Admitted Mothers": f"{total_mothers:,}",
-                    "Admitted Newborns": f"{total_newborns:,}",
-                }
-            )
-
-            transposed_df = pd.DataFrame(transposed_data)
-            st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
-            st.markdown(
-                transposed_df.style.set_table_attributes(
-                    'class="summary-table newborn-table"'
-                )
-                .hide(axis="index")
-                .set_properties(**{"text-align": "left"})
-                .to_html(),
-                unsafe_allow_html=True,
-            )
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Add download button for regional data
-            col_info3, col_download3 = st.columns([3, 1])
-            with col_download3:
-                download_data = []
-                for region, data in regional_comparison_data.items():
-                    download_data.append(
-                        {
-                            "Region": region,
-                            "Admitted Mothers": data["mothers"],
-                            "Admitted Newborns": data["newborns"],
-                        }
-                    )
+        # Add download button for regional data
+        col_info3, col_download3 = st.columns([3, 1])
+        with col_download3:
+            download_data = []
+            for region, data in regional_comparison_data.items():
                 download_data.append(
                     {
-                        "Region": "TOTAL",
-                        "Admitted Mothers": total_mothers,
-                        "Admitted Newborns": total_newborns,
+                        "Region": region,
+                        "Admitted Mothers": data["mothers"],
+                        "Admitted Newborns": data["newborns"],
                     }
                 )
-                download_df = pd.DataFrame(download_data)
-                st.download_button(
-                    "📥 Download Regional Data",
-                    data=download_df.to_csv(index=False),
-                    file_name=f"regional_comparison_{country_name.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
-        else:
-            st.info("No regional data available for comparison.")
+            download_data.append(
+                {
+                    "Region": "TOTAL",
+                    "Admitted Mothers": total_mothers,
+                    "Admitted Newborns": total_newborns,
+                }
+            )
+            download_df = pd.DataFrame(download_data)
+            st.download_button(
+                "📥 Download Regional Data",
+                data=download_df.to_csv(index=False),
+                file_name=f"regional_comparison_{country_name.replace(' ', '_')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
     else:
-        # Show message when summarized data is not displayed
-        st.markdown("---")
-        st.info(
-            "💡 Click the 'View Summarized Data' button above to see detailed tables and regional comparisons"
-        )
+        st.info("No regional data available for comparison.")
 
 
 def render_maternal_dashboard_shared(
@@ -1565,7 +1738,22 @@ def render():
             st.session_state.active_tab = "mentorship"
             logging.info("🔄 Switched to Mentorship tab")
 
-        display_odk_dashboard(user)
+        # ✅ NEW: Check if mentorship data should be loaded
+        if not st.session_state.tab_data_loaded["mentorship"]:
+            render_tab_placeholder(
+                "Mentorship Dashboard",
+                "📋",
+                "mentorship",
+                "View mentorship tracking data and ODK form submissions",
+            )
+        else:
+            # ✅ Show loading indicator if data is being processed
+            if st.session_state.tab_loading["mentorship"]:
+                render_loading_indicator("Mentorship Dashboard", "📋")
+                # After loading, set loading to False
+                st.session_state.tab_loading["mentorship"] = False
+                st.rerun()
+            display_odk_dashboard(user)
 
     with tab5:
         if st.session_state.active_tab != "data_quality":

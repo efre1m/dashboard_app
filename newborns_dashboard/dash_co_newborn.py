@@ -28,8 +28,15 @@ from newborns_dashboard.kpi_inborn import (
     render_inborn_facility_comparison_chart,
     render_inborn_region_comparison_chart,
 )
+from newborns_dashboard.kpi_nmr import (
+    compute_nmr_kpi,
+    compute_nmr_numerator,  # ✅ IMPORT THE NUMERATOR FUNCTION
+    render_nmr_trend_chart,
+    render_nmr_facility_comparison_chart,
+    render_nmr_region_comparison_chart,
+)
 
-# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, and Inborn
+# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, Inborn, and NMR
 KPI_MAPPING = {
     "LBW KMC Coverage (%)": {
         "title": "LBW KMC Coverage (%)",
@@ -51,17 +58,23 @@ KPI_MAPPING = {
         "numerator_name": "Inborn Cases",
         "denominator_name": "Total Admissions",
     },
+    "Neonatal Mortality Rate (%)": {
+        "title": "Neonatal Mortality Rate (%)",
+        "numerator_name": "Dead Cases",
+        "denominator_name": "Total Admissions",
+    },
 }
 
-# All KPI options including Hypothermia and Inborn
+# All KPI options including Hypothermia, Inborn, and NMR
 KPI_OPTIONS = [
     "LBW KMC Coverage (%)",
     "CPAP Coverage for RDS (%)",
     "Hypothermia on Admission (%)",
     "Inborn Babies (%)",
+    "Neonatal Mortality Rate (%)",
 ]
 
-# KPI Grouping for Tab Navigation - Inborn added to "Newborn Complications" group
+# KPI Grouping for Tab Navigation - NMR added to "Newborn Complications" group
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
@@ -70,6 +83,9 @@ KPI_GROUPS = {
     "Admission Assessment": [
         "Hypothermia on Admission (%)",
         "Inborn Babies (%)",
+    ],
+    "Newborn Outcomes": [
+        "Neonatal Mortality Rate (%)",
     ],
 }
 
@@ -134,8 +150,14 @@ def render_kpi_tab_navigation():
     if "selected_kpi_NEWBORN_DASHBOARD" not in st.session_state:
         st.session_state.selected_kpi_NEWBORN_DASHBOARD = "LBW KMC Coverage (%)"
 
-    # Create tabs for both groups
-    tab1, tab2 = st.tabs(["👶 **Newborn Care**", "🩺 **Admission Assessment**"])
+    # Create tabs for all groups
+    tab1, tab2, tab3 = st.tabs(
+        [
+            "👶 **Newborn Care**",
+            "🩺 **Admission Assessment**",
+            "📊 **Newborn Outcomes**",
+        ]
+    )
 
     selected_kpi = st.session_state.selected_kpi_NEWBORN_DASHBOARD
 
@@ -168,7 +190,7 @@ def render_kpi_tab_navigation():
                 selected_kpi = "CPAP Coverage for RDS (%)"
 
     with tab2:
-        # Newborn Complications KPIs - two buttons layout
+        # Admission Assessment KPIs - two buttons layout
         col1, col2 = st.columns(2)
 
         with col1:
@@ -194,6 +216,23 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Inborn Babies (%)"
+
+    with tab3:
+        # Newborn Outcomes KPIs - single button layout
+        (col1,) = st.columns(1)
+
+        with col1:
+            if st.button(
+                "Neonatal Mortality",
+                key="nmr_btn_newborn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Neonatal Mortality Rate (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Neonatal Mortality Rate (%)"
 
     # ✅ FIX: Use the UNIQUE session state key
     if selected_kpi != st.session_state.selected_kpi_NEWBORN_DASHBOARD:
@@ -237,6 +276,44 @@ def compute_inborn_for_dashboard(df, facility_uids=None, tei_df=None):
     return {
         "inborn_rate": float(inborn_rate),
         "inborn_count": int(inborn_count),
+        "total_admitted_newborns": int(total_admitted_newborns),
+    }
+
+
+def compute_nmr_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of NMR KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "nmr_rate": 0.0,
+            "dead_count": 0,
+            "total_admitted_newborns": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported numerator function directly
+    dead_count = compute_nmr_numerator(df, facility_uids)
+
+    # Count unique TEIs in the filtered dataset
+    total_admitted_newborns = df["tei_id"].nunique()
+
+    # Calculate NMR rate
+    nmr_rate = (
+        (dead_count / total_admitted_newborns * 100)
+        if total_admitted_newborns > 0
+        else 0.0
+    )
+
+    return {
+        "nmr_rate": float(nmr_rate),
+        "dead_count": int(dead_count),
         "total_admitted_newborns": int(total_admitted_newborns),
     }
 
@@ -342,6 +419,18 @@ def render_trend_chart_section(
             tei_df=tei_df,
         )
 
+    elif kpi_selection == "Neonatal Mortality Rate (%)":
+        # Then render the trend chart
+        render_nmr_trend_chart(
+            filtered_events,
+            "period_display",
+            "Neonatal Mortality Rate Trend Over Time",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,
+        )
+
 
 def render_comparison_chart(
     kpi_selection,
@@ -402,6 +491,18 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 title="Inborn Babies (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Neonatal Mortality Rate (%)":
+            # Then render the comparison chart
+            render_nmr_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Neonatal Mortality Rate (%) - Facility Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 facility_names=display_names,
@@ -481,6 +582,43 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 title="Inborn Babies (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                facilities_by_region=facilities_by_region,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Neonatal Mortality Rate (%)":
+            # ✅ FIX: Show independent computation first
+            st.subheader("📊 Neonatal Mortality Rate - Region Comparison")
+
+            # Compute overall data for context
+            overall_nmr_data = compute_nmr_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total Dead Cases",
+                    value=f"{overall_nmr_data['dead_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Admitted Newborns",
+                    value=f"{overall_nmr_data['total_admitted_newborns']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall NMR Rate",
+                    value=f"{overall_nmr_data['nmr_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_nmr_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Neonatal Mortality Rate (%) - Region Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 region_names=display_names,

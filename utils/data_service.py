@@ -423,6 +423,12 @@ def fetch_program_data_for_user(
             ],
             "program_stage_name": "Interventions",
         },
+        "TOicTEwzSGj": {  # Discharge And Final Diagnosis
+            "data_elements": [
+                "vmOAGuFcaz4",  # Newborn status at discharge
+            ],
+            "program_stage_name": "Discharge And Final Diagnosis",
+        },
     }
 
     # Select the appropriate program stage mapping based on program UID

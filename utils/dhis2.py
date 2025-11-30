@@ -42,6 +42,7 @@ NEWBORN_HEALTH_ELEMENTS = {
     "OpHw2X58x5i",  # Second Reason for Admission
     "gJH6PkYI6IV",  # Third Reason for Admission
     "aK5txmRYpVX",  # birth location
+    "vmOAGuFcaz4",  # Newborn Status at Discharge
 }
 
 # Combine for complete coverage
@@ -77,6 +78,7 @@ DATA_ELEMENT_NAMES = {
     "OpHw2X58x5i": "Second Reason for Admission",
     "gJH6PkYI6IV": "Third Reason for Admission",
     "aK5txmRYpVX": "birth location",
+    "vmOAGuFcaz4": "Newborn Status at Discharge",
 }
 
 
