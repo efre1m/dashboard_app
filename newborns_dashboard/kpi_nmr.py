@@ -93,6 +93,7 @@ def compute_nmr_trend_data(
 ):
     """
     Compute NMR trend data by period - USE INBORN-STYLE DENOMINATOR TRACKING
+    WITH CHRONOLOGICAL ORDERING
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -110,7 +111,25 @@ def compute_nmr_trend_data(
     # ✅ USE INBORN-STYLE DENOMINATOR: Track counted newborns across periods
     counted_newborns = set()
 
-    for period in sorted(df[period_col].unique()):
+    # ✅ FIX: Sort periods chronologically using period_sort if available
+    if "period_sort" in df.columns:
+        # Use period_sort for proper chronological ordering
+        periods_sorted = sorted(
+            df[["period_display", "period_sort"]].drop_duplicates().itertuples(),
+            key=lambda x: x.period_sort,
+        )
+        periods = [p.period_display for p in periods_sorted]
+    else:
+        # Fallback: try to sort period_display as dates
+        try:
+            periods = sorted(
+                df[period_col].unique(),
+                key=lambda x: pd.to_datetime(x, errors="coerce"),
+            )
+        except:
+            periods = sorted(df[period_col].unique())
+
+    for period in periods:
         period_df = df[df[period_col] == period]
         period_display = (
             period_df["period_display"].iloc[0] if not period_df.empty else period
@@ -169,7 +188,7 @@ def render_nmr_trend_chart(
     facility_uids=None,
     tei_df=None,
 ):
-    """Render a LINE CHART ONLY for NMR rate trend"""
+    """Render a LINE CHART ONLY for NMR rate trend WITH CHRONOLOGICAL ORDERING"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -190,7 +209,26 @@ def render_nmr_trend_chart(
         0
     )
 
-    # Create line chart
+    # ✅ FIX: Ensure chronological ordering in the chart
+    # Use period_sort if available, otherwise try to sort period_display as dates
+    if "period_sort" in df.columns:
+        # Merge period_sort back to trend_df for proper ordering
+        period_sort_mapping = df[["period_display", "period_sort"]].drop_duplicates()
+        trend_df = trend_df.merge(period_sort_mapping, on="period_display", how="left")
+        trend_df = trend_df.sort_values("period_sort")
+        period_order = trend_df["period_display"].tolist()
+    else:
+        # Fallback: try to sort period_display as dates
+        try:
+            trend_df["period_datetime"] = pd.to_datetime(
+                trend_df[period_col], errors="coerce"
+            )
+            trend_df = trend_df.sort_values("period_datetime")
+            period_order = trend_df[period_col].tolist()
+        except:
+            period_order = sorted(trend_df[period_col].unique())
+
+    # Create line chart with proper ordering
     fig = px.line(
         trend_df,
         x=period_col,
@@ -199,6 +237,7 @@ def render_nmr_trend_chart(
         line_shape="linear",
         title=title,
         height=400,
+        category_orders={period_col: period_order},  # ✅ Ensure chronological order
     )
 
     # Update traces for line chart
