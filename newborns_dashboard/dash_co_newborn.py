@@ -35,8 +35,14 @@ from newborns_dashboard.kpi_nmr import (
     render_nmr_facility_comparison_chart,
     render_nmr_region_comparison_chart,
 )
+from newborns_dashboard.kpi_newborn_bw import (  # ✅ IMPORT NEWBORN BIRTH WEIGHT KPI
+    compute_newborn_bw_kpi,
+    render_newborn_bw_trend_chart,
+    render_newborn_bw_facility_comparison_chart,
+    render_newborn_bw_region_comparison_chart,
+)
 
-# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, Inborn, and NMR
+# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, Inborn, NMR, and Birth Weight
 KPI_MAPPING = {
     "LBW KMC Coverage (%)": {
         "title": "LBW KMC Coverage (%)",
@@ -63,18 +69,24 @@ KPI_MAPPING = {
         "numerator_name": "Dead Cases",
         "denominator_name": "Total Admissions",
     },
+    "Newborn Birth Weight Distribution": {
+        "title": "Newborn Birth Weight Distribution",
+        "numerator_name": "Birth Weight Cases",
+        "denominator_name": "Total Admissions",
+    },
 }
 
-# All KPI options including Hypothermia, Inborn, and NMR
+# All KPI options including Birth Weight
 KPI_OPTIONS = [
     "LBW KMC Coverage (%)",
     "CPAP Coverage for RDS (%)",
     "Hypothermia on Admission (%)",
     "Inborn Babies (%)",
     "Neonatal Mortality Rate (%)",
+    "Newborn Birth Weight Distribution",
 ]
 
-# KPI Grouping for Tab Navigation - NMR added to "Newborn Complications" group
+# KPI Grouping for Tab Navigation - Birth Weight added to "Admission Assessment" group
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
@@ -83,6 +95,7 @@ KPI_GROUPS = {
     "Admission Assessment": [
         "Hypothermia on Admission (%)",
         "Inborn Babies (%)",
+        "Newborn Birth Weight Distribution",
     ],
     "Newborn Outcomes": [
         "Neonatal Mortality Rate (%)",
@@ -190,8 +203,8 @@ def render_kpi_tab_navigation():
                 selected_kpi = "CPAP Coverage for RDS (%)"
 
     with tab2:
-        # Admission Assessment KPIs - two buttons layout
-        col1, col2 = st.columns(2)
+        # Admission Assessment KPIs - three buttons layout
+        col1, col2, col3 = st.columns(3)
 
         with col1:
             if st.button(
@@ -216,6 +229,19 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Inborn Babies (%)"
+
+        with col3:
+            if st.button(
+                "Birth Weight",
+                key="bw_btn_newborn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Newborn Birth Weight Distribution"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Newborn Birth Weight Distribution"
 
     with tab3:
         # Newborn Outcomes KPIs - single button layout
@@ -315,6 +341,34 @@ def compute_nmr_for_dashboard(df, facility_uids=None, tei_df=None):
         "nmr_rate": float(nmr_rate),
         "dead_count": int(dead_count),
         "total_admitted_newborns": int(total_admitted_newborns),
+    }
+
+
+def compute_bw_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of Birth Weight KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "total_admissions": 0,
+            "bw_categories": {},
+            "category_rates": {},
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported birth weight function directly
+    bw_data = compute_newborn_bw_kpi(df, facility_uids)
+
+    return {
+        "total_admissions": bw_data["total_admissions"],
+        "bw_categories": bw_data["bw_categories"],
+        "category_rates": bw_data["category_rates"],
     }
 
 
@@ -431,6 +485,18 @@ def render_trend_chart_section(
             tei_df=tei_df,
         )
 
+    elif kpi_selection == "Newborn Birth Weight Distribution":
+        # ✅ NEW: Render birth weight trend chart
+        render_newborn_bw_trend_chart(
+            filtered_events,
+            "period_display",
+            "Newborn Birth Weight Distribution Trend",
+            bg_color,
+            text_color,
+            facility_names=display_names,
+            facility_uids=facility_uids,
+        )
+
 
 def render_comparison_chart(
     kpi_selection,
@@ -508,6 +574,17 @@ def render_comparison_chart(
                 facility_names=display_names,
                 facility_uids=facility_uids,
                 tei_df=tei_df,
+            )
+        elif kpi_selection == "Newborn Birth Weight Distribution":
+            # ✅ NEW: Render birth weight facility comparison chart
+            render_newborn_bw_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Newborn Birth Weight Distribution - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
             )
 
     else:  # region comparison (only for national)
@@ -624,6 +701,39 @@ def render_comparison_chart(
                 region_names=display_names,
                 facilities_by_region=facilities_by_region,
                 tei_df=tei_df,
+            )
+        elif kpi_selection == "Newborn Birth Weight Distribution":
+            # ✅ NEW: Render birth weight region comparison chart
+            st.subheader("📊 Newborn Birth Weight Distribution - Region Comparison")
+
+            # Compute overall data for context
+            overall_bw_data = compute_bw_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(
+                    label="Total Admissions",
+                    value=f"{overall_bw_data['total_admissions']:,}",
+                )
+            with col2:
+                # Show normal birth weight rate (2500-4000g) as key indicator
+                normal_bw_rate = overall_bw_data["category_rates"].get("2500_4000", 0)
+                st.metric(
+                    label="Normal Birth Weight Rate (2500-4000g)",
+                    value=f"{normal_bw_rate:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_newborn_bw_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Newborn Birth Weight Distribution - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                facilities_by_region=facilities_by_region,
             )
 
 
