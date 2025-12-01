@@ -50,6 +50,14 @@ from newborns_dashboard.kpi_newborn_bw import (  # ✅ IMPORT NEWBORN BIRTH WEIG
     render_newborn_bw_region_comparison_chart,
 )
 
+# ✅ IMPORT NEW HYPOTHERMIA INBORN/OUTBORN KPI
+from newborns_dashboard.kpi_in_out_hypo import (
+    compute_inborn_outborn_hypothermia_kpi,
+    render_inborn_outborn_hypothermia_trend_chart,
+    render_inborn_outborn_hypothermia_comparison_chart,
+    render_inborn_outborn_hypothermia_summary,
+)
+
 # KPI mapping for KMC coverage, CPAP coverage, Hypothermia, Inborn, NMR, and Birth Weight
 KPI_MAPPING = {
     "LBW KMC Coverage (%)": {
@@ -77,6 +85,11 @@ KPI_MAPPING = {
         "numerator_name": "Hypothermia Cases",
         "denominator_name": "Total Admissions",
     },
+    "Hypothermia Inborn/Outborn": {
+        "title": "Hypothermia Inborn/Outborn",
+        "numerator_name": "Hypothermia Cases",
+        "denominator_name": "Babies by Birth Location",
+    },
     "Inborn Babies (%)": {
         "title": "Inborn Babies (%)",
         "numerator_name": "Inborn Cases",
@@ -101,12 +114,13 @@ KPI_OPTIONS = [
     "General CPAP Coverage (%)",
     "Prophylactic CPAP Coverage (%)",
     "Hypothermia on Admission (%)",
+    "Hypothermia Inborn/Outborn",  # ✅ NEW KPI - RIGHT AFTER HYPOTHERMIA
     "Inborn Babies (%)",
     "Neonatal Mortality Rate (%)",
     "Newborn Birth Weight Distribution",
 ]
 
-# KPI Grouping for Tab Navigation - Birth Weight added to "Admission Assessment" group
+# KPI Grouping for Tab Navigation - Hypothermia Inborn/Outborn placed right after Hypothermia
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
@@ -116,6 +130,7 @@ KPI_GROUPS = {
     ],
     "Admission Assessment": [
         "Hypothermia on Admission (%)",
+        "Hypothermia Inborn/Outborn",  # ✅ PLACED RIGHT AFTER HYPOTHERMIA
         "Inborn Babies (%)",
         "Newborn Birth Weight Distribution",
     ],
@@ -251,8 +266,8 @@ def render_kpi_tab_navigation():
                 selected_kpi = "Prophylactic CPAP Coverage (%)"
 
     with tab2:
-        # Admission Assessment KPIs - three buttons layout
-        col1, col2, col3 = st.columns(3)
+        # Admission Assessment KPIs - FOUR buttons layout (Hypothermia Inborn/Outborn right after Hypothermia)
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             if st.button(
@@ -269,6 +284,19 @@ def render_kpi_tab_navigation():
 
         with col2:
             if st.button(
+                "Hypothermia Inborn/Outborn",  # ✅ NEW BUTTON - Short name for display
+                key="hypo_in_out_btn_newborn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Hypothermia Inborn/Outborn"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Hypothermia Inborn/Outborn"
+
+        with col3:
+            if st.button(
                 "Inborn Babies",
                 key="inborn_btn_newborn",  # ✅ Unique key
                 use_container_width=True,
@@ -278,7 +306,7 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Inborn Babies (%)"
 
-        with col3:
+        with col4:
             if st.button(
                 "Birth Weight",
                 key="bw_btn_newborn",  # ✅ Unique key
@@ -610,6 +638,20 @@ def render_trend_chart_section(
             tei_df=tei_df,  # ✅ Pass TEI dataframe
         )
 
+    elif kpi_selection == "Hypothermia Inborn/Outborn":
+        # ✅ NEW: Render hypothermia inborn/outborn trend chart
+        # REMOVED: First show summary metrics - render_inborn_outborn_hypothermia_summary is removed
+        # Then render the trend chart
+        render_inborn_outborn_hypothermia_trend_chart(
+            filtered_events,
+            "period_display",
+            "Hypothermia at Admission by Birth Location",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,  # ✅ Pass TEI dataframe
+        )
+
     elif kpi_selection == "Inborn Babies (%)":
         # Then render the trend chart
         render_inborn_trend_chart(
@@ -725,6 +767,19 @@ def render_comparison_chart(
                 facility_names=display_names,
                 facility_uids=facility_uids,
                 tei_df=tei_df,
+            )
+        elif kpi_selection == "Hypothermia Inborn/Outborn":
+            # ✅ NEW: Render hypothermia inborn/outborn facility comparison chart
+            render_inborn_outborn_hypothermia_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Hypothermia Inborn/Outborn - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                comparison_type="facility",
+                tei_df=tei_df,  # ✅ Pass TEI dataframe
             )
         elif kpi_selection == "Inborn Babies (%)":
             # Then render the comparison chart
@@ -879,6 +934,28 @@ def render_comparison_chart(
                 region_names=display_names,
                 facilities_by_region=facilities_by_region,
                 tei_df=tei_df,
+            )
+        elif kpi_selection == "Hypothermia Inborn/Outborn":
+            # ✅ NEW: Render hypothermia inborn/outborn region comparison chart
+            st.subheader("📊 Hypothermia Inborn/Outborn - Region Comparison")
+
+            # Compute overall data for context - PASS tei_df
+            overall_data = compute_inborn_outborn_hypothermia_kpi(
+                filtered_events, tei_df=tei_df
+            )
+
+            # REMOVED the metrics display section
+            # Then render the comparison chart
+            render_inborn_outborn_hypothermia_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Hypothermia Inborn/Outborn - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=None,  # For region comparison, we don't filter by facility
+                comparison_type="region",
+                tei_df=tei_df,  # ✅ Pass TEI dataframe
             )
         elif kpi_selection == "Inborn Babies (%)":
             # ✅ FIX: Show independent computation first
