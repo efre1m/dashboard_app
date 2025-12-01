@@ -37,7 +37,7 @@ from dashboards.data_quality_tracking import render_data_quality_tracking
 initialize_status_system()
 
 logging.basicConfig(level=logging.INFO)
-CACHE_TTL = 1800  # 30 minutes
+CACHE_TTL = 2700  # 45 minutes
 
 
 # Performance optimization: Pre-load essential data with user-specific caching
@@ -73,7 +73,7 @@ def fetch_shared_program_data(user, program_uid):
 
 
 def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
-    """Smart data loading with 30-minute auto-refresh and user-specific caching"""
+    """Smart data loading with 45-minute auto-refresh and user-specific caching"""
     maternal_program_uid = program_uid_map.get("Maternal Inpatient Data")
     newborn_program_uid = program_uid_map.get("Newborn Care Form")
 
@@ -86,11 +86,11 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
 
     current_time = time.time()
 
-    # ✅ Check if cache has expired (30 minutes = 1800 seconds)
+    # ✅ INCREASED CACHE TIME: 45 minutes = 2700 seconds
     cache_expired = False
     if shared_timestamp_key in st.session_state:
         time_elapsed = current_time - st.session_state[shared_timestamp_key]
-        cache_expired = time_elapsed > 1800  # 30 minutes
+        cache_expired = time_elapsed > 2700
         if cache_expired:
             logging.info(
                 f"🔄 Cache expired after {time_elapsed:.0f} seconds, fetching fresh data"
@@ -117,11 +117,10 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
         st.session_state[shared_maternal_key] = None
         st.session_state[shared_newborn_key] = None
 
-        # Load fresh data in parallel - ONLY show spinner if requested
-        spinner_text = "🚀 Loading dashboard data..." if show_spinner else None
-
         def load_data():
+            # Use ThreadPoolExecutor with timeout handling
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                # Submit both data fetching tasks
                 maternal_future = (
                     executor.submit(
                         fetch_shared_program_data, user, maternal_program_uid
@@ -137,66 +136,92 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                     else None
                 )
 
-                # Get results with timeout
+                # ✅ INCREASED TIMEOUT: 300 seconds (5 minutes)
                 try:
+                    maternal_data = None
+                    newborn_data = None
+
+                    # Get maternal data with timeout
                     if maternal_future:
-                        st.session_state[shared_maternal_key] = maternal_future.result(
-                            timeout=120
-                        )
-                    if newborn_future:
-                        st.session_state[shared_newborn_key] = newborn_future.result(
-                            timeout=120
+                        maternal_data = maternal_future.result(timeout=300)
+                        logging.info(
+                            f"✅ Maternal data loaded: {len(maternal_data.get('tei', pd.DataFrame())) if maternal_data else 0} TEIs"
                         )
 
+                    # Get newborn data with timeout
+                    if newborn_future:
+                        newborn_data = newborn_future.result(timeout=300)
+                        logging.info(
+                            f"✅ Newborn data loaded: {len(newborn_data.get('tei', pd.DataFrame())) if newborn_data else 0} TEIs"
+                        )
+
+                    # Store results
+                    st.session_state[shared_maternal_key] = maternal_data
+                    st.session_state[shared_newborn_key] = newborn_data
                     st.session_state[shared_loaded_key] = True
-                    st.session_state[shared_timestamp_key] = (
-                        current_time  # Update timestamp
-                    )
+                    st.session_state[shared_timestamp_key] = current_time
 
                     # ✅ STORE in main cached_shared_data for easy access
                     st.session_state.cached_shared_data = {
-                        "maternal": st.session_state[shared_maternal_key],
-                        "newborn": st.session_state[shared_newborn_key],
+                        "maternal": maternal_data,
+                        "newborn": newborn_data,
                     }
 
                     # Log fresh data stats
                     maternal_tei_count = (
-                        len(
-                            st.session_state[shared_maternal_key].get(
-                                "tei", pd.DataFrame()
-                            )
-                        )
-                        if st.session_state[shared_maternal_key]
+                        len(maternal_data.get("tei", pd.DataFrame()))
+                        if maternal_data
                         else 0
                     )
                     newborn_tei_count = (
-                        len(
-                            st.session_state[shared_newborn_key].get(
-                                "tei", pd.DataFrame()
-                            )
-                        )
-                        if st.session_state[shared_newborn_key]
+                        len(newborn_data.get("tei", pd.DataFrame()))
+                        if newborn_data
                         else 0
                     )
                     logging.info(
-                        f"✅ FRESH DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs"
+                        f"✅ FRESH DATA COMPLETE: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs"
                     )
 
                     # Reset refresh trigger and user changed flags
                     st.session_state.refresh_trigger = False
                     st.session_state.user_changed = False
 
+                    return True
+
                 except concurrent.futures.TimeoutError:
-                    logging.error("Data loading timeout")
+                    logging.error("❌ Data loading timeout after 300 seconds")
+                    # Store whatever data we managed to get
+                    maternal_data = (
+                        maternal_data if "maternal_data" in locals() else None
+                    )
+                    newborn_data = newborn_data if "newborn_data" in locals() else None
+
+                    st.session_state[shared_maternal_key] = maternal_data
+                    st.session_state[shared_newborn_key] = newborn_data
+                    st.session_state[shared_loaded_key] = (
+                        True  # Mark as loaded even if partial
+                    )
+                    st.session_state[shared_timestamp_key] = current_time
+
+                    # Store partial data
+                    st.session_state.cached_shared_data = {
+                        "maternal": maternal_data,
+                        "newborn": newborn_data,
+                    }
+
+                    logging.warning("⚠️ Using partially loaded data due to timeout")
+                    return True  # Continue with partial data
+
+                except Exception as e:
+                    logging.error(f"❌ Error during data loading: {e}")
                     return False
-            return True
 
         # Show spinner only if requested
         if show_spinner:
-            with st.spinner(spinner_text):
+            with st.spinner("🚀 Loading dashboard data..."):
                 success = load_data()
                 if not success:
-                    st.error("Data loading timeout. Please try refreshing.")
+                    st.error("Data loading failed. Please try refreshing.")
         else:
             success = load_data()
 
@@ -259,7 +284,7 @@ def clear_shared_cache(user=None):
 def initialize_session_state():
     """Optimized session state initialization with proper tab isolation"""
     session_vars = {
-        "refresh_trigger": False,  # ✅ Added for manual refresh tracking
+        "refresh_trigger": False,
         "selected_facilities": [],
         "selected_regions": [],
         "current_facility_uids": [],
@@ -298,11 +323,11 @@ def initialize_session_state():
         },
         # ✅ NEW: Track which tabs have been activated by user
         "tab_data_loaded": {
-            "maternal": True,  # Always load maternal and newborn by default
-            "newborn": True,  # Always load newborn by default
-            "summary": False,  # Only load when user clicks button
-            "mentorship": False,  # Only load when user clicks button
-            "data_quality": True,  # Always load data quality by default
+            "maternal": True,
+            "newborn": True,
+            "summary": False,
+            "mentorship": False,
+            "data_quality": True,
         },
         # ✅ NEW: Track loading state for each tab
         "tab_loading": {
@@ -356,14 +381,11 @@ def initialize_session_state():
 initialize_session_state()
 
 
-# ✅ CONSISTENT COUNTING FUNCTIONS - SAME AS REGIONAL DASHBOARD
+# ✅ CONSISTENT COUNTING FUNCTIONS
 def count_unique_newborns_consistent(
     tei_df, facility_uids=None, org_unit_column="tei_orgUnit"
 ):
-    """
-    ✅ FIX: Consistent counting of unique newborns across entire dashboard
-    Uses the same logic as regional dashboard
-    """
+    """✅ FIX: Consistent counting of unique newborns across entire dashboard"""
     if tei_df.empty:
         return 0
 
@@ -381,15 +403,11 @@ def count_unique_newborns_consistent(
     elif "trackedEntityInstance" in filtered_tei.columns:
         return filtered_tei["trackedEntityInstance"].nunique()
     else:
-        # Fallback: use index if no TEI column found
         return filtered_tei.index.nunique()
 
 
 def count_unique_mothers_consistent(enrollments_df, facility_uids=None):
-    """
-    ✅ FIX: Consistent counting of unique mothers across entire dashboard
-    Uses the same logic as regional dashboard
-    """
+    """✅ FIX: Consistent counting of unique mothers across entire dashboard"""
     if enrollments_df.empty:
         return 0
 
@@ -417,7 +435,7 @@ def count_unique_teis_from_events(
     if events_df.empty or "tei_id" not in events_df.columns:
         return 0
 
-    # Filter by facility if specified - SAME LOGIC AS REGIONAL
+    # Filter by facility if specified
     if facility_uids and org_unit_column in events_df.columns:
         filtered_events = events_df[events_df[org_unit_column].isin(facility_uids)]
     else:
@@ -448,16 +466,22 @@ def get_location_display_name(
         return country_name, "Country"
     elif filter_mode == "By Region" and selected_regions:
         return (
-            selected_regions[0]
-            if len(selected_regions) == 1
-            else ", ".join(selected_regions)
-        ), ("Region" if len(selected_regions) == 1 else "Regions")
+            (
+                selected_regions[0]
+                if len(selected_regions) == 1
+                else ", ".join(selected_regions)
+            ),
+            "Region" if len(selected_regions) == 1 else "Regions",
+        )
     elif filter_mode == "By Facility" and selected_facilities:
         return (
-            selected_facilities[0]
-            if len(selected_facilities) == 1
-            else ", ".join(selected_facilities)
-        ), ("Facility" if len(selected_facilities) == 1 else "Facilities")
+            (
+                selected_facilities[0]
+                if len(selected_facilities) == 1
+                else ", ".join(selected_facilities)
+            ),
+            "Facility" if len(selected_facilities) == 1 else "Facilities",
+        )
     else:
         return country_name, "Country"
 
@@ -497,25 +521,22 @@ def calculate_regional_comparison_data(
     for region_name, facilities in facilities_by_region.items():
         region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
 
-        # ✅ FIX: Use consistent counting - SAME AS REGIONAL DASHBOARD
-        # Count mothers from enrollments data (consistent approach)
+        # ✅ FIX: Use consistent counting
         if maternal_enrollments_df is not None and not maternal_enrollments_df.empty:
             maternal_count = count_unique_mothers_consistent(
                 maternal_enrollments_df, region_facility_uids
             )
         else:
-            # Fallback to events counting (like regional dashboard)
             maternal_count = count_unique_teis_from_events(
                 maternal_events_df, region_facility_uids
             )
 
-        # ✅ FIX: Use consistent counting - SAME AS REGIONAL DASHBOARD
+        # ✅ FIX: Use consistent counting
         if newborn_tei_df is not None and not newborn_tei_df.empty:
             newborn_count = count_unique_newborns_consistent(
                 newborn_tei_df, region_facility_uids
             )
         else:
-            # Fallback to events counting (like regional dashboard)
             newborn_count = count_unique_teis_from_events(
                 newborn_events_df, region_facility_uids
             )
@@ -548,9 +569,6 @@ def render_loading_indicator(tab_name, icon):
         unsafe_allow_html=True,
     )
 
-    # Simulate processing time
-    time.sleep(2)
-
 
 def render_tab_placeholder(tab_name, icon, tab_key, description):
     """Render a placeholder with a button to load data for the tab"""
@@ -576,7 +594,6 @@ def render_tab_placeholder(tab_name, icon, tab_key, description):
             type="primary",
             key=f"load_{tab_key}_data",
         ):
-            # Set loading state and data loaded state
             st.session_state.tab_loading[tab_key] = True
             st.session_state.tab_data_loaded[tab_key] = True
             st.rerun()
@@ -586,8 +603,6 @@ def render_summary_dashboard_shared(
     user, country_name, facilities_by_region, facility_mapping, shared_data
 ):
     """✅ FIX: OPTIMIZED Summary Dashboard with CONSISTENT counting"""
-
-    # ✅ FIXED: Only run if this is the active tab AND data is loaded
     if st.session_state.active_tab != "summary":
         return
 
@@ -604,22 +619,10 @@ def render_summary_dashboard_shared(
     # ✅ Show loading indicator if data is being processed
     if st.session_state.tab_loading["summary"]:
         render_loading_indicator("Summary Dashboard", "📊")
-        # After loading, set loading to False
         st.session_state.tab_loading["summary"] = False
         st.rerun()
 
     logging.info("🔄 Summary dashboard rendering")
-
-    # Use columns for better layout control
-    col_title, col_space = st.columns([4, 1])
-    with col_title:
-        st.markdown(
-            f'<div class="main-header" style="margin-bottom: 0.5rem;">📊 Summary Dashboard - {country_name}</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "**Comprehensive overview of maternal and newborn health indicators**"
-        )
 
     # Get facility selection
     filter_mode = st.session_state.get("filter_mode", "All Facilities")
@@ -662,7 +665,7 @@ def render_summary_dashboard_shared(
     else:
         # Compute summary data
         with st.spinner("🔄 Computing summary statistics..."):
-            # Extract dataframes - use consistent data sources
+            # Extract dataframes
             maternal_events_df = (
                 maternal_data.get("events", pd.DataFrame())
                 if maternal_data
@@ -691,7 +694,7 @@ def render_summary_dashboard_shared(
                 else pd.DataFrame()
             )
 
-            # ✅ FIX: Use consistent counting functions - SAME AS REGIONAL
+            # ✅ FIX: Use consistent counting functions
             maternal_tei_count = count_unique_mothers_consistent(
                 maternal_enrollments_df, facility_uids
             )
@@ -778,8 +781,8 @@ def render_summary_dashboard_shared(
                     "kmc_coverage_rate": 0.0,
                     "kmc_cases": 0,
                     "total_lbw": 0,
-                    "total_newborns": newborn_tei_count,  # ✅ Add consistent count
-                    "total_mothers": maternal_tei_count,  # ✅ Add consistent count
+                    "total_newborns": newborn_tei_count,
+                    "total_mothers": maternal_tei_count,
                 }
                 logging.info("🔄 Using placeholder NEWBORN KPIs")
 
@@ -787,7 +790,7 @@ def render_summary_dashboard_shared(
             newborn_indicators = {
                 "total_admitted": newborn_kpi_data.get(
                     "total_newborns", newborn_tei_count
-                ),  # ✅ Use consistent count
+                ),
                 "nmr": "N/A",
                 "kmc_coverage_rate": newborn_kpi_data.get("kmc_coverage_rate", 0.0),
                 "kmc_cases": newborn_kpi_data.get("kmc_cases", 0),
@@ -799,10 +802,10 @@ def render_summary_dashboard_shared(
                 "newborn_indicators": newborn_indicators,
                 "maternal_tei_count": newborn_kpi_data.get(
                     "total_mothers", maternal_tei_count
-                ),  # ✅ Use consistent count
+                ),
                 "newborn_tei_count": newborn_kpi_data.get(
                     "total_newborns", newborn_tei_count
-                ),  # ✅ Use consistent count
+                ),
                 "newborn_start_date": newborn_start_date,
                 "maternal_start_date": maternal_start_date,
                 "regional_comparison_data": regional_comparison_data,
@@ -890,28 +893,6 @@ def render_summary_dashboard_shared(
             """,
                 unsafe_allow_html=True,
             )
-
-    # ✅ Add data consistency check
-    total_regional_mothers = sum(
-        data["mothers"] for data in regional_comparison_data.values()
-    )
-    total_regional_newborns = sum(
-        data["newborns"] for data in regional_comparison_data.values()
-    )
-
-    if (
-        total_regional_mothers != maternal_tei_count
-        or total_regional_newborns != newborn_tei_count
-    ):
-        st.warning(
-            f"""
-        **Data Consistency Note:**
-        - Regional mothers sum: {total_regional_mothers:,} vs Quick stats: {maternal_tei_count:,}
-        - Regional newborns sum: {total_regional_newborns:,} vs Quick stats: {newborn_tei_count:,}
-        
-        *Regional data shows facility-level counts while quick stats show overall unique counts.*
-        """
-        )
 
     # ✅ DIRECTLY SHOW ALL TABLES (no button needed)
     st.markdown("---")
@@ -1131,8 +1112,6 @@ def render_maternal_dashboard_shared(
     view_mode="Normal Trend",
 ):
     """Optimized Maternal Dashboard rendering - Only runs when tab is active"""
-
-    # ✅ FIXED: Only run if this is the active tab
     if st.session_state.active_tab != "maternal":
         return
 
@@ -1151,19 +1130,9 @@ def render_maternal_dashboard_shared(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
-    events_df.to_csv("maternal_events_debug_national.csv", index=False)  # DEBUG
-
     # Store in session state for quick access
     st.session_state.maternal_events_df = events_df.copy()
     st.session_state.maternal_tei_df = tei_df.copy()
-
-    # ✅ DEBUG: Log what we're storing
-    logging.info(
-        f"✅ STORED maternal data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
-    )
-    logging.info(
-        f"✅ Maternal events has_actual_event values: {events_df['has_actual_event'].value_counts().to_dict() if 'has_actual_event' in events_df.columns else 'NO COLUMN'}"
-    )
 
     render_connection_status(events_df, user=user)
 
@@ -1232,12 +1201,10 @@ def render_maternal_dashboard_shared(
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
 
-    # ✅ IMPROVED: Single progress container with better messaging
+    # Progress container
     progress_container = st.empty()
     with progress_container.container():
         st.markdown("---")
-
-        # Progress steps
         st.markdown("### 📈 Preparing Dashboard...")
 
         progress_col1, progress_col2 = st.columns([3, 1])
@@ -1469,7 +1436,7 @@ def render():
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
         st.cache_data.clear()
         clear_shared_cache(user)
-        st.session_state.refresh_trigger = True  # ✅ Set refresh trigger
+        st.session_state.refresh_trigger = True
         st.session_state.selection_applied = True
         st.session_state.facility_filter_applied = False
         st.session_state.last_computed_kpis = None
@@ -1509,18 +1476,51 @@ def render():
     facility_mapping = st.session_state.facility_mapping
     program_uid_map = st.session_state.program_uid_map
 
-    # ✅ FIX: SINGLE DATA LOADING - Only load once and store in variable
+    # ✅ FIX: SINGLE DATA LOADING with PROGRESS INDICATOR
     if not st.session_state.get("data_initialized", False):
-        # First time or fresh data needed
-        with st.spinner("🚀 Loading dashboard data..."):
-            shared_data = get_shared_program_data_optimized(
-                user, program_uid_map, show_spinner=False
-            )
-            st.session_state.data_initialized = True
-            st.session_state.cached_shared_data = (
-                shared_data  # ✅ Store in session state
-            )
-            logging.info("✅ Initial data loading complete")
+        # Show progress indicator for first load
+        progress_container = st.empty()
+        with progress_container.container():
+            st.markdown("---")
+            st.markdown("### 🚀 Loading Dashboard Data...")
+
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(
+                    """
+                <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
+                <h4 style="margin: 0 0 10px 0; color: #1f77b4;">📥 Fetching Data from DHIS2</h4>
+                <p style="margin: 5px 0; font-size: 14px;">• Loading maternal inpatient data...</p>
+                <p style="margin: 5px 0; font-size: 14px;">• Loading newborn care data...</p>
+                <p style="margin: 5px 0; font-size: 14px;">• Processing and caching results...</p>
+                <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 3-5 minutes for initial load</p>
+                </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+
+            with col2:
+                st.markdown(
+                    """
+                <div style="text-align: center; padding: 10px;">
+                <div style="font-size: 24px;">⏳</div>
+                <div style="font-size: 12px; margin-top: 5px;">Loading</div>
+                </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+
+        # Load the data
+        shared_data = get_shared_program_data_optimized(
+            user, program_uid_map, show_spinner=False
+        )
+
+        # Clear progress indicator
+        progress_container.empty()
+
+        st.session_state.data_initialized = True
+        st.session_state.cached_shared_data = shared_data
+        logging.info("✅ Initial data loading complete")
     else:
         # Use cached data from session state - no loading needed
         shared_data = st.session_state.cached_shared_data
@@ -1683,9 +1683,6 @@ def render():
         ]
     )
 
-    # ✅ FIX: Use the ALREADY LOADED shared_data variable - NO SECOND CALL
-    # shared_data is already loaded above and stored in st.session_state.cached_shared_data
-
     with tab1:
         # Update active tab only if this tab is clicked
         if st.session_state.active_tab != "maternal":
@@ -1750,7 +1747,6 @@ def render():
             # ✅ Show loading indicator if data is being processed
             if st.session_state.tab_loading["mentorship"]:
                 render_loading_indicator("Mentorship Dashboard", "📋")
-                # After loading, set loading to False
                 st.session_state.tab_loading["mentorship"] = False
                 st.rerun()
             display_odk_dashboard(user)

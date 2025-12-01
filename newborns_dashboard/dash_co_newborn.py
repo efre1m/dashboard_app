@@ -11,9 +11,17 @@ from newborns_dashboard.kmc_coverage import (
 )
 from newborns_dashboard.kpi_cpap import (
     compute_cpap_kpi,
+    compute_cpap_general_kpi,
+    compute_cpap_prophylactic_kpi,
     render_cpap_trend_chart,
+    render_cpap_general_trend_chart,
+    render_cpap_prophylactic_trend_chart,
     render_cpap_facility_comparison_chart,
+    render_cpap_general_facility_comparison_chart,
+    render_cpap_prophylactic_facility_comparison_chart,
     render_cpap_region_comparison_chart,
+    render_cpap_general_region_comparison_chart,
+    render_cpap_prophylactic_region_comparison_chart,
 )
 from newborns_dashboard.kpi_hypothermia import (
     compute_hypothermia_kpi,
@@ -54,6 +62,16 @@ KPI_MAPPING = {
         "numerator_name": "CPAP Cases",
         "denominator_name": "Total RDS Newborns",
     },
+    "General CPAP Coverage (%)": {
+        "title": "General CPAP Coverage (%)",
+        "numerator_name": "CPAP Cases",
+        "denominator_name": "Total Admissions",
+    },
+    "Prophylactic CPAP Coverage (%)": {
+        "title": "Prophylactic CPAP Coverage (%)",
+        "numerator_name": "Prophylactic CPAP Cases",
+        "denominator_name": "Total Newborns (1000-2499g)",
+    },
     "Hypothermia on Admission (%)": {
         "title": "Hypothermia on Admission (%)",
         "numerator_name": "Hypothermia Cases",
@@ -80,6 +98,8 @@ KPI_MAPPING = {
 KPI_OPTIONS = [
     "LBW KMC Coverage (%)",
     "CPAP Coverage for RDS (%)",
+    "General CPAP Coverage (%)",
+    "Prophylactic CPAP Coverage (%)",
     "Hypothermia on Admission (%)",
     "Inborn Babies (%)",
     "Neonatal Mortality Rate (%)",
@@ -91,6 +111,8 @@ KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
         "CPAP Coverage for RDS (%)",
+        "General CPAP Coverage (%)",
+        "Prophylactic CPAP Coverage (%)",
     ],
     "Admission Assessment": [
         "Hypothermia on Admission (%)",
@@ -175,8 +197,8 @@ def render_kpi_tab_navigation():
     selected_kpi = st.session_state.selected_kpi_NEWBORN_DASHBOARD
 
     with tab1:
-        # Newborn Care KPIs - smaller layout
-        col1, col2 = st.columns(2)
+        # Newborn Care KPIs - 4 buttons layout
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             if st.button(
@@ -191,8 +213,8 @@ def render_kpi_tab_navigation():
 
         with col2:
             if st.button(
-                "CPAP Coverage",
-                key="cpap_btn_newborn",  # ✅ Unique key
+                "CPAP for RDS",
+                key="cpap_rds_btn_newborn",  # ✅ Unique key
                 use_container_width=True,
                 type=(
                     "primary"
@@ -201,6 +223,32 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "CPAP Coverage for RDS (%)"
+
+        with col3:
+            if st.button(
+                "General CPAP",
+                key="cpap_general_btn_newborn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "General CPAP Coverage (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "General CPAP Coverage (%)"
+
+        with col4:
+            if st.button(
+                "Prophylactic CPAP",
+                key="cpap_prophylactic_btn_newborn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Prophylactic CPAP Coverage (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Prophylactic CPAP Coverage (%)"
 
     with tab2:
         # Admission Assessment KPIs - three buttons layout
@@ -372,6 +420,62 @@ def compute_bw_for_dashboard(df, facility_uids=None, tei_df=None):
     }
 
 
+def compute_cpap_general_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of General CPAP KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "cpap_general_rate": 0.0,
+            "cpap_general_count": 0,
+            "total_admitted_newborns": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported general CPAP function directly
+    cpap_data = compute_cpap_general_kpi(df, facility_uids, tei_df)
+
+    return {
+        "cpap_general_rate": cpap_data["cpap_general_rate"],
+        "cpap_general_count": cpap_data["cpap_general_count"],
+        "total_admitted_newborns": cpap_data["total_admitted_newborns"],
+    }
+
+
+def compute_cpap_prophylactic_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of Prophylactic CPAP KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "cpap_prophylactic_rate": 0.0,
+            "cpap_prophylactic_count": 0,
+            "total_target_weight": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported prophylactic CPAP function directly
+    cpap_data = compute_cpap_prophylactic_kpi(df, facility_uids)
+
+    return {
+        "cpap_prophylactic_rate": cpap_data["cpap_prophylactic_rate"],
+        "cpap_prophylactic_count": cpap_data["cpap_prophylactic_count"],
+        "total_target_weight": cpap_data["total_target_weight"],
+    }
+
+
 def render_trend_chart_section(
     kpi_selection,
     filtered_events,
@@ -446,6 +550,51 @@ def render_trend_chart_section(
             display_names,
             "CPAP Cases",
             "Total RDS Newborns",
+            facility_uids,
+        )
+
+    elif kpi_selection == "General CPAP Coverage (%)":
+        # ✅ NEW: Render general CPAP trend chart
+        render_cpap_general_trend_chart(
+            filtered_events,
+            "period_display",
+            "General CPAP Coverage Trend",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,
+        )
+
+    elif kpi_selection == "Prophylactic CPAP Coverage (%)":
+        period_data = []
+        for period in filtered_events["period"].unique():
+            period_df = filtered_events[filtered_events["period"] == period]
+            period_display = (
+                period_df["period_display"].iloc[0] if not period_df.empty else period
+            )
+            cpap_data = compute_cpap_prophylactic_kpi(period_df, facility_uids)
+
+            period_data.append(
+                {
+                    "period": period,
+                    "period_display": period_display,
+                    "value": cpap_data["cpap_prophylactic_rate"],
+                    "Prophylactic CPAP Cases": cpap_data["cpap_prophylactic_count"],
+                    "Total Newborns (1000-2499g)": cpap_data["total_target_weight"],
+                }
+            )
+
+        group = pd.DataFrame(period_data)
+        render_cpap_prophylactic_trend_chart(
+            group,
+            "period_display",
+            "value",
+            "Prophylactic CPAP Coverage Trend",
+            bg_color,
+            text_color,
+            display_names,
+            "Prophylactic CPAP Cases",
+            "Total Newborns (1000-2499g)",
             facility_uids,
         )
 
@@ -539,6 +688,32 @@ def render_comparison_chart(
                 numerator_name="CPAP Cases",
                 denominator_name="Total RDS Newborns",
             )
+        elif kpi_selection == "General CPAP Coverage (%)":
+            # ✅ NEW: Render general CPAP facility comparison chart
+            render_cpap_general_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="General CPAP Coverage (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Prophylactic CPAP Coverage (%)":
+            # ✅ NEW: Render prophylactic CPAP facility comparison chart
+            render_cpap_prophylactic_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                value_col="value",
+                title="Prophylactic CPAP Coverage (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name="Prophylactic CPAP Cases",
+                denominator_name="Total Newborns (1000-2499g)",
+            )
         elif kpi_selection == "Hypothermia on Admission (%)":
             # ✅ FIX: Pass TEI dataframe to prevent overcounting
             render_hypothermia_facility_comparison_chart(
@@ -615,6 +790,83 @@ def render_comparison_chart(
                 facilities_by_region=facilities_by_region,
                 numerator_name="CPAP Cases",
                 denominator_name="Total RDS Newborns",
+            )
+        elif kpi_selection == "General CPAP Coverage (%)":
+            # ✅ NEW: Render general CPAP region comparison chart
+            st.subheader("📊 General CPAP Coverage - Region Comparison")
+
+            # Compute overall data for context
+            overall_cpap_data = compute_cpap_general_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total CPAP Cases",
+                    value=f"{overall_cpap_data['cpap_general_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Admitted Newborns",
+                    value=f"{overall_cpap_data['total_admitted_newborns']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall General CPAP Rate",
+                    value=f"{overall_cpap_data['cpap_general_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_cpap_general_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="General CPAP Coverage (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                facilities_by_region=facilities_by_region,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Prophylactic CPAP Coverage (%)":
+            # ✅ NEW: Render prophylactic CPAP region comparison chart
+            st.subheader("📊 Prophylactic CPAP Coverage - Region Comparison")
+
+            # Compute overall data for context
+            overall_cpap_data = compute_cpap_prophylactic_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total Prophylactic CPAP Cases",
+                    value=f"{overall_cpap_data['cpap_prophylactic_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Newborns (1000-2499g)",
+                    value=f"{overall_cpap_data['total_target_weight']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall Prophylactic CPAP Rate",
+                    value=f"{overall_cpap_data['cpap_prophylactic_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_cpap_prophylactic_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                value_col="value",
+                title="Prophylactic CPAP Coverage (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                region_mapping={},
+                facilities_by_region=facilities_by_region,
+                numerator_name="Prophylactic CPAP Cases",
+                denominator_name="Total Newborns (1000-2499g)",
             )
         elif kpi_selection == "Hypothermia on Admission (%)":
             # ✅ FIX: Pass TEI dataframe to prevent overcounting
