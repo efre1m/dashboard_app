@@ -37,6 +37,16 @@ from newborns_dashboard.kpi_hypo_after_adm import (
     render_hypothermia_after_admission_facility_comparison_chart,
     render_hypothermia_after_admission_region_comparison_chart,
 )
+
+# ✅ IMPORT CORRECTED KMC BOTH RANGES (1000-1999g AND 2000-2499g) KPI WITH FIXED TABLES
+from newborns_dashboard.kpi_kmc_1000_2499 import (
+    compute_kmc_1000_1999_kpi,
+    compute_kmc_2000_2499_kpi,
+    render_kmc_both_ranges_trend_chart,  # ✅ CORRECTED FUNCTION WITH FIXED TABLES
+    render_kmc_both_ranges_facility_comparison_chart,  # ✅ CORRECTED FUNCTION WITH FIXED TABLES
+    render_kmc_both_ranges_region_comparison_chart,  # ✅ CORRECTED FUNCTION WITH FIXED TABLES
+)
+
 from newborns_dashboard.kpi_inborn import (
     compute_inborn_kpi,
     compute_inborn_numerator,  # ✅ IMPORT THE NUMERATOR FUNCTION
@@ -72,6 +82,11 @@ KPI_MAPPING = {
         "title": "LBW KMC Coverage (%)",
         "numerator_name": "KMC Cases",
         "denominator_name": "Total LBW Newborns",
+    },
+    "KMC Coverage by Birth Weight Range": {
+        "title": "KMC Coverage by Birth Weight Range",
+        "numerator_name": "KMC Cases",
+        "denominator_name": "Total Newborns by Weight Range",
     },
     "CPAP Coverage for RDS (%)": {
         "title": "CPAP Coverage for RDS (%)",
@@ -123,6 +138,7 @@ KPI_MAPPING = {
 # All KPI options including Birth Weight
 KPI_OPTIONS = [
     "LBW KMC Coverage (%)",
+    "KMC Coverage by Birth Weight Range",  # ✅ NEW COMBINED KPI FOR BOTH RANGES
     "CPAP Coverage for RDS (%)",
     "General CPAP Coverage (%)",
     "Prophylactic CPAP Coverage (%)",
@@ -138,6 +154,7 @@ KPI_OPTIONS = [
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
+        "KMC Coverage by Birth Weight Range",  # ✅ ADDED NEW COMBINED KPI
         "CPAP Coverage for RDS (%)",
         "General CPAP Coverage (%)",
         "Prophylactic CPAP Coverage (%)",
@@ -227,13 +244,13 @@ def render_kpi_tab_navigation():
     selected_kpi = st.session_state.selected_kpi_NEWBORN_DASHBOARD
 
     with tab1:
-        # Newborn Care KPIs - 4 buttons layout
-        col1, col2, col3, col4 = st.columns(4)
+        # Newborn Care KPIs - 5 buttons layout (with new KMC both ranges)
+        col1, col2, col3, col4, col5 = st.columns(5)
 
         with col1:
             if st.button(
-                "KMC Coverage",
-                key="kmc_btn_newborn",  # ✅ Unique key
+                "LBW KMC Coverage",
+                key="kmc_lbw_btn_newborn",  # ✅ Unique key
                 use_container_width=True,
                 type=(
                     "primary" if selected_kpi == "LBW KMC Coverage (%)" else "secondary"
@@ -242,6 +259,19 @@ def render_kpi_tab_navigation():
                 selected_kpi = "LBW KMC Coverage (%)"
 
         with col2:
+            if st.button(
+                "KMC by BW Range",  # ✅ UPDATED BUTTON TEXT
+                key="kmc_both_ranges_btn_newborn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "KMC Coverage by Birth Weight Range"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "KMC Coverage by Birth Weight Range"
+
+        with col3:
             if st.button(
                 "CPAP for RDS",
                 key="cpap_rds_btn_newborn",  # ✅ Unique key
@@ -254,7 +284,7 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "CPAP Coverage for RDS (%)"
 
-        with col3:
+        with col4:
             if st.button(
                 "General CPAP",
                 key="cpap_general_btn_newborn",  # ✅ Unique key
@@ -267,7 +297,7 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "General CPAP Coverage (%)"
 
-        with col4:
+        with col5:
             if st.button(
                 "Prophylactic CPAP",
                 key="cpap_prophylactic_btn_newborn",  # ✅ Unique key
@@ -372,6 +402,40 @@ def render_kpi_tab_navigation():
         st.rerun()
 
     return st.session_state.selected_kpi_NEWBORN_DASHBOARD
+
+
+def compute_kmc_both_ranges_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ Compute both KMC ranges for dashboard summary
+    """
+    if df is None or df.empty:
+        return {
+            "kmc_1000_1999_rate": 0.0,
+            "kmc_1000_1999_count": 0,
+            "kmc_1000_1999_total": 0,
+            "kmc_2000_2499_rate": 0.0,
+            "kmc_2000_2499_count": 0,
+            "kmc_2000_2499_total": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported KMC functions directly
+    kmc_1000_1999_data = compute_kmc_1000_1999_kpi(df, facility_uids)
+    kmc_2000_2499_data = compute_kmc_2000_2499_kpi(df, facility_uids)
+
+    return {
+        "kmc_1000_1999_rate": kmc_1000_1999_data["kmc_rate"],
+        "kmc_1000_1999_count": kmc_1000_1999_data["kmc_count"],
+        "kmc_1000_1999_total": kmc_1000_1999_data["total_newborns"],
+        "kmc_2000_2499_rate": kmc_2000_2499_data["kmc_rate"],
+        "kmc_2000_2499_count": kmc_2000_2499_data["kmc_count"],
+        "kmc_2000_2499_total": kmc_2000_2499_data["total_newborns"],
+    }
 
 
 def compute_inborn_for_dashboard(df, facility_uids=None, tei_df=None):
@@ -610,6 +674,18 @@ def render_trend_chart_section(
             facility_uids,
         )
 
+    elif kpi_selection == "KMC Coverage by Birth Weight Range":
+        # ✅ NEW: Render BOTH KMC ranges (1000-1999g and 2000-2499g) in one chart WITH CORRECTED TABLES
+        render_kmc_both_ranges_trend_chart(
+            filtered_events,
+            "period_display",
+            "KMC Coverage by Birth Weight Range",
+            bg_color,
+            text_color,
+            display_names,
+            facility_uids=facility_uids,
+        )
+
     elif kpi_selection == "CPAP Coverage for RDS (%)":
         period_data = []
         for period in filtered_events["period"].unique():
@@ -789,6 +865,17 @@ def render_comparison_chart(
                 numerator_name="KMC Cases",
                 denominator_name="Total LBW Newborns",
             )
+        elif kpi_selection == "KMC Coverage by Birth Weight Range":
+            # ✅ NEW: Render BOTH KMC ranges facility comparison chart WITH CORRECTED TABLES
+            render_kmc_both_ranges_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="KMC Coverage by Birth Weight Range - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+            )
         elif kpi_selection == "CPAP Coverage for RDS (%)":
             render_cpap_facility_comparison_chart(
                 df=filtered_events,
@@ -915,6 +1002,57 @@ def render_comparison_chart(
                 facilities_by_region=facilities_by_region,
                 numerator_name="KMC Cases",
                 denominator_name="Total LBW Newborns",
+            )
+        elif kpi_selection == "KMC Coverage by Birth Weight Range":
+            # ✅ NEW: Render BOTH KMC ranges region comparison chart WITH CORRECTED TABLES
+            st.subheader("📊 KMC Coverage by Birth Weight Range - Region Comparison")
+
+            # Compute overall data for context
+            overall_kmc_data = compute_kmc_both_ranges_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="KMC 1000-1999g Rate",
+                    value=f"{overall_kmc_data['kmc_1000_1999_rate']:.1f}%",
+                )
+            with col2:
+                st.metric(
+                    label="KMC 2000-2499g Rate",
+                    value=f"{overall_kmc_data['kmc_2000_2499_rate']:.1f}%",
+                )
+            with col3:
+                # Calculate combined rate
+                total_kmc_cases = (
+                    overall_kmc_data["kmc_1000_1999_count"]
+                    + overall_kmc_data["kmc_2000_2499_count"]
+                )
+                total_newborns = (
+                    overall_kmc_data["kmc_1000_1999_total"]
+                    + overall_kmc_data["kmc_2000_2499_total"]
+                )
+                combined_rate = (
+                    (total_kmc_cases / total_newborns * 100)
+                    if total_newborns > 0
+                    else 0
+                )
+                st.metric(
+                    label="Combined Rate (1000-2499g)",
+                    value=f"{combined_rate:.1f}%",
+                )
+
+            # Then render the comparison chart WITH CORRECTED TABLES
+            render_kmc_both_ranges_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="KMC Coverage by Birth Weight Range - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                region_mapping={},
+                facilities_by_region=facilities_by_region,
             )
         elif kpi_selection == "CPAP Coverage for RDS (%)":
             render_cpap_region_comparison_chart(
