@@ -358,17 +358,19 @@ initialize_session_state()
 
 
 def count_unique_teis_from_events(events_df, facility_uids, org_unit_column="orgUnit"):
-    """Count unique TEIs from events dataframe (same as national.py)"""
-    if events_df.empty or not facility_uids:
+    """✅ Count unique TEIs from events dataframe - SAME AS KPI_UTILS LOGIC"""
+    if events_df.empty:
         return 0
 
-    # Filter events by facility UIDs
-    if org_unit_column in events_df.columns:
+    # Filter by facilities if specified - same as kpi_utils
+    if facility_uids and org_unit_column in events_df.columns:
         filtered_events = events_df[events_df[org_unit_column].isin(facility_uids)]
+    elif facility_uids and "orgUnit" in events_df.columns:
+        filtered_events = events_df[events_df["orgUnit"].isin(facility_uids)]
     else:
         filtered_events = events_df
 
-    # Count unique TEI IDs from events
+    # Count unique TEI IDs from events - EXACTLY LIKE kpi_utils.compute_total_deliveries()
     if "tei_id" in filtered_events.columns:
         return filtered_events["tei_id"].nunique()
     else:
@@ -410,7 +412,7 @@ def get_earliest_date(df, date_column):
 
 
 def calculate_maternal_indicators(maternal_events_df, facility_uids):
-    """Optimized maternal indicators calculation"""
+    """✅ OPTIMIZED maternal indicators calculation - USING KPI_UTILS SAME WAY"""
     if maternal_events_df.empty:
         return {
             "total_deliveries": 0,
@@ -424,30 +426,22 @@ def calculate_maternal_indicators(maternal_events_df, facility_uids):
             "low_birth_weight_count": 0,
         }
 
-    # Use compute_kpis for basic maternal indicators
+    # ✅ USE SAME KPI_UTILS FUNCTION AS NATIONAL DASHBOARD
     kpi_data = compute_kpis(maternal_events_df, facility_uids)
 
+    # Get values directly from kpi_utils computation
     total_deliveries = kpi_data.get("total_deliveries", 0)
     maternal_deaths = kpi_data.get("maternal_deaths", 0)
+    maternal_death_rate = kpi_data.get("maternal_death_rate", 0.0)
     live_births = kpi_data.get("live_births", 0)
     stillbirths = kpi_data.get("stillbirths", 0)
     total_births = kpi_data.get("total_births", 0)
+    stillbirth_rate = kpi_data.get("stillbirth_rate", 0.0)
 
-    # Use compute_lbw_kpi specifically for low birth weight data
+    # ✅ Use compute_lbw_kpi specifically for low birth weight data
     lbw_data = compute_lbw_kpi(maternal_events_df, facility_uids)
     low_birth_weight_count = lbw_data.get("lbw_count", 0)
-    total_weighed = lbw_data.get("total_weighed", total_births)
     low_birth_weight_rate = lbw_data.get("lbw_rate", 0.0)
-
-    # Calculate rates
-    maternal_death_rate = (
-        (maternal_deaths / live_births * 100000) if live_births > 0 else 0.0
-    )
-    stillbirth_rate = (stillbirths / total_births * 1000) if total_births > 0 else 0.0
-
-    # If lbw_rate is 0 but we have data, calculate it manually
-    if low_birth_weight_rate == 0 and total_weighed > 0:
-        low_birth_weight_rate = (low_birth_weight_count / total_weighed) * 100
 
     return {
         "total_deliveries": total_deliveries,
@@ -463,11 +457,28 @@ def calculate_maternal_indicators(maternal_events_df, facility_uids):
 
 
 def calculate_newborn_indicators(newborn_events_df, facility_uids):
-    """Optimized newborn indicators calculation"""
+    """✅ OPTIMIZED newborn indicators calculation using events dataframe"""
     if newborn_events_df.empty:
-        return {"total_admitted": 0, "nmr": "N/A"}
+        return {
+            "total_admitted": 0,
+            "nmr": "N/A",
+            "kmc_coverage_rate": 0.0,
+            "kmc_cases": 0,
+            "total_lbw": 0,
+        }
 
-    return {"total_admitted": 0, "nmr": "N/A"}
+    # Count newborns from events dataframe
+    total_admitted = count_unique_teis_from_events(
+        newborn_events_df, facility_uids, "orgUnit"
+    )
+
+    return {
+        "total_admitted": total_admitted,
+        "nmr": "N/A",  # Placeholder - would need actual computation
+        "kmc_coverage_rate": 0.0,  # Placeholder
+        "kmc_cases": 0,  # Placeholder
+        "total_lbw": 0,  # Placeholder
+    }
 
 
 def get_location_display_name(selected_facilities, region_name):
@@ -560,7 +571,7 @@ def render_tab_placeholder(tab_name, icon, tab_key, description):
 def render_summary_dashboard_shared(
     user, region_name, facility_mapping, selected_facilities, shared_data
 ):
-    """OPTIMIZED Summary Dashboard - Only runs when tab is active"""
+    """✅ OPTIMIZED Summary Dashboard - USING KPI_UTILS SAME LOGIC"""
 
     # ✅ FIXED: Only run if this is the active tab AND data is loaded
     if st.session_state.active_tab != "summary":
@@ -583,7 +594,7 @@ def render_summary_dashboard_shared(
         st.session_state.tab_loading["summary"] = False
         st.rerun()
 
-    logging.info("🔄 Summary dashboard rendering")
+    logging.info("🔄 Regional summary dashboard rendering - USING KPI_UTILS LOGIC")
 
     # Get location display name
     location_name, location_type = get_location_display_name(
@@ -618,9 +629,9 @@ def render_summary_dashboard_shared(
         summary_data = st.session_state.summary_kpi_cache[cache_key]["data"]
         logging.info("✅ USING CACHED summary data")
     else:
-        # Compute summary data
-        with st.spinner("🔄 Computing summary statistics..."):
-            # Extract dataframes - use events for TEI counting (same as national.py)
+        # ✅ Compute summary data USING SAME LOGIC AS KPI_UTILS
+        with st.spinner("🔄 Computing summary statistics using KPI_UTILS logic..."):
+            # Extract dataframes - use events for TEI counting (SAME AS KPI_UTILS)
             maternal_events_df = (
                 maternal_data.get("events", pd.DataFrame())
                 if maternal_data
@@ -632,7 +643,30 @@ def render_summary_dashboard_shared(
                 else pd.DataFrame()
             )
 
-            # Get enrollment dates
+            # ✅ Get TEI counts FROM EVENTS (SAME AS kpi_utils.compute_total_deliveries())
+            if not maternal_events_df.empty and "tei_id" in maternal_events_df.columns:
+                if facility_uids:
+                    filtered_events = maternal_events_df[
+                        maternal_events_df["orgUnit"].isin(facility_uids)
+                    ]
+                else:
+                    filtered_events = maternal_events_df
+                maternal_tei_count = filtered_events["tei_id"].nunique()
+            else:
+                maternal_tei_count = 0
+
+            if not newborn_events_df.empty and "tei_id" in newborn_events_df.columns:
+                if facility_uids:
+                    filtered_newborn_events = newborn_events_df[
+                        newborn_events_df["orgUnit"].isin(facility_uids)
+                    ]
+                else:
+                    filtered_newborn_events = newborn_events_df
+                newborn_tei_count = filtered_newborn_events["tei_id"].nunique()
+            else:
+                newborn_tei_count = 0
+
+            # Get enrollment dates for start date display
             newborn_enrollments_df = normalize_enrollment_dates(
                 newborn_data.get("enrollments", pd.DataFrame())
                 if newborn_data
@@ -644,14 +678,6 @@ def render_summary_dashboard_shared(
                 else pd.DataFrame()
             )
 
-            # Get TEI counts FROM EVENTS (same as national.py)
-            maternal_tei_count = count_unique_teis_from_events(
-                maternal_events_df, facility_uids, "orgUnit"
-            )
-            newborn_tei_count = count_unique_teis_from_events(
-                newborn_events_df, facility_uids, "orgUnit"
-            )
-
             # Get dates
             newborn_start_date = get_earliest_date(
                 newborn_enrollments_df, "enrollmentDate"
@@ -660,19 +686,52 @@ def render_summary_dashboard_shared(
                 maternal_enrollments_df, "enrollmentDate"
             )
 
-            # Calculate indicators
+            # ✅ Calculate indicators USING KPI_UTILS
             maternal_indicators = calculate_maternal_indicators(
                 maternal_events_df, facility_uids
             )
+
+            # Newborn indicators
             newborn_indicators = calculate_newborn_indicators(
                 newborn_events_df, facility_uids
             )
             newborn_indicators["total_admitted"] = newborn_tei_count
 
-            # Facility comparison - use events for counting
-            facility_comparison_data = calculate_facility_comparison_data(
-                maternal_events_df, newborn_events_df, facility_mapping
-            )
+            # ✅ Facility comparison - using events data (SAME AS KPI_UTILS)
+            facility_comparison_data = {}
+            for facility_name, facility_uid in facility_mapping.items():
+                # Count mothers from events (same as kpi_utils)
+                if (
+                    not maternal_events_df.empty
+                    and "tei_id" in maternal_events_df.columns
+                ):
+                    facility_maternal_events = maternal_events_df[
+                        maternal_events_df["orgUnit"] == facility_uid
+                    ]
+                    maternal_count = facility_maternal_events["tei_id"].nunique()
+                else:
+                    maternal_count = 0
+
+                # Count newborns from events
+                if (
+                    not newborn_events_df.empty
+                    and "tei_id" in newborn_events_df.columns
+                ):
+                    facility_newborn_events = newborn_events_df[
+                        newborn_events_df["orgUnit"] == facility_uid
+                    ]
+                    newborn_count = facility_newborn_events["tei_id"].nunique()
+                else:
+                    newborn_count = 0
+
+                # Only include facilities with data
+                if maternal_count > 0 or newborn_count > 0:
+                    short_name = shorten_facility_name(facility_name)
+                    facility_comparison_data[short_name] = {
+                        "mothers": maternal_count,
+                        "newborns": newborn_count,
+                        "full_name": facility_name,
+                    }
 
             summary_data = {
                 "maternal_indicators": maternal_indicators,
@@ -954,7 +1013,7 @@ def render_summary_dashboard_shared(
             for facility, data in facility_comparison_data.items():
                 download_data.append(
                     {
-                        "Facility": facility,
+                        "Facility": data.get("full_name", facility),
                         "Admitted Mothers": data["mothers"],
                         "Admitted Newborns": data["newborns"],
                     }
