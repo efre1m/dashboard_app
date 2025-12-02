@@ -426,8 +426,15 @@ def fetch_program_data_for_user(
         "TOicTEwzSGj": {  # Discharge And Final Diagnosis
             "data_elements": [
                 "vmOAGuFcaz4",  # Newborn status at discharge
+                "yBCwmQP0A6a",  # Discharge Weight (grams):
             ],
             "program_stage_name": "Discharge And Final Diagnosis",
+        },
+        "VsVlpG1V2ub": {  # Observations And Nursing Care 2
+            "data_elements": [
+                "nIKIu6f5vbW",  # lowest recorded temperature (Celsius)
+            ],
+            "program_stage_name": "Observations And Nursing Care 2",
         },
     }
 

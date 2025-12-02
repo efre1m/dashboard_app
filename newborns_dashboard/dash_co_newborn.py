@@ -29,6 +29,14 @@ from newborns_dashboard.kpi_hypothermia import (
     render_hypothermia_facility_comparison_chart,
     render_hypothermia_region_comparison_chart,
 )
+
+# ✅ IMPORT NEW HYPOTHERMIA AFTER ADMISSION KPI
+from newborns_dashboard.kpi_hypo_after_adm import (
+    compute_hypothermia_after_admission_kpi,
+    render_hypothermia_after_admission_trend_chart,
+    render_hypothermia_after_admission_facility_comparison_chart,
+    render_hypothermia_after_admission_region_comparison_chart,
+)
 from newborns_dashboard.kpi_inborn import (
     compute_inborn_kpi,
     compute_inborn_numerator,  # ✅ IMPORT THE NUMERATOR FUNCTION
@@ -85,6 +93,11 @@ KPI_MAPPING = {
         "numerator_name": "Hypothermia Cases",
         "denominator_name": "Total Admissions",
     },
+    "Hypothermia After Admission (%)": {
+        "title": "Hypothermia After Admission (%)",
+        "numerator_name": "Hypothermia Cases",
+        "denominator_name": "Total Admissions",
+    },
     "Hypothermia Inborn/Outborn": {
         "title": "Hypothermia Inborn/Outborn",
         "numerator_name": "Hypothermia Cases",
@@ -114,6 +127,7 @@ KPI_OPTIONS = [
     "General CPAP Coverage (%)",
     "Prophylactic CPAP Coverage (%)",
     "Hypothermia on Admission (%)",
+    "Hypothermia After Admission (%)",  # ✅ NEW KPI
     "Hypothermia Inborn/Outborn",  # ✅ NEW KPI - RIGHT AFTER HYPOTHERMIA
     "Inborn Babies (%)",
     "Neonatal Mortality Rate (%)",
@@ -130,6 +144,7 @@ KPI_GROUPS = {
     ],
     "Admission Assessment": [
         "Hypothermia on Admission (%)",
+        "Hypothermia After Admission (%)",  # ✅ NEW KPI
         "Hypothermia Inborn/Outborn",  # ✅ PLACED RIGHT AFTER HYPOTHERMIA
         "Inborn Babies (%)",
         "Newborn Birth Weight Distribution",
@@ -271,7 +286,7 @@ def render_kpi_tab_navigation():
 
         with col1:
             if st.button(
-                "Hypothermia",
+                "Hypothermia on Admission",
                 key="hypothermia_btn_newborn",  # ✅ Unique key
                 use_container_width=True,
                 type=(
@@ -284,7 +299,20 @@ def render_kpi_tab_navigation():
 
         with col2:
             if st.button(
-                "Hypothermia Inborn/Outborn",  # ✅ NEW BUTTON - Short name for display
+                "Hypothermia After Admission",  # ✅ NEW BUTTON
+                key="hypothermia_after_btn_newborn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Hypothermia After Admission (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Hypothermia After Admission (%)"
+
+        with col3:
+            if st.button(
+                "Hypothermia Inborn/Outborn",  # ✅ NEW BUTTON
                 key="hypo_in_out_btn_newborn",  # ✅ Unique key
                 use_container_width=True,
                 type=(
@@ -295,7 +323,7 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Hypothermia Inborn/Outborn"
 
-        with col3:
+        with col4:
             if st.button(
                 "Inborn Babies",
                 key="inborn_btn_newborn",  # ✅ Unique key
@@ -306,7 +334,9 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Inborn Babies (%)"
 
-        with col4:
+        # Birth Weight button on a new row
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
             if st.button(
                 "Birth Weight",
                 key="bw_btn_newborn",  # ✅ Unique key
@@ -504,6 +534,38 @@ def compute_cpap_prophylactic_for_dashboard(df, facility_uids=None, tei_df=None)
     }
 
 
+def compute_hypothermia_after_admission_for_dashboard(
+    df, facility_uids=None, tei_df=None
+):
+    """
+    ✅ Independent computation of Hypothermia After Admission KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "hypothermia_rate": 0.0,
+            "hypothermia_count": 0,
+            "total_admitted_newborns": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported hypothermia after admission function directly
+    hypothermia_data = compute_hypothermia_after_admission_kpi(
+        df, facility_uids, tei_df
+    )
+
+    return {
+        "hypothermia_rate": hypothermia_data["hypothermia_rate"],
+        "hypothermia_count": hypothermia_data["hypothermia_count"],
+        "total_admitted_newborns": hypothermia_data["total_admitted_newborns"],
+    }
+
+
 def render_trend_chart_section(
     kpi_selection,
     filtered_events,
@@ -638,10 +700,20 @@ def render_trend_chart_section(
             tei_df=tei_df,  # ✅ Pass TEI dataframe
         )
 
+    elif kpi_selection == "Hypothermia After Admission (%)":
+        # ✅ NEW: Render hypothermia after admission trend chart
+        render_hypothermia_after_admission_trend_chart(
+            filtered_events,
+            "period_display",
+            "Hypothermia After Admission (%)",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,  # ✅ Pass TEI dataframe
+        )
+
     elif kpi_selection == "Hypothermia Inborn/Outborn":
         # ✅ NEW: Render hypothermia inborn/outborn trend chart
-        # REMOVED: First show summary metrics - render_inborn_outborn_hypothermia_summary is removed
-        # Then render the trend chart
         render_inborn_outborn_hypothermia_trend_chart(
             filtered_events,
             "period_display",
@@ -762,6 +834,18 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 title="Hypothermia on Admission (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Hypothermia After Admission (%)":
+            # ✅ NEW: Render hypothermia after admission facility comparison chart
+            render_hypothermia_after_admission_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Hypothermia After Admission (%) - Facility Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 facility_names=display_names,
@@ -935,6 +1019,45 @@ def render_comparison_chart(
                 facilities_by_region=facilities_by_region,
                 tei_df=tei_df,
             )
+        elif kpi_selection == "Hypothermia After Admission (%)":
+            # ✅ NEW: Render hypothermia after admission region comparison chart
+            st.subheader("📊 Hypothermia After Admission - Region Comparison")
+
+            # Compute overall data for context
+            overall_hypothermia_data = (
+                compute_hypothermia_after_admission_for_dashboard(
+                    filtered_events, None, tei_df  # No facility filter for regional
+                )
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total Hypothermia Cases",
+                    value=f"{overall_hypothermia_data['hypothermia_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Admissions",
+                    value=f"{overall_hypothermia_data['total_admitted_newborns']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall Hypothermia Rate",
+                    value=f"{overall_hypothermia_data['hypothermia_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_hypothermia_after_admission_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Hypothermia After Admission (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                facilities_by_region=facilities_by_region,
+                tei_df=tei_df,
+            )
         elif kpi_selection == "Hypothermia Inborn/Outborn":
             # ✅ NEW: Render hypothermia inborn/outborn region comparison chart
             st.subheader("📊 Hypothermia Inborn/Outborn - Region Comparison")
@@ -944,7 +1067,6 @@ def render_comparison_chart(
                 filtered_events, tei_df=tei_df
             )
 
-            # REMOVED the metrics display section
             # Then render the comparison chart
             render_inborn_outborn_hypothermia_comparison_chart(
                 df=filtered_events,

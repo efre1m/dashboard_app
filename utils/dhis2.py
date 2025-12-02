@@ -43,6 +43,8 @@ NEWBORN_HEALTH_ELEMENTS = {
     "gJH6PkYI6IV",  # Third Reason for Admission
     "aK5txmRYpVX",  # birth location
     "vmOAGuFcaz4",  # Newborn Status at Discharge
+    "yBCwmQP0A6a",  # Discharge Weight (grams):
+    "nIKIu6f5vbW",  # lowest recorded temperature (Celsius)
 }
 
 # Combine for complete coverage
@@ -79,6 +81,8 @@ DATA_ELEMENT_NAMES = {
     "gJH6PkYI6IV": "Third Reason for Admission",
     "aK5txmRYpVX": "birth location",
     "vmOAGuFcaz4": "Newborn Status at Discharge",
+    "yBCwmQP0A6a": "Discharge Weight (grams)",
+    "nIKIu6f5vbW": "lowest recorded temperature (Celsius)",
 }
 
 
