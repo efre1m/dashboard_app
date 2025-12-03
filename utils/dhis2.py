@@ -45,6 +45,8 @@ NEWBORN_HEALTH_ELEMENTS = {
     "vmOAGuFcaz4",  # Newborn Status at Discharge
     "yBCwmQP0A6a",  # Discharge Weight (grams):
     "nIKIu6f5vbW",  # lowest recorded temperature (Celsius)
+    "sxtsEDilKZd",  # Were antibiotics administered?
+    "wn0tHaHcceW",  # Sub-Categories of Infection:
 }
 
 # Combine for complete coverage
@@ -83,6 +85,8 @@ DATA_ELEMENT_NAMES = {
     "vmOAGuFcaz4": "Newborn Status at Discharge",
     "yBCwmQP0A6a": "Discharge Weight (grams)",
     "nIKIu6f5vbW": "lowest recorded temperature (Celsius)",
+    "sxtsEDilKZd": "Were antibiotics administered?",
+    "wn0tHaHcceW": "Sub-Categories of Infection",
 }
 
 

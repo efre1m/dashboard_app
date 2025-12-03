@@ -420,6 +420,7 @@ def fetch_program_data_for_user(
             "data_elements": [
                 "QK7Fi6OwtDC",  # KMC Administered
                 "wlHEf9FdmJM",  # CPAP Administered
+                "sxtsEDilKZd",  # Were antibiotics administered?
             ],
             "program_stage_name": "Interventions",
         },
@@ -427,6 +428,7 @@ def fetch_program_data_for_user(
             "data_elements": [
                 "vmOAGuFcaz4",  # Newborn status at discharge
                 "yBCwmQP0A6a",  # Discharge Weight (grams):
+                "wn0tHaHcceW",  # Sub-Categories of Infection:
             ],
             "program_stage_name": "Discharge And Final Diagnosis",
         },

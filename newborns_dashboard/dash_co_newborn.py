@@ -54,6 +54,15 @@ from newborns_dashboard.kpi_inborn import (
     render_inborn_facility_comparison_chart,
     render_inborn_region_comparison_chart,
 )
+
+from newborns_dashboard.kpi_antibiotic import (  # ✅ IMPORT ANTIBIOTICS KPI
+    compute_antibiotics_kpi,
+    compute_antibiotics_numerator,
+    render_antibiotics_trend_chart,
+    render_antibiotics_facility_comparison_chart,
+    render_antibiotics_region_comparison_chart,
+)
+
 from newborns_dashboard.kpi_nmr import (
     compute_nmr_kpi,
     compute_nmr_numerator,  # ✅ IMPORT THE NUMERATOR FUNCTION
@@ -76,7 +85,7 @@ from newborns_dashboard.kpi_in_out_hypo import (
     render_inborn_outborn_hypothermia_summary,
 )
 
-# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, Inborn, NMR, and Birth Weight
+# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, Inborn, Antibiotics, NMR, and Birth Weight
 KPI_MAPPING = {
     "LBW KMC Coverage (%)": {
         "title": "LBW KMC Coverage (%)",
@@ -123,6 +132,11 @@ KPI_MAPPING = {
         "numerator_name": "Inborn Cases",
         "denominator_name": "Total Admissions",
     },
+    "Antibiotics for Clinical Sepsis (%)": {
+        "title": "Antibiotics for Clinical Sepsis (%)",
+        "numerator_name": "Antibiotics Cases",
+        "denominator_name": "Probable Sepsis Cases",
+    },
     "Neonatal Mortality Rate (%)": {
         "title": "Neonatal Mortality Rate (%)",
         "numerator_name": "Dead Cases",
@@ -142,15 +156,16 @@ KPI_OPTIONS = [
     "CPAP Coverage for RDS (%)",
     "General CPAP Coverage (%)",
     "Prophylactic CPAP Coverage (%)",
+    "Antibiotics for Clinical Sepsis (%)",  # ✅ ADDED ANTIBIOTICS KPI TO NEWBORN CARE
     "Hypothermia on Admission (%)",
     "Hypothermia After Admission (%)",  # ✅ NEW KPI
     "Hypothermia Inborn/Outborn",  # ✅ NEW KPI - RIGHT AFTER HYPOTHERMIA
     "Inborn Babies (%)",
-    "Neonatal Mortality Rate (%)",
     "Newborn Birth Weight Distribution",
+    "Neonatal Mortality Rate (%)",
 ]
 
-# KPI Grouping for Tab Navigation - Hypothermia Inborn/Outborn placed right after Hypothermia
+# KPI Grouping for Tab Navigation - Antibiotics added to Newborn Care group
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
@@ -158,6 +173,7 @@ KPI_GROUPS = {
         "CPAP Coverage for RDS (%)",
         "General CPAP Coverage (%)",
         "Prophylactic CPAP Coverage (%)",
+        "Antibiotics for Clinical Sepsis (%)",  # ✅ ADDED ANTIBIOTICS TO NEWBORN CARE
     ],
     "Admission Assessment": [
         "Hypothermia on Admission (%)",
@@ -232,7 +248,7 @@ def render_kpi_tab_navigation():
     if "selected_kpi_NEWBORN_DASHBOARD" not in st.session_state:
         st.session_state.selected_kpi_NEWBORN_DASHBOARD = "LBW KMC Coverage (%)"
 
-    # Create tabs for all groups
+    # Create tabs for all groups - KEEP ORIGINAL TAB NAMES
     tab1, tab2, tab3 = st.tabs(
         [
             "👶 **Newborn Care**",
@@ -244,7 +260,7 @@ def render_kpi_tab_navigation():
     selected_kpi = st.session_state.selected_kpi_NEWBORN_DASHBOARD
 
     with tab1:
-        # Newborn Care KPIs - 5 buttons layout (with new KMC both ranges)
+        # Newborn Care KPIs - 6 buttons layout (5 on first row, 1 on second row)
         col1, col2, col3, col4, col5 = st.columns(5)
 
         with col1:
@@ -309,6 +325,21 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Prophylactic CPAP Coverage (%)"
+
+        # Second row for Antibiotics button
+        col6, col7, col8, col9, col10 = st.columns(5)
+        with col6:
+            if st.button(
+                "Antibiotics for Probable Sepsis",  # ✅ NEW BUTTON IN NEWBORN CARE
+                key="antibiotics_newborn_care_btn",  # ✅ Unique key
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Antibiotics for Clinical Sepsis (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Antibiotics for Clinical Sepsis (%)"
 
     with tab2:
         # Admission Assessment KPIs - FOUR buttons layout (Hypothermia Inborn/Outborn right after Hypothermia)
@@ -473,6 +504,54 @@ def compute_inborn_for_dashboard(df, facility_uids=None, tei_df=None):
         "inborn_rate": float(inborn_rate),
         "inborn_count": int(inborn_count),
         "total_admitted_newborns": int(total_admitted_newborns),
+    }
+
+
+def compute_antibiotics_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of antibiotics KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "antibiotics_rate": 0.0,
+            "antibiotics_count": 0,
+            "probable_sepsis_count": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported numerator function directly
+    antibiotics_count = compute_antibiotics_numerator(df, facility_uids)
+
+    # Count babies with Probable Sepsis (denominator)
+    from newborns_dashboard.kpi_antibiotic import (
+        SUBCATEGORIES_INFECTION_UID,
+        PROBABLE_SEPSIS_CODE,
+    )
+
+    sepsis_mask = (df["dataElement_uid"] == SUBCATEGORIES_INFECTION_UID) & (
+        df["value"] == PROBABLE_SEPSIS_CODE
+    )
+
+    sepsis_events = df[sepsis_mask]
+    probable_sepsis_count = sepsis_events["tei_id"].nunique()
+
+    # Calculate antibiotics rate
+    antibiotics_rate = (
+        (antibiotics_count / probable_sepsis_count * 100)
+        if probable_sepsis_count > 0
+        else 0.0
+    )
+
+    return {
+        "antibiotics_rate": float(antibiotics_rate),
+        "antibiotics_count": int(antibiotics_count),
+        "probable_sepsis_count": int(probable_sepsis_count),
     }
 
 
@@ -764,6 +843,18 @@ def render_trend_chart_section(
             facility_uids,
         )
 
+    elif kpi_selection == "Antibiotics for Clinical Sepsis (%)":
+        # ✅ NEW: Render antibiotics trend chart
+        render_antibiotics_trend_chart(
+            filtered_events,
+            "period_display",
+            "Antibiotics for Clinical Sepsis Trend",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,
+        )
+
     elif kpi_selection == "Hypothermia on Admission (%)":
         # ✅ FIX: Pass TEI dataframe to prevent overcounting
         render_hypothermia_trend_chart(
@@ -812,18 +903,6 @@ def render_trend_chart_section(
             tei_df=tei_df,
         )
 
-    elif kpi_selection == "Neonatal Mortality Rate (%)":
-        # Then render the trend chart
-        render_nmr_trend_chart(
-            filtered_events,
-            "period_display",
-            "Neonatal Mortality Rate Trend Over Time",
-            bg_color,
-            text_color,
-            facility_uids=facility_uids,
-            tei_df=tei_df,
-        )
-
     elif kpi_selection == "Newborn Birth Weight Distribution":
         # ✅ NEW: Render birth weight trend chart
         render_newborn_bw_trend_chart(
@@ -834,6 +913,18 @@ def render_trend_chart_section(
             text_color,
             facility_names=display_names,
             facility_uids=facility_uids,
+        )
+
+    elif kpi_selection == "Neonatal Mortality Rate (%)":
+        # Then render the trend chart
+        render_nmr_trend_chart(
+            filtered_events,
+            "period_display",
+            "Neonatal Mortality Rate Trend Over Time",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,
         )
 
 
@@ -915,6 +1006,18 @@ def render_comparison_chart(
                 numerator_name="Prophylactic CPAP Cases",
                 denominator_name="Total Newborns (1000-2499g)",
             )
+        elif kpi_selection == "Antibiotics for Clinical Sepsis (%)":
+            # ✅ NEW: Render antibiotics facility comparison chart
+            render_antibiotics_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Antibiotics for Clinical Sepsis (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                tei_df=tei_df,
+            )
         elif kpi_selection == "Hypothermia on Admission (%)":
             # ✅ FIX: Pass TEI dataframe to prevent overcounting
             render_hypothermia_facility_comparison_chart(
@@ -964,6 +1067,17 @@ def render_comparison_chart(
                 facility_uids=facility_uids,
                 tei_df=tei_df,
             )
+        elif kpi_selection == "Newborn Birth Weight Distribution":
+            # ✅ NEW: Render birth weight facility comparison chart
+            render_newborn_bw_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Newborn Birth Weight Distribution - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+            )
         elif kpi_selection == "Neonatal Mortality Rate (%)":
             # Then render the comparison chart
             render_nmr_facility_comparison_chart(
@@ -975,17 +1089,6 @@ def render_comparison_chart(
                 facility_names=display_names,
                 facility_uids=facility_uids,
                 tei_df=tei_df,
-            )
-        elif kpi_selection == "Newborn Birth Weight Distribution":
-            # ✅ NEW: Render birth weight facility comparison chart
-            render_newborn_bw_facility_comparison_chart(
-                df=filtered_events,
-                period_col="period_display",
-                title="Newborn Birth Weight Distribution - Facility Comparison",
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
             )
 
     else:  # region comparison (only for national)
@@ -1145,6 +1248,43 @@ def render_comparison_chart(
                 numerator_name="Prophylactic CPAP Cases",
                 denominator_name="Total Newborns (1000-2499g)",
             )
+        elif kpi_selection == "Antibiotics for Clinical Sepsis (%)":
+            # ✅ NEW: Show independent computation first
+            st.subheader("📊 Antibiotics for Clinical Sepsis - Region Comparison")
+
+            # Compute overall data for context
+            overall_antibiotics_data = compute_antibiotics_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total Antibiotics Cases",
+                    value=f"{overall_antibiotics_data['antibiotics_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Probable Sepsis Cases",
+                    value=f"{overall_antibiotics_data['probable_sepsis_count']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall Antibiotics Rate",
+                    value=f"{overall_antibiotics_data['antibiotics_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_antibiotics_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Antibiotics for Clinical Sepsis (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                facilities_by_region=facilities_by_region,
+                tei_df=tei_df,
+            )
         elif kpi_selection == "Hypothermia on Admission (%)":
             # ✅ FIX: Pass TEI dataframe to prevent overcounting
             render_hypothermia_region_comparison_chart(
@@ -1254,6 +1394,39 @@ def render_comparison_chart(
                 facilities_by_region=facilities_by_region,
                 tei_df=tei_df,
             )
+        elif kpi_selection == "Newborn Birth Weight Distribution":
+            # ✅ NEW: Render birth weight region comparison chart
+            st.subheader("📊 Newborn Birth Weight Distribution - Region Comparison")
+
+            # Compute overall data for context
+            overall_bw_data = compute_bw_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(
+                    label="Total Admissions",
+                    value=f"{overall_bw_data['total_admissions']:,}",
+                )
+            with col2:
+                # Show normal birth weight rate (2500-4000g) as key indicator
+                normal_bw_rate = overall_bw_data["category_rates"].get("2500_4000", 0)
+                st.metric(
+                    label="Normal Birth Weight Rate (2500-4000g)",
+                    value=f"{normal_bw_rate:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_newborn_bw_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Newborn Birth Weight Distribution - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                facilities_by_region=facilities_by_region,
+            )
         elif kpi_selection == "Neonatal Mortality Rate (%)":
             # ✅ FIX: Show independent computation first
             st.subheader("📊 Neonatal Mortality Rate - Region Comparison")
@@ -1290,39 +1463,6 @@ def render_comparison_chart(
                 region_names=display_names,
                 facilities_by_region=facilities_by_region,
                 tei_df=tei_df,
-            )
-        elif kpi_selection == "Newborn Birth Weight Distribution":
-            # ✅ NEW: Render birth weight region comparison chart
-            st.subheader("📊 Newborn Birth Weight Distribution - Region Comparison")
-
-            # Compute overall data for context
-            overall_bw_data = compute_bw_for_dashboard(
-                filtered_events, None, tei_df  # No facility filter for regional
-            )
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric(
-                    label="Total Admissions",
-                    value=f"{overall_bw_data['total_admissions']:,}",
-                )
-            with col2:
-                # Show normal birth weight rate (2500-4000g) as key indicator
-                normal_bw_rate = overall_bw_data["category_rates"].get("2500_4000", 0)
-                st.metric(
-                    label="Normal Birth Weight Rate (2500-4000g)",
-                    value=f"{normal_bw_rate:.1f}%",
-                )
-
-            # Then render the comparison chart
-            render_newborn_bw_region_comparison_chart(
-                df=filtered_events,
-                period_col="period_display",
-                title="Newborn Birth Weight Distribution - Region Comparison",
-                bg_color=bg_color,
-                text_color=text_color,
-                region_names=display_names,
-                facilities_by_region=facilities_by_region,
             )
 
 
