@@ -438,6 +438,12 @@ def fetch_program_data_for_user(
             ],
             "program_stage_name": "Observations And Nursing Care 2",
         },
+        "aCrttmnx7FI": {  # Microbiology And Labs
+            "data_elements": [
+                "A94ibeuO9GL",  # Blood culture for suspected sepsis:
+            ],
+            "program_stage_name": "Microbiology And Labs",
+        },
     }
 
     # Select the appropriate program stage mapping based on program UID

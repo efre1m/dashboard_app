@@ -47,6 +47,7 @@ NEWBORN_HEALTH_ELEMENTS = {
     "nIKIu6f5vbW",  # lowest recorded temperature (Celsius)
     "sxtsEDilKZd",  # Were antibiotics administered?
     "wn0tHaHcceW",  # Sub-Categories of Infection:
+    "A94ibeuO9GL",  # Blood culture for suspected sepsis:
 }
 
 # Combine for complete coverage
@@ -87,6 +88,7 @@ DATA_ELEMENT_NAMES = {
     "nIKIu6f5vbW": "lowest recorded temperature (Celsius)",
     "sxtsEDilKZd": "Were antibiotics administered?",
     "wn0tHaHcceW": "Sub-Categories of Infection",
+    "A94ibeuO9GL": "Blood culture for suspected sepsis",
 }
 
 

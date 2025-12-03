@@ -63,6 +63,28 @@ from newborns_dashboard.kpi_antibiotic import (  # ✅ IMPORT ANTIBIOTICS KPI
     render_antibiotics_region_comparison_chart,
 )
 
+# ✅ IMPORT NEW CULTURE DONE KPI
+from newborns_dashboard.kpi_culture_done import (
+    compute_culture_done_kpi,
+    compute_culture_done_numerator,
+    compute_antibiotics_denominator,
+    render_culture_done_trend_chart,
+    render_culture_done_facility_comparison_chart,
+    render_culture_done_region_comparison_chart,
+    render_culture_done_comprehensive_summary,
+)
+
+# ✅ IMPORT NEW CULTURE DONE FOR SEPSIS KPI
+from newborns_dashboard.kpi_culture_sepsis import (
+    compute_culture_done_sepsis_kpi,
+    compute_sepsis_culture_numerator,
+    compute_sepsis_cases,
+    render_culture_done_sepsis_trend_chart,
+    render_culture_done_sepsis_facility_comparison_chart,
+    render_culture_done_sepsis_region_comparison_chart,
+    render_culture_done_sepsis_comprehensive_summary,
+)
+
 from newborns_dashboard.kpi_nmr import (
     compute_nmr_kpi,
     compute_nmr_numerator,  # ✅ IMPORT THE NUMERATOR FUNCTION
@@ -85,7 +107,7 @@ from newborns_dashboard.kpi_in_out_hypo import (
     render_inborn_outborn_hypothermia_summary,
 )
 
-# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, Inborn, Antibiotics, NMR, and Birth Weight
+# KPI mapping for KMC coverage, CPAP coverage, Hypothermia, Inborn, Antibiotics, Culture Done, Culture Done for Sepsis, NMR, and Birth Weight
 KPI_MAPPING = {
     "LBW KMC Coverage (%)": {
         "title": "LBW KMC Coverage (%)",
@@ -137,6 +159,16 @@ KPI_MAPPING = {
         "numerator_name": "Antibiotics Cases",
         "denominator_name": "Probable Sepsis Cases",
     },
+    "Culture Done for Babies on Antibiotics (%)": {  # ✅ EXISTING CULTURE DONE KPI
+        "title": "Culture Done for Babies on Antibiotics (%)",
+        "numerator_name": "Culture Done Cases",
+        "denominator_name": "Total Babies on Antibiotics",
+    },
+    "Culture Done for Babies with Clinical Sepsis (%)": {  # ✅ NEW CULTURE DONE FOR SEPSIS KPI
+        "title": "Culture Done for Babies with Clinical Sepsis (%)",
+        "numerator_name": "Culture Done Cases",
+        "denominator_name": "Probable Sepsis Cases",
+    },
     "Neonatal Mortality Rate (%)": {
         "title": "Neonatal Mortality Rate (%)",
         "numerator_name": "Dead Cases",
@@ -157,6 +189,8 @@ KPI_OPTIONS = [
     "General CPAP Coverage (%)",
     "Prophylactic CPAP Coverage (%)",
     "Antibiotics for Clinical Sepsis (%)",  # ✅ ADDED ANTIBIOTICS KPI TO NEWBORN CARE
+    "Culture Done for Babies on Antibiotics (%)",  # ✅ ADDED EXISTING CULTURE DONE KPI
+    "Culture Done for Babies with Clinical Sepsis (%)",  # ✅ ADDED NEW CULTURE DONE FOR SEPSIS KPI
     "Hypothermia on Admission (%)",
     "Hypothermia After Admission (%)",  # ✅ NEW KPI
     "Hypothermia Inborn/Outborn",  # ✅ NEW KPI - RIGHT AFTER HYPOTHERMIA
@@ -165,7 +199,7 @@ KPI_OPTIONS = [
     "Neonatal Mortality Rate (%)",
 ]
 
-# KPI Grouping for Tab Navigation - Antibiotics added to Newborn Care group
+# KPI Grouping for Tab Navigation - Antibiotics and Culture Done added to Newborn Care group
 KPI_GROUPS = {
     "Newborn Care": [
         "LBW KMC Coverage (%)",
@@ -174,6 +208,8 @@ KPI_GROUPS = {
         "General CPAP Coverage (%)",
         "Prophylactic CPAP Coverage (%)",
         "Antibiotics for Clinical Sepsis (%)",  # ✅ ADDED ANTIBIOTICS TO NEWBORN CARE
+        "Culture Done for Babies on Antibiotics (%)",  # ✅ ADDED EXISTING CULTURE DONE KPI
+        "Culture Done for Babies with Clinical Sepsis (%)",  # ✅ ADDED NEW CULTURE DONE FOR SEPSIS KPI
     ],
     "Admission Assessment": [
         "Hypothermia on Admission (%)",
@@ -260,13 +296,14 @@ def render_kpi_tab_navigation():
     selected_kpi = st.session_state.selected_kpi_NEWBORN_DASHBOARD
 
     with tab1:
-        # Newborn Care KPIs - 6 buttons layout (5 on first row, 1 on second row)
+        # Newborn Care KPIs - 8 buttons layout (3 rows)
+        # First row: 5 buttons
         col1, col2, col3, col4, col5 = st.columns(5)
 
         with col1:
             if st.button(
                 "LBW KMC Coverage",
-                key="kmc_lbw_btn_newborn",  # ✅ Unique key
+                key="kmc_lbw_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary" if selected_kpi == "LBW KMC Coverage (%)" else "secondary"
@@ -276,8 +313,8 @@ def render_kpi_tab_navigation():
 
         with col2:
             if st.button(
-                "KMC by BW Range",  # ✅ UPDATED BUTTON TEXT
-                key="kmc_both_ranges_btn_newborn",  # ✅ Unique key
+                "KMC by BW Range",
+                key="kmc_both_ranges_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -290,7 +327,7 @@ def render_kpi_tab_navigation():
         with col3:
             if st.button(
                 "CPAP for RDS",
-                key="cpap_rds_btn_newborn",  # ✅ Unique key
+                key="cpap_rds_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -303,7 +340,7 @@ def render_kpi_tab_navigation():
         with col4:
             if st.button(
                 "General CPAP",
-                key="cpap_general_btn_newborn",  # ✅ Unique key
+                key="cpap_general_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -316,7 +353,7 @@ def render_kpi_tab_navigation():
         with col5:
             if st.button(
                 "Prophylactic CPAP",
-                key="cpap_prophylactic_btn_newborn",  # ✅ Unique key
+                key="cpap_prophylactic_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -326,12 +363,12 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Prophylactic CPAP Coverage (%)"
 
-        # Second row for Antibiotics button
+        # Second row: 3 buttons (Antibiotics and Culture Dones)
         col6, col7, col8, col9, col10 = st.columns(5)
         with col6:
             if st.button(
-                "Antibiotics for Probable Sepsis",  # ✅ NEW BUTTON IN NEWBORN CARE
-                key="antibiotics_newborn_care_btn",  # ✅ Unique key
+                "Antibiotics for Probable Sepsis",
+                key="antibiotics_newborn_care_btn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -341,6 +378,33 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Antibiotics for Clinical Sepsis (%)"
 
+        with col7:
+            if st.button(
+                "Culture Done for Antibiotics",  # ✅ EXISTING CULTURE DONE BUTTON
+                key="culture_done_newborn_care_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Culture Done for Babies on Antibiotics (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Culture Done for Babies on Antibiotics (%)"
+
+        with col8:
+            if st.button(
+                "Culture Done for Sepsis",  # ✅ NEW CULTURE DONE FOR SEPSIS BUTTON
+                key="culture_done_sepsis_newborn_care_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi
+                    == "Culture Done for Babies with Clinical Sepsis (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Culture Done for Babies with Clinical Sepsis (%)"
+
     with tab2:
         # Admission Assessment KPIs - FOUR buttons layout (Hypothermia Inborn/Outborn right after Hypothermia)
         col1, col2, col3, col4 = st.columns(4)
@@ -348,7 +412,7 @@ def render_kpi_tab_navigation():
         with col1:
             if st.button(
                 "Hypothermia on Admission",
-                key="hypothermia_btn_newborn",  # ✅ Unique key
+                key="hypothermia_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -360,8 +424,8 @@ def render_kpi_tab_navigation():
 
         with col2:
             if st.button(
-                "Hypothermia After Admission",  # ✅ NEW BUTTON
-                key="hypothermia_after_btn_newborn",  # ✅ Unique key
+                "Hypothermia After Admission",
+                key="hypothermia_after_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -373,8 +437,8 @@ def render_kpi_tab_navigation():
 
         with col3:
             if st.button(
-                "Hypothermia Inborn/Outborn",  # ✅ NEW BUTTON
-                key="hypo_in_out_btn_newborn",  # ✅ Unique key
+                "Hypothermia Inborn/Outborn",
+                key="hypo_in_out_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -387,7 +451,7 @@ def render_kpi_tab_navigation():
         with col4:
             if st.button(
                 "Inborn Babies",
-                key="inborn_btn_newborn",  # ✅ Unique key
+                key="inborn_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary" if selected_kpi == "Inborn Babies (%)" else "secondary"
@@ -400,7 +464,7 @@ def render_kpi_tab_navigation():
         with col5:
             if st.button(
                 "Birth Weight",
-                key="bw_btn_newborn",  # ✅ Unique key
+                key="bw_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -417,7 +481,7 @@ def render_kpi_tab_navigation():
         with col1:
             if st.button(
                 "Neonatal Mortality",
-                key="nmr_btn_newborn",  # ✅ Unique key
+                key="nmr_btn_newborn",
                 use_container_width=True,
                 type=(
                     "primary"
@@ -552,6 +616,74 @@ def compute_antibiotics_for_dashboard(df, facility_uids=None, tei_df=None):
         "antibiotics_rate": float(antibiotics_rate),
         "antibiotics_count": int(antibiotics_count),
         "probable_sepsis_count": int(probable_sepsis_count),
+    }
+
+
+def compute_culture_done_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of Culture Done KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "culture_rate": 0.0,
+            "culture_count": 0,
+            "antibiotics_count": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported numerator function directly
+    culture_count = compute_culture_done_numerator(df, facility_uids)
+    antibiotics_count = compute_antibiotics_denominator(df, facility_uids)
+
+    # Calculate culture rate
+    culture_rate = (
+        (culture_count / antibiotics_count * 100) if antibiotics_count > 0 else 0.0
+    )
+
+    return {
+        "culture_rate": float(culture_rate),
+        "culture_count": int(culture_count),
+        "antibiotics_count": int(antibiotics_count),
+    }
+
+
+def compute_culture_done_sepsis_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of Culture Done for Sepsis KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "culture_sepsis_rate": 0.0,
+            "culture_count": 0,
+            "sepsis_count": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported numerator function directly
+    culture_count = compute_sepsis_culture_numerator(df, facility_uids)
+    sepsis_count = compute_sepsis_cases(df, facility_uids)
+
+    # Calculate culture rate for sepsis
+    culture_sepsis_rate = (
+        (culture_count / sepsis_count * 100) if sepsis_count > 0 else 0.0
+    )
+
+    return {
+        "culture_sepsis_rate": float(culture_sepsis_rate),
+        "culture_count": int(culture_count),
+        "sepsis_count": int(sepsis_count),
     }
 
 
@@ -855,6 +987,30 @@ def render_trend_chart_section(
             tei_df=tei_df,
         )
 
+    elif kpi_selection == "Culture Done for Babies on Antibiotics (%)":
+        # ✅ NEW: Render culture done trend chart
+        render_culture_done_trend_chart(
+            filtered_events,
+            "period_display",
+            "Culture Done for Babies on Antibiotics Trend",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,
+        )
+
+    elif kpi_selection == "Culture Done for Babies with Clinical Sepsis (%)":
+        # ✅ NEW: Render culture done for sepsis trend chart
+        render_culture_done_sepsis_trend_chart(
+            filtered_events,
+            "period_display",
+            "Culture Done for Babies with Clinical Sepsis Trend",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,
+        )
+
     elif kpi_selection == "Hypothermia on Admission (%)":
         # ✅ FIX: Pass TEI dataframe to prevent overcounting
         render_hypothermia_trend_chart(
@@ -1012,6 +1168,30 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 title="Antibiotics for Clinical Sepsis (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Culture Done for Babies on Antibiotics (%)":
+            # ✅ NEW: Render culture done facility comparison chart
+            render_culture_done_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Culture Done for Babies on Antibiotics (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Culture Done for Babies with Clinical Sepsis (%)":
+            # ✅ NEW: Render culture done for sepsis facility comparison chart
+            render_culture_done_sepsis_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Culture Done for Babies with Clinical Sepsis (%) - Facility Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 facility_names=display_names,
@@ -1279,6 +1459,85 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 title="Antibiotics for Clinical Sepsis (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                facilities_by_region=facilities_by_region,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Culture Done for Babies on Antibiotics (%)":
+            # ✅ NEW: Show independent computation first
+            st.subheader(
+                "📊 Culture Done for Babies on Antibiotics - Region Comparison"
+            )
+
+            # Compute overall data for context
+            overall_culture_data = compute_culture_done_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total Culture Done Cases",
+                    value=f"{overall_culture_data['culture_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Babies on Antibiotics",
+                    value=f"{overall_culture_data['antibiotics_count']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall Culture Done Rate",
+                    value=f"{overall_culture_data['culture_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_culture_done_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Culture Done for Babies on Antibiotics (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                region_mapping={},
+                facilities_by_region=facilities_by_region,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Culture Done for Babies with Clinical Sepsis (%)":
+            # ✅ NEW: Show independent computation first
+            st.subheader(
+                "📊 Culture Done for Babies with Clinical Sepsis - Region Comparison"
+            )
+
+            # Compute overall data for context
+            overall_culture_sepsis_data = compute_culture_done_sepsis_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total Culture Done Cases",
+                    value=f"{overall_culture_sepsis_data['culture_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Probable Sepsis Cases",
+                    value=f"{overall_culture_sepsis_data['sepsis_count']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall Culture Done for Sepsis Rate",
+                    value=f"{overall_culture_sepsis_data['culture_sepsis_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_culture_done_sepsis_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Culture Done for Babies with Clinical Sepsis (%) - Region Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 region_names=display_names,

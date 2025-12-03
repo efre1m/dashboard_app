@@ -329,21 +329,34 @@ def render_kmc_both_ranges_trend_chart(
         st.info("⚠️ No data available for the selected period.")
         return
 
+    # Filter by facilities if specified
+    filtered_df = df.copy()
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)]
+
+    if filtered_df.empty:
+        st.info("⚠️ No data available for the selected facilities.")
+        return
+
     # Get unique periods sorted
-    periods = sorted(df[period_col].unique())
+    periods = sorted(filtered_df[period_col].unique())
 
     # Prepare data for both ranges
     trend_data = []
+    table_data = []
 
     for period in periods:
-        period_df = df[df[period_col] == period]
+        period_df = filtered_df[filtered_df[period_col] == period]
 
         # Compute KMC 1000-1999g
-        kmc_1000_1999_data = compute_kmc_1000_1999_kpi(period_df, facility_uids)
+        kmc_1000_1999_data = compute_kmc_1000_1999_kpi(period_df)
 
         # Compute KMC 2000-2499g
-        kmc_2000_2499_data = compute_kmc_2000_2499_kpi(period_df, facility_uids)
+        kmc_2000_2499_data = compute_kmc_2000_2499_kpi(period_df)
 
+        # For chart (both ranges separately)
         trend_data.append(
             {
                 period_col: period,
@@ -361,6 +374,21 @@ def render_kmc_both_ranges_trend_chart(
                 "KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
                 "KMC Cases": kmc_2000_2499_data["kmc_count"],
                 "Total Newborns": kmc_2000_2499_data["total_newborns"],
+            }
+        )
+
+        # For table (both ranges side-by-side)
+        table_data.append(
+            {
+                "Period": period,
+                # 1000-1999g columns
+                "1000-1999g KMC Cases": kmc_1000_1999_data["kmc_count"],
+                "1000-1999g Total Newborns": kmc_1000_1999_data["total_newborns"],
+                "1000-1999g KMC Rate (%)": kmc_1000_1999_data["kmc_rate"],
+                # 2000-2499g columns
+                "2000-2499g KMC Cases": kmc_2000_2499_data["kmc_count"],
+                "2000-2499g Total Newborns": kmc_2000_2499_data["total_newborns"],
+                "2000-2499g KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
             }
         )
 
@@ -424,50 +452,42 @@ def render_kmc_both_ranges_trend_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Show summary table for both ranges - CORRECTED TO SHOW BOTH CATEGORIES IN SAME ROW
+    # Show summary table for both ranges
     st.subheader("📋 KMC Coverage Trend by Period")
 
-    # Prepare separate data for table with both categories side-by-side
-    table_data = []
-    for period in periods:
-        period_df = df[df[period_col] == period]
-
-        # Compute KMC 1000-1999g
-        kmc_1000_1999_data = compute_kmc_1000_1999_kpi(period_df, facility_uids)
-
-        # Compute KMC 2000-2499g
-        kmc_2000_2499_data = compute_kmc_2000_2499_kpi(period_df, facility_uids)
-
-        table_data.append(
-            {
-                "Period": period,
-                # 1000-1999g columns
-                "1000-1999g KMC Cases": kmc_1000_1999_data["kmc_count"],
-                "1000-1999g Total Newborns": kmc_1000_1999_data["total_newborns"],
-                "1000-1999g KMC Rate (%)": kmc_1000_1999_data["kmc_rate"],
-                # 2000-2499g columns
-                "2000-2499g KMC Cases": kmc_2000_2499_data["kmc_count"],
-                "2000-2499g Total Newborns": kmc_2000_2499_data["total_newborns"],
-                "2000-2499g KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
-            }
-        )
+    if not table_data:
+        st.info("⚠️ No data available for trend table.")
+        return
 
     table_df = pd.DataFrame(table_data)
 
     if not table_df.empty:
-        # Calculate overall totals for both ranges
-        overall_1000_1999 = compute_kmc_1000_1999_kpi(df, facility_uids)
-        overall_2000_2499 = compute_kmc_2000_2499_kpi(df, facility_uids)
+        # Calculate overall totals by SUMMING period totals (NOT recalculating from entire dataset)
+        overall_1000_1999_kmc_cases = table_df["1000-1999g KMC Cases"].sum()
+        overall_1000_1999_total = table_df["1000-1999g Total Newborns"].sum()
+        overall_1000_1999_rate = (
+            (overall_1000_1999_kmc_cases / overall_1000_1999_total * 100)
+            if overall_1000_1999_total > 0
+            else 0.0
+        )
+
+        overall_2000_2499_kmc_cases = table_df["2000-2499g KMC Cases"].sum()
+        overall_2000_2499_total = table_df["2000-2499g Total Newborns"].sum()
+        overall_2000_2499_rate = (
+            (overall_2000_2499_kmc_cases / overall_2000_2499_total * 100)
+            if overall_2000_2499_total > 0
+            else 0.0
+        )
 
         # Add overall row
         overall_row = {
             "Period": "Overall",
-            "1000-1999g KMC Cases": overall_1000_1999["kmc_count"],
-            "1000-1999g Total Newborns": overall_1000_1999["total_newborns"],
-            "1000-1999g KMC Rate (%)": overall_1000_1999["kmc_rate"],
-            "2000-2499g KMC Cases": overall_2000_2499["kmc_count"],
-            "2000-2499g Total Newborns": overall_2000_2499["total_newborns"],
-            "2000-2499g KMC Rate (%)": overall_2000_2499["kmc_rate"],
+            "1000-1999g KMC Cases": overall_1000_1999_kmc_cases,
+            "1000-1999g Total Newborns": overall_1000_1999_total,
+            "1000-1999g KMC Rate (%)": overall_1000_1999_rate,
+            "2000-2499g KMC Cases": overall_2000_2499_kmc_cases,
+            "2000-2499g Total Newborns": overall_2000_2499_total,
+            "2000-2499g KMC Rate (%)": overall_2000_2499_rate,
         }
 
         table_df = pd.concat([table_df, pd.DataFrame([overall_row])], ignore_index=True)
@@ -490,6 +510,11 @@ def render_kmc_both_ranges_trend_chart(
         )
 
         st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+
+        # Add a note about the calculation method
+        st.caption(
+            "📝 **Note**: Overall totals are calculated by summing period totals."
+        )
 
         # Download button
         csv = table_df.to_csv(index=False)
@@ -537,15 +562,17 @@ def render_kmc_both_ranges_facility_comparison_chart(
 
     # Prepare data for all facilities and both ranges for chart
     chart_data = []
+    table_data = []
 
     for facility_uid, facility_name in facility_uid_to_name.items():
         facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
 
         if not facility_df.empty:
             # Compute both ranges for this facility
-            kmc_1000_1999_data = compute_kmc_1000_1999_kpi(facility_df, [facility_uid])
-            kmc_2000_2499_data = compute_kmc_2000_2499_kpi(facility_df, [facility_uid])
+            kmc_1000_1999_data = compute_kmc_1000_1999_kpi(facility_df)
+            kmc_2000_2499_data = compute_kmc_2000_2499_kpi(facility_df)
 
+            # For chart
             chart_data.append(
                 {
                     "Facility": facility_name,
@@ -563,6 +590,21 @@ def render_kmc_both_ranges_facility_comparison_chart(
                     "KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
                     "KMC Cases": kmc_2000_2499_data["kmc_count"],
                     "Total Newborns": kmc_2000_2499_data["total_newborns"],
+                }
+            )
+
+            # For table
+            table_data.append(
+                {
+                    "Facility Name": facility_name,
+                    # 1000-1999g columns
+                    "1000-1999g KMC Rate (%)": kmc_1000_1999_data["kmc_rate"],
+                    "1000-1999g KMC Cases": kmc_1000_1999_data["kmc_count"],
+                    "1000-1999g Total Newborns": kmc_1000_1999_data["total_newborns"],
+                    # 2000-2499g columns
+                    "2000-2499g KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
+                    "2000-2499g KMC Cases": kmc_2000_2499_data["kmc_count"],
+                    "2000-2499g Total Newborns": kmc_2000_2499_data["total_newborns"],
                 }
             )
 
@@ -618,33 +660,8 @@ def render_kmc_both_ranges_facility_comparison_chart(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Facility comparison table - CORRECTED TO SHOW BOTH CATEGORIES SIDE-BY-SIDE
+    # Facility comparison table
     st.subheader("📋 Facility Comparison Summary")
-
-    # Prepare separate data for table with both categories side-by-side
-    table_data = []
-
-    for facility_uid, facility_name in facility_uid_to_name.items():
-        facility_df = filtered_df[filtered_df["orgUnit"] == facility_uid]
-
-        if not facility_df.empty:
-            # Compute both ranges for this facility
-            kmc_1000_1999_data = compute_kmc_1000_1999_kpi(facility_df, [facility_uid])
-            kmc_2000_2499_data = compute_kmc_2000_2499_kpi(facility_df, [facility_uid])
-
-            table_data.append(
-                {
-                    "Facility Name": facility_name,
-                    # 1000-1999g columns
-                    "1000-1999g KMC Rate (%)": kmc_1000_1999_data["kmc_rate"],
-                    "1000-1999g KMC Cases": kmc_1000_1999_data["kmc_count"],
-                    "1000-1999g Total Newborns": kmc_1000_1999_data["total_newborns"],
-                    # 2000-2499g columns
-                    "2000-2499g KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
-                    "2000-2499g KMC Cases": kmc_2000_2499_data["kmc_count"],
-                    "2000-2499g Total Newborns": kmc_2000_2499_data["total_newborns"],
-                }
-            )
 
     if not table_data:
         st.info("⚠️ No facility summary data available.")
@@ -652,50 +669,69 @@ def render_kmc_both_ranges_facility_comparison_chart(
 
     table_df = pd.DataFrame(table_data)
 
-    # Calculate overall totals
-    overall_1000_1999 = compute_kmc_1000_1999_kpi(filtered_df, facility_uids)
-    overall_2000_2499 = compute_kmc_2000_2499_kpi(filtered_df, facility_uids)
-
-    # Add overall row
-    overall_row = {
-        "Facility Name": "Overall",
-        "1000-1999g KMC Rate (%)": overall_1000_1999["kmc_rate"],
-        "1000-1999g KMC Cases": overall_1000_1999["kmc_count"],
-        "1000-1999g Total Newborns": overall_1000_1999["total_newborns"],
-        "2000-2499g KMC Rate (%)": overall_2000_2499["kmc_rate"],
-        "2000-2499g KMC Cases": overall_2000_2499["kmc_count"],
-        "2000-2499g Total Newborns": overall_2000_2499["total_newborns"],
-    }
-
-    table_df = pd.concat([table_df, pd.DataFrame([overall_row])], ignore_index=True)
-    table_df.insert(0, "No", range(1, len(table_df) + 1))
-
-    # Format table
-    styled_table = (
-        table_df.style.format(
-            {
-                "1000-1999g KMC Rate (%)": "{:.2f}%",
-                "1000-1999g KMC Cases": "{:,.0f}",
-                "1000-1999g Total Newborns": "{:,.0f}",
-                "2000-2499g KMC Rate (%)": "{:.2f}%",
-                "2000-2499g KMC Cases": "{:,.0f}",
-                "2000-2499g Total Newborns": "{:,.0f}",
-            }
+    if not table_df.empty:
+        # Calculate overall totals by SUMMING facility totals (NOT recalculating from entire dataset)
+        overall_1000_1999_kmc_cases = table_df["1000-1999g KMC Cases"].sum()
+        overall_1000_1999_total = table_df["1000-1999g Total Newborns"].sum()
+        overall_1000_1999_rate = (
+            (overall_1000_1999_kmc_cases / overall_1000_1999_total * 100)
+            if overall_1000_1999_total > 0
+            else 0.0
         )
-        .set_table_attributes('class="summary-table"')
-        .hide(axis="index")
-    )
 
-    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+        overall_2000_2499_kmc_cases = table_df["2000-2499g KMC Cases"].sum()
+        overall_2000_2499_total = table_df["2000-2499g Total Newborns"].sum()
+        overall_2000_2499_rate = (
+            (overall_2000_2499_kmc_cases / overall_2000_2499_total * 100)
+            if overall_2000_2499_total > 0
+            else 0.0
+        )
 
-    # Download button
-    csv = table_df.to_csv(index=False)
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="kmc_coverage_by_weight_range_facility_comparison.csv",
-        mime="text/csv",
-    )
+        # Add overall row
+        overall_row = {
+            "Facility Name": "Overall",
+            "1000-1999g KMC Rate (%)": overall_1000_1999_rate,
+            "1000-1999g KMC Cases": overall_1000_1999_kmc_cases,
+            "1000-1999g Total Newborns": overall_1000_1999_total,
+            "2000-2499g KMC Rate (%)": overall_2000_2499_rate,
+            "2000-2499g KMC Cases": overall_2000_2499_kmc_cases,
+            "2000-2499g Total Newborns": overall_2000_2499_total,
+        }
+
+        table_df = pd.concat([table_df, pd.DataFrame([overall_row])], ignore_index=True)
+        table_df.insert(0, "No", range(1, len(table_df) + 1))
+
+        # Format table
+        styled_table = (
+            table_df.style.format(
+                {
+                    "1000-1999g KMC Rate (%)": "{:.2f}%",
+                    "1000-1999g KMC Cases": "{:,.0f}",
+                    "1000-1999g Total Newborns": "{:,.0f}",
+                    "2000-2499g KMC Rate (%)": "{:.2f}%",
+                    "2000-2499g KMC Cases": "{:,.0f}",
+                    "2000-2499g Total Newborns": "{:,.0f}",
+                }
+            )
+            .set_table_attributes('class="summary-table"')
+            .hide(axis="index")
+        )
+
+        st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+
+        # Add a note about the calculation method
+        st.caption(
+            "📝 **Note**: Overall totals are calculated by summing facility totals."
+        )
+
+        # Download button
+        csv = table_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="kmc_coverage_by_weight_range_facility_comparison.csv",
+            mime="text/csv",
+        )
 
 
 def render_kmc_both_ranges_region_comparison_chart(
@@ -719,8 +755,9 @@ def render_kmc_both_ranges_region_comparison_chart(
         st.info("⚠️ No regions selected for comparison.")
         return
 
-    # Prepare data for all regions for chart
+    # Prepare data for all regions for chart and table
     chart_data = []
+    table_data = []
 
     for region_name in region_names:
         region_facility_uids = [
@@ -732,13 +769,10 @@ def render_kmc_both_ranges_region_comparison_chart(
 
             if not region_df.empty:
                 # Compute both ranges for this region
-                kmc_1000_1999_data = compute_kmc_1000_1999_kpi(
-                    region_df, region_facility_uids
-                )
-                kmc_2000_2499_data = compute_kmc_2000_2499_kpi(
-                    region_df, region_facility_uids
-                )
+                kmc_1000_1999_data = compute_kmc_1000_1999_kpi(region_df)
+                kmc_2000_2499_data = compute_kmc_2000_2499_kpi(region_df)
 
+                # For chart
                 chart_data.append(
                     {
                         "Region": region_name,
@@ -756,6 +790,25 @@ def render_kmc_both_ranges_region_comparison_chart(
                         "KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
                         "KMC Cases": kmc_2000_2499_data["kmc_count"],
                         "Total Newborns": kmc_2000_2499_data["total_newborns"],
+                    }
+                )
+
+                # For table
+                table_data.append(
+                    {
+                        "Region Name": region_name,
+                        # 1000-1999g columns
+                        "1000-1999g KMC Rate (%)": kmc_1000_1999_data["kmc_rate"],
+                        "1000-1999g KMC Cases": kmc_1000_1999_data["kmc_count"],
+                        "1000-1999g Total Newborns": kmc_1000_1999_data[
+                            "total_newborns"
+                        ],
+                        # 2000-2499g columns
+                        "2000-2499g KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
+                        "2000-2499g KMC Cases": kmc_2000_2499_data["kmc_count"],
+                        "2000-2499g Total Newborns": kmc_2000_2499_data[
+                            "total_newborns"
+                        ],
                     }
                 )
 
@@ -811,46 +864,8 @@ def render_kmc_both_ranges_region_comparison_chart(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Region comparison table - CORRECTED TO SHOW BOTH CATEGORIES SIDE-BY-SIDE
+    # Region comparison table
     st.subheader("📋 Region Comparison Summary")
-
-    # Prepare separate data for table with both categories side-by-side
-    table_data = []
-
-    for region_name in region_names:
-        region_facility_uids = [
-            uid for _, uid in facilities_by_region.get(region_name, [])
-        ]
-
-        if region_facility_uids:
-            region_df = df[df["orgUnit"].isin(region_facility_uids)]
-
-            if not region_df.empty:
-                # Compute both ranges for this region
-                kmc_1000_1999_data = compute_kmc_1000_1999_kpi(
-                    region_df, region_facility_uids
-                )
-                kmc_2000_2499_data = compute_kmc_2000_2499_kpi(
-                    region_df, region_facility_uids
-                )
-
-                table_data.append(
-                    {
-                        "Region Name": region_name,
-                        # 1000-1999g columns
-                        "1000-1999g KMC Rate (%)": kmc_1000_1999_data["kmc_rate"],
-                        "1000-1999g KMC Cases": kmc_1000_1999_data["kmc_count"],
-                        "1000-1999g Total Newborns": kmc_1000_1999_data[
-                            "total_newborns"
-                        ],
-                        # 2000-2499g columns
-                        "2000-2499g KMC Rate (%)": kmc_2000_2499_data["kmc_rate"],
-                        "2000-2499g KMC Cases": kmc_2000_2499_data["kmc_count"],
-                        "2000-2499g Total Newborns": kmc_2000_2499_data[
-                            "total_newborns"
-                        ],
-                    }
-                )
 
     if not table_data:
         st.info("⚠️ No region summary data available.")
@@ -858,55 +873,66 @@ def render_kmc_both_ranges_region_comparison_chart(
 
     table_df = pd.DataFrame(table_data)
 
-    # Calculate overall totals
-    all_region_facility_uids = []
-    for region_name in region_names:
-        region_facility_uids = [
-            uid for _, uid in facilities_by_region.get(region_name, [])
-        ]
-        all_region_facility_uids.extend(region_facility_uids)
-
-    overall_df = df[df["orgUnit"].isin(all_region_facility_uids)]
-    overall_1000_1999 = compute_kmc_1000_1999_kpi(overall_df, all_region_facility_uids)
-    overall_2000_2499 = compute_kmc_2000_2499_kpi(overall_df, all_region_facility_uids)
-
-    # Add overall row
-    overall_row = {
-        "Region Name": "Overall",
-        "1000-1999g KMC Rate (%)": overall_1000_1999["kmc_rate"],
-        "1000-1999g KMC Cases": overall_1000_1999["kmc_count"],
-        "1000-1999g Total Newborns": overall_1000_1999["total_newborns"],
-        "2000-2499g KMC Rate (%)": overall_2000_2499["kmc_rate"],
-        "2000-2499g KMC Cases": overall_2000_2499["kmc_count"],
-        "2000-2499g Total Newborns": overall_2000_2499["total_newborns"],
-    }
-
-    table_df = pd.concat([table_df, pd.DataFrame([overall_row])], ignore_index=True)
-    table_df.insert(0, "No", range(1, len(table_df) + 1))
-
-    # Format table
-    styled_table = (
-        table_df.style.format(
-            {
-                "1000-1999g KMC Rate (%)": "{:.2f}%",
-                "1000-1999g KMC Cases": "{:,.0f}",
-                "1000-1999g Total Newborns": "{:,.0f}",
-                "2000-2499g KMC Rate (%)": "{:.2f}%",
-                "2000-2499g KMC Cases": "{:,.0f}",
-                "2000-2499g Total Newborns": "{:,.0f}",
-            }
+    if not table_df.empty:
+        # Calculate overall totals by SUMMING region totals (NOT recalculating from entire dataset)
+        overall_1000_1999_kmc_cases = table_df["1000-1999g KMC Cases"].sum()
+        overall_1000_1999_total = table_df["1000-1999g Total Newborns"].sum()
+        overall_1000_1999_rate = (
+            (overall_1000_1999_kmc_cases / overall_1000_1999_total * 100)
+            if overall_1000_1999_total > 0
+            else 0.0
         )
-        .set_table_attributes('class="summary-table"')
-        .hide(axis="index")
-    )
 
-    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+        overall_2000_2499_kmc_cases = table_df["2000-2499g KMC Cases"].sum()
+        overall_2000_2499_total = table_df["2000-2499g Total Newborns"].sum()
+        overall_2000_2499_rate = (
+            (overall_2000_2499_kmc_cases / overall_2000_2499_total * 100)
+            if overall_2000_2499_total > 0
+            else 0.0
+        )
 
-    # Download button
-    csv = table_df.to_csv(index=False)
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="kmc_coverage_by_weight_range_region_comparison.csv",
-        mime="text/csv",
-    )
+        # Add overall row
+        overall_row = {
+            "Region Name": "Overall",
+            "1000-1999g KMC Rate (%)": overall_1000_1999_rate,
+            "1000-1999g KMC Cases": overall_1000_1999_kmc_cases,
+            "1000-1999g Total Newborns": overall_1000_1999_total,
+            "2000-2499g KMC Rate (%)": overall_2000_2499_rate,
+            "2000-2499g KMC Cases": overall_2000_2499_kmc_cases,
+            "2000-2499g Total Newborns": overall_2000_2499_total,
+        }
+
+        table_df = pd.concat([table_df, pd.DataFrame([overall_row])], ignore_index=True)
+        table_df.insert(0, "No", range(1, len(table_df) + 1))
+
+        # Format table
+        styled_table = (
+            table_df.style.format(
+                {
+                    "1000-1999g KMC Rate (%)": "{:.2f}%",
+                    "1000-1999g KMC Cases": "{:,.0f}",
+                    "1000-1999g Total Newborns": "{:,.0f}",
+                    "2000-2499g KMC Rate (%)": "{:.2f}%",
+                    "2000-2499g KMC Cases": "{:,.0f}",
+                    "2000-2499g Total Newborns": "{:,.0f}",
+                }
+            )
+            .set_table_attributes('class="summary-table"')
+            .hide(axis="index")
+        )
+
+        st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+
+        # Add a note about the calculation method
+        st.caption(
+            "📝 **Note**: Overall totals are calculated by summing region totals."
+        )
+
+        # Download button
+        csv = table_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="kmc_coverage_by_weight_range_region_comparison.csv",
+            mime="text/csv",
+        )
