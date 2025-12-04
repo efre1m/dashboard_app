@@ -15,10 +15,10 @@ MATERNAL_NUMERICAL_ELEMENTS = {
     },
 }
 
-# Required maternal data elements from fetched data - Only check First Reason
+# Required maternal data elements from fetched data
 MATERNAL_REQUIRED_ELEMENTS = {
     "Q1p7CxWGUoi": "FP Counseling and Method Provided pp",
-    "lphtwP2ViZU": "Mode of Delivery maternal",
+    "lphtwP2ViZU": "Mode of Delivery",
     "wZig9cek3Gv": "Birth Outcome",
     "VzwnSBROvUm": "Number of Newborns",
     "z7Eb2yFLOBI": "Date/stay pp",
@@ -26,8 +26,29 @@ MATERNAL_REQUIRED_ELEMENTS = {
     "CJiTafFo0TS": "Obstetric condition at delivery",
     "yVRLuRU943e": "Uterotonics given",
     "tTrH9cOQRnZ": "HIV Result",
-    "H7J2SxBpObS": "ARV Rx for Newborn (By type) pp",
-    "QUlJEvzGcQK": "Birth Weight (grams)",
+    "H7J2SxBpObS": "ARV Rx for Newborn",
+    "QUlJEvzGcQK": "Birth Weight",
+    "K8BCYRU1TUP": "Instrumental Delivery",  # Added missing element
+}
+
+# Mapping of data elements to program stage names (from data_service.py)
+MATERNAL_ELEMENT_TO_PROGRAM_STAGE = {
+    # Delivery summary (mdw5BoS50mb)
+    "lphtwP2ViZU": "Delivery summary",
+    "VzwnSBROvUm": "Delivery summary",
+    "QUlJEvzGcQK": "Delivery summary",
+    "wZig9cek3Gv": "Delivery summary",
+    "tTrH9cOQRnZ": "Delivery summary",
+    "CJiTafFo0TS": "Delivery summary",
+    "yVRLuRU943e": "Delivery summary",
+    # Instrumental Delivery form (bwk9bBfYcsD)
+    "K8BCYRU1TUP": "Instrumental Delivery form",
+    # Postpartum care (VpBHRE7FlJL)
+    "z7Eb2yFLOBI": "Postpartum care",
+    "H7J2SxBpObS": "Postpartum care",
+    "Q1p7CxWGUoi": "Postpartum care",
+    # Discharge Summary (DLVsIxjhwMj)
+    "TjQOcW6tm8k": "Discharge Summary",
 }
 
 # Cache TTL for data quality results (1 hour)
@@ -100,8 +121,15 @@ def is_national_user(user):
     )
 
 
+def get_program_stage_for_element(data_element_uid):
+    """Get program stage name for a data element"""
+    return MATERNAL_ELEMENT_TO_PROGRAM_STAGE.get(
+        data_element_uid, "Unknown Program Stage"
+    )
+
+
 def check_maternal_outliers(events_df, user):
-    """Check for outliers in maternal numerical data elements with caching - SUPPORTS NATIONAL USERS"""
+    """Check for outliers in maternal numerical data elements - Only show TEIs with outliers"""
     if events_df.empty:
         return pd.DataFrame()
 
@@ -115,9 +143,7 @@ def check_maternal_outliers(events_df, user):
         logging.info("✅ Using cached maternal outliers")
         return st.session_state[cache_key].copy()
 
-    outliers = []
-
-    # ✅ FIX: National users see all regions, regional users see only their region
+    # User region filtering setup
     user_region = user.get("region_name", "Unknown Region")
     is_national = is_national_user(user)
 
@@ -125,161 +151,284 @@ def check_maternal_outliers(events_df, user):
         f"🔍 Maternal DQ - User region: {user_region}, Is national: {is_national}"
     )
 
-    for data_element_uid, element_info in MATERNAL_NUMERICAL_ELEMENTS.items():
-        element_name = element_info["name"]
-        min_val, max_val = element_info["impossible_range"]
-        unit = element_info["unit"]
+    # Get all unique TEIs in the dataset
+    all_teis = events_df["tei_id"].unique()
 
-        element_rows = events_df[
-            events_df["dataElement_uid"] == data_element_uid
-        ].copy()
-        if not element_rows.empty:
-            element_rows["numeric_value"] = element_rows["value"].apply(
-                safe_numeric_conversion
-            )
-            numeric_rows = element_rows[element_rows["numeric_value"].notna()]
+    # FOR NATIONAL USERS: Sample 2000 TEIs for outliers (increased for better detection)
+    outlier_sample_size = 2000  # Increased to 2000 for outliers
 
-            if not numeric_rows.empty:
-                outlier_mask = (numeric_rows["numeric_value"] < min_val) | (
-                    numeric_rows["numeric_value"] > max_val
-                )
-                outlier_rows = numeric_rows[outlier_mask]
+    if is_national and len(all_teis) > outlier_sample_size:
+        logging.info(
+            f"🌍 National user: Sampling {outlier_sample_size} TEIs from {len(all_teis)} total for outliers"
+        )
+        selected_teis = np.random.choice(
+            all_teis, size=outlier_sample_size, replace=False
+        )
+        all_teis = selected_teis
+        logging.info(
+            f"📊 Sampling completed: {len(all_teis)} TEIs to check for outliers"
+        )
 
-                for _, row in outlier_rows.iterrows():
-                    outlier_value = row["numeric_value"]
-                    issue_type = (
-                        f"Too Low (< {min_val} {unit})"
-                        if outlier_value < min_val
-                        else f"Too High (> {max_val} {unit})"
-                    )
-                    tei_id = row.get("tei_id")
-                    first_name, father_name = get_patient_name_from_tei(
-                        tei_id, "maternal"
-                    )
-                    facility_name = row.get("orgUnit_name", "Unknown Facility")
-                    region = get_region_from_facility(facility_name)
+    # Create a dictionary to track data for each TEI
+    tei_data = {}
+    # Track all possible outlier columns across all TEIs
+    all_outlier_columns = set()
 
-                    # ✅ FIX: National users see all regions, regional users see only their region
-                    if is_national or region == user_region:
-                        outliers.append(
-                            {
-                                "First Name": first_name,
-                                "Father Name": father_name,
-                                "Region": region,
-                                "Facility": facility_name,
-                                "Data Element": element_name,
-                                "Value": outlier_value,
-                                "Unit": unit,
-                                "Issue Type": issue_type,
-                                "TEI ID": tei_id,
-                            }
-                        )
+    outliers_found = 0
+    teis_processed = 0
 
-    result_df = pd.DataFrame(outliers)
+    # Process each TEI
+    for tei_id in all_teis:
+        teis_processed += 1
+
+        # Get patient name
+        first_name, father_name = get_patient_name_from_tei(tei_id, "maternal")
+
+        # Get facility and region for this TEI
+        tei_events = events_df[events_df["tei_id"] == tei_id]
+        if not tei_events.empty:
+            facility_name = tei_events.iloc[0].get("orgUnit_name", "Unknown Facility")
+            region = get_region_from_facility(facility_name)
+
+            # Apply user region filter early (for regional users)
+            if not is_national and region != user_region:
+                continue
+
+            # Track outlier count for this TEI
+            outlier_count = 0
+            tei_outlier_data = {}
+
+            # Check each numerical data element for outliers
+            for data_element_uid, element_info in MATERNAL_NUMERICAL_ELEMENTS.items():
+                element_name = element_info["name"]
+                min_val, max_val = element_info["impossible_range"]
+                unit = element_info.get("unit", "")
+                program_stage = get_program_stage_for_element(data_element_uid)
+
+                # Create column name in format: ElementName_ProgramStage_Unit
+                if unit:
+                    column_name = f"{element_name}_{program_stage}_{unit}"
+                else:
+                    column_name = f"{element_name}_{program_stage}"
+
+                # Check if element exists for this TEI
+                element_rows = tei_events[
+                    tei_events["dataElement_uid"] == data_element_uid
+                ]
+
+                if not element_rows.empty:
+                    # Convert value to numeric
+                    for _, row in element_rows.iterrows():
+                        value = row.get("value")
+                        numeric_value = safe_numeric_conversion(value)
+
+                        if pd.notna(numeric_value):
+                            # Check if it's an outlier
+                            is_outlier = False
+                            issue_type = ""
+
+                            if numeric_value < min_val:
+                                is_outlier = True
+                                issue_type = f"Too Low (< {min_val} {unit})"
+                            elif numeric_value > max_val:
+                                is_outlier = True
+                                issue_type = f"Too High (> {max_val} {unit})"
+
+                            # If it's an outlier, add to the TEI data
+                            if is_outlier:
+                                # Format: value - issue type
+                                formatted_value = f"{numeric_value:.2f} - {issue_type}"
+                                tei_outlier_data[column_name] = formatted_value
+                                all_outlier_columns.add(column_name)
+                                outlier_count += 1
+                                outliers_found += 1
+
+            # ONLY add TEI to results if it has at least one outlier
+            if outlier_count > 0:
+                # Initialize TEI data structure with basic info
+                tei_data[tei_id] = {
+                    "First Name": first_name,
+                    "Father Name": father_name,
+                    "Region": region,
+                    "Facility": facility_name,
+                    "TEI ID": tei_id,
+                    "Outlier Count": outlier_count,
+                    **tei_outlier_data,  # Add all outlier columns
+                }
+
+    # Convert to DataFrame
+    if not tei_data:
+        result_df = pd.DataFrame()
+    else:
+        result_df = pd.DataFrame(list(tei_data.values()))
+
+        # Ensure all outlier columns exist in DataFrame (fill with empty for TEIs that don't have that specific outlier)
+        for column in all_outlier_columns:
+            if column not in result_df.columns:
+                result_df[column] = ""
+
+        # Sort by outlier count (highest first)
+        result_df = result_df.sort_values("Outlier Count", ascending=False)
 
     # Cache the results
     st.session_state[cache_key] = result_df.copy()
     st.session_state[f"{cache_key}_timestamp"] = time.time()
 
     logging.info(
-        f"✅ Maternal outliers - National user: {is_national}, Found: {len(result_df)} outliers"
+        f"✅ Maternal outliers - Processed {teis_processed} TEIs, found {len(result_df)} TEIs with {outliers_found} total outliers"
     )
+
+    # Add info message for national users
+    if is_national:
+        if result_df.empty:
+            logging.info(
+                f"ℹ️ National user: No outliers found in sample of {len(all_teis)} patients"
+            )
+        else:
+            logging.info(
+                f"🌍 National user: Found {len(result_df)} patients with outliers in sample of {len(all_teis)}"
+            )
+
     return result_df
 
 
 def check_missing_data_elements(events_df, user):
-    """OPTIMIZED CHECK: Batch process missing data elements for better performance"""
+    """Create matrix view with one row per TEI - Only show TEIs with missing data"""
     if events_df.empty:
         return pd.DataFrame()
 
-    cache_key = get_user_cache_key(user, "maternal_missing_elements")
+    cache_key = get_user_cache_key(user, "maternal_missing_elements_matrix")
 
     # Check cache
     if (
         cache_key in st.session_state
         and time.time() - st.session_state[f"{cache_key}_timestamp"] < DQ_CACHE_TTL
     ):
-        logging.info("✅ Using cached maternal missing elements")
+        logging.info("✅ Using cached maternal missing elements matrix")
         return st.session_state[cache_key].copy()
 
-    logging.info("🔍 Starting OPTIMIZED maternal missing data check")
+    logging.info("🔍 Creating matrix view for maternal missing data")
 
-    # ✅ OPTIMIZATION 1: Pre-filter for required data elements only
-    required_uids = list(MATERNAL_REQUIRED_ELEMENTS.keys())
-    filtered_events = events_df[events_df["dataElement_uid"].isin(required_uids)].copy()
+    # Get all unique TEIs in the dataset
+    all_teis = events_df["tei_id"].unique()
 
-    if filtered_events.empty:
-        logging.info("✅ No required data elements found in events")
-        return pd.DataFrame()
-
-    # ✅ OPTIMIZATION 2: Filter out non-empty values in one go
-    missing_mask = filtered_events["value"].isna() | (filtered_events["value"] == "")
-    missing_rows = filtered_events[missing_mask].copy()
-
-    if missing_rows.empty:
-        logging.info("✅ No missing data elements found")
-        return pd.DataFrame()
-
-    # ✅ OPTIMIZATION 3: Batch process patient names
-    unique_tei_ids = missing_rows["tei_id"].unique()
-    patient_names = {}
-
-    # Batch get patient names for all unique TEI IDs
-    for tei_id in unique_tei_ids:
-        first_name, father_name = get_patient_name_from_tei(tei_id, "maternal")
-        patient_names[tei_id] = (first_name, father_name)
-
-    # ✅ OPTIMIZATION 4: Pre-compute regions for facilities
-    unique_facilities = missing_rows["orgUnit_name"].unique()
-    facility_regions = {}
-
-    for facility in unique_facilities:
-        facility_regions[facility] = get_region_from_facility(facility)
-
-    # ✅ OPTIMIZATION 5: User region filtering
-    user_region = user.get("region_name", "Unknown Region")
+    # FOR NATIONAL USERS: Sample 500 TEIs (increased from 100)
     is_national = is_national_user(user)
+    sample_size = 500
 
-    missing_data = []
-
-    # ✅ OPTIMIZATION 6: Vectorized processing with pre-computed values
-    for _, row in missing_rows.iterrows():
-        tei_id = row.get("tei_id")
-        facility_name = row.get("orgUnit_name", "Unknown Facility")
-        region = facility_regions.get(facility_name, "Unknown Region")
-
-        # Apply user region filter
-        if not is_national and region != user_region:
-            continue
-
-        data_element_uid = row.get("dataElement_uid")
-        element_name = MATERNAL_REQUIRED_ELEMENTS.get(
-            data_element_uid, "Unknown Element"
+    if is_national and len(all_teis) > sample_size:
+        logging.info(
+            f"🌍 National user: Sampling {sample_size} TEIs from {len(all_teis)} total for missing data"
         )
+        selected_teis = np.random.choice(all_teis, size=sample_size, replace=False)
+        all_teis = selected_teis
 
-        first_name, father_name = patient_names.get(tei_id, ("Unknown", "Unknown"))
+    # User region filtering setup
+    user_region = user.get("region_name", "Unknown Region")
 
-        missing_data.append(
-            {
-                "First Name": first_name,
-                "Father Name": father_name,
-                "Region": region,
-                "Facility": facility_name,
-                "TEI ID": tei_id,
-                "Issue Type": "Missing Data Element",
-                "Data Element Missing": element_name,
-            }
-        )
+    # Create a dictionary to track data for each TEI
+    tei_data = {}
+    # Track all possible missing element columns across all TEIs
+    all_missing_columns = set()
 
-    result_df = pd.DataFrame(missing_data)
+    # Process each TEI
+    for tei_id in all_teis:
+        # Get patient name
+        first_name, father_name = get_patient_name_from_tei(tei_id, "maternal")
+
+        # Get facility and region for this TEI
+        tei_events = events_df[events_df["tei_id"] == tei_id]
+        if not tei_events.empty:
+            facility_name = tei_events.iloc[0].get("orgUnit_name", "Unknown Facility")
+            region = get_region_from_facility(facility_name)
+
+            # Apply user region filter early (for regional users)
+            if not is_national and region != user_region:
+                continue
+
+            # Track missing elements for this TEI
+            missing_elements = []
+
+            # Check each required data element
+            for data_element_uid, element_name in MATERNAL_REQUIRED_ELEMENTS.items():
+                program_stage = get_program_stage_for_element(data_element_uid)
+                column_name = f"{element_name}_{program_stage}"
+
+                # Check if element exists for this TEI
+                element_rows = tei_events[
+                    tei_events["dataElement_uid"] == data_element_uid
+                ]
+
+                is_missing = False
+                if element_rows.empty:
+                    # Element not found at all
+                    is_missing = True
+                else:
+                    # Check if value is present
+                    has_value = False
+                    for _, row in element_rows.iterrows():
+                        value = row.get("value")
+                        if pd.notna(value) and str(value).strip() != "":
+                            has_value = True
+                            break
+
+                    if not has_value:
+                        is_missing = True
+
+                # Track missing elements
+                if is_missing:
+                    missing_elements.append(column_name)
+
+            # ONLY add TEI to results if it has at least one missing element
+            if missing_elements:
+                # Initialize TEI data structure with basic info
+                tei_data[tei_id] = {
+                    "First Name": first_name,
+                    "Father Name": father_name,
+                    "Region": region,
+                    "Facility": facility_name,
+                    "TEI ID": tei_id,
+                    "Missing Count": len(missing_elements),
+                }
+
+                # Add all missing element columns
+                for column_name in missing_elements:
+                    tei_data[tei_id][column_name] = "missing"
+                    all_missing_columns.add(column_name)
+
+    # Convert to DataFrame
+    if not tei_data:
+        result_df = pd.DataFrame()
+    else:
+        result_df = pd.DataFrame(list(tei_data.values()))
+
+        # Ensure all missing columns exist in DataFrame (fill with empty for TEIs that don't have that missing element)
+        for column in all_missing_columns:
+            if column not in result_df.columns:
+                result_df[column] = ""
+
+        # Sort by missing count (highest first)
+        result_df = result_df.sort_values("Missing Count", ascending=False)
 
     # Cache the results
     st.session_state[cache_key] = result_df.copy()
     st.session_state[f"{cache_key}_timestamp"] = time.time()
 
     logging.info(
-        f"✅ OPTIMIZED Maternal - Found {len(result_df)} missing data elements"
+        f"✅ Maternal missing data - {len(result_df)} TEIs with missing data (sampled {len(all_teis)} TEIs)"
     )
+
+    # Add info message for national users
+    if is_national:
+        if result_df.empty:
+            logging.info(
+                "ℹ️ National user: No missing data found in sample of 500 patients"
+            )
+        else:
+            logging.info(
+                f"🌍 National user: Found {len(result_df)} patients with missing data in sample of 500"
+            )
+
     return result_df
 
 
@@ -296,7 +445,7 @@ def render_maternal_data_quality():
 
     user = st.session_state.get("user", {})
 
-    # ✅ ADD: Show user level info
+    # Show user level info
     is_national = is_national_user(user)
     user_level = (
         "National Level"
@@ -322,62 +471,105 @@ def render_outliers_tab(user):
         st.success("No data outliers found")
         return
 
-    st.error(f"Found {len(outliers_df)} data outliers")
+    st.error(f"Found {len(outliers_df)} patients with data outliers")
+
+    # Calculate summary statistics
+    if "Outlier Count" in outliers_df.columns:
+        total_outliers = outliers_df["Outlier Count"].sum()
+        avg_outliers = outliers_df["Outlier Count"].mean()
+        st.info(
+            f"**Summary**: {total_outliers} total outlier values across {len(outliers_df)} patients (average: {avg_outliers:.1f} per patient)"
+        )
+
+    # Identify outlier columns (all columns that are not basic info)
+    basic_columns = [
+        "First Name",
+        "Father Name",
+        "Region",
+        "Facility",
+        "TEI ID",
+        "Outlier Count",
+    ]
+    outlier_columns = [col for col in outliers_df.columns if col not in basic_columns]
 
     # Filters
     col1, col2, col3 = st.columns(3)
     with col1:
-        all_regions = ["All Regions"] + sorted(outliers_df["Region"].unique())
-        selected_region = st.selectbox(
-            "Region", options=all_regions, index=0, key="maternal_outlier_region"
-        )
+        if "Region" in outliers_df.columns:
+            all_regions = ["All Regions"] + sorted(outliers_df["Region"].unique())
+            selected_region = st.selectbox(
+                "Region", options=all_regions, index=0, key="maternal_outlier_region"
+            )
+        else:
+            selected_region = "All Regions"
+
     with col2:
-        all_facilities = ["All Facilities"] + sorted(outliers_df["Facility"].unique())
-        selected_facility = st.selectbox(
-            "Facility", options=all_facilities, index=0, key="maternal_outlier_facility"
-        )
+        if "Facility" in outliers_df.columns:
+            all_facilities = ["All Facilities"] + sorted(
+                outliers_df["Facility"].unique()
+            )
+            selected_facility = st.selectbox(
+                "Facility",
+                options=all_facilities,
+                index=0,
+                key="maternal_outlier_facility",
+            )
+        else:
+            selected_facility = "All Facilities"
+
     with col3:
-        all_elements = ["All Data Elements"] + sorted(
-            outliers_df["Data Element"].unique()
-        )
-        selected_element = st.selectbox(
-            "Data Element",
-            options=all_elements,
-            index=0,
-            key="maternal_outlier_element",
-        )
+        if "Outlier Count" in outliers_df.columns:
+            outlier_counts = sorted(outliers_df["Outlier Count"].unique())
+            all_counts = ["All Counts"] + [str(c) for c in outlier_counts]
+            selected_count = st.selectbox(
+                "Outlier Count",
+                options=all_counts,
+                index=0,
+                key="maternal_outlier_count",
+            )
+        else:
+            selected_count = "All Counts"
 
     # Apply filters
     filtered_df = outliers_df.copy()
-    if selected_region != "All Regions":
+    if selected_region != "All Regions" and "Region" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["Region"] == selected_region]
-    if selected_facility != "All Facilities":
+    if selected_facility != "All Facilities" and "Facility" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["Facility"] == selected_facility]
-    if selected_element != "All Data Elements":
-        filtered_df = filtered_df[filtered_df["Data Element"] == selected_element]
+    if selected_count != "All Counts":
+        filtered_df = filtered_df[filtered_df["Outlier Count"] == int(selected_count)]
 
     if filtered_df.empty:
         st.info("No data outliers match filters")
         return
 
-    # Display table - REMOVED the additional "No" column
-    display_df = filtered_df.copy().reset_index(drop=True)
-    display_columns = [
-        "First Name",
-        "Father Name",
-        "Region",
-        "Facility",
-        "Data Element",
-        "Value",
-        "Unit",
-        "Issue Type",
-    ]
+    # Reorder columns: basic info first, then outlier elements
+    display_columns = basic_columns + sorted(outlier_columns)
+    display_columns = [col for col in display_columns if col in filtered_df.columns]
 
-    st.dataframe(display_df[display_columns], use_container_width=True)
+    # Create display dataframe with proper index starting from 1
+    display_df = filtered_df[display_columns].copy()
+    display_df = display_df.reset_index(drop=True)  # Remove any existing index
+    display_df.index = range(1, len(display_df) + 1)  # Start index at 1
+
+    # Color coding function for outlier values
+    def style_outlier_cells(val):
+        if (
+            isinstance(val, str) and "- Too" in val
+        ):  # Matches "2.0 - Too Low" or "2.0 - Too High"
+            return "background-color: #ffcccc; color: #990000; font-weight: bold"
+        return ""
+
+    # Display with styling
+    st.dataframe(
+        display_df.style.map(style_outlier_cells, subset=outlier_columns),
+        use_container_width=True,
+        height=400,
+    )
 
 
 def render_missing_elements_tab(user):
-    """Render the missing data elements analysis tab"""
+    """Render the missing data elements analysis tab with matrix view"""
     events_df = st.session_state.maternal_events_df
     missing_elements_df = check_missing_data_elements(events_df, user)
 
@@ -385,48 +577,102 @@ def render_missing_elements_tab(user):
         st.success("All data elements complete")
         return
 
-    st.error(f"Found {len(missing_elements_df)} missing data elements")
+    st.error(f"Found {len(missing_elements_df)} patients with missing data elements")
+
+    # Calculate summary statistics
+    if "Missing Count" in missing_elements_df.columns:
+        total_missing = missing_elements_df["Missing Count"].sum()
+        avg_missing = missing_elements_df["Missing Count"].mean()
+        st.info(
+            f"**Summary**: {total_missing} total missing elements across {len(missing_elements_df)} patients (average: {avg_missing:.1f} per patient)"
+        )
 
     # Filters
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        all_regions = ["All Regions"] + sorted(missing_elements_df["Region"].unique())
-        selected_region = st.selectbox(
-            "Region",
-            options=all_regions,
-            index=0,
-            key="maternal_missing_elements_region",
-        )
+        if "Region" in missing_elements_df.columns:
+            all_regions = ["All Regions"] + sorted(
+                missing_elements_df["Region"].unique()
+            )
+            selected_region = st.selectbox(
+                "Region", options=all_regions, index=0, key="maternal_missing_region"
+            )
+        else:
+            selected_region = "All Regions"
+
     with col2:
-        all_facilities = ["All Facilities"] + sorted(
-            missing_elements_df["Facility"].unique()
-        )
-        selected_facility = st.selectbox(
-            "Facility",
-            options=all_facilities,
-            index=0,
-            key="maternal_missing_elements_facility",
-        )
+        if "Facility" in missing_elements_df.columns:
+            all_facilities = ["All Facilities"] + sorted(
+                missing_elements_df["Facility"].unique()
+            )
+            selected_facility = st.selectbox(
+                "Facility",
+                options=all_facilities,
+                index=0,
+                key="maternal_missing_facility",
+            )
+        else:
+            selected_facility = "All Facilities"
+
+    with col3:
+        if "Missing Count" in missing_elements_df.columns:
+            missing_counts = sorted(missing_elements_df["Missing Count"].unique())
+            all_counts = ["All Counts"] + [str(c) for c in missing_counts]
+            selected_count = st.selectbox(
+                "Missing Elements Count",
+                options=all_counts,
+                index=0,
+                key="maternal_missing_count",
+            )
+        else:
+            selected_count = "All Counts"
 
     # Apply filters
     filtered_df = missing_elements_df.copy()
-    if selected_region != "All Regions":
+    if selected_region != "All Regions" and "Region" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["Region"] == selected_region]
-    if selected_facility != "All Facilities":
+    if selected_facility != "All Facilities" and "Facility" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["Facility"] == selected_facility]
+    if selected_count != "All Counts":
+        filtered_df = filtered_df[filtered_df["Missing Count"] == int(selected_count)]
 
     if filtered_df.empty:
-        st.info("No missing elements match filters")
+        st.info("No missing elements match the selected filters")
         return
 
-    # Display table - REMOVED the additional "No" column
-    display_df = filtered_df.copy().reset_index(drop=True)
-    display_columns = [
+    # Identify missing element columns
+    basic_columns = [
         "First Name",
         "Father Name",
         "Region",
         "Facility",
-        "Data Element Missing",
+        "TEI ID",
+        "Missing Count",
+    ]
+    missing_element_columns = [
+        col
+        for col in filtered_df.columns
+        if col not in basic_columns and (filtered_df[col] == "missing").any()
     ]
 
-    st.dataframe(display_df[display_columns], use_container_width=True)
+    # Reorder columns: basic info first, then missing elements
+    display_columns = basic_columns + sorted(missing_element_columns)
+    display_columns = [col for col in display_columns if col in filtered_df.columns]
+
+    # Create display dataframe with proper index starting from 1
+    display_df = filtered_df[display_columns].copy()
+    display_df = display_df.reset_index(drop=True)  # Remove any existing index
+    display_df.index = range(1, len(display_df) + 1)  # Start index at 1
+
+    # Color coding function
+    def style_missing_cells(val):
+        if val == "missing":
+            return "background-color: #ffcccc; color: #990000; font-weight: bold"
+        return ""
+
+    # Display with styling
+    st.dataframe(
+        display_df.style.map(style_missing_cells, subset=missing_element_columns),
+        use_container_width=True,
+        height=400,
+    )

@@ -129,9 +129,9 @@ def clear_all_analysis_data():
         "newborn_analysis_triggered",
         # Cache keys for current user
         "dq_maternal_outliers",
-        "dq_maternal_missing_elements",
+        "dq_maternal_missing_elements_matrix",
         "dq_newborn_outliers",
-        "dq_newborn_missing_elements",
+        "dq_newborn_missing_elements_matrix",
     ]
 
     for key in analysis_keys:
@@ -170,8 +170,8 @@ def filter_data_by_user_access(events_df, tei_df, user):
                         facility_to_region_map[facility_name] = region_name.upper()
 
                 # Filter events data based on user's region facilities
-                if "Facility" in events_df.columns:
-                    events_df["Region"] = events_df["Facility"].map(
+                if "orgUnit_name" in events_df.columns:  # Using DHIS2 column name
+                    events_df["Region"] = events_df["orgUnit_name"].map(
                         facility_to_region_map
                     )
                     filtered_events = events_df[
@@ -179,11 +179,11 @@ def filter_data_by_user_access(events_df, tei_df, user):
                     ].copy()
 
                     # Get the TEI IDs from filtered events
-                    filtered_tei_ids = filtered_events["TEI ID"].unique()
+                    filtered_tei_ids = filtered_events["tei_id"].unique()
 
                     # Filter TEI data based on the same TEI IDs
                     filtered_tei = tei_df[
-                        tei_df["TEI ID"].isin(filtered_tei_ids)
+                        tei_df["tei_id"].isin(filtered_tei_ids)
                     ].copy()
 
                     logging.info(
@@ -257,16 +257,32 @@ def analyze_with_progress(analysis_function, events_df, user, analysis_name):
                 with results_container:
                     results_container.empty()
                     st.info(
-                        f"📊 Progress {progress}% - Found {len(current_results)} issues so far"
+                        f"📊 Progress {progress}% - Found {len(current_results)} patients with issues so far"
                     )
+                    # Show basic columns for preview
                     display_cols = [
-                        col for col in current_results.columns if col not in ["TEI ID"]
+                        "First Name",
+                        (
+                            "Father Name"
+                            if "Father Name" in current_results.columns
+                            else "Last Name"
+                        ),
+                        "Region",
+                        "Facility",
+                        (
+                            "Missing Count"
+                            if "Missing Count" in current_results.columns
+                            else "Outlier Count"
+                        ),
+                    ]
+                    display_cols = [
+                        col for col in display_cols if col in current_results.columns
                     ]
                     display_df = current_results[display_cols].head(10)
                     st.dataframe(display_df, use_container_width=True)
                     if len(current_results) > 10:
                         st.caption(
-                            f"Showing first 10 of {len(current_results)} results found so far"
+                            f"Showing first 10 of {len(current_results)} patients found so far"
                         )
                     st.write("---")
 
@@ -295,13 +311,109 @@ def analyze_with_progress(analysis_function, events_df, user, analysis_name):
     # Display final results - ALL processed patients
     with results_container:
         if not current_results.empty:
-            st.info(f"📊 Found {len(current_results)} issues in total")
-            display_cols = [
-                col for col in current_results.columns if col not in ["TEI ID"]
-            ]
-            display_df = current_results[display_cols]
-            st.dataframe(display_df, use_container_width=True)
-            st.caption(f"Showing all {len(current_results)} results")
+            # Determine if this is outliers or missing data
+            if "Outlier Count" in current_results.columns:
+                # Outliers matrix
+                st.info(f"📊 Found {len(current_results)} patients with outliers")
+
+                # Show the matrix view for outliers
+                basic_cols = [
+                    "First Name",
+                    (
+                        "Father Name"
+                        if "Father Name" in current_results.columns
+                        else "Last Name"
+                    ),
+                    "Region",
+                    "Facility",
+                    "TEI ID",
+                    "Outlier Count",
+                ]
+                basic_cols = [
+                    col for col in basic_cols if col in current_results.columns
+                ]
+                outlier_cols = [
+                    col for col in current_results.columns if col not in basic_cols
+                ]
+
+                display_cols = basic_cols + sorted(outlier_cols)
+                display_df = current_results[display_cols].copy()
+
+                # Replace non-outlier values with empty strings for display
+                for col in outlier_cols:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(
+                            lambda x: (
+                                "" if not (isinstance(x, str) and "- Too" in x) else x
+                            )
+                        )
+
+                # Apply styling for outlier values
+                def style_outlier_cells(val):
+                    if isinstance(val, str) and "- Too" in val:
+                        # Outlier cells - red background with value shown
+                        return "background-color: #ffcccc; color: #990000; font-weight: bold"
+                    elif val == "":
+                        # Cells with normal values - green background, empty cell
+                        return "background-color: #ccffcc;"
+                    else:
+                        # Empty cells
+                        return ""
+
+                st.dataframe(
+                    display_df.style.map(style_outlier_cells, subset=outlier_cols),
+                    use_container_width=True,
+                )
+            else:
+                # Missing data matrix
+                st.info(f"📊 Found {len(current_results)} patients with missing data")
+
+                # Show the matrix view for missing data
+                basic_cols = [
+                    "First Name",
+                    (
+                        "Father Name"
+                        if "Father Name" in current_results.columns
+                        else "Last Name"
+                    ),
+                    "Region",
+                    "Facility",
+                    "TEI ID",
+                    "Missing Count",
+                ]
+                basic_cols = [
+                    col for col in basic_cols if col in current_results.columns
+                ]
+                missing_cols = [
+                    col for col in current_results.columns if col not in basic_cols
+                ]
+
+                display_cols = basic_cols + sorted(missing_cols)
+                display_df = current_results[display_cols].copy()
+
+                # Replace non-missing values with empty strings for display
+                for col in missing_cols:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(
+                            lambda x: "" if x != "missing" else x
+                        )
+
+                # Apply styling for missing cells
+                def style_missing_cells(val):
+                    if val == "missing":
+                        # Missing cells - red background
+                        return "background-color: #ffcccc; color: #990000; font-weight: bold"
+                    elif val == "":
+                        # Cells with values - green background
+                        return "background-color: #ccffcc;"
+                    else:
+                        # Empty cells
+                        return ""
+
+                st.dataframe(
+                    display_df.style.map(style_missing_cells, subset=missing_cols),
+                    use_container_width=True,
+                )
         else:
             st.info("🔍 No issues found in the analyzed data")
 
@@ -324,21 +436,46 @@ def clear_analysis_state(analysis_type):
 
 def safe_sorted_unique(values):
     """Safely sort unique values, handling mixed data types"""
-    if values is None or len(values) == 0:
+    if values is None:
         return []
 
-    # Convert to list and remove None values
-    unique_values = [v for v in values.unique() if v is not None]
+    # Handle empty case
+    try:
+        if len(values) == 0:
+            return []
+    except:
+        return []
+
+    # Handle different input types
+    if hasattr(values, "unique"):
+        # It's a pandas Series - use .unique()
+        unique_values = [v for v in values.unique() if v is not None]
+    elif isinstance(values, (list, tuple, set)):
+        # It's a Python list/tuple/set - use set() to get unique
+        unique_values = list(set([v for v in values if v is not None]))
+    else:
+        # Try to handle as iterable
+        try:
+            seen = set()
+            unique_values = []
+            for v in values:
+                if v is not None and v not in seen:
+                    seen.add(v)
+                    unique_values.append(v)
+        except:
+            return []
+
+    if not unique_values:
+        return []
 
     # Separate strings and non-strings
     strings = [str(v) for v in unique_values if isinstance(v, (str,))]
     non_strings = [v for v in unique_values if not isinstance(v, (str,))]
 
-    # Sort each group separately
+    # Sort each group
     sorted_strings = sorted(strings)
     sorted_non_strings = sorted(non_strings)
 
-    # Combine results
     return sorted_strings + sorted_non_strings
 
 
@@ -466,7 +603,7 @@ def render_maternal_data_quality_manual(user, data_available):
         f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
     )
     cache_key_outliers = f"dq_maternal_outliers_{current_user_key}"
-    cache_key_missing = f"dq_maternal_missing_elements_{current_user_key}"
+    cache_key_missing = f"dq_maternal_missing_elements_matrix_{current_user_key}"
 
     has_cached_outliers = cache_key_outliers in st.session_state
     has_cached_missing = cache_key_missing in st.session_state
@@ -504,7 +641,10 @@ def render_maternal_data_quality_manual(user, data_available):
     ):
         outliers_df = st.session_state[cache_key_outliers]
         st.session_state.maternal_outliers_df = outliers_df
-        st.success(f"📊 Cached analysis: {len(outliers_df)} outliers")
+        if not outliers_df.empty:
+            st.success(f"📊 Cached analysis: {len(outliers_df)} patients with outliers")
+        else:
+            st.success("📊 Cached analysis: No outliers found")
     elif (
         "maternal_outliers_df" in st.session_state
         and not st.session_state.maternal_outliers_df.empty
@@ -512,9 +652,13 @@ def render_maternal_data_quality_manual(user, data_available):
     ):
         outliers_df = st.session_state.maternal_outliers_df
         if st.session_state.get("maternal_outliers_stop", False):
-            st.warning(f"⏹️ Stopped analysis: {len(outliers_df)} outliers found")
+            st.warning(
+                f"⏹️ Stopped analysis: {len(outliers_df)} patients with outliers found"
+            )
         else:
-            st.success(f"📊 Analysis complete: {len(outliers_df)} outliers found")
+            st.success(
+                f"📊 Analysis complete: {len(outliers_df)} patients with outliers found"
+            )
     else:
         st.info("👆 Click 'Analyze Outliers' to start analysis")
 
@@ -523,6 +667,19 @@ def render_maternal_data_quality_manual(user, data_available):
         not outliers_df.empty
         and not st.session_state.maternal_analysis_triggered["outliers"]
     ):
+        # Identify outlier columns (all columns that are not basic info)
+        basic_columns = [
+            "First Name",
+            "Father Name",
+            "Region",
+            "Facility",
+            "TEI ID",
+            "Outlier Count",
+        ]
+        outlier_columns = [
+            col for col in outliers_df.columns if col not in basic_columns
+        ]
+
         # Filters
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -537,7 +694,6 @@ def render_maternal_data_quality_manual(user, data_available):
                     key="maternal_outlier_region",
                 )
             else:
-                st.info("No Region data available")
                 selected_region = "All Regions"
 
         with col2:
@@ -552,23 +708,20 @@ def render_maternal_data_quality_manual(user, data_available):
                     key="maternal_outlier_facility",
                 )
             else:
-                st.info("No Facility data available")
                 selected_facility = "All Facilities"
 
         with col3:
-            if "Data Element" in outliers_df.columns:
-                all_elements = ["All Data Elements"] + safe_sorted_unique(
-                    outliers_df["Data Element"]
-                )
-                selected_element = st.selectbox(
-                    "Data Element",
-                    options=all_elements,
+            if "Outlier Count" in outliers_df.columns:
+                outlier_counts = sorted(outliers_df["Outlier Count"].unique())
+                all_counts = ["All Counts"] + [str(c) for c in outlier_counts]
+                selected_count = st.selectbox(
+                    "Outlier Count",
+                    options=all_counts,
                     index=0,
-                    key="maternal_outlier_element",
+                    key="maternal_outlier_count",
                 )
             else:
-                st.info("No Data Element data available")
-                selected_element = "All Data Elements"
+                selected_count = "All Counts"
 
         # Apply filters
         filtered_df = outliers_df.copy()
@@ -576,30 +729,50 @@ def render_maternal_data_quality_manual(user, data_available):
             filtered_df = filtered_df[filtered_df["Region"] == selected_region]
         if selected_facility != "All Facilities" and "Facility" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["Facility"] == selected_facility]
-        if (
-            selected_element != "All Data Elements"
-            and "Data Element" in filtered_df.columns
-        ):
-            filtered_df = filtered_df[filtered_df["Data Element"] == selected_element]
+        if selected_count != "All Counts":
+            filtered_df = filtered_df[
+                filtered_df["Outlier Count"] == int(selected_count)
+            ]
 
         if filtered_df.empty:
-            st.info("No outliers match the selected filters")
-        else:
-            display_columns = [
-                "First Name",
-                "Father Name",
-                "Region",
-                "Facility",
-                "Data Element",
-                "Value",
-                "Unit",
-                "Issue Type",
-            ]
-            # Only include columns that actually exist in the dataframe
-            available_columns = [
-                col for col in display_columns if col in filtered_df.columns
-            ]
-            st.dataframe(filtered_df[available_columns], use_container_width=True)
+            st.info("No data outliers match filters")
+            return
+
+        # Reorder columns: basic info first, then outlier elements
+        display_columns = basic_columns + sorted(outlier_columns)
+        display_columns = [col for col in display_columns if col in filtered_df.columns]
+
+        # Create display dataframe with proper index starting from 1
+        display_df = filtered_df[display_columns].copy()
+
+        # Replace non-outlier values with empty strings for display
+        for col in outlier_columns:
+            if col in display_df.columns:
+                display_df[col] = display_df[col].apply(
+                    lambda x: "" if not (isinstance(x, str) and "- Too" in x) else x
+                )
+
+        display_df = display_df.reset_index(drop=True)
+        display_df.index = range(1, len(display_df) + 1)
+
+        # Color coding function for outlier values
+        def style_outlier_cells(val):
+            if isinstance(val, str) and "- Too" in val:
+                # Outlier cells - red background with value shown
+                return "background-color: #ffcccc; color: #990000; font-weight: bold"
+            elif val == "":
+                # Cells with normal values - green background, empty cell
+                return "background-color: #ccffcc;"
+            else:
+                # Empty cells
+                return ""
+
+        # Display with styling
+        st.dataframe(
+            display_df.style.map(style_outlier_cells, subset=outlier_columns),
+            use_container_width=True,
+            height=400,
+        )
 
     # MISSING DATA ANALYSIS
     st.markdown("---")
@@ -634,7 +807,12 @@ def render_maternal_data_quality_manual(user, data_available):
     ):
         missing_df = st.session_state[cache_key_missing]
         st.session_state.maternal_missing_df = missing_df
-        st.success(f"📊 Cached analysis: {len(missing_df)} missing elements")
+        if not missing_df.empty:
+            st.success(
+                f"📊 Cached analysis: {len(missing_df)} patients with missing data"
+            )
+        else:
+            st.success("📊 Cached analysis: No missing data found")
     elif (
         "maternal_missing_df" in st.session_state
         and not st.session_state.maternal_missing_df.empty
@@ -642,10 +820,12 @@ def render_maternal_data_quality_manual(user, data_available):
     ):
         missing_df = st.session_state.maternal_missing_df
         if st.session_state.get("maternal_missing_stop", False):
-            st.warning(f"⏹️ Stopped analysis: {len(missing_df)} missing elements found")
+            st.warning(
+                f"⏹️ Stopped analysis: {len(missing_df)} patients with missing data found"
+            )
         else:
             st.success(
-                f"📊 Analysis complete: {len(missing_df)} missing elements found"
+                f"📊 Analysis complete: {len(missing_df)} patients with missing data found"
             )
     else:
         st.info("👆 Click 'Analyze Missing Data' to start analysis")
@@ -656,7 +836,7 @@ def render_maternal_data_quality_manual(user, data_available):
         and not st.session_state.maternal_analysis_triggered["missing"]
     ):
         # Filters
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             if "Region" in missing_df.columns:
                 all_regions = ["All Regions"] + safe_sorted_unique(missing_df["Region"])
@@ -667,7 +847,6 @@ def render_maternal_data_quality_manual(user, data_available):
                     key="maternal_missing_region",
                 )
             else:
-                st.info("No Region data available")
                 selected_region = "All Regions"
 
         with col2:
@@ -682,8 +861,20 @@ def render_maternal_data_quality_manual(user, data_available):
                     key="maternal_missing_facility",
                 )
             else:
-                st.info("No Facility data available")
                 selected_facility = "All Facilities"
+
+        with col3:
+            if "Missing Count" in missing_df.columns:
+                missing_counts = sorted(missing_df["Missing Count"].unique())
+                all_counts = ["All Counts"] + [str(c) for c in missing_counts]
+                selected_count = st.selectbox(
+                    "Missing Elements Count",
+                    options=all_counts,
+                    index=0,
+                    key="maternal_missing_count",
+                )
+            else:
+                selected_count = "All Counts"
 
         # Apply filters
         filtered_df = missing_df.copy()
@@ -691,22 +882,73 @@ def render_maternal_data_quality_manual(user, data_available):
             filtered_df = filtered_df[filtered_df["Region"] == selected_region]
         if selected_facility != "All Facilities" and "Facility" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["Facility"] == selected_facility]
+        if selected_count != "All Counts":
+            filtered_df = filtered_df[
+                filtered_df["Missing Count"] == int(selected_count)
+            ]
 
         if filtered_df.empty:
             st.info("No missing elements match the selected filters")
-        else:
-            display_columns = [
-                "First Name",
-                "Father Name",
-                "Region",
-                "Facility",
-                "Data Element Missing",
-            ]
-            # Only include columns that actually exist in the dataframe
-            available_columns = [
-                col for col in display_columns if col in filtered_df.columns
-            ]
-            st.dataframe(filtered_df[available_columns], use_container_width=True)
+            return
+
+        # Identify missing element columns
+        basic_columns = [
+            "First Name",
+            "Father Name",
+            "Region",
+            "Facility",
+            "TEI ID",
+            "Missing Count",
+        ]
+        missing_element_columns = [
+            col for col in filtered_df.columns if col not in basic_columns
+        ]
+
+        # Reorder columns: basic info first, then missing elements
+        display_columns = basic_columns + sorted(missing_element_columns)
+        display_columns = [col for col in display_columns if col in filtered_df.columns]
+
+        # Create display dataframe with proper index starting from 1
+        display_df = filtered_df[display_columns].copy()
+
+        # Replace non-missing values with empty strings for display
+        for col in missing_element_columns:
+            if col in display_df.columns:
+                display_df[col] = display_df[col].apply(
+                    lambda x: "" if x != "missing" else x
+                )
+
+        display_df = display_df.reset_index(drop=True)
+        display_df.index = range(1, len(display_df) + 1)
+
+        # Color coding function
+        def style_missing_cells(val):
+            if val == "missing":
+                # Missing cells - red background
+                return "background-color: #ffcccc; color: #990000; font-weight: bold"
+            elif val == "":
+                # Cells with values - green background
+                return "background-color: #ccffcc;"
+            else:
+                # Empty cells
+                return ""
+
+        # Display with styling
+        st.dataframe(
+            display_df.style.map(style_missing_cells, subset=missing_element_columns),
+            use_container_width=True,
+            height=400,
+        )
+
+        # Download button
+        csv = filtered_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download Missing Data Report",
+            data=csv,
+            file_name=f"maternal_missing_data_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 
 def render_newborn_data_quality_manual(user, data_available):
@@ -774,7 +1016,7 @@ def render_newborn_data_quality_manual(user, data_available):
         f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
     )
     cache_key_outliers = f"dq_newborn_outliers_{current_user_key}"
-    cache_key_missing = f"dq_newborn_missing_elements_{current_user_key}"
+    cache_key_missing = f"dq_newborn_missing_elements_matrix_{current_user_key}"
 
     has_cached_outliers = cache_key_outliers in st.session_state
     has_cached_missing = cache_key_missing in st.session_state
@@ -812,7 +1054,10 @@ def render_newborn_data_quality_manual(user, data_available):
     ):
         outliers_df = st.session_state[cache_key_outliers]
         st.session_state.newborn_outliers_df = outliers_df
-        st.success(f"📊 Cached analysis: {len(outliers_df)} outliers")
+        if not outliers_df.empty:
+            st.success(f"📊 Cached analysis: {len(outliers_df)} patients with outliers")
+        else:
+            st.success("📊 Cached analysis: No outliers found")
     elif (
         "newborn_outliers_df" in st.session_state
         and not st.session_state.newborn_outliers_df.empty
@@ -820,9 +1065,13 @@ def render_newborn_data_quality_manual(user, data_available):
     ):
         outliers_df = st.session_state.newborn_outliers_df
         if st.session_state.get("newborn_outliers_stop", False):
-            st.warning(f"⏹️ Stopped analysis: {len(outliers_df)} outliers found")
+            st.warning(
+                f"⏹️ Stopped analysis: {len(outliers_df)} patients with outliers found"
+            )
         else:
-            st.success(f"📊 Analysis complete: {len(outliers_df)} outliers found")
+            st.success(
+                f"📊 Analysis complete: {len(outliers_df)} patients with outliers found"
+            )
     else:
         st.info("👆 Click 'Analyze Outliers' to start analysis")
 
@@ -831,6 +1080,19 @@ def render_newborn_data_quality_manual(user, data_available):
         not outliers_df.empty
         and not st.session_state.newborn_analysis_triggered["outliers"]
     ):
+        # Identify outlier columns (all columns that are not basic info)
+        basic_columns = [
+            "First Name",
+            "Last Name",
+            "Region",
+            "Facility",
+            "TEI ID",
+            "Outlier Count",
+        ]
+        outlier_columns = [
+            col for col in outliers_df.columns if col not in basic_columns
+        ]
+
         # Filters
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -842,7 +1104,6 @@ def render_newborn_data_quality_manual(user, data_available):
                     "Region", options=all_regions, index=0, key="newborn_outlier_region"
                 )
             else:
-                st.info("No Region data available")
                 selected_region = "All Regions"
 
         with col2:
@@ -857,23 +1118,20 @@ def render_newborn_data_quality_manual(user, data_available):
                     key="newborn_outlier_facility",
                 )
             else:
-                st.info("No Facility data available")
                 selected_facility = "All Facilities"
 
         with col3:
-            if "Data Element" in outliers_df.columns:
-                all_elements = ["All Data Elements"] + safe_sorted_unique(
-                    outliers_df["Data Element"]
-                )
-                selected_element = st.selectbox(
-                    "Data Element",
-                    options=all_elements,
+            if "Outlier Count" in outliers_df.columns:
+                outlier_counts = sorted(outliers_df["Outlier Count"].unique())
+                all_counts = ["All Counts"] + [str(c) for c in outlier_counts]
+                selected_count = st.selectbox(
+                    "Outlier Count",
+                    options=all_counts,
                     index=0,
-                    key="newborn_outlier_element",
+                    key="newborn_outlier_count",
                 )
             else:
-                st.info("No Data Element data available")
-                selected_element = "All Data Elements"
+                selected_count = "All Counts"
 
         # Apply filters
         filtered_df = outliers_df.copy()
@@ -881,30 +1139,50 @@ def render_newborn_data_quality_manual(user, data_available):
             filtered_df = filtered_df[filtered_df["Region"] == selected_region]
         if selected_facility != "All Facilities" and "Facility" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["Facility"] == selected_facility]
-        if (
-            selected_element != "All Data Elements"
-            and "Data Element" in filtered_df.columns
-        ):
-            filtered_df = filtered_df[filtered_df["Data Element"] == selected_element]
+        if selected_count != "All Counts":
+            filtered_df = filtered_df[
+                filtered_df["Outlier Count"] == int(selected_count)
+            ]
 
         if filtered_df.empty:
-            st.info("No outliers match the selected filters")
-        else:
-            display_columns = [
-                "First Name",
-                "Last Name",
-                "Region",
-                "Facility",
-                "Data Element",
-                "Value",
-                "Unit",
-                "Issue Type",
-            ]
-            # Only include columns that actually exist in the dataframe
-            available_columns = [
-                col for col in display_columns if col in filtered_df.columns
-            ]
-            st.dataframe(filtered_df[available_columns], use_container_width=True)
+            st.info("No data outliers match filters")
+            return
+
+        # Reorder columns: basic info first, then outlier elements
+        display_columns = basic_columns + sorted(outlier_columns)
+        display_columns = [col for col in display_columns if col in filtered_df.columns]
+
+        # Create display dataframe with proper index starting from 1
+        display_df = filtered_df[display_columns].copy()
+
+        # Replace non-outlier values with empty strings for display
+        for col in outlier_columns:
+            if col in display_df.columns:
+                display_df[col] = display_df[col].apply(
+                    lambda x: "" if not (isinstance(x, str) and "- Too" in x) else x
+                )
+
+        display_df = display_df.reset_index(drop=True)
+        display_df.index = range(1, len(display_df) + 1)
+
+        # Color coding function for outlier values
+        def style_outlier_cells(val):
+            if isinstance(val, str) and "- Too" in val:
+                # Outlier cells - red background with value shown
+                return "background-color: #ffcccc; color: #990000; font-weight: bold"
+            elif val == "":
+                # Cells with normal values - green background, empty cell
+                return "background-color: #ccffcc;"
+            else:
+                # Empty cells
+                return ""
+
+        # Display with styling
+        st.dataframe(
+            display_df.style.map(style_outlier_cells, subset=outlier_columns),
+            use_container_width=True,
+            height=400,
+        )
 
     # MISSING DATA ANALYSIS
     st.markdown("---")
@@ -939,7 +1217,12 @@ def render_newborn_data_quality_manual(user, data_available):
     ):
         missing_df = st.session_state[cache_key_missing]
         st.session_state.newborn_missing_df = missing_df
-        st.success(f"📊 Cached analysis: {len(missing_df)} missing elements")
+        if not missing_df.empty:
+            st.success(
+                f"📊 Cached analysis: {len(missing_df)} patients with missing data"
+            )
+        else:
+            st.success("📊 Cached analysis: No missing data found")
     elif (
         "newborn_missing_df" in st.session_state
         and not st.session_state.newborn_missing_df.empty
@@ -947,10 +1230,12 @@ def render_newborn_data_quality_manual(user, data_available):
     ):
         missing_df = st.session_state.newborn_missing_df
         if st.session_state.get("newborn_missing_stop", False):
-            st.warning(f"⏹️ Stopped analysis: {len(missing_df)} missing elements found")
+            st.warning(
+                f"⏹️ Stopped analysis: {len(missing_df)} patients with missing data found"
+            )
         else:
             st.success(
-                f"📊 Analysis complete: {len(missing_df)} missing elements found"
+                f"📊 Analysis complete: {len(missing_df)} patients with missing data found"
             )
     else:
         st.info("👆 Click 'Analyze Missing Data' to start analysis")
@@ -961,7 +1246,7 @@ def render_newborn_data_quality_manual(user, data_available):
         and not st.session_state.newborn_analysis_triggered["missing"]
     ):
         # Filters
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             if "Region" in missing_df.columns:
                 all_regions = ["All Regions"] + safe_sorted_unique(missing_df["Region"])
@@ -969,7 +1254,6 @@ def render_newborn_data_quality_manual(user, data_available):
                     "Region", options=all_regions, index=0, key="newborn_missing_region"
                 )
             else:
-                st.info("No Region data available")
                 selected_region = "All Regions"
 
         with col2:
@@ -984,8 +1268,20 @@ def render_newborn_data_quality_manual(user, data_available):
                     key="newborn_missing_facility",
                 )
             else:
-                st.info("No Facility data available")
                 selected_facility = "All Facilities"
+
+        with col3:
+            if "Missing Count" in missing_df.columns:
+                missing_counts = sorted(missing_df["Missing Count"].unique())
+                all_counts = ["All Counts"] + [str(c) for c in missing_counts]
+                selected_count = st.selectbox(
+                    "Missing Elements Count",
+                    options=all_counts,
+                    index=0,
+                    key="newborn_missing_count",
+                )
+            else:
+                selected_count = "All Counts"
 
         # Apply filters
         filtered_df = missing_df.copy()
@@ -993,19 +1289,70 @@ def render_newborn_data_quality_manual(user, data_available):
             filtered_df = filtered_df[filtered_df["Region"] == selected_region]
         if selected_facility != "All Facilities" and "Facility" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["Facility"] == selected_facility]
+        if selected_count != "All Counts":
+            filtered_df = filtered_df[
+                filtered_df["Missing Count"] == int(selected_count)
+            ]
 
         if filtered_df.empty:
             st.info("No missing elements match the selected filters")
-        else:
-            display_columns = [
-                "First Name",
-                "Last Name",
-                "Region",
-                "Facility",
-                "Data Element Missing",
-            ]
-            # Only include columns that actually exist in the dataframe
-            available_columns = [
-                col for col in display_columns if col in filtered_df.columns
-            ]
-            st.dataframe(filtered_df[available_columns], use_container_width=True)
+            return
+
+        # Identify missing element columns
+        basic_columns = [
+            "First Name",
+            "Last Name",
+            "Region",
+            "Facility",
+            "TEI ID",
+            "Missing Count",
+        ]
+        missing_element_columns = [
+            col for col in filtered_df.columns if col not in basic_columns
+        ]
+
+        # Reorder columns: basic info first, then missing elements
+        display_columns = basic_columns + sorted(missing_element_columns)
+        display_columns = [col for col in display_columns if col in filtered_df.columns]
+
+        # Create display dataframe with proper index starting from 1
+        display_df = filtered_df[display_columns].copy()
+
+        # Replace non-missing values with empty strings for display
+        for col in missing_element_columns:
+            if col in display_df.columns:
+                display_df[col] = display_df[col].apply(
+                    lambda x: "" if x != "missing" else x
+                )
+
+        display_df = display_df.reset_index(drop=True)
+        display_df.index = range(1, len(display_df) + 1)
+
+        # Color coding function
+        def style_missing_cells(val):
+            if val == "missing":
+                # Missing cells - red background
+                return "background-color: #ffcccc; color: #990000; font-weight: bold"
+            elif val == "":
+                # Cells with values - green background
+                return "background-color: #ccffcc;"
+            else:
+                # Empty cells
+                return ""
+
+        # Display with styling
+        st.dataframe(
+            display_df.style.map(style_missing_cells, subset=missing_element_columns),
+            use_container_width=True,
+            height=400,
+        )
+
+        # Download button
+        csv = filtered_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download Missing Data Report",
+            data=csv,
+            file_name=f"newborn_missing_data_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
