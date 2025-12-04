@@ -85,6 +85,17 @@ from newborns_dashboard.kpi_culture_sepsis import (
     render_culture_done_sepsis_comprehensive_summary,
 )
 
+# ✅ IMPORT NEW CULTURE RESULT RECORDED KPI
+from newborns_dashboard.kpi_culture_result_recorded import (
+    compute_culture_result_recorded_kpi,
+    compute_culture_result_recorded_numerator,
+    compute_culture_result_recorded_denominator,
+    render_culture_result_recorded_trend_chart,
+    render_culture_result_recorded_facility_comparison_chart,
+    render_culture_result_recorded_region_comparison_chart,
+    render_culture_result_recorded_comprehensive_summary,
+)
+
 from newborns_dashboard.kpi_nmr import (
     compute_nmr_kpi,
     compute_nmr_numerator,  # ✅ IMPORT THE NUMERATOR FUNCTION
@@ -169,6 +180,11 @@ KPI_MAPPING = {
         "numerator_name": "Culture Done Cases",
         "denominator_name": "Probable Sepsis Cases",
     },
+    "Culture Result Recorded (%)": {  # ✅ NEW CULTURE RESULT RECORDED KPI
+        "title": "Culture Result Recorded (%)",
+        "numerator_name": "Culture Result Recorded Cases",
+        "denominator_name": "Total Culture Done Cases",
+    },
     "Neonatal Mortality Rate (%)": {
         "title": "Neonatal Mortality Rate (%)",
         "numerator_name": "Dead Cases",
@@ -191,6 +207,7 @@ KPI_OPTIONS = [
     "Antibiotics for Clinical Sepsis (%)",  # ✅ ADDED ANTIBIOTICS KPI TO NEWBORN CARE
     "Culture Done for Babies on Antibiotics (%)",  # ✅ ADDED EXISTING CULTURE DONE KPI
     "Culture Done for Babies with Clinical Sepsis (%)",  # ✅ ADDED NEW CULTURE DONE FOR SEPSIS KPI
+    "Culture Result Recorded (%)",  # ✅ ADDED NEW CULTURE RESULT RECORDED KPI
     "Hypothermia on Admission (%)",
     "Hypothermia After Admission (%)",  # ✅ NEW KPI
     "Hypothermia Inborn/Outborn",  # ✅ NEW KPI - RIGHT AFTER HYPOTHERMIA
@@ -210,6 +227,7 @@ KPI_GROUPS = {
         "Antibiotics for Clinical Sepsis (%)",  # ✅ ADDED ANTIBIOTICS TO NEWBORN CARE
         "Culture Done for Babies on Antibiotics (%)",  # ✅ ADDED EXISTING CULTURE DONE KPI
         "Culture Done for Babies with Clinical Sepsis (%)",  # ✅ ADDED NEW CULTURE DONE FOR SEPSIS KPI
+        "Culture Result Recorded (%)",  # ✅ ADDED NEW CULTURE RESULT RECORDED KPI
     ],
     "Admission Assessment": [
         "Hypothermia on Admission (%)",
@@ -363,8 +381,10 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Prophylactic CPAP Coverage (%)"
 
-        # Second row: 3 buttons (Antibiotics and Culture Dones)
-        col6, col7, col8, col9, col10 = st.columns(5)
+        # Second row: 4 buttons (Antibiotics, Culture Done, Culture Done for Sepsis, Culture Result Recorded)
+        # Changed from 5 columns to 4 to better distribute the space
+        col6, col7, col8, col9 = st.columns(4)
+
         with col6:
             if st.button(
                 "Antibiotics for Probable Sepsis",
@@ -404,6 +424,19 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Culture Done for Babies with Clinical Sepsis (%)"
+
+        with col9:
+            if st.button(
+                "Culture Result Recorded",  # ✅ NEW CULTURE RESULT RECORDED BUTTON
+                key="culture_result_recorded_newborn_care_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Culture Result Recorded (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Culture Result Recorded (%)"
 
     with tab2:
         # Admission Assessment KPIs - FOUR buttons layout (Hypothermia Inborn/Outborn right after Hypothermia)
@@ -684,6 +717,34 @@ def compute_culture_done_sepsis_for_dashboard(df, facility_uids=None, tei_df=Non
         "culture_sepsis_rate": float(culture_sepsis_rate),
         "culture_count": int(culture_count),
         "sepsis_count": int(sepsis_count),
+    }
+
+
+def compute_culture_result_recorded_for_dashboard(df, facility_uids=None, tei_df=None):
+    """
+    ✅ FIX: Independent computation of Culture Result Recorded KPI for dashboard
+    This ensures the counting is done correctly without relying on trend functions
+    """
+    if df is None or df.empty:
+        return {
+            "culture_result_rate": 0.0,
+            "culture_result_count": 0,
+            "culture_done_count": 0,
+        }
+
+    # Filter by facilities if specified
+    if facility_uids:
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        df = df[df["orgUnit"].isin(facility_uids)]
+
+    # ✅ Use the imported function directly
+    culture_result_data = compute_culture_result_recorded_kpi(df, facility_uids, tei_df)
+
+    return {
+        "culture_result_rate": culture_result_data["culture_result_rate"],
+        "culture_result_count": culture_result_data["culture_result_count"],
+        "culture_done_count": culture_result_data["culture_done_count"],
     }
 
 
@@ -1011,6 +1072,18 @@ def render_trend_chart_section(
             tei_df=tei_df,
         )
 
+    elif kpi_selection == "Culture Result Recorded (%)":
+        # ✅ NEW: Render culture result recorded trend chart
+        render_culture_result_recorded_trend_chart(
+            filtered_events,
+            "period_display",
+            "Blood Culture Result Recorded Trend",
+            bg_color,
+            text_color,
+            facility_uids=facility_uids,
+            tei_df=tei_df,
+        )
+
     elif kpi_selection == "Hypothermia on Admission (%)":
         # ✅ FIX: Pass TEI dataframe to prevent overcounting
         render_hypothermia_trend_chart(
@@ -1192,6 +1265,18 @@ def render_comparison_chart(
                 df=filtered_events,
                 period_col="period_display",
                 title="Culture Done for Babies with Clinical Sepsis (%) - Facility Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Culture Result Recorded (%)":
+            # ✅ NEW: Render culture result recorded facility comparison chart
+            render_culture_result_recorded_facility_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Blood Culture Result Recorded - Facility Comparison",
                 bg_color=bg_color,
                 text_color=text_color,
                 facility_names=display_names,
@@ -1541,6 +1626,44 @@ def render_comparison_chart(
                 bg_color=bg_color,
                 text_color=text_color,
                 region_names=display_names,
+                facilities_by_region=facilities_by_region,
+                tei_df=tei_df,
+            )
+        elif kpi_selection == "Culture Result Recorded (%)":
+            # ✅ NEW: Show independent computation first
+            st.subheader("📊 Culture Result Recorded - Region Comparison")
+
+            # Compute overall data for context
+            overall_culture_result_data = compute_culture_result_recorded_for_dashboard(
+                filtered_events, None, tei_df  # No facility filter for regional
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    label="Total Result Recorded Cases",
+                    value=f"{overall_culture_result_data['culture_result_count']:,}",
+                )
+            with col2:
+                st.metric(
+                    label="Total Culture Done Cases",
+                    value=f"{overall_culture_result_data['culture_done_count']:,}",
+                )
+            with col3:
+                st.metric(
+                    label="Overall Result Recorded Rate",
+                    value=f"{overall_culture_result_data['culture_result_rate']:.1f}%",
+                )
+
+            # Then render the comparison chart
+            render_culture_result_recorded_region_comparison_chart(
+                df=filtered_events,
+                period_col="period_display",
+                title="Culture Result Recorded (%) - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=display_names,
+                region_mapping={},
                 facilities_by_region=facilities_by_region,
                 tei_df=tei_df,
             )
