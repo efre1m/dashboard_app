@@ -118,17 +118,48 @@ def _get_session() -> requests.Session:
     return _session
 
 
+def is_test_facility(facility_name: str) -> bool:
+    """Check if a facility name indicates it's a test/demo facility."""
+    if not facility_name:
+        return False
+
+    facility_lower = facility_name.lower()
+
+    # Common test facility indicators
+    test_keywords = ["test", "demo", "example", "sample", "training", "dummy"]
+
+    # Check if starts with any test keyword
+    if any(facility_lower.startswith(keyword) for keyword in test_keywords):
+        return True
+
+    return False
+
+
 def fetch_top_regions() -> Dict[str, str]:
-    """Fetch all top-level regions (level=2)."""
+    """Fetch all top-level regions (level=2), excluding test regions."""
     url = f"{settings.DHIS2_BASE_URL}/api/organisationUnits.json?level=2&fields=id,displayName&paging=false"
     try:
         resp = _get_session().get(url, timeout=60)
         resp.raise_for_status()
-        regions = {
-            ou["id"]: ou["displayName"]
-            for ou in resp.json().get("organisationUnits", [])
-        }
-        logging.info(f"Top-level regions fetched: {len(regions)}")
+
+        regions = {}
+        test_count = 0
+
+        for ou in resp.json().get("organisationUnits", []):
+            display_name = ou["displayName"]
+            ou_id = ou["id"]
+
+            # Skip test regions
+            if is_test_facility(display_name):
+                test_count += 1
+                logging.debug(f"Skipping test region: {display_name}")
+                continue
+
+            regions[ou_id] = display_name
+
+        logging.info(
+            f"Top-level regions fetched: {len(regions)} (ignored {test_count} test regions)"
+        )
         return regions
     except Exception as e:
         logging.error(f"Failed to fetch top regions: {e}")
@@ -136,16 +167,31 @@ def fetch_top_regions() -> Dict[str, str]:
 
 
 def fetch_orgunit_names() -> Dict[str, str]:
-    """Fetch all orgUnit UIDs and names from DHIS2."""
+    """Fetch all orgUnit UIDs and names from DHIS2, ignoring test facilities."""
     url = f"{settings.DHIS2_BASE_URL}/api/organisationUnits.json?fields=id,displayName&paging=false"
     try:
         resp = _get_session().get(url, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        ou_dict = {
-            ou["id"]: ou["displayName"] for ou in data.get("organisationUnits", [])
-        }
-        logging.info(f"Fetched {len(ou_dict)} orgUnits from DHIS2.")
+
+        ou_dict = {}
+        test_count = 0
+
+        for ou in data.get("organisationUnits", []):
+            display_name = ou["displayName"]
+            ou_id = ou["id"]
+
+            # Skip test facilities
+            if is_test_facility(display_name):
+                test_count += 1
+                logging.debug(f"Skipping test facility: {display_name}")
+                continue
+
+            ou_dict[ou_id] = display_name
+
+        logging.info(
+            f"Fetched {len(ou_dict)} orgUnits from DHIS2 (ignored {test_count} test facilities)."
+        )
         return ou_dict
     except Exception as e:
         logging.error(f"Failed to fetch orgUnit names: {e}")
@@ -266,9 +312,9 @@ def fetch_national_data(
     program_uid: str, required_elements: Optional[Set[str]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Fetch TEIs region by region for full national coverage.
+    Fetch TEIs region by region for full national coverage, excluding test facilities.
     """
-    regions = fetch_top_regions()
+    regions = fetch_top_regions()  # This already excludes test regions
     all_patients = []
 
     for ou_uid, name in regions.items():
@@ -306,22 +352,44 @@ def fetch_dhis2_data_for_ous(
 
     logging.info(f"Fetching DHIS2 data for role: {user_role}")
 
+    # Filter out test facilities from the input OU list
+    orgunit_names = fetch_orgunit_names()  # This already excludes test facilities
+    filtered_ou_uids = [uid for uid in ou_uids if uid in orgunit_names]
+
+    if len(filtered_ou_uids) < len(ou_uids):
+        logging.info(
+            f"Filtered out {len(ou_uids) - len(filtered_ou_uids)} test facilities from input list"
+        )
+
+    if not filtered_ou_uids:
+        logging.warning("No non-test facilities to fetch data from")
+        return {
+            "patients": [],
+            "dataElements": {},
+            "programStages": {},
+            "orgUnitNames": orgunit_names,
+            "total_ous": 0,
+            "total_teis": 0,
+            "optimization_stats": {},
+        }
+
     # For national level, use the regional iteration approach
     if user_role == "national":
         logging.info("Using national data fetching strategy (region by region)")
         all_patients = fetch_national_data(program_uid, required_elements)
     else:
         # For facility and regional levels
-        logging.info(f"Fetching DHIS2 data for {len(ou_uids)} OUs, role: {user_role}")
-        for ou_uid in ou_uids:
+        logging.info(
+            f"Fetching DHIS2 data for {len(filtered_ou_uids)} OUs (after test facility filtering), role: {user_role}"
+        )
+        for ou_uid in filtered_ou_uids:
             patients = fetch_patient_data(
                 program_uid, ou_uid, user_role, required_elements
             )
             all_patients.extend(patients)
             time.sleep(1)
 
-    # Fetch all orgUnit names
-    orgunit_names = fetch_orgunit_names()
+    # Note: orgunit_names is already fetched and filtered above
 
     # Fetch only required data elements if specified
     if required_elements:
@@ -391,9 +459,10 @@ def fetch_dhis2_data_for_ous(
     logging.info(f"   Total TEIs: {total_teis}")
     if required_elements:
         logging.info(f"   TEIs with required data: {teis_with_required_data}")
-        logging.info(
-            f"   Required data coverage: {teis_with_required_data}/{total_teis} = {(teis_with_required_data/total_teis*100):.1f}%"
-        )
+        if total_teis > 0:
+            logging.info(
+                f"   Required data coverage: {teis_with_required_data}/{total_teis} = {(teis_with_required_data/total_teis*100):.1f}%"
+            )
 
     result = {
         "patients": all_patients,
@@ -401,7 +470,9 @@ def fetch_dhis2_data_for_ous(
         "programStages": ps_dict,
         "orgUnitNames": orgunit_names,
         "total_ous": (
-            len(ou_uids) if user_role != "national" else len(fetch_top_regions())
+            len(filtered_ou_uids)
+            if user_role != "national"
+            else len(fetch_top_regions())
         ),
         "total_teis": total_teis,
         "optimization_stats": {

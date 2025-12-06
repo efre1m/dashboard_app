@@ -1179,6 +1179,8 @@ def render_maternal_dashboard_shared(
     enrollments_df = normalize_enrollment_dates(enrollments_df)
     events_df = normalize_event_dates(events_df)
 
+    events_df.to_csv("debug_maternal_events.csv", index=False)
+
     # Store in session state for quick access
     st.session_state.maternal_events_df = events_df.copy()
     st.session_state.maternal_tei_df = tei_df.copy()
@@ -1366,6 +1368,11 @@ def render_maternal_dashboard_shared(
                 display_names,
                 bg_color,
                 text_color,
+                comparison_mode=comparison_mode,  # ADD THIS
+                facilities_by_region=facilities_by_region,  # ADD THIS
+                region_names=(
+                    display_names if comparison_mode == "region" else None
+                ),  # ADD THIS
             )
 
         render_additional_analytics(

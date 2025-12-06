@@ -59,6 +59,9 @@ from utils.kpi_utils import (
     render_region_comparison_chart,
 )
 
+# ADD THIS IMPORT
+from utils.kpi_missing_md import render_missing_md_simple_table
+
 # KPI mapping for comparison charts - used in both files
 KPI_MAPPING = {
     "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {
@@ -116,6 +119,12 @@ KPI_MAPPING = {
         "numerator_name": "SVD Deliveries",
         "denominator_name": "Total Deliveries",
     },
+    # ADD THIS NEW KPI
+    "Missing Mode of Delivery": {
+        "title": "Missing Mode of Delivery",
+        "numerator_name": "Missing MD Cases",
+        "denominator_name": "Total Deliveries",
+    },
 }
 
 # KPI Grouping for Tab Navigation
@@ -136,6 +145,10 @@ KPI_GROUPS = {
         "ARV Prophylaxis Rate (%)",
         "Assisted Delivery Rate (%)",
         "Normal Vaginal Delivery (SVD) Rate (%)",
+    ],
+    # ADD THIS NEW GROUP
+    "Missing": [
+        "Missing Mode of Delivery",
     ],
 }
 
@@ -163,6 +176,7 @@ KPI_OPTIONS = [
     "Low Birth Weight (LBW) Rate (%)",
     "Assisted Delivery Rate (%)",
     "Normal Vaginal Delivery (SVD) Rate (%)",
+    "Missing Mode of Delivery",  # ADD THIS
 ]
 
 
@@ -229,6 +243,10 @@ def render_kpi_tab_navigation():
             "Assisted Delivery Rate (%)",
             "Normal Vaginal Delivery (SVD) Rate (%)",
         ],
+        # ADD THIS NEW GROUP FOR MISSING DATA
+        "❓ Missing": [
+            "Missing Mode of Delivery",
+        ],
     }
 
     # Initialize session state for KPI selection
@@ -237,9 +255,9 @@ def render_kpi_tab_navigation():
             "Institutional Maternal Death Rate (per 100,000 births)"
         )
 
-    # Create main KPI group tabs
-    tab1, tab2, tab3 = st.tabs(
-        ["📉 **Mortality**", "🚨 **Complications**", "🏥 **Care**"]
+    # Create main KPI group tabs - ADD 4TH TAB
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📉 **Mortality**", "🚨 **Complications**", "🏥 **Care**", "❓ **Missing**"]
     )
 
     selected_kpi = st.session_state.selected_kpi
@@ -394,6 +412,21 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Normal Vaginal Delivery (SVD) Rate (%)"
 
+    with tab4:
+        # Missing Data KPIs - Just show the Missing Mode of Delivery button
+        st.markdown("### Missing Data Analysis")
+        st.markdown("Analyze data completeness and missing information")
+
+        if st.button(
+            "📊 Missing Mode of Delivery",
+            key="missing_md_btn",
+            use_container_width=True,
+            type=(
+                "primary" if selected_kpi == "Missing Mode of Delivery" else "secondary"
+            ),
+        ):
+            selected_kpi = "Missing Mode of Delivery"
+
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_kpi:
         st.session_state.selected_kpi = selected_kpi
@@ -403,9 +436,30 @@ def render_kpi_tab_navigation():
 
 
 def render_trend_chart_section(
-    kpi_selection, filtered_events, facility_uids, display_names, bg_color, text_color
+    kpi_selection,
+    filtered_events,
+    facility_uids,
+    display_names,
+    bg_color,
+    text_color,
+    comparison_mode="overall",  # ADD THIS PARAMETER
+    facilities_by_region=None,  # ADD THIS PARAMETER
+    region_names=None,  # ADD THIS PARAMETER
 ):
     """Render the trend chart based on KPI selection - USE COUNT FUNCTIONS FOR ALL"""
+
+    # SPECIAL HANDLING FOR MISSING MODE OF DELIVERY
+    if kpi_selection == "Missing Mode of Delivery":
+        # For Missing Mode of Delivery, we just show the table, no trend chart
+        render_missing_md_simple_table(
+            df=filtered_events,
+            facility_uids=facility_uids,
+            display_names=display_names,
+            comparison_mode=comparison_mode,  # USE THE COMPARISON MODE
+            facilities_by_region=facilities_by_region,  # PASS REGION DATA
+            region_names=region_names,  # PASS REGION NAMES
+        )
+        return
 
     # Process periods in chronological order
     sorted_periods = sorted(filtered_events["period"].unique())
@@ -858,6 +912,9 @@ def _create_period_row(kpi_selection, period, period_display, kpi_data):
                 "total_deliveries"
             ],  # Consistent with C-section
         }
+    elif kpi_selection == "Missing Mode of Delivery":
+        # This won't be used since we handle Missing Mode separately
+        return {}
     return {}
 
 
@@ -1016,6 +1073,7 @@ def _render_kpi_chart(
                 "Total Deliveries",
                 facility_uids,
             )
+        # Note: Missing Mode of Delivery is handled separately in render_trend_chart_section
     except Exception as e:
         st.error(f"Error rendering chart for {kpi_selection}: {str(e)}")
 
@@ -1074,6 +1132,11 @@ def _get_default_kpi_data(kpi_selection):
             "svd_deliveries": 0,
             "total_deliveries": 0,  # Consistent with C-section
         },
+        "Missing Mode of Delivery": {
+            "missing_md_rate": 0.0,
+            "missing_md_count": 0,
+            "total_deliveries": 0,
+        },
     }
     return defaults.get(kpi_selection, {})
 
@@ -1090,6 +1153,12 @@ def render_comparison_chart(
     is_national=False,
 ):
     """Render comparison charts for both national and regional views"""
+
+    # SPECIAL HANDLING FOR MISSING MODE OF DELIVERY
+    if kpi_selection == "Missing Mode of Delivery":
+        # For Missing Mode of Delivery, the table already shows the comparison
+        # So we don't need a separate comparison chart
+        return
 
     kpi_config = get_kpi_config(kpi_selection)
 
@@ -1305,6 +1374,7 @@ def render_additional_analytics(
         render_lbw_category_pie_chart(
             filtered_events, facility_uids, bg_color, text_color
         )
+    # No additional analytics needed for Missing Mode of Delivery
 
 
 def normalize_event_dates(df: pd.DataFrame) -> pd.DataFrame:

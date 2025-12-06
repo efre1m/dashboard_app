@@ -742,6 +742,9 @@ def render_maternal_dashboard(user, program_uid, facility_name, facility_uid):
             facility_name,
             filters["bg_color"],
             text_color,
+            comparison_mode="overall",  # ADD THIS - facility only has overall mode
+            facilities_by_region=None,  # ADD THIS - None for facility
+            region_names=None,  # ADD THIS - None for facility
         )
 
         st.markdown("</div>", unsafe_allow_html=True)

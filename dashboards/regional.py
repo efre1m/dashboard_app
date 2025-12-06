@@ -1144,6 +1144,7 @@ def render_maternal_dashboard_shared(
     st.session_state.maternal_events_df = events_df.copy()
     st.session_state.maternal_tei_df = tei_df.copy()
 
+    events_df.to_csv("debug_maternal_events.csv", index=False)
     # ✅ DEBUG: Log what we're storing (data is already filtered by user access)
     logging.info(
         f"✅ STORED maternal data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
@@ -1293,6 +1294,9 @@ def render_maternal_dashboard_shared(
                 facility_names or selected_facilities,
                 bg_color,
                 text_color,
+                comparison_mode="facility",  # ADD THIS - regional only has facility comparison
+                facilities_by_region=None,  # ADD THIS - None for regional
+                region_names=None,  # ADD THIS - None for regional
             )
 
         render_additional_analytics(
