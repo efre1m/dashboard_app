@@ -1384,12 +1384,12 @@ def render_comparison_chart(
             with col1:
                 st.metric(
                     label="KMC 1000-1999g Rate",
-                    value=f"{overall_kmc_data['kmc_1000_1999_rate']:.1f}%",
+                    value=f"{overall_kmc_data['kmc_1000_1999_rate']:.2f}%",
                 )
             with col2:
                 st.metric(
                     label="KMC 2000-2499g Rate",
-                    value=f"{overall_kmc_data['kmc_2000_2499_rate']:.1f}%",
+                    value=f"{overall_kmc_data['kmc_2000_2499_rate']:.2f}%",
                 )
             with col3:
                 # Calculate combined rate
@@ -1408,7 +1408,7 @@ def render_comparison_chart(
                 )
                 st.metric(
                     label="Combined Rate (1000-2499g)",
-                    value=f"{combined_rate:.1f}%",
+                    value=f"{combined_rate:.2f}%",
                 )
 
             # Then render the comparison chart WITH CORRECTED TABLES
@@ -1459,7 +1459,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall General CPAP Rate",
-                    value=f"{overall_cpap_data['cpap_general_rate']:.1f}%",
+                    value=f"{overall_cpap_data['cpap_general_rate']:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1496,7 +1496,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall Prophylactic CPAP Rate",
-                    value=f"{overall_cpap_data['cpap_prophylactic_rate']:.1f}%",
+                    value=f"{overall_cpap_data['cpap_prophylactic_rate']:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1536,7 +1536,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall Antibiotics Rate",
-                    value=f"{overall_antibiotics_data['antibiotics_rate']:.1f}%",
+                    value=f"{overall_antibiotics_data['antibiotics_rate']:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1575,7 +1575,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall Culture Done Rate",
-                    value=f"{overall_culture_data['culture_rate']:.1f}%",
+                    value=f"{overall_culture_data['culture_rate']:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1615,7 +1615,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall Culture Done for Sepsis Rate",
-                    value=f"{overall_culture_sepsis_data['culture_sepsis_rate']:.1f}%",
+                    value=f"{overall_culture_sepsis_data['culture_sepsis_rate']:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1652,7 +1652,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall Result Recorded Rate",
-                    value=f"{overall_culture_result_data['culture_result_rate']:.1f}%",
+                    value=f"{overall_culture_result_data['culture_result_rate']:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1704,7 +1704,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall Hypothermia Rate",
-                    value=f"{overall_hypothermia_data['hypothermia_rate']:.1f}%",
+                    value=f"{overall_hypothermia_data['hypothermia_rate']:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1762,7 +1762,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall Inborn Rate",
-                    value=f"{overall_inborn_data['inborn_rate']:.1f}%",
+                    value=f"{overall_inborn_data['inborn_rate']:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1796,7 +1796,7 @@ def render_comparison_chart(
                 normal_bw_rate = overall_bw_data["category_rates"].get("2500_4000", 0)
                 st.metric(
                     label="Normal Birth Weight Rate (2500-4000g)",
-                    value=f"{normal_bw_rate:.1f}%",
+                    value=f"{normal_bw_rate:.2f}%",
                 )
 
             # Then render the comparison chart
@@ -1832,7 +1832,7 @@ def render_comparison_chart(
             with col3:
                 st.metric(
                     label="Overall NMR Rate",
-                    value=f"{overall_nmr_data['nmr_rate']:.1f}%",
+                    value=f"{overall_nmr_data['nmr_rate']:.2f}%",
                 )
 
             # Then render the comparison chart

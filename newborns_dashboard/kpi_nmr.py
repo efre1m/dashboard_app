@@ -339,7 +339,7 @@ def render_nmr_trend_chart(
     styled_table = (
         summary_table_display.style.format(
             {
-                "Neonatal Mortality Rate (%)": "{:.1f}%",
+                "Neonatal Mortality Rate (%)": "{:.2f}%",
                 "Dead Cases": "{:,.0f}",
                 "Total Admitted Newborns": "{:,.0f}",
             }

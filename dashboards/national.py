@@ -32,6 +32,7 @@ from utils.status import (
 )
 from utils.odk_dashboard import display_odk_dashboard
 from dashboards.data_quality_tracking import render_data_quality_tracking
+from newborns_dashboard.kpi_nmr import compute_nmr_kpi
 
 # Initialize status system
 initialize_status_system()
@@ -820,6 +821,18 @@ def render_summary_dashboard_shared(
                 }
             )
 
+            # ✅ FIX: COMPUTE NMR USING THE NEW FUNCTION
+            nmr_result = compute_nmr_kpi(newborn_events_df, facility_uids, tei_df=None)
+
+            # Extract NMR data
+            nmr_rate = nmr_result.get("nmr_rate", 0.0)
+            nmr_dead_count = nmr_result.get("dead_count", 0)
+            nmr_total_admitted = nmr_result.get("total_admitted_newborns", 0)
+
+            logging.info(
+                f"✅ Computed NMR: {nmr_rate:.2f}% ({nmr_dead_count}/{nmr_total_admitted})"
+            )
+
             # Use pre-computed NEWBORN KPIs
             if (
                 st.session_state.get("last_computed_newborn_kpis")
@@ -839,12 +852,15 @@ def render_summary_dashboard_shared(
                 }
                 logging.info("🔄 Using placeholder NEWBORN KPIs")
 
-            # Newborn indicators
+            # ✅ FIX: Update newborn indicators with computed NMR
             newborn_indicators = {
                 "total_admitted": newborn_kpi_data.get(
                     "total_newborns", newborn_tei_count
                 ),
-                "nmr": "N/A",
+                "nmr": f"{nmr_rate:.2f}%",  # ← NOW USING COMPUTED VALUE!
+                "nmr_raw": nmr_rate,  # Store raw value
+                "nmr_dead_count": nmr_dead_count,
+                "nmr_total_admitted": nmr_total_admitted,
                 "kmc_coverage_rate": newborn_kpi_data.get("kmc_coverage_rate", 0.0),
                 "kmc_cases": newborn_kpi_data.get("kmc_cases", 0),
                 "total_lbw": newborn_kpi_data.get("total_lbw", 0),
@@ -949,7 +965,7 @@ def render_summary_dashboard_shared(
     # Newborn Overview Table
     st.markdown("### 👶 Newborn Care Overview")
 
-    # Create newborn table data
+    # Create newborn table data with actual NMR value
     newborn_table_data = {
         "No": list(range(1, 10)),
         "Indicator": [
@@ -967,6 +983,7 @@ def render_summary_dashboard_shared(
             newborn_start_date,
             location_name,
             f"{newborn_tei_count:,}",
+            # ✅ FIX: Use computed NMR value instead of "N/A"
             f"{newborn_indicators['nmr']}",
             f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
             f"{maternal_indicators['live_births']:,}",
@@ -989,7 +1006,7 @@ def render_summary_dashboard_shared(
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Download button for newborn data
+    # Download button for newborn data with NMR
     col_info, col_download = st.columns([3, 1])
     with col_download:
         newborn_data_download = {

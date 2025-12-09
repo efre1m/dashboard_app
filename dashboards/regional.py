@@ -32,6 +32,7 @@ from utils.status import (
 )
 from utils.odk_dashboard import display_odk_dashboard
 from dashboards.data_quality_tracking import render_data_quality_tracking
+from newborns_dashboard.kpi_nmr import compute_nmr_kpi
 
 # Initialize status system
 initialize_status_system()
@@ -571,7 +572,7 @@ def render_tab_placeholder(tab_name, icon, tab_key, description):
 def render_summary_dashboard_shared(
     user, region_name, facility_mapping, selected_facilities, shared_data
 ):
-    """✅ OPTIMIZED Summary Dashboard - USING KPI_UTILS SAME LOGIC"""
+    """✅ OPTIMIZED Summary Dashboard - USING KPI_UTILS SAME LOGIC WITH NMR"""
 
     # ✅ FIXED: Only run if this is the active tab AND data is loaded
     if st.session_state.active_tab != "summary":
@@ -686,16 +687,54 @@ def render_summary_dashboard_shared(
                 maternal_enrollments_df, "enrollmentDate"
             )
 
-            # ✅ Calculate indicators USING KPI_UTILS
+            # ✅ Calculate maternal indicators USING KPI_UTILS
             maternal_indicators = calculate_maternal_indicators(
                 maternal_events_df, facility_uids
             )
 
-            # Newborn indicators
-            newborn_indicators = calculate_newborn_indicators(
-                newborn_events_df, facility_uids
-            )
-            newborn_indicators["total_admitted"] = newborn_tei_count
+            # ✅ FIX: COMPUTE NMR USING THE NEW FUNCTION
+            try:
+                # Import the NMR computation function
+                from newborns_dashboard.kpi_nmr import compute_nmr_kpi
+
+                # Compute NMR using the newborn events dataframe
+                nmr_result = compute_nmr_kpi(
+                    newborn_events_df, facility_uids, tei_df=None
+                )
+
+                # Extract NMR data
+                nmr_rate = nmr_result.get("nmr_rate", 0.0)
+                nmr_dead_count = nmr_result.get("dead_count", 0)
+                nmr_total_admitted = nmr_result.get("total_admitted_newborns", 0)
+
+                logging.info(
+                    f"✅ Computed NMR: {nmr_rate:.2f}% ({nmr_dead_count}/{nmr_total_admitted})"
+                )
+
+            except ImportError as e:
+                logging.error(f"❌ Could not import NMR computation: {e}")
+                nmr_rate = 0.0
+                nmr_dead_count = 0
+                nmr_total_admitted = 0
+            except Exception as e:
+                logging.error(f"❌ Error computing NMR: {e}")
+                nmr_rate = 0.0
+                nmr_dead_count = 0
+                nmr_total_admitted = 0
+
+            # ✅ FIX: Update newborn indicators with computed NMR
+            newborn_indicators = {
+                "total_admitted": newborn_tei_count,
+                "nmr": (
+                    f"{nmr_rate:.2f}%" if isinstance(nmr_rate, (int, float)) else "N/A"
+                ),
+                "nmr_raw": nmr_rate,  # Store raw value
+                "nmr_dead_count": nmr_dead_count,
+                "nmr_total_admitted": nmr_total_admitted,
+                "kmc_coverage_rate": 0.0,  # Placeholder
+                "kmc_cases": 0,  # Placeholder
+                "total_lbw": 0,  # Placeholder
+            }
 
             # ✅ Facility comparison - using events data (SAME AS KPI_UTILS)
             facility_comparison_data = {}
@@ -833,7 +872,7 @@ def render_summary_dashboard_shared(
     # Newborn Overview Table
     st.markdown("### 👶 Newborn Care Overview")
 
-    # Create newborn table data
+    # Create newborn table data with actual NMR value
     newborn_table_data = {
         "No": list(range(1, 10)),
         "Indicator": [
@@ -851,6 +890,7 @@ def render_summary_dashboard_shared(
             newborn_start_date,
             location_name,
             f"{newborn_tei_count:,}",
+            # ✅ FIX: Use computed NMR value instead of "N/A"
             f"{newborn_indicators['nmr']}",
             f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
             f"{maternal_indicators['live_births']:,}",
@@ -873,7 +913,7 @@ def render_summary_dashboard_shared(
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Download button for newborn data
+    # Download button for newborn data with NMR
     col_info, col_download = st.columns([3, 1])
     with col_download:
         newborn_data_download = {
@@ -1144,7 +1184,7 @@ def render_maternal_dashboard_shared(
     st.session_state.maternal_events_df = events_df.copy()
     st.session_state.maternal_tei_df = tei_df.copy()
 
-    events_df.to_csv("debug_maternal_events.csv", index=False)
+    # events_df.to_csv("debug_maternal_events.csv", index=False)
     # ✅ DEBUG: Log what we're storing (data is already filtered by user access)
     logging.info(
         f"✅ STORED maternal data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
