@@ -67,7 +67,12 @@ def fetch_shared_program_data(user, program_uid):
     if not program_uid:
         return None
     try:
-        return fetch_program_data_for_user(user, program_uid)
+        # ✅ ALWAYS get patient-level data
+        return fetch_program_data_for_user(
+            user,
+            program_uid,
+            transform_to_patient_level=True,  # ✅ Always get transformed data
+        )
     except Exception as e:
         logging.error(f"Error fetching data for program {program_uid}: {e}")
         return None
@@ -160,27 +165,31 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                         "newborn": st.session_state[shared_newborn_key],
                     }
 
-                    # Log fresh data stats
-                    maternal_tei_count = (
+                    # Log fresh data stats with patient-level info
+                    maternal_patient_count = (
                         len(
                             st.session_state[shared_maternal_key].get(
-                                "tei", pd.DataFrame()
+                                "patients", pd.DataFrame()
                             )
                         )
                         if st.session_state[shared_maternal_key]
                         else 0
                     )
-                    newborn_tei_count = (
+                    newborn_patient_count = (
                         len(
                             st.session_state[shared_newborn_key].get(
-                                "tei", pd.DataFrame()
+                                "patients", pd.DataFrame()
                             )
                         )
                         if st.session_state[shared_newborn_key]
                         else 0
                     )
+
                     logging.info(
-                        f"✅ FRESH DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs"
+                        f"✅ FRESH DATA: {maternal_patient_count} maternal patient-level rows"
+                    )
+                    logging.info(
+                        f"✅ FRESH DATA: {newborn_patient_count} newborn patient-level rows"
                     )
 
                     # Reset refresh trigger and user changed flags
@@ -203,19 +212,23 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
 
     else:
         # ✅ Use cached data
-        maternal_tei_count = (
-            len(st.session_state[shared_maternal_key].get("tei", pd.DataFrame()))
+        maternal_patient_count = (
+            len(st.session_state[shared_maternal_key].get("patients", pd.DataFrame()))
             if st.session_state[shared_maternal_key]
             else 0
         )
-        newborn_tei_count = (
-            len(st.session_state[shared_newborn_key].get("tei", pd.DataFrame()))
+        newborn_patient_count = (
+            len(st.session_state[shared_newborn_key].get("patients", pd.DataFrame()))
             if st.session_state[shared_newborn_key]
             else 0
         )
+
         time_elapsed = current_time - st.session_state[shared_timestamp_key]
         logging.info(
-            f"✅ USING CACHED DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs ({time_elapsed:.0f}s old)"
+            f"✅ USING CACHED DATA: {maternal_patient_count} maternal patient-level rows ({time_elapsed:.0f}s old)"
+        )
+        logging.info(
+            f"✅ USING CACHED DATA: {newborn_patient_count} newborn patient-level rows ({time_elapsed:.0f}s old)"
         )
 
     return {
@@ -270,6 +283,7 @@ def initialize_session_state():
         "cached_events_data": None,
         "cached_enrollments_data": None,
         "cached_tei_data": None,
+        "cached_patient_data": None,  # ✅ NEW: Patient-level data cache
         "last_applied_selection": "All Facilities",
         "kpi_cache": {},
         "selected_program_uid": None,
@@ -314,6 +328,7 @@ def initialize_session_state():
         "facilities": [],
         "facility_mapping": {},
         "program_uid_map": {},
+        # ✅ NEW: Remove transformed data toggle - ALWAYS use patient-level
     }
 
     for key, default_value in session_vars.items():
@@ -350,6 +365,8 @@ def initialize_session_state():
         st.session_state.tab_loading["mentorship"] = False
         # Reset show tables
         st.session_state.show_summarized_data_regional = True
+        # Reset cached patient data
+        st.session_state.cached_patient_data = None
     else:
         st.session_state.user_changed = False
 
@@ -358,44 +375,21 @@ def initialize_session_state():
 initialize_session_state()
 
 
-def count_unique_teis_from_events(events_df, facility_uids, org_unit_column="orgUnit"):
-    """✅ Count unique TEIs from events dataframe - SAME AS KPI_UTILS LOGIC"""
-    if events_df.empty:
+def count_patients_from_patient_level(df, facility_uids, org_unit_column="orgUnit"):
+    """✅ Count unique patients from patient-level dataframe"""
+    if df.empty:
         return 0
 
-    # Filter by facilities if specified - same as kpi_utils
-    if facility_uids and org_unit_column in events_df.columns:
-        filtered_events = events_df[events_df[org_unit_column].isin(facility_uids)]
-    elif facility_uids and "orgUnit" in events_df.columns:
-        filtered_events = events_df[events_df["orgUnit"].isin(facility_uids)]
+    # Filter by facilities if specified
+    if facility_uids and org_unit_column in df.columns:
+        filtered_df = df[df[org_unit_column].isin(facility_uids)]
+    elif facility_uids and "orgUnit" in df.columns:
+        filtered_df = df[df["orgUnit"].isin(facility_uids)]
     else:
-        filtered_events = events_df
+        filtered_df = df
 
-    # Count unique TEI IDs from events - EXACTLY LIKE kpi_utils.compute_total_deliveries()
-    if "tei_id" in filtered_events.columns:
-        return filtered_events["tei_id"].nunique()
-    else:
-        return 0
-
-
-def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUnit"):
-    """Optimized TEI counting from TEI dataframe (for backward compatibility)"""
-    if tei_df.empty or not facility_uids:
-        return 0
-
-    if org_unit_column in tei_df.columns:
-        filtered_tei = tei_df[tei_df[org_unit_column].isin(facility_uids)]
-    else:
-        filtered_tei = (
-            tei_df[tei_df["orgUnit"].isin(facility_uids)]
-            if "orgUnit" in tei_df.columns
-            else tei_df
-        )
-
-    id_column = (
-        "tei_id" if "tei_id" in filtered_tei.columns else "trackedEntityInstance"
-    )
-    return filtered_tei[id_column].nunique() if id_column in filtered_tei.columns else 0
+    # Count unique patients (each row is a patient)
+    return len(filtered_df)
 
 
 def get_earliest_date(df, date_column):
@@ -412,9 +406,9 @@ def get_earliest_date(df, date_column):
         return "N/A"
 
 
-def calculate_maternal_indicators(maternal_events_df, facility_uids):
-    """✅ OPTIMIZED maternal indicators calculation - USING KPI_UTILS SAME WAY"""
-    if maternal_events_df.empty:
+def calculate_maternal_indicators(patient_df, facility_uids):
+    """✅ OPTIMIZED maternal indicators calculation - USING PURE PATIENT-LEVEL DATA"""
+    if patient_df.empty:
         return {
             "total_deliveries": 0,
             "maternal_deaths": 0,
@@ -427,8 +421,8 @@ def calculate_maternal_indicators(maternal_events_df, facility_uids):
             "low_birth_weight_count": 0,
         }
 
-    # ✅ USE SAME KPI_UTILS FUNCTION AS NATIONAL DASHBOARD
-    kpi_data = compute_kpis(maternal_events_df, facility_uids)
+    # ✅ USE PURE PATIENT-LEVEL DATA
+    kpi_data = compute_kpis(patient_df, facility_uids)
 
     # Get values directly from kpi_utils computation
     total_deliveries = kpi_data.get("total_deliveries", 0)
@@ -440,7 +434,7 @@ def calculate_maternal_indicators(maternal_events_df, facility_uids):
     stillbirth_rate = kpi_data.get("stillbirth_rate", 0.0)
 
     # ✅ Use compute_lbw_kpi specifically for low birth weight data
-    lbw_data = compute_lbw_kpi(maternal_events_df, facility_uids)
+    lbw_data = compute_lbw_kpi(patient_df, facility_uids)
     low_birth_weight_count = lbw_data.get("lbw_count", 0)
     low_birth_weight_rate = lbw_data.get("lbw_rate", 0.0)
 
@@ -457,9 +451,9 @@ def calculate_maternal_indicators(maternal_events_df, facility_uids):
     }
 
 
-def calculate_newborn_indicators(newborn_events_df, facility_uids):
-    """✅ OPTIMIZED newborn indicators calculation using events dataframe"""
-    if newborn_events_df.empty:
+def calculate_newborn_indicators(patient_df, facility_uids):
+    """✅ OPTIMIZED newborn indicators calculation using patient-level data"""
+    if patient_df.empty:
         return {
             "total_admitted": 0,
             "nmr": "N/A",
@@ -468,9 +462,9 @@ def calculate_newborn_indicators(newborn_events_df, facility_uids):
             "total_lbw": 0,
         }
 
-    # Count newborns from events dataframe
-    total_admitted = count_unique_teis_from_events(
-        newborn_events_df, facility_uids, "orgUnit"
+    # Count newborns from patient-level dataframe
+    total_admitted = count_patients_from_patient_level(
+        patient_df, facility_uids, "orgUnit"
     )
 
     return {
@@ -572,9 +566,9 @@ def render_tab_placeholder(tab_name, icon, tab_key, description):
 def render_summary_dashboard_shared(
     user, region_name, facility_mapping, selected_facilities, shared_data
 ):
-    """✅ OPTIMIZED Summary Dashboard - USING KPI_UTILS SAME LOGIC WITH NMR"""
+    """✅ OPTIMIZED Summary Dashboard - USING PURE PATIENT-LEVEL DATA"""
 
-    # ✅ FIXED: Only run if this is the active tab AND data is loaded
+    # ✅ FIXED: Only run if this is the active tab
     if st.session_state.active_tab != "summary":
         return
 
@@ -595,7 +589,9 @@ def render_summary_dashboard_shared(
         st.session_state.tab_loading["summary"] = False
         st.rerun()
 
-    logging.info("🔄 Regional summary dashboard rendering - USING KPI_UTILS LOGIC")
+    logging.info(
+        "🔄 Regional summary dashboard rendering - USING PURE PATIENT-LEVEL DATA"
+    )
 
     # Get location display name
     location_name, location_type = get_location_display_name(
@@ -630,42 +626,34 @@ def render_summary_dashboard_shared(
         summary_data = st.session_state.summary_kpi_cache[cache_key]["data"]
         logging.info("✅ USING CACHED summary data")
     else:
-        # ✅ Compute summary data USING SAME LOGIC AS KPI_UTILS
-        with st.spinner("🔄 Computing summary statistics using KPI_UTILS logic..."):
-            # Extract dataframes - use events for TEI counting (SAME AS KPI_UTILS)
-            maternal_events_df = (
-                maternal_data.get("events", pd.DataFrame())
-                if maternal_data
-                else pd.DataFrame()
-            )
-            newborn_events_df = (
-                newborn_data.get("events", pd.DataFrame())
-                if newborn_data
-                else pd.DataFrame()
+        # ✅ Compute summary data USING PURE PATIENT-LEVEL DATA
+        with st.spinner("🔄 Computing summary statistics using patient-level data..."):
+            # ✅ Get patient-level data directly
+            maternal_patient_df = pd.DataFrame()
+            newborn_patient_df = pd.DataFrame()
+
+            if maternal_data and "patients" in maternal_data:
+                maternal_patient_df = maternal_data.get("patients", pd.DataFrame())
+                if not maternal_patient_df.empty:
+                    logging.info("✅ Using maternal patient-level data for summary")
+
+            if newborn_data and "patients" in newborn_data:
+                newborn_patient_df = newborn_data.get("patients", pd.DataFrame())
+                if not newborn_patient_df.empty:
+                    logging.info("✅ Using newborn patient-level data for summary")
+
+            # ✅ Get patient counts FROM PATIENT-LEVEL DATA
+            maternal_patient_count = (
+                count_patients_from_patient_level(maternal_patient_df, facility_uids)
+                if not maternal_patient_df.empty
+                else 0
             )
 
-            # ✅ Get TEI counts FROM EVENTS (SAME AS kpi_utils.compute_total_deliveries())
-            if not maternal_events_df.empty and "tei_id" in maternal_events_df.columns:
-                if facility_uids:
-                    filtered_events = maternal_events_df[
-                        maternal_events_df["orgUnit"].isin(facility_uids)
-                    ]
-                else:
-                    filtered_events = maternal_events_df
-                maternal_tei_count = filtered_events["tei_id"].nunique()
-            else:
-                maternal_tei_count = 0
-
-            if not newborn_events_df.empty and "tei_id" in newborn_events_df.columns:
-                if facility_uids:
-                    filtered_newborn_events = newborn_events_df[
-                        newborn_events_df["orgUnit"].isin(facility_uids)
-                    ]
-                else:
-                    filtered_newborn_events = newborn_events_df
-                newborn_tei_count = filtered_newborn_events["tei_id"].nunique()
-            else:
-                newborn_tei_count = 0
+            newborn_patient_count = (
+                count_patients_from_patient_level(newborn_patient_df, facility_uids)
+                if not newborn_patient_df.empty
+                else 0
+            )
 
             # Get enrollment dates for start date display
             newborn_enrollments_df = normalize_enrollment_dates(
@@ -687,79 +675,41 @@ def render_summary_dashboard_shared(
                 maternal_enrollments_df, "enrollmentDate"
             )
 
-            # ✅ Calculate maternal indicators USING KPI_UTILS
-            maternal_indicators = calculate_maternal_indicators(
-                maternal_events_df, facility_uids
+            # ✅ Calculate maternal indicators USING PATIENT-LEVEL DATA
+            maternal_indicators = (
+                calculate_maternal_indicators(maternal_patient_df, facility_uids)
+                if not maternal_patient_df.empty
+                else {
+                    "total_deliveries": 0,
+                    "maternal_deaths": 0,
+                    "maternal_death_rate": 0.0,
+                    "live_births": 0,
+                    "stillbirths": 0,
+                    "total_births": 0,
+                    "stillbirth_rate": 0.0,
+                    "low_birth_weight_rate": 0.0,
+                    "low_birth_weight_count": 0,
+                }
             )
 
-            # ✅ FIX: COMPUTE NMR USING THE NEW FUNCTION
-            try:
-                # Import the NMR computation function
-                from newborns_dashboard.kpi_nmr import compute_nmr_kpi
-
-                # Compute NMR using the newborn events dataframe
-                nmr_result = compute_nmr_kpi(
-                    newborn_events_df, facility_uids, tei_df=None
-                )
-
-                # Extract NMR data
-                nmr_rate = nmr_result.get("nmr_rate", 0.0)
-                nmr_dead_count = nmr_result.get("dead_count", 0)
-                nmr_total_admitted = nmr_result.get("total_admitted_newborns", 0)
-
-                logging.info(
-                    f"✅ Computed NMR: {nmr_rate:.2f}% ({nmr_dead_count}/{nmr_total_admitted})"
-                )
-
-            except ImportError as e:
-                logging.error(f"❌ Could not import NMR computation: {e}")
-                nmr_rate = 0.0
-                nmr_dead_count = 0
-                nmr_total_admitted = 0
-            except Exception as e:
-                logging.error(f"❌ Error computing NMR: {e}")
-                nmr_rate = 0.0
-                nmr_dead_count = 0
-                nmr_total_admitted = 0
-
-            # ✅ FIX: Update newborn indicators with computed NMR
-            newborn_indicators = {
-                "total_admitted": newborn_tei_count,
-                "nmr": (
-                    f"{nmr_rate:.2f}%" if isinstance(nmr_rate, (int, float)) else "N/A"
-                ),
-                "nmr_raw": nmr_rate,  # Store raw value
-                "nmr_dead_count": nmr_dead_count,
-                "nmr_total_admitted": nmr_total_admitted,
-                "kmc_coverage_rate": 0.0,  # Placeholder
-                "kmc_cases": 0,  # Placeholder
-                "total_lbw": 0,  # Placeholder
-            }
-
-            # ✅ Facility comparison - using events data (SAME AS KPI_UTILS)
+            # ✅ Facility comparison - using patient-level data
             facility_comparison_data = {}
             for facility_name, facility_uid in facility_mapping.items():
-                # Count mothers from events (same as kpi_utils)
-                if (
-                    not maternal_events_df.empty
-                    and "tei_id" in maternal_events_df.columns
-                ):
-                    facility_maternal_events = maternal_events_df[
-                        maternal_events_df["orgUnit"] == facility_uid
+                # Count mothers from patient-level data
+                if not maternal_patient_df.empty:
+                    facility_maternal_patients = maternal_patient_df[
+                        maternal_patient_df["orgUnit"] == facility_uid
                     ]
-                    maternal_count = facility_maternal_events["tei_id"].nunique()
+                    maternal_count = len(facility_maternal_patients)
                 else:
                     maternal_count = 0
 
-                # Count newborns from events
-                if (
-                    not newborn_events_df.empty
-                    and "tei_id" in newborn_events_df.columns
-                ):
-                    facility_newborn_events = newborn_events_df[
-                        newborn_events_df["orgUnit"] == facility_uid
+                # Count newborns from patient-level data
+                if not newborn_patient_df.empty:
+                    facility_newborn_patients = newborn_patient_df[
+                        newborn_patient_df["orgUnit"] == facility_uid
                     ]
-                    newborn_count = facility_newborn_events["tei_id"].nunique()
+                    newborn_count = len(facility_newborn_patients)
                 else:
                     newborn_count = 0
 
@@ -774,9 +724,8 @@ def render_summary_dashboard_shared(
 
             summary_data = {
                 "maternal_indicators": maternal_indicators,
-                "newborn_indicators": newborn_indicators,
-                "maternal_tei_count": maternal_tei_count,
-                "newborn_tei_count": newborn_tei_count,
+                "maternal_patient_count": maternal_patient_count,
+                "newborn_patient_count": newborn_patient_count,
                 "newborn_start_date": newborn_start_date,
                 "maternal_start_date": maternal_start_date,
                 "facility_comparison_data": facility_comparison_data,
@@ -790,9 +739,8 @@ def render_summary_dashboard_shared(
 
     # Extract data for rendering
     maternal_indicators = summary_data["maternal_indicators"]
-    newborn_indicators = summary_data["newborn_indicators"]
-    maternal_tei_count = summary_data["maternal_tei_count"]
-    newborn_tei_count = summary_data["newborn_tei_count"]
+    maternal_patient_count = summary_data["maternal_patient_count"]
+    newborn_patient_count = summary_data["newborn_patient_count"]
     newborn_start_date = summary_data["newborn_start_date"]
     maternal_start_date = summary_data["maternal_start_date"]
     facility_comparison_data = summary_data["facility_comparison_data"]
@@ -826,14 +774,14 @@ def render_summary_dashboard_shared(
         (
             col1,
             "👩 Total Mothers",
-            maternal_tei_count,
+            maternal_patient_count,
             "info-metric",
             "Unique mothers admitted",
         ),
         (
             col2,
             "👶 Total Newborns",
-            newborn_tei_count,
+            newborn_patient_count,
             "success-metric",
             "Unique newborns admitted",
         ),
@@ -872,14 +820,13 @@ def render_summary_dashboard_shared(
     # Newborn Overview Table
     st.markdown("### 👶 Newborn Care Overview")
 
-    # Create newborn table data with actual NMR value
+    # Create newborn table data
     newborn_table_data = {
-        "No": list(range(1, 10)),
+        "No": list(range(1, 9)),
         "Indicator": [
             "Start Date",
             location_type,
             "Total Admitted Newborns",
-            "NMR",
             "Stillbirth Rate",
             "Live Births",
             "Stillbirths",
@@ -889,9 +836,7 @@ def render_summary_dashboard_shared(
         "Value": [
             newborn_start_date,
             location_name,
-            f"{newborn_tei_count:,}",
-            # ✅ FIX: Use computed NMR value instead of "N/A"
-            f"{newborn_indicators['nmr']}",
+            f"{newborn_patient_count:,}",
             f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
             f"{maternal_indicators['live_births']:,}",
             f"{maternal_indicators['stillbirths']:,}",
@@ -913,14 +858,13 @@ def render_summary_dashboard_shared(
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Download button for newborn data with NMR
+    # Download button for newborn data
     col_info, col_download = st.columns([3, 1])
     with col_download:
         newborn_data_download = {
             "Start Date": [newborn_start_date],
             f"{location_type}": [location_name],
-            "Total Admitted Newborns": [newborn_tei_count],
-            "NMR": [f"{newborn_indicators['nmr']}"],
+            "Total Admitted Newborns": [newborn_patient_count],
             "Stillbirth Rate": [
                 f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births"
             ],
@@ -957,7 +901,7 @@ def render_summary_dashboard_shared(
         "Value": [
             maternal_start_date,
             location_name,
-            f"{maternal_tei_count:,}",
+            f"{maternal_patient_count:,}",
             f"{maternal_indicators['total_deliveries']:,}",
             f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births",
         ],
@@ -982,7 +926,7 @@ def render_summary_dashboard_shared(
         maternal_data_download = {
             "Start Date": [maternal_start_date],
             f"{location_type}": [location_name],
-            "Total Admitted Mothers": [maternal_tei_count],
+            "Total Admitted Mothers": [maternal_patient_count],
             "Total Deliveries": [maternal_indicators["total_deliveries"]],
             "Maternal Death Rate": [
                 f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births"
@@ -1077,33 +1021,6 @@ def render_summary_dashboard_shared(
         st.info("No facility data available for comparison.")
 
 
-def calculate_facility_comparison_data(
-    maternal_events_df, newborn_events_df, facility_mapping
-):
-    """Optimized facility comparison data calculation using events data"""
-    facility_data = {}
-
-    for facility_name, facility_uid in facility_mapping.items():
-        # Count TEIs from events data (same as national.py)
-        maternal_count = count_unique_teis_from_events(
-            maternal_events_df, [facility_uid], "orgUnit"
-        )
-        newborn_count = count_unique_teis_from_events(
-            newborn_events_df, [facility_uid], "orgUnit"
-        )
-
-        # Only include facilities with data
-        if maternal_count > 0 or newborn_count > 0:
-            short_name = shorten_facility_name(facility_name)
-            facility_data[short_name] = {
-                "mothers": maternal_count,
-                "newborns": newborn_count,
-                "full_name": facility_name,
-            }
-
-    return facility_data
-
-
 def shorten_facility_name(facility_name):
     """Shorten facility name for compact display"""
     remove_words = [
@@ -1156,13 +1073,13 @@ def render_maternal_dashboard_shared(
     facility_mapping=None,
     facility_names=None,
 ):
-    """Optimized Maternal Dashboard rendering - Only runs when tab is active"""
+    """✅ OPTIMIZED Maternal Dashboard rendering - USING PURE PATIENT-LEVEL DATA"""
 
     # ✅ FIXED: Only run if this is the active tab
     if st.session_state.active_tab != "maternal":
         return
 
-    logging.info("🔄 Maternal dashboard rendering")
+    logging.info("🔄 Maternal dashboard rendering - USING PURE PATIENT-LEVEL DATA")
 
     if not maternal_data:
         st.error("No maternal data available")
@@ -1171,31 +1088,41 @@ def render_maternal_dashboard_shared(
     # ✅ DATA IS ALREADY FILTERED BY USER ACCESS - NO NEED FOR ADDITIONAL FILTERING
     # The data from fetch_program_data_for_user is already filtered for the user's region/facilities
 
-    # Efficient data extraction
+    # ✅ GET PATIENT-LEVEL DATA DIRECTLY
+    patient_df = pd.DataFrame()
+    if "patients" in maternal_data:
+        patient_df = maternal_data.get("patients", pd.DataFrame())
+
+    if patient_df.empty:
+        st.error("No patient-level data available")
+        return
+
+    logging.info(f"✅ Using pure patient-level data: {len(patient_df)} patients")
+
+    # Store patient data in session state
+    st.session_state.maternal_patient_df = patient_df.copy()
+
+    # Get other dataframes
     tei_df = maternal_data.get("tei", pd.DataFrame())
     enrollments_df = maternal_data.get("enrollments", pd.DataFrame())
-    events_df = maternal_data.get("events", pd.DataFrame())
 
     # Normalize dates efficiently
     enrollments_df = normalize_enrollment_dates(enrollments_df)
-    events_df = normalize_event_dates(events_df)
 
     # ✅ Store data in session state for data quality tracking
-    st.session_state.maternal_events_df = events_df.copy()
     st.session_state.maternal_tei_df = tei_df.copy()
 
-    # events_df.to_csv("debug_maternal_events.csv", index=False)
     # ✅ DEBUG: Log what we're storing (data is already filtered by user access)
     logging.info(
-        f"✅ STORED maternal data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
+        f"✅ STORED maternal data for DQ: {len(patient_df)} patients, {len(tei_df)} TEIs"
     )
-    if not events_df.empty and "orgUnit_name" in events_df.columns:
-        facilities_in_data = events_df["orgUnit_name"].unique()
+    if not patient_df.empty and "orgUnit_name" in patient_df.columns:
+        facilities_in_data = patient_df["orgUnit_name"].unique()
         logging.info(
             f"🔍 MATERNAL - Facilities in data (already filtered by user access): {list(facilities_in_data)}"
         )
 
-    render_connection_status(events_df, user=user)
+    render_connection_status(patient_df, user=user)
 
     # Update session state
     st.session_state.current_facility_uids = facility_uids
@@ -1218,6 +1145,9 @@ def render_maternal_dashboard_shared(
         unsafe_allow_html=True,
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
+
+    # ✅ Add data format indicator
+    st.info(f"📊 Using pure patient-level data format: {len(patient_df)} patients")
 
     # ✅ IMPROVED: Single progress container with better messaging
     progress_container = st.empty()
@@ -1262,19 +1192,62 @@ def render_maternal_dashboard_shared(
 
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
+
+        # ✅ CREATE A SIMPLE DATA FRAME FOR FILTER COMPATIBILITY
+        # Extract date from patient-level columns for filtering
+        filter_df = pd.DataFrame()
+        if not patient_df.empty:
+            # Find date columns in patient data
+            date_columns = [
+                col
+                for col in patient_df.columns
+                if "eventDate_" in col or "event_date_" in col
+            ]
+            if date_columns:
+                # Use the first date column found
+                date_col = date_columns[0]
+                filter_df = pd.DataFrame(
+                    {
+                        "tei_id": patient_df["tei_id"],
+                        "orgUnit": patient_df["orgUnit"],
+                        "event_date": pd.to_datetime(
+                            patient_df[date_col], errors="coerce"
+                        ),
+                    }
+                )
+
         filters = render_simple_filter_controls(
-            events_df, container=col_ctrl, context="regional_maternal"
+            filter_df, container=col_ctrl, context="regional_maternal"
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply filters efficiently
-    filtered_events = apply_simple_filters(events_df, filters, facility_uids)
-    st.session_state["filtered_events"] = filtered_events.copy()
+    # Apply filters efficiently - need to handle patient-level format
+    filtered_patients = patient_df.copy()
+    if not filter_df.empty and "event_date" in filter_df.columns:
+        start_datetime = pd.to_datetime(filters["start_date"])
+        end_datetime = pd.to_datetime(filters["end_date"])
+
+        # Merge date info back to filter patients
+        date_mask = (filter_df["event_date"] >= start_datetime) & (
+            filter_df["event_date"] <= end_datetime
+        )
+        teis_with_dates = filter_df[date_mask]["tei_id"].unique()
+        filtered_patients = patient_df[
+            patient_df["tei_id"].isin(teis_with_dates)
+        ].copy()
+
+    # Filter by facilities
+    if facility_uids:
+        filtered_patients = filtered_patients[
+            filtered_patients["orgUnit"].isin(facility_uids)
+        ]
+
+    st.session_state["filtered_patients"] = filtered_patients.copy()
     st.session_state["last_applied_selection"] = True
 
     # KPI Cards with filtered data
     with kpi_container:
-        if filtered_events.empty or "event_date" not in filtered_events.columns:
+        if filtered_patients.empty:
             progress_container.empty()
             st.markdown(
                 '<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for selected filters.</div>',
@@ -1289,7 +1262,7 @@ def render_maternal_dashboard_shared(
         user_id = str(user.get("id", user.get("username", "default_user")))
 
         # ✅ STORE computed KPIs for reuse in summary tab
-        kpi_data = render_kpi_cards(filtered_events, location_name, user_id=user_id)
+        kpi_data = render_kpi_cards(filtered_patients, location_name, user_id=user_id)
 
         # Save for summary dashboard to reuse
         st.session_state.last_computed_kpis = kpi_data
@@ -1311,9 +1284,10 @@ def render_maternal_dashboard_shared(
                 f'<div class="section-header" style="margin: 0.3rem 0;">📈 {selected_kpi} - Facility Comparison - Maternal Inpatient Data</div>',
                 unsafe_allow_html=True,
             )
+            # ✅ PASS PATIENT-LEVEL DATA TO COMPARISON CHART
             render_comparison_chart(
                 kpi_selection=selected_kpi,
-                filtered_events=filtered_events,
+                filtered_events=filtered_patients,  # Pass patient-level data
                 comparison_mode="facility",
                 display_names=facility_names or selected_facilities,
                 facility_uids=facility_uids,
@@ -1327,9 +1301,10 @@ def render_maternal_dashboard_shared(
                 f'<div class="section-header" style="margin: 0.3rem 0;">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',
                 unsafe_allow_html=True,
             )
+            # ✅ PASS PATIENT-LEVEL DATA TO TREND CHART
             render_trend_chart_section(
                 selected_kpi,
-                filtered_events,
+                filtered_patients,  # Pass patient-level data
                 facility_uids,
                 facility_names or selected_facilities,
                 bg_color,
@@ -1341,7 +1316,7 @@ def render_maternal_dashboard_shared(
 
         render_additional_analytics(
             selected_kpi,
-            filtered_events,
+            filtered_patients,  # Pass patient-level data
             facility_uids,
             bg_color,
             text_color,
@@ -1385,6 +1360,60 @@ def render():
     .metric-help { font-size: 0.65rem !important; margin-top: 2px !important; }
     .summary-table th, .summary-table td { padding: 6px 8px !important; font-size: 12px !important; }
     .stCheckbox label { color: #000000 !important; font-size: 0.9rem !important; }
+    
+    /* ADD THIS TABLE STYLING */
+    .summary-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 14px;
+        border: 1px solid #e0e0e0;
+    }
+    .summary-table th {
+        background-color: #1f77b4;
+        color: white;
+        padding: 8px 12px;
+        text-align: left;
+        font-weight: 600;
+    }
+    .summary-table td {
+        padding: 8px 12px;
+        border-bottom: 1px solid #ddd;
+    }
+    .summary-table tr:hover {
+        background-color: #f5f5f5;
+    }
+    .summary-table .overall-row {
+        background-color: #e8f4fc;
+        font-weight: bold;
+    }
+    
+    /* For tab navigation buttons */
+    div.stButton > button[kind="primary"] {
+        background-color: #1f77b4 !important;
+        color: white !important;
+        border-color: #1a6790 !important;
+        font-weight: 600 !important;
+    }
+    
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #1668a1 !important;
+        color: white !important;
+        border-color: #145a8c !important;
+    }
+    
+    div.stButton > button[kind="secondary"] {
+        background-color: #f8f9fa !important;
+        color: #495057 !important;
+        border-color: #dee2e6 !important;
+        font-weight: 500 !important;
+    }
+    
+    div.stButton > button[kind="secondary"]:hover {
+        background-color: #e9ecef !important;
+        color: #495057 !important;
+        border-color: #ced4da !important;
+    }
     </style>
     """,
         unsafe_allow_html=True,
@@ -1420,6 +1449,8 @@ def render():
     """,
         unsafe_allow_html=True,
     )
+
+    # ✅ REMOVED: Data Format Toggle - ALWAYS use patient-level data
 
     # Refresh Data Button
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
@@ -1474,11 +1505,13 @@ def render():
             st.session_state.cached_shared_data = (
                 shared_data  # ✅ Store in session state
             )
-            logging.info("✅ Initial data loading complete")
+            logging.info("✅ Initial data loading complete - PURE PATIENT-LEVEL DATA")
     else:
         # Use cached data from session state - no loading needed
         shared_data = st.session_state.cached_shared_data
-        logging.info("✅ Using cached shared data from session state")
+        logging.info(
+            "✅ Using cached shared data from session state - PURE PATIENT-LEVEL DATA"
+        )
 
     # ✅ Add cache status indicator in sidebar
     if st.session_state.get("data_initialized", False):
@@ -1596,7 +1629,7 @@ def render():
         # Update active tab only if this tab is clicked
         if st.session_state.active_tab != "maternal":
             st.session_state.active_tab = "maternal"
-            logging.info("🔄 Switched to Maternal tab")
+            logging.info("🔄 Switched to Maternal tab - USING PURE PATIENT-LEVEL DATA")
 
         maternal_data = shared_data["maternal"]
         if maternal_data:
@@ -1620,6 +1653,7 @@ def render():
 
         newborn_data = shared_data["newborn"]
         if newborn_data:
+            # ✅ UPDATED: Pass patient-level data to newborn dashboard
             render_newborn_dashboard(
                 user=user,
                 program_uid=program_uid_map.get("Newborn Care Form"),
@@ -1630,6 +1664,8 @@ def render():
                 facility_mapping=facility_mapping,
                 facility_names=facility_names,
                 shared_newborn_data=newborn_data,
+                # ✅ ALWAYS use patient-level data
+                use_patient_level=True,
             )
         else:
             st.error("Newborn data not available")

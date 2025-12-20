@@ -165,6 +165,130 @@ def update_facility_selection(
     return facility_uids, display_names, comparison_mode
 
 
+def convert_patient_to_events_format(patient_df, program_type):
+    """
+    Convert patient-level DataFrame back to events format for compatibility with existing functions.
+
+    Args:
+        patient_df: Patient-level DataFrame
+        program_type: 'maternal' or 'newborn'
+
+    Returns:
+        DataFrame in events format
+    """
+    if patient_df.empty:
+        return pd.DataFrame()
+
+    logging.info(f"🔄 Converting {program_type} patient-level data to events format")
+
+    # List to collect events
+    events_list = []
+
+    # Iterate through each patient
+    for idx, row in patient_df.iterrows():
+        tei_id = row.get("tei_id", "")
+        org_unit = row.get("orgUnit", "")
+        org_unit_name = row.get("orgUnit_name", "")
+
+        if not tei_id:
+            continue
+
+        # Find columns that contain data elements (not metadata columns)
+        metadata_cols = ["tei_id", "orgUnit", "orgUnit_name", "program_type"]
+
+        for col in patient_df.columns:
+            if col in metadata_cols:
+                continue
+
+            # Extract value
+            value = row[col]
+
+            # Skip empty values
+            if pd.isna(value) or value == "":
+                continue
+
+            # Try to infer program stage and data element from column name
+            # This is a simplified approach - you may need to adjust based on your column naming
+            program_stage_name = "Unknown"
+            data_element_name = col
+
+            # Try to extract program stage from column name
+            if "_" in col:
+                parts = col.split("_")
+                if len(parts) >= 2:
+                    # Last part might be program stage name
+                    program_stage_name = parts[-1]
+                    data_element_name = "_".join(parts[:-1])
+
+            event_data = {
+                "tei_id": tei_id,
+                "event": f"patient_{tei_id}_{col}",
+                "programStage_uid": f"patient_{program_type}",
+                "programStageName": program_stage_name,
+                "orgUnit": org_unit,
+                "orgUnit_name": org_unit_name,
+                "eventDate": "",  # Not available in patient format
+                "dataElement_uid": col,
+                "dataElementName": data_element_name,
+                "value": str(value),
+                "has_actual_event": True,
+                "event_date": pd.NaT,  # Not available
+                "period": "Unknown",
+                "period_display": "Unknown",
+                "period_sort": "999999",
+            }
+            events_list.append(event_data)
+
+    events_df = pd.DataFrame(events_list)
+
+    logging.info(
+        f"✅ Converted {len(events_list)} events from {len(patient_df)} patients"
+    )
+    return events_df
+
+
+def get_patient_data_for_dashboard(newborn_data, use_patient_level=True):
+    """
+    Get the appropriate data format for newborn dashboard rendering.
+    Uses patient-level data if available and requested, otherwise falls back to events.
+
+    Args:
+        newborn_data: Newborn data dictionary
+        use_patient_level: Whether to use patient-level data
+
+    Returns:
+        Tuple of (tei_df, enrollments_df, events_df)
+    """
+    tei_df = pd.DataFrame()
+    enrollments_df = pd.DataFrame()
+    events_df = pd.DataFrame()
+
+    if newborn_data:
+        # Get TEI and enrollments data
+        tei_df = newborn_data.get("tei", pd.DataFrame())
+        enrollments_df = newborn_data.get("enrollments", pd.DataFrame())
+
+        # Handle events data based on format preference
+        if use_patient_level and "patients" in newborn_data:
+            patient_df = newborn_data.get("patients", pd.DataFrame())
+            if not patient_df.empty:
+                logging.info("✅ Using newborn patient-level data")
+                events_df = convert_patient_to_events_format(patient_df, "newborn")
+                # Store patient data in session state
+                st.session_state.newborn_patient_df = patient_df.copy()
+                st.session_state.newborn_original_events_df = newborn_data.get(
+                    "events", pd.DataFrame()
+                )
+            else:
+                events_df = newborn_data.get("events", pd.DataFrame())
+                st.session_state.newborn_patient_df = pd.DataFrame()
+        else:
+            events_df = newborn_data.get("events", pd.DataFrame())
+            st.session_state.newborn_patient_df = pd.DataFrame()
+
+    return tei_df, enrollments_df, events_df
+
+
 def render_newborn_dashboard(
     user,
     program_uid,
@@ -175,6 +299,7 @@ def render_newborn_dashboard(
     facility_mapping,
     facility_names,
     shared_newborn_data=None,  # ← NEW PARAMETER: Accept shared data from regional.py
+    use_transformed_data=True,  # ✅ NEW: Control whether to use patient-level data
 ):
     """Render Newborn Care Form dashboard using shared data to avoid duplicate API calls"""
 
@@ -199,14 +324,24 @@ def render_newborn_dashboard(
         st.error("⚠️ Newborn data not available")
         return
 
+    # ✅ UPDATED: Get data in appropriate format
+    tei_df, enrollments_df, events_df = get_patient_data_for_dashboard(
+        newborn_data, use_patient_level=use_transformed_data
+    )
+
     # FILTER DATA BY SELECTED FACILITIES - FOLLOWING REGIONAL.PY PATTERN
     if facility_uids:
-        newborn_data = filter_data_by_facilities(newborn_data, facility_uids)
+        # Filter each dataframe separately
+        if not tei_df.empty and "tei_orgUnit" in tei_df.columns:
+            tei_df = tei_df[tei_df["tei_orgUnit"].isin(facility_uids)].copy()
 
-    # Extract dataframes efficiently
-    tei_df = newborn_data.get("tei", pd.DataFrame())
-    enrollments_df = newborn_data.get("enrollments", pd.DataFrame())
-    events_df = newborn_data.get("events", pd.DataFrame())
+        if not enrollments_df.empty and "tei_orgUnit" in enrollments_df.columns:
+            enrollments_df = enrollments_df[
+                enrollments_df["tei_orgUnit"].isin(facility_uids)
+            ].copy()
+
+        if not events_df.empty and "orgUnit" in events_df.columns:
+            events_df = events_df[events_df["orgUnit"].isin(facility_uids)].copy()
 
     # Normalize dates using common functions
     enrollments_df = normalize_enrollment_dates(enrollments_df)
@@ -216,15 +351,14 @@ def render_newborn_dashboard(
     st.session_state.newborn_events_df = events_df.copy()
     st.session_state.newborn_tei_df = tei_df.copy()
 
-    events_df.to_csv("debug_newborn_events.csv", index=False)
-
     # ✅ DEBUG: Log what we're storing
     logging.info(
         f"✅ STORED newborn data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
     )
-    logging.info(
-        f"✅ Newborn events has_actual_event values: {events_df['has_actual_event'].value_counts().to_dict() if 'has_actual_event' in events_df.columns else 'NO COLUMN'}"
-    )
+    if not events_df.empty and "has_actual_event" in events_df.columns:
+        logging.info(
+            f"✅ Newborn events has_actual_event values: {events_df['has_actual_event'].value_counts().to_dict()}"
+        )
 
     render_connection_status(events_df, user=user)
 
@@ -248,6 +382,11 @@ def render_newborn_dashboard(
         unsafe_allow_html=True,
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
+
+    # ✅ Add data format indicator
+    if use_transformed_data and "patients" in newborn_data:
+        patient_count = len(newborn_data.get("patients", pd.DataFrame()))
+        st.info(f"📊 Using patient-level data format: {patient_count} patients")
 
     # ✅ ADD PROGRESS INDICATOR (same pattern as national newborn)
     progress_container = st.empty()
@@ -400,14 +539,25 @@ def render_newborn_summary(
             facility_mapping[f] for f in selected_facilities if f in facility_mapping
         ]
 
+    # ✅ UPDATED: Get data in appropriate format based on session state
+    use_patient_level = st.session_state.get("use_transformed_data", True)
+    tei_df, enrollments_df, events_df = get_patient_data_for_dashboard(
+        newborn_data, use_patient_level=use_patient_level
+    )
+
     # FILTER DATA BY SELECTED FACILITIES
     if facility_uids:
-        newborn_data = filter_data_by_facilities(newborn_data, facility_uids)
+        # Filter each dataframe
+        if not tei_df.empty and "tei_orgUnit" in tei_df.columns:
+            tei_df = tei_df[tei_df["tei_orgUnit"].isin(facility_uids)].copy()
 
-    # Extract dataframes
-    tei_df = newborn_data.get("tei", pd.DataFrame())
-    events_df = newborn_data.get("events", pd.DataFrame())
-    enrollments_df = newborn_data.get("enrollments", pd.DataFrame())
+        if not enrollments_df.empty and "tei_orgUnit" in enrollments_df.columns:
+            enrollments_df = enrollments_df[
+                enrollments_df["tei_orgUnit"].isin(facility_uids)
+            ].copy()
+
+        if not events_df.empty and "orgUnit" in events_df.columns:
+            events_df = events_df[events_df["orgUnit"].isin(facility_uids)].copy()
 
     # Normalize dates
     enrollments_df = normalize_enrollment_dates(enrollments_df)
@@ -428,4 +578,36 @@ def render_newborn_summary(
         "kmc_cases": newborn_indicators["kmc_cases"],
         "total_lbw": newborn_indicators["total_lbw"],
         "start_date": newborn_start_date,
+    }
+
+
+# ✅ Helper function for regional.py summary dashboard
+def get_newborn_patient_data(newborn_data):
+    """
+    Extract newborn patient-level data for summary dashboard.
+    This is used by the regional.py summary dashboard.
+
+    Args:
+        newborn_data: Newborn data dictionary
+
+    Returns:
+        Dictionary with patient-level data and metadata
+    """
+    if not newborn_data:
+        return {
+            "patient_df": pd.DataFrame(),
+            "tei_count": 0,
+            "patient_count": 0,
+            "has_patient_data": False,
+        }
+
+    # Get patient-level data if available
+    patient_df = newborn_data.get("patients", pd.DataFrame())
+    tei_df = newborn_data.get("tei", pd.DataFrame())
+
+    return {
+        "patient_df": patient_df,
+        "tei_count": len(tei_df),
+        "patient_count": len(patient_df),
+        "has_patient_data": not patient_df.empty,
     }

@@ -1,9 +1,10 @@
 # utils/data_service.py
-from typing import Optional, Dict, List, Union, Set
+from typing import Optional, Dict, List, Union, Set, Any
 import pandas as pd
 import logging
 import os
 from utils.queries import (
+    get_all_programs,
     get_orgunit_uids_for_user,
     get_program_by_uid,
     get_facilities_for_user,
@@ -282,10 +283,13 @@ def fetch_program_data_for_user(
     program_uid: str = None,
     facility_uids: List[str] = None,
     period_label: str = "Monthly",
+    transform_to_patient_level: bool = True,  # ✅ NEW: Add this parameter
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
     Fetch DHIS2 program data optimized for ALL required KPI data elements.
     Creates placeholder events only for TEI-ProgramStage combinations that have NO events.
+
+    ✅ NEW: Added transform_to_patient_level parameter to control transformation
     """
     if not program_uid:
         logging.warning("No program UID provided.")
@@ -295,6 +299,9 @@ def fetch_program_data_for_user(
     if not program_info:
         logging.warning(f"Program with UID {program_uid} not found in database.")
         return {}
+
+    # Get program name for logging
+    program_name = program_info.get("program_name", "Unknown Program")
 
     # ✅ SIMPLE CHECK: If program UID is maternal, integrate CSV data
     if program_uid == "aLoraiFNkng":
@@ -317,7 +324,7 @@ def fetch_program_data_for_user(
 
     # Use optimized fetch with ALL required data elements
     logging.info(
-        f"🚀 OPTIMIZED FETCH: Using {len(REQUIRED_DATA_ELEMENTS)} required data elements"
+        f"🚀 OPTIMIZED FETCH for {program_name}: Using {len(REQUIRED_DATA_ELEMENTS)} required data elements"
     )
     logging.info(f"📋 Maternal Health elements: {len(MATERNAL_HEALTH_ELEMENTS)}")
     logging.info(f"📋 Newborn Health elements: {len(NEWBORN_HEALTH_ELEMENTS)}")
@@ -580,7 +587,7 @@ def fetch_program_data_for_user(
     tei_program_stage_combinations = len(all_tei_ids) * len(PROGRAM_STAGE_MAPPING)
     actual_tei_program_stage_combinations = len(tei_program_stage_events)
 
-    logging.info(f"📊 EVENT STATISTICS:")
+    logging.info(f"📊 EVENT STATISTICS for {program_name}:")
     logging.info(f"   👥 Total TEIs: {len(all_tei_ids)}")
     logging.info(f"   🏥 Total program stages: {len(PROGRAM_STAGE_MAPPING)}")
     logging.info(
@@ -654,19 +661,51 @@ def fetch_program_data_for_user(
             enr_df["enrollmentDate"], errors="coerce"
         )
 
+    # ✅ NEW: TRANSFORM TO PATIENT-LEVEL FORMAT IF REQUESTED
+    patient_df = pd.DataFrame()
+    if transform_to_patient_level and not evt_df.empty:
+        logging.info(f"🔄 Transforming {program_name} events to patient-level format")
+        patient_df = transform_events_to_patient_level(evt_df, program_uid)
+        if not patient_df.empty:
+            logging.info(
+                f"✅ Patient-level transformation complete: {len(patient_df)} patients, {len(patient_df.columns)} columns"
+            )
+
+            # ✅ DEBUG: Save transformed data to CSV
+            try:
+                import os
+                from datetime import datetime
+
+                # Create data_exports directory if it doesn't exist
+                os.makedirs("data_exports", exist_ok=True)
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                program_type = "maternal" if program_uid == "aLoraiFNkng" else "newborn"
+                filename = f"transformed_{program_type}_{timestamp}.csv"
+                filepath = os.path.join("data_exports", filename)
+
+                patient_df.to_csv(filepath, index=False, encoding="utf-8")
+                logging.info(f"💾 Saved transformed data to: {filepath}")
+                logging.info(f"   File size: {os.path.getsize(filepath) / 1024:.1f} KB")
+            except Exception as e:
+                logging.warning(f"⚠️ Could not save transformed data: {e}")
+        else:
+            logging.warning("⚠️ Patient-level transformation returned empty DataFrame")
+
     # Data verification
     if not evt_df.empty:
         # Count actual vs placeholder events
         actual_events = len(evt_df[evt_df["has_actual_event"] == True])
         placeholder_events = len(evt_df[evt_df["has_actual_event"] == False])
 
-        logging.info(f"✅ FINAL DATA STRUCTURE:")
+        logging.info(f"✅ FINAL DATA STRUCTURE for {program_name}:")
         logging.info(f"   📊 Total events: {len(evt_df)}")
         logging.info(f"   ✅ Actual events: {actual_events}")
         logging.info(f"   📝 Placeholder events: {placeholder_events}")
         logging.info(f"   👥 Unique TEIs: {len(evt_df['tei_id'].unique())}")
 
-    return {
+    # Build result dictionary
+    result = {
         "program_info": program_info,
         "raw_json": patients,
         "tei": tei_df,
@@ -674,6 +713,15 @@ def fetch_program_data_for_user(
         "events": evt_df,
         "optimization_stats": optimization_stats,
     }
+
+    # Add patient-level data if transformed
+    if not patient_df.empty:
+        result["patients"] = patient_df  # ✅ NEW: Add patient-level data
+        logging.info(f"📊 Added patient-level data to result: {len(patient_df)} rows")
+    else:
+        logging.info(f"📊 No patient-level data available for {program_name}")
+
+    return result
 
 
 def fetch_odk_data_for_user(
@@ -753,3 +801,384 @@ def list_available_odk_forms() -> List[dict]:
     except Exception as e:
         logging.error(f"Error listing ODK forms: {e}")
         return []
+
+
+# ✅ TRANSFORMATION FUNCTIONS START HERE
+
+
+def transform_events_to_patient_level(
+    events_df: pd.DataFrame, program_uid: str
+) -> pd.DataFrame:
+    """
+    Transform events DataFrame from long format (one row per data element)
+    to wide format (one row per patient) with program stage information in column names.
+
+    This creates a much more efficient dataset for analysis.
+
+    Args:
+        events_df: DataFrame in the current long format
+        program_uid: Program UID to determine program type
+
+    Returns:
+        DataFrame in wide format (one row per patient)
+    """
+    if events_df.empty:
+        logging.warning("Empty events DataFrame provided for transformation")
+        return pd.DataFrame()
+
+    # Make a copy to avoid modifying the original
+    df = events_df.copy()
+
+    # Determine program type based on UID
+    is_maternal = program_uid == "aLoraiFNkng"
+    program_type = "maternal" if is_maternal else "newborn"
+
+    logging.info(
+        f"🔄 Transforming {program_type.upper()} events to patient-level format"
+    )
+    logging.info(
+        f"   Input: {len(df)} rows from {df['tei_id'].nunique()} unique patients"
+    )
+    logging.info(f"   Found {df['programStage_uid'].nunique()} unique program stages")
+    logging.info(f"   Found {df['dataElement_uid'].nunique()} unique data elements")
+
+    # Step 1: Create base patient information
+    if "orgUnit" in df.columns and "orgUnit_name" in df.columns:
+        patient_base = df[["tei_id", "orgUnit", "orgUnit_name"]].drop_duplicates()
+    else:
+        # Fallback if columns don't exist
+        patient_base = df[["tei_id"]].drop_duplicates()
+        if "orgUnit" in df.columns:
+            org_mapping = (
+                df[["tei_id", "orgUnit"]]
+                .drop_duplicates()
+                .set_index("tei_id")["orgUnit"]
+                .to_dict()
+            )
+            patient_base["orgUnit"] = patient_base["tei_id"].map(org_mapping)
+        if "orgUnit_name" in df.columns:
+            org_name_mapping = (
+                df[["tei_id", "orgUnit_name"]]
+                .drop_duplicates()
+                .set_index("tei_id")["orgUnit_name"]
+                .to_dict()
+            )
+            patient_base["orgUnit_name"] = patient_base["tei_id"].map(org_name_mapping)
+
+    # Step 2: Get all unique program stages for this data
+    program_stages = df[["programStage_uid", "programStageName"]].drop_duplicates()
+
+    # Step 3: Process each program stage separately
+    all_stage_data = []
+
+    for _, stage_row in program_stages.iterrows():
+        program_stage_uid = stage_row["programStage_uid"]
+        program_stage_name = stage_row["programStageName"]
+
+        # Filter data for this program stage
+        stage_data = df[df["programStage_uid"] == program_stage_uid].copy()
+
+        if stage_data.empty:
+            continue
+
+        logging.info(
+            f"   Processing program stage: {program_stage_name} ({program_stage_uid})"
+        )
+
+        # Group by tei_id - each group represents one patient in this program stage
+        stage_groups = stage_data.groupby("tei_id")
+
+        stage_patient_rows = []
+
+        for tei_id, group in stage_groups:
+            # Start with basic patient info
+            patient_row = {"tei_id": tei_id}
+
+            # Get the first event row for metadata (if there are multiple events for same stage)
+            if not group.empty:
+                first_event = group.iloc[0]
+
+                # Add event metadata with program stage suffix
+                # Use UID suffix for technical columns
+                if "event" in first_event:
+                    patient_row[f"event_{program_stage_uid}"] = first_event.get(
+                        "event", ""
+                    )
+                if "eventDate" in first_event:
+                    patient_row[f"eventDate_{program_stage_uid}"] = first_event.get(
+                        "eventDate", ""
+                    )
+                if "has_actual_event" in first_event:
+                    patient_row[f"has_actual_event_{program_stage_uid}"] = (
+                        first_event.get("has_actual_event", "")
+                    )
+
+                # Use name suffix for display columns
+                if "event" in first_event:
+                    patient_row[f"event_{program_stage_name}"] = first_event.get(
+                        "event", ""
+                    )
+                if "eventDate" in first_event:
+                    patient_row[f"eventDate_{program_stage_name}"] = first_event.get(
+                        "eventDate", ""
+                    )
+                if "has_actual_event" in first_event:
+                    patient_row[f"has_actual_event_{program_stage_name}"] = (
+                        first_event.get("has_actual_event", "")
+                    )
+
+                # Add date-related columns with program stage name suffix
+                for date_col in [
+                    "event_date",
+                    "period",
+                    "period_display",
+                    "period_sort",
+                ]:
+                    if date_col in first_event:
+                        patient_row[f"{date_col}_{program_stage_name}"] = first_event[
+                            date_col
+                        ]
+
+            # Add data elements - create columns for each data element
+            # We need to handle the case where a patient might have multiple events in the same program stage
+            # For now, we'll take the first non-empty value
+            for data_element_uid in group["dataElement_uid"].unique():
+                # Get all values for this data element
+                element_values = group[group["dataElement_uid"] == data_element_uid][
+                    "value"
+                ]
+                # Take the first non-empty value if available
+                value = next(
+                    (v for v in element_values if pd.notna(v) and str(v).strip() != ""),
+                    "",
+                )
+
+                # Get the data element name
+                data_element_rows = group[group["dataElement_uid"] == data_element_uid]
+                if not data_element_rows.empty:
+                    data_element_name = data_element_rows["dataElementName"].iloc[0]
+
+                    # Create column with UID + program stage UID
+                    uid_col_name = f"{data_element_uid}_{program_stage_uid}"
+                    patient_row[uid_col_name] = value
+
+                    # Create column with name + program stage name
+                    # Clean the column name to avoid special characters
+                    clean_name = (
+                        str(data_element_name)
+                        .replace("(", "")
+                        .replace(")", "")
+                        .replace(":", "")
+                        .replace("/", "_")
+                        .replace(" ", "_")
+                        .replace(".", "")
+                    )
+                    # Remove multiple underscores
+                    while "__" in clean_name:
+                        clean_name = clean_name.replace("__", "_")
+                    # Remove trailing/leading underscores
+                    clean_name = clean_name.strip("_")
+
+                    name_col_name = f"{clean_name}_{program_stage_name}"
+                    # Clean the program stage name too
+                    name_col_name = (
+                        name_col_name.replace(" ", "_")
+                        .replace("-", "_")
+                        .replace("(", "")
+                        .replace(")", "")
+                    )
+                    while "__" in name_col_name:
+                        name_col_name = name_col_name.replace("__", "_")
+                    name_col_name = name_col_name.strip("_")
+
+                    patient_row[name_col_name] = value
+
+            stage_patient_rows.append(patient_row)
+
+        # Create DataFrame for this program stage
+        if stage_patient_rows:
+            stage_df = pd.DataFrame(stage_patient_rows)
+            all_stage_data.append(stage_df)
+
+    # Step 4: Merge all stage data with patient base
+    if not all_stage_data:
+        logging.warning("No program stage data found after transformation")
+        return patient_base
+
+    # Start with patient base and merge all program stage data
+    patient_df = patient_base
+    for stage_df in all_stage_data:
+        patient_df = patient_df.merge(stage_df, on="tei_id", how="left")
+
+    # Fill NaN values with empty string for better readability
+    patient_df = patient_df.fillna("")
+
+    # Add program type indicator
+    patient_df["program_type"] = program_type
+
+    # Log transformation statistics
+    logging.info(f"✅ Transformation complete:")
+    logging.info(
+        f"   📊 Output: {len(patient_df)} patients, {len(patient_df.columns)} columns"
+    )
+    if len(df) > 0 and len(patient_df) > 0:
+        reduction_pct = (1 - len(patient_df) / len(df)) * 100
+        logging.info(
+            f"   📈 Data reduction: {len(df)} → {len(patient_df)} rows ({reduction_pct:.1f}% reduction)"
+        )
+
+    # Show some sample column names
+    sample_cols = [
+        col
+        for col in patient_df.columns
+        if col not in ["tei_id", "orgUnit", "orgUnit_name", "program_type"]
+    ]
+    if len(sample_cols) > 0:
+        logging.info(f"   📋 Sample columns ({len(sample_cols)} total):")
+        for i, col in enumerate(sample_cols[:10]):  # Show first 10
+            logging.info(f"      {i+1}. {col}")
+        if len(sample_cols) > 10:
+            logging.info(f"      ... and {len(sample_cols) - 10} more columns")
+
+    return patient_df
+
+
+def get_newborn_program_uid() -> str:
+    """
+    Get the newborn program UID from the database.
+    Returns the UID for 'Newborn Care Form' program.
+    """
+    programs = get_all_programs()
+    for program in programs:
+        if program.get("program_name") == "Newborn Care Form":
+            return program.get("program_uid", "")
+
+    # If not found, try to find any program that's not maternal
+    for program in programs:
+        if program.get("program_uid") != "aLoraiFNkng":
+            return program.get("program_uid", "")
+
+    return ""
+
+
+def get_patient_level_summary(patient_df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Get summary statistics from patient-level DataFrame.
+
+    Args:
+        patient_df: Patient-level DataFrame
+
+    Returns:
+        Dictionary with summary statistics
+    """
+    if patient_df.empty:
+        return {"error": "Empty DataFrame"}
+
+    summary = {
+        "total_patients": len(patient_df),
+        "total_columns": len(patient_df.columns),
+        "orgunits_count": (
+            patient_df["orgUnit_name"].nunique()
+            if "orgUnit_name" in patient_df.columns
+            else 0
+        ),
+        "program_type": (
+            patient_df["program_type"].iloc[0]
+            if "program_type" in patient_df.columns
+            else "unknown"
+        ),
+        "column_categories": {},
+    }
+
+    # Categorize columns
+    columns = list(patient_df.columns)
+
+    for col in columns:
+        if col in ["tei_id", "orgUnit", "orgUnit_name", "program_type"]:
+            summary["column_categories"]["basic_info"] = (
+                summary["column_categories"].get("basic_info", 0) + 1
+            )
+        elif (
+            col.startswith("event_")
+            or col.startswith("eventDate_")
+            or col.startswith("has_actual_event_")
+        ):
+            summary["column_categories"]["event_metadata"] = (
+                summary["column_categories"].get("event_metadata", 0) + 1
+            )
+        elif "_" in col and any(
+            x in col
+            for x in ["event_date_", "period_", "period_display_", "period_sort_"]
+        ):
+            summary["column_categories"]["date_info"] = (
+                summary["column_categories"].get("date_info", 0) + 1
+            )
+        elif "_" in col and len(col.split("_")) >= 2:
+            # Likely a data element column
+            summary["column_categories"]["data_elements"] = (
+                summary["column_categories"].get("data_elements", 0) + 1
+            )
+        else:
+            summary["column_categories"]["other"] = (
+                summary["column_categories"].get("other", 0) + 1
+            )
+
+    return summary
+
+
+def optimize_patient_dataframe(patient_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Optimize the patient-level DataFrame for better performance.
+
+    Args:
+        patient_df: Patient-level DataFrame
+
+    Returns:
+        Optimized DataFrame
+    """
+    if patient_df.empty:
+        return patient_df
+
+    df = patient_df.copy()
+
+    # Reorder columns: basic info first, then metadata, then data elements
+    basic_cols = ["tei_id", "orgUnit", "orgUnit_name", "program_type"]
+    event_cols = [
+        col
+        for col in df.columns
+        if col.startswith(("event_", "eventDate_", "has_actual_event_"))
+    ]
+    date_cols = [
+        col
+        for col in df.columns
+        if any(
+            x in col
+            for x in ["event_date_", "period_", "period_display_", "period_sort_"]
+        )
+    ]
+    data_cols = [
+        col for col in df.columns if col not in basic_cols + event_cols + date_cols
+    ]
+
+    # Sort each category
+    event_cols.sort()
+    date_cols.sort()
+    data_cols.sort()
+
+    # Reorder DataFrame
+    ordered_cols = basic_cols + event_cols + date_cols + data_cols
+    df = df[ordered_cols]
+
+    return df
+
+
+def create_data_exports_directory():
+    """Create the data_exports directory if it doesn't exist."""
+    import os
+
+    os.makedirs("data_exports", exist_ok=True)
+    logging.info("📁 Created/verified data_exports directory")
+
+
+# Initialize data exports directory
+create_data_exports_directory()
