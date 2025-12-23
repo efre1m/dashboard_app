@@ -14,7 +14,7 @@ from utils.queries import (
     get_facility_mapping_for_user,
 )
 from utils.dash_co import (
-    normalize_event_dates,
+    normalize_patient_dates,  # Changed from normalize_event_dates
     normalize_enrollment_dates,
     render_trend_chart_section,
     render_comparison_chart,
@@ -22,6 +22,8 @@ from utils.dash_co import (
     get_text_color,
     apply_simple_filters,
     render_simple_filter_controls,
+    apply_patient_filters,  # Changed from apply_simple_filters
+    render_patient_filter_controls,  # Changed from render_simple_filter_controls
     render_kpi_tab_navigation,
 )
 from utils.kpi_utils import clear_cache, compute_kpis
@@ -266,9 +268,9 @@ def initialize_session_state():
         "current_facility_uids": [],
         "current_display_names": ["All Facilities"],
         "current_comparison_mode": "facility",
-        "filtered_events": pd.DataFrame(),
+        "filtered_patients": pd.DataFrame(),  # Changed from filtered_events
         "selection_applied": True,
-        "cached_events_data": None,
+        "cached_patients_data": None,  # Changed from cached_events_data
         "cached_enrollments_data": None,
         "cached_tei_data": None,
         "last_applied_selection": "All Facilities",
@@ -423,8 +425,6 @@ def calculate_maternal_indicators_from_patients(patient_df, facility_uids):
     total_weighed = 0
 
     # Check for maternal death indicators in patient data
-    # This will depend on your actual data structure
-    # For now, we'll use a simple approach
     if "delivery_summary_maternal_death" in filtered_df.columns:
         maternal_deaths = filtered_df["delivery_summary_maternal_death"].sum()
 
@@ -1144,18 +1144,6 @@ def render_maternal_dashboard_shared(
     print(f"Facility UIDs: {facility_uids}")
     print(f"View mode: {view_mode}")
 
-    # Check if period_label exists in session state
-    if "period_label" in st.session_state:
-        print(f"📅 period_label in session_state: {st.session_state.period_label}")
-    else:
-        print(f"❌ period_label NOT in session_state")
-
-    # Check all session state variables
-    print(f"\n📋 Relevant session state variables:")
-    for key in st.session_state.keys():
-        if "period" in key.lower() or "filter" in key.lower():
-            print(f"   {key}: {st.session_state[key]}")
-
     # ✅ FIXED: Only run if this is the active tab
     if st.session_state.active_tab != "maternal":
         return
@@ -1169,37 +1157,92 @@ def render_maternal_dashboard_shared(
     # ✅ GET PATIENT-LEVEL DATA
     patients_df = maternal_data.get("patients", pd.DataFrame())
 
-    # Get events DataFrame for compatibility (may be empty or transformed)
-    events_df = maternal_data.get("events", pd.DataFrame())
+    # Use patient data directly
+    working_df = patients_df.copy()
 
-    # For now, we'll use the events dataframe if available, otherwise use patients
-    if events_df.empty or len(events_df) < 10:  # If events data is minimal
-        logging.info("⚠️ Using patient-level data directly for maternal dashboard")
-        # We'll work with patient data directly
-        working_df = patients_df.copy()
-        # Add event_date column if needed
-        if "event_date" not in working_df.columns:
-            # Use first available event date column
-            event_date_cols = [
-                col for col in working_df.columns if "event_date_" in col
-            ]
-            if event_date_cols:
-                working_df["event_date"] = pd.to_datetime(
-                    working_df[event_date_cols[0]], errors="coerce"
-                )
+    # ✅ CRITICAL FIX: Ensure ALL patients have a date for filtering
+    # Create a combined date column that uses event_date if available, otherwise enrollment_date
+    if "event_date" not in working_df.columns:
+        # Try to find event date columns
+        event_date_cols = [
+            col for col in working_df.columns if "event_date" in col.lower()
+        ]
+        if event_date_cols:
+            # Use the first event date column
+            working_df["event_date"] = pd.to_datetime(
+                working_df[event_date_cols[0]], errors="coerce"
+            )
+        else:
+            working_df["event_date"] = pd.NaT
+
+    # Ensure enrollment_date exists and is datetime
+    if "enrollment_date" in working_df.columns:
+        working_df["enrollment_date"] = pd.to_datetime(
+            working_df["enrollment_date"], errors="coerce"
+        )
     else:
-        logging.info("✅ Using transformed events data for maternal dashboard")
-        working_df = events_df.copy()
-        working_df = normalize_event_dates(working_df)
+        # Try to find enrollment date
+        enrollment_cols = [
+            col
+            for col in working_df.columns
+            if "enrollment" in col.lower() or "incident" in col.lower()
+        ]
+        if enrollment_cols:
+            working_df["enrollment_date"] = pd.to_datetime(
+                working_df[enrollment_cols[0]], errors="coerce"
+            )
+        else:
+            # If no enrollment date, use the earliest available date
+            date_columns = [col for col in working_df.columns if "date" in col.lower()]
+            if date_columns:
+                working_df["enrollment_date"] = pd.to_datetime(
+                    working_df[date_columns[0]], errors="coerce"
+                )
+            else:
+                # Last resort: use event_date or current date
+                working_df["enrollment_date"] = working_df["event_date"].fillna(
+                    pd.Timestamp.now()
+                )
 
-    # ✅ Store data in session state for data quality tracking
-    st.session_state.maternal_events_df = working_df.copy()
-    st.session_state.maternal_patients_df = patients_df.copy()
+    # ✅ CRITICAL: Create a combined date that always has a value
+    # Use event_date if available, otherwise enrollment_date
+    working_df["combined_date"] = working_df["event_date"].combine_first(
+        working_df["enrollment_date"]
+    )
+
+    # Check how many dates we have
+    total_patients = len(working_df)
+    valid_dates = working_df["combined_date"].notna().sum()
+
+    print(f"\n📊 DATE ANALYSIS:")
+    print(f"   Total patients: {total_patients}")
+    print(f"   Patients with valid combined_date: {valid_dates}")
+    print(f"   Missing dates: {total_patients - valid_dates}")
+
+    if valid_dates < total_patients:
+        print(f"   ⚠️ Some patients don't have dates. Adding fallback dates...")
+        # Fill missing dates with the most common date or median date
+        if not working_df["combined_date"].isna().all():
+            # Use median date for missing values
+            median_date = working_df["combined_date"].median()
+            working_df["combined_date"] = working_df["combined_date"].fillna(
+                median_date
+            )
+            print(
+                f"   ✅ Filled {total_patients - valid_dates} missing dates with median: {median_date}"
+            )
+        else:
+            # All dates missing, use current date
+            working_df["combined_date"] = pd.Timestamp.now()
+            print(f"   ⚠️ All dates missing, using current date")
+
+    # ✅ Store the original df for KPI calculations (all patients)
+    st.session_state.maternal_patients_df = working_df.copy()
 
     # ✅ DEBUG: Log what we're storing
-    logging.info(f"✅ STORED maternal data: {len(working_df)} rows (events/patients)")
-    if not patients_df.empty and "orgUnit_name" in patients_df.columns:
-        facilities_in_data = patients_df["orgUnit_name"].unique()
+    logging.info(f"✅ STORED maternal data: {len(working_df)} rows (patients)")
+    if not working_df.empty and "orgUnit_name" in working_df.columns:
+        facilities_in_data = working_df["orgUnit_name"].unique()
         logging.info(
             f"🔍 MATERNAL - Facilities in patient data: {list(facilities_in_data)}"
         )
@@ -1276,29 +1319,40 @@ def render_maternal_dashboard_shared(
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply filters efficiently
-    filtered_data = apply_simple_filters(working_df, filters, facility_uids)
-    st.session_state["filtered_events"] = filtered_data.copy()
+    # ✅ IMPORTANT: Use working_df for KPI calculations (all 3,639 patients)
+    # But create a filtered version for charts
+    kpi_df = working_df.copy()  # Use ALL patients for KPI calculations
+
+    # Create filtered version for charts (uses combined_date)
+    chart_df = working_df.copy()
+    chart_df["event_date"] = chart_df[
+        "combined_date"
+    ]  # Use combined_date for filtering
+
+    # Apply filters to chart_df for trend analysis
+    filtered_for_charts = apply_simple_filters(chart_df, filters, facility_uids)
+
+    # Store both versions
+    st.session_state["filtered_patients"] = filtered_for_charts.copy()
+    st.session_state["all_patients_for_kpi"] = (
+        kpi_df.copy()
+    )  # Store all patients for KPI
     st.session_state["last_applied_selection"] = True
 
-    # KPI Cards with filtered data
+    # KPI Cards with ALL data (not filtered by date)
     with kpi_container:
-        if filtered_data.empty or "event_date" not in filtered_data.columns:
-            progress_container.empty()
-            st.markdown(
-                '<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for selected filters.</div>',
-                unsafe_allow_html=True,
-            )
-            return
-
         location_name, location_type = get_location_display_name(
             selected_facilities, region_name
         )
 
         user_id = str(user.get("id", user.get("username", "default_user")))
 
-        # ✅ STORE computed KPIs for reuse in summary tab
-        kpi_data = render_kpi_cards(filtered_data, location_name, user_id=user_id)
+        # ✅ FIXED: Use ALL patients for KPI calculations
+        print(f"\n📊 KPI CALCULATION:")
+        print(f"   Using {len(kpi_df)} patients for KPI calculations")
+        print(f"   Using {len(filtered_for_charts)} patients for trend charts")
+
+        kpi_data = render_kpi_cards(kpi_df, location_name, user_id=user_id)
 
         # Save for summary dashboard to reuse
         st.session_state.last_computed_kpis = kpi_data
@@ -1322,14 +1376,16 @@ def render_maternal_dashboard_shared(
             )
             render_comparison_chart(
                 kpi_selection=selected_kpi,
-                filtered_events=filtered_data,
+                filtered_events=filtered_for_charts,  # Use filtered data for charts
                 comparison_mode="facility",
                 display_names=facility_names or selected_facilities,
                 facility_uids=facility_uids,
                 facilities_by_region=None,
+                region_names=None,
                 bg_color=bg_color,
                 text_color=text_color,
                 is_national=False,
+                show_table=filters.get("show_table", False),
             )
         else:
             st.markdown(
@@ -1338,7 +1394,7 @@ def render_maternal_dashboard_shared(
             )
             render_trend_chart_section(
                 selected_kpi,
-                filtered_data,
+                filtered_for_charts,  # Use filtered data for charts
                 facility_uids,
                 facility_names or selected_facilities,
                 bg_color,
@@ -1350,11 +1406,125 @@ def render_maternal_dashboard_shared(
 
         render_additional_analytics(
             selected_kpi,
-            filtered_data,
+            filtered_for_charts,  # Use filtered data for charts
             facility_uids,
             bg_color,
             text_color,
         )
+
+
+def diagnose_data_issues(user, shared_data, selected_facilities, facility_mapping):
+    """Diagnostic function to identify data issues"""
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔍 Run Data Diagnostics", use_container_width=True):
+        with st.expander("📊 Data Diagnostics Report", expanded=True):
+            st.markdown("### 🩺 Data Health Check")
+
+            # Get data
+            maternal_data = shared_data.get("maternal", {})
+            newborn_data = shared_data.get("newborn", {})
+
+            maternal_patients = maternal_data.get("patients", pd.DataFrame())
+            newborn_patients = newborn_data.get("patients", pd.DataFrame())
+
+            # Facility analysis
+            st.markdown("#### 🏥 Facility Analysis")
+
+            # Get normalized facility names
+            from utils.data_service import normalize_facility_name
+
+            db_facilities = [f[0] for f in st.session_state.facilities]
+            normalized_db = [normalize_facility_name(f) for f in db_facilities]
+
+            if (
+                "orgUnit_name" in maternal_patients.columns
+                and not maternal_patients.empty
+            ):
+                data_facilities = maternal_patients["orgUnit_name"].unique()
+                normalized_data = [normalize_facility_name(f) for f in data_facilities]
+
+                # Find matches and mismatches
+                matches = set(normalized_db) & set(normalized_data)
+                db_only = set(normalized_db) - set(normalized_data)
+                data_only = set(normalized_data) - set(normalized_db)
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("✅ Matches", len(matches))
+                with col2:
+                    st.metric("❌ DB Only", len(db_only))
+                with col3:
+                    st.metric("❓ Data Only", len(data_only))
+
+                if db_only:
+                    st.warning("Facilities in DB but not in data:")
+                    for fac in sorted(db_only)[:10]:
+                        st.write(f"  - {fac}")
+
+                if data_only:
+                    st.info("Facilities in data but not in DB:")
+                    for fac in sorted(data_only)[:10]:
+                        st.write(f"  - {fac}")
+            else:
+                st.warning("No facility names found in maternal patient data")
+
+            # Patient count analysis
+            st.markdown("#### 👥 Patient Count Analysis")
+
+            if not maternal_patients.empty and "tei_id" in maternal_patients.columns:
+                total_patients = maternal_patients["tei_id"].nunique()
+                st.write(f"**Total unique patients:** {total_patients}")
+
+                # Count by facility
+                if "orgUnit_name" in maternal_patients.columns:
+                    facility_counts = maternal_patients.groupby("orgUnit_name")[
+                        "tei_id"
+                    ].nunique()
+
+                    st.write("**Top 10 facilities by patient count:**")
+                    for facility, count in (
+                        facility_counts.sort_values(ascending=False).head(10).items()
+                    ):
+                        st.write(f"  - {facility}: {count} patients")
+
+            # Data quality checks
+            st.markdown("#### 📋 Data Quality Checks")
+
+            if not maternal_patients.empty:
+                # Check for missing critical columns
+                critical_columns = [
+                    "birth_outcome_delivery_summary",
+                    "mode_of_delivery_maternal_delivery_summary",
+                    "event_date_delivery_summary",
+                ]
+
+                missing_cols = [
+                    col
+                    for col in critical_columns
+                    if col not in maternal_patients.columns
+                ]
+                if missing_cols:
+                    st.error(f"Missing critical columns: {missing_cols}")
+
+                # Check birth outcome data
+                if "birth_outcome_delivery_summary" in maternal_patients.columns:
+                    total_rows = len(maternal_patients)
+                    non_null = (
+                        maternal_patients["birth_outcome_delivery_summary"]
+                        .notna()
+                        .sum()
+                    )
+
+                    from utils.kpi_utils import compute_stillbirth_count
+
+                    stillbirths = compute_stillbirth_count(maternal_patients)
+
+                    st.write(f"**Birth Outcome Analysis:**")
+                    st.write(f"  - Total rows: {total_rows}")
+                    st.write(
+                        f"  - Non-null birth outcomes: {non_null} ({non_null/total_rows*100:.1f}%)"
+                    )
+                    st.write(f"  - Stillbirths found: {stillbirths}")
 
 
 def render():
@@ -1589,6 +1759,9 @@ def render():
             key="view_mode_regional",
             label_visibility="collapsed",
         )
+
+    # ================ DIAGNOSTIC TOOL ================
+    diagnose_data_issues(user, shared_data, selected_facilities, facility_mapping)
 
     # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
     tab1, tab2, tab3, tab4, tab5 = st.tabs(

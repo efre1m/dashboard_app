@@ -12,6 +12,38 @@ from utils.queries import (
     get_facilities_for_user,
 )
 
+# ========== NEW FUNCTION: Facility Name Normalization ==========
+
+
+def normalize_facility_name(facility_name: str) -> str:
+    """
+    Normalize facility names to handle spacing differences
+
+    Example:
+    - 'Ambo  General Hospital' -> 'Ambo General Hospital'
+    - 'Ambo   university   Hospital' -> 'Ambo university Hospital'
+    """
+    if not facility_name:
+        return ""
+
+    # Remove extra spaces (multiple spaces to single space)
+    normalized = " ".join(facility_name.split())
+
+    return normalized.strip()
+
+
+def normalize_all_facility_names(
+    df: pd.DataFrame, facility_column: str = "orgUnit_name"
+) -> pd.DataFrame:
+    """Normalize facility names in dataframe"""
+    if df.empty or facility_column not in df.columns:
+        return df
+
+    df = df.copy()
+    df[facility_column] = df[facility_column].apply(normalize_facility_name)
+    return df
+
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
@@ -187,16 +219,14 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
 def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
     """
     Filter patient-level DataFrame based on user's access level.
-
-    Args:
-        df: Patient-level DataFrame
-        user: User dictionary with role, region_name, facility_name
-
-    Returns:
-        Filtered DataFrame
+    FIXED: Normalizes facility names before filtering.
     """
     if df.empty:
         return df
+
+    # ✅ NORMALIZE facility names first
+    if "orgUnit_name" in df.columns:
+        df = normalize_all_facility_names(df, "orgUnit_name")
 
     user_role = user.get("role", "")
 
@@ -211,31 +241,41 @@ def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
             return pd.DataFrame()
 
         user_facilities = get_facilities_for_user(user)
-        facility_names_in_region = [facility[0] for facility in user_facilities]
-
-        from utils.queries import get_facility_mapping_for_user
-
-        facility_mapping = get_facility_mapping_for_user(user)
-
-        facility_uids_in_region = []
-        for facility_name in facility_names_in_region:
-            if facility_name in facility_mapping:
-                facility_uids_in_region.append(facility_mapping[facility_name])
-
-        if "orgUnit" in df.columns and facility_uids_in_region:
-            filtered_df = df[df["orgUnit"].isin(facility_uids_in_region)]
-        elif "orgUnit_name" in df.columns and facility_names_in_region:
-            filtered_df = df[df["orgUnit_name"].isin(facility_names_in_region)]
-        else:
-            logging.warning(
-                "DataFrame has no orgUnit or orgUnit_name column - cannot filter"
-            )
-            return df
+        # ✅ NORMALIZE facility names from database too
+        facility_names_in_region = [
+            normalize_facility_name(facility[0]) for facility in user_facilities
+        ]
 
         logging.info(
-            f"🏞️ Regional user '{region_name}' - filtered to {len(filtered_df)} patients from {len(facility_uids_in_region)} facilities"
+            f"🔍 Looking for facilities in region '{region_name}': {facility_names_in_region}"
         )
-        return filtered_df
+
+        if "orgUnit_name" in df.columns and facility_names_in_region:
+            # Find which facilities actually exist in the data
+            facilities_in_data = df["orgUnit_name"].unique()
+            logging.info(f"📊 Facilities in data: {list(facilities_in_data)}")
+
+            # Filter by normalized names
+            filtered_df = df[df["orgUnit_name"].isin(facility_names_in_region)]
+
+            # Log what was found
+            found_facilities = filtered_df["orgUnit_name"].unique()
+            missing_facilities = set(facility_names_in_region) - set(found_facilities)
+
+            if missing_facilities:
+                logging.warning(
+                    f"⚠️ Some facilities not found in data: {missing_facilities}"
+                )
+
+            logging.info(
+                f"🏞️ Regional user '{region_name}' - filtered to {len(filtered_df)} patients from {len(found_facilities)}/{len(facility_names_in_region)} facilities"
+            )
+            return filtered_df
+        else:
+            logging.warning(
+                "DataFrame has no orgUnit_name column - cannot filter by facility name"
+            )
+            return df
 
     elif user_role == "facility":
         facility_name = user.get("facility_name", "")
@@ -243,121 +283,27 @@ def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
             logging.warning("Facility user has no facility_name - cannot filter data")
             return pd.DataFrame()
 
-        from utils.queries import get_facility_mapping_for_user
+        # ✅ NORMALIZE the user's facility name
+        normalized_facility_name = normalize_facility_name(facility_name)
 
-        facility_mapping = get_facility_mapping_for_user(user)
-        facility_uid = facility_mapping.get(facility_name)
+        if "orgUnit_name" in df.columns:
+            facilities_in_data = df["orgUnit_name"].unique()
+            logging.info(f"🔍 Looking for facility: '{normalized_facility_name}'")
+            logging.info(f"📊 Facilities in data: {list(facilities_in_data)}")
 
-        if facility_uid and "orgUnit" in df.columns:
-            filtered_df = df[df["orgUnit"] == facility_uid]
-        elif "orgUnit_name" in df.columns:
-            filtered_df = df[df["orgUnit_name"] == facility_name]
-        else:
-            logging.warning(
-                "DataFrame has no orgUnit or orgUnit_name column - cannot filter"
+            filtered_df = df[df["orgUnit_name"] == normalized_facility_name]
+
+            logging.info(
+                f"🏥 Facility user '{facility_name}' (normalized: '{normalized_facility_name}') - filtered to {len(filtered_df)} patients"
             )
+            return filtered_df
+        else:
+            logging.warning("DataFrame has no orgUnit_name column - cannot filter")
             return df
-
-        logging.info(
-            f"🏥 Facility user '{facility_name}' - filtered to {len(filtered_df)} patients"
-        )
-        return filtered_df
 
     else:
         logging.warning(f"Unknown user role '{user_role}' - returning no data")
         return pd.DataFrame()
-
-
-def transform_patient_to_events(df: pd.DataFrame, program_type: str) -> pd.DataFrame:
-    """
-    Transform patient-level data to events DataFrame format for compatibility.
-    This creates the 'events' DataFrame that regional.py expects.
-    """
-    if df.empty:
-        return pd.DataFrame()
-
-    events_list = []
-
-    # Define program stage mappings
-    program_stages = {
-        "maternal": {
-            "delivery_summary": "mdw5BoS50mb",
-            "postpartum_care": "VpBHRE7FlJL",
-            "discharge_summary": "DLVsIxjhwMj",
-            "instrumental_delivery": "bwk9bBfYcsD",
-        },
-        "newborn": {
-            "microbiology_and_labs": "aCrttmnx7FI",
-            "admission_information": "l39SlVGlQGs",
-            "observations_and_nursing_care_1": "j0HI2eJjvbj",
-            "interventions": "ed8ErpgTCwx",
-            "observations_and_nursing_care_2": "VsVlpG1V2ub",
-            "discharge_and_final_diagnosis": "TOicTEwzSGj",
-        },
-    }
-
-    stages = program_stages.get(program_type, {})
-
-    for idx, row in df.iterrows():
-        tei_id = row.get("tei_id", f"patient_{idx}")
-        org_unit = row.get("orgUnit", "")
-        org_unit_name = row.get("orgUnit_name", "")
-
-        # Process each program stage
-        for stage_key, stage_uid in stages.items():
-            # Check if this stage exists in the data
-            event_col = f"event_{stage_key}"
-            event_date_col = f"event_date_{stage_key}"
-            period_col = f"period_{stage_key}"
-            period_display_col = f"period_display_{stage_key}"
-
-            if event_col in row and pd.notna(row.get(event_col)):
-                event_id = row[event_col]
-                event_date = row.get(event_date_col)
-                period = row.get(period_col, "")
-                period_display = row.get(period_display_col, "")
-
-                # Get all data elements for this stage
-                data_element_prefixes = [
-                    col.replace(f"{stage_key}_", "")
-                    for col in df.columns
-                    if col.startswith(f"{stage_key}_")
-                    and col
-                    not in [event_col, event_date_col, period_col, period_display_col]
-                ]
-
-                # Create events for each data element
-                for data_element in data_element_prefixes:
-                    value_col = f"{stage_key}_{data_element}"
-                    if value_col in row:
-                        event_data = {
-                            "tei_id": tei_id,
-                            "event": event_id,
-                            "programStage_uid": stage_uid,
-                            "programStageName": stage_key.replace("_", " ").title(),
-                            "orgUnit": org_unit,
-                            "orgUnit_name": org_unit_name,
-                            "eventDate": event_date,
-                            "dataElement_uid": data_element,  # Simplified
-                            "dataElementName": data_element.replace("_", " ").title(),
-                            "value": row[value_col],
-                            "has_actual_event": True,
-                            "period": period,
-                            "period_display": period_display,
-                            "period_sort": row.get(f"period_sort_{stage_key}", ""),
-                        }
-                        events_list.append(event_data)
-
-    events_df = pd.DataFrame(events_list)
-
-    # Add event_date column for compatibility with dash_co functions
-    if not events_df.empty and "eventDate" in events_df.columns:
-        events_df["event_date"] = pd.to_datetime(
-            events_df["eventDate"], errors="coerce"
-        )
-
-    logging.info(f"✅ Transformed {len(df)} patients to {len(events_df)} events")
-    return events_df
 
 
 def load_patient_data_for_user(
@@ -432,15 +378,7 @@ def fetch_program_data_for_user(
     """
     Load pre-fetched program data for user from CSV files.
 
-    Args:
-        user: User dictionary
-        program_uid: Program UID (helps identify program type)
-        facility_uids: Facility UIDs (unused for CSV loading)
-        period_label: Period label for display
-        transform_to_patient_level: Always True - we only have patient-level data
-
-    Returns:
-        Dictionary with patient-level data and program info
+    ✅ FIXED: No transformation needed - we work directly with patient data
     """
     program_info = get_program_by_uid(program_uid) if program_uid else {}
     program_name = program_info.get("program_name", "Unknown Program")
@@ -473,8 +411,9 @@ def fetch_program_data_for_user(
     # Load patient-level data from CSV
     patient_df = load_patient_data_for_user(user, program_type)
 
-    # ✅ TRANSFORM to events DataFrame for compatibility
-    events_df = transform_patient_to_events(patient_df, program_type)
+    # ✅ NO TRANSFORMATION NEEDED - we work directly with patient data
+    # Create empty events DataFrame for compatibility
+    events_df = pd.DataFrame()
 
     # Create empty dataframes for compatibility
     tei_df = pd.DataFrame()
@@ -494,19 +433,19 @@ def fetch_program_data_for_user(
         "raw_json": [],
         "tei": tei_df,
         "enrollments": enr_df,
-        "events": events_df,  # ✅ TRANSFORMED events DataFrame
+        "events": events_df,  # Empty - we don't need transformed events
         "patients": patient_df,  # Original patient-level data
         "optimization_stats": {
             "data_source": "pre_fetched_csv",
             "program_type": program_type,
             "patient_count": len(patient_df),
-            "events_count": len(events_df),
+            "events_count": 0,  # We don't have events
         },
     }
 
     if not patient_df.empty:
         logging.info(
-            f"✅ Successfully loaded {len(patient_df)} {program_type} patients, transformed to {len(events_df)} events"
+            f"✅ Successfully loaded {len(patient_df)} {program_type} patients"
         )
     else:
         logging.warning(f"⚠️ No {program_type} patient data loaded")
