@@ -85,24 +85,29 @@ def get_available_aggregations(start_date, end_date):
 
 def format_weekly_label(period_start):
     """
-    Format weekly period as human-readable with week number and range (e.g., "W1 (Jan 1-7, 2025)")
+    Format weekly period as human-readable with week number and range
+    e.g., "W1 (Jan 1-7, 2025)"
     """
     period_end = period_start + dt.timedelta(days=6)
 
     # Calculate week number within the year
     week_number = period_start.isocalendar()[1]
 
-    # Format the date range more clearly
-    start_str = period_start.strftime("%b %d")
-    end_str = period_end.strftime("%b %d, %Y")
-
-    # Handle same year case
+    # Format: W1 (01-07 Jan, 2025)
     if period_start.year == period_end.year:
-        return f"Week {week_number} ({start_str} - {end_str})"
+        if period_start.month == period_end.month:
+            # Same month
+            date_range = f"{period_start.day:02d}-{period_end.day:02d} {period_start.strftime('%b')}, {period_start.year}"
+        else:
+            # Crosses month boundary
+            date_range = f"{period_start.day:02d} {period_start.strftime('%b')} - {period_end.day:02d} {period_end.strftime('%b')}, {period_start.year}"
     else:
-        # Different year (rare but possible for year-end weeks)
-        start_str_full = period_start.strftime("%b %d, %Y")
-        return f"Week {week_number} ({start_str_full} - {end_str})"
+        # Crosses year boundary (rare)
+        date_range = (
+            f"{period_start.strftime('%d %b, %Y')} - {period_end.strftime('%d %b, %Y')}"
+        )
+
+    return f"Week {week_number} ({date_range})"
 
 
 def format_quarterly_label(quarter_str):
@@ -118,46 +123,83 @@ def format_quarterly_label(quarter_str):
 
 def assign_period(df: pd.DataFrame, date_col: str, period_label: str):
     """
-    Adds a 'period' column to the DataFrame based on the selected aggregation.
-    Returns human-readable period labels and adds a numeric sorting column.
+    FIXED VERSION: Properly assign periods for ALL period types
     """
     if df.empty or date_col not in df.columns:
         st.warning("No valid date column found for period assignment")
         return df
 
+    # Make sure date column is datetime
+    if not pd.api.types.is_datetime64_any_dtype(df[date_col]):
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+
+    # Remove rows with invalid dates
+    df = df[df[date_col].notna()]
+
+    if df.empty:
+        return df
+
+    print(f"\n📅 assign_period: Creating '{period_label}' periods")
+    print(f"   Date range: {df[date_col].min()} to {df[date_col].max()}")
+    print(f"   Total rows: {len(df)}")
+
+    # RESET any existing period columns
+    for col in ["period", "period_display", "period_sort"]:
+        if col in df.columns:
+            df = df.drop(columns=[col])
+
     if period_label == "Daily":
-        df["period"] = df[date_col].dt.strftime("%Y-%m-%d")  # Sortable format
-        df["period_display"] = df[date_col].dt.strftime("%b %d, %Y")  # Display format
+        df["period"] = df[date_col].dt.strftime("%Y-%m-%d")  # Sortable: 2025-07-17
+        df["period_display"] = df[date_col].dt.strftime(
+            "%d %b %Y"
+        )  # Display: 17 Jul 2025
         df["period_sort"] = df[date_col].dt.normalize()
 
+        print(f"   Created DAILY periods")
+        print(f"   Sample: {df['period_display'].head(3).tolist()}")
+
     elif period_label == "Weekly":
+        # Calculate week start (Monday)
         df["week_start"] = df[date_col] - pd.to_timedelta(
             df[date_col].dt.weekday, unit="D"
         )
-        df["period"] = df["week_start"].dt.strftime("%Y-%m-%d")  # Sortable format
-        df["period_display"] = df["week_start"].apply(
-            format_weekly_label
-        )  # Use the improved formatting
+        df["period"] = df["week_start"].dt.strftime("%Y-%W")  # Sortable: 2025-28
+        df["period_display"] = df["week_start"].apply(format_weekly_label)
         df["period_sort"] = df["week_start"]
 
+        print(f"   Created WEEKLY periods")
+        print(f"   Sample: {df['period_display'].head(3).tolist()}")
+
     elif period_label == "Monthly":
-        df["period"] = df[date_col].dt.strftime("%Y-%m")  # Sortable format
-        df["period_display"] = df[date_col].dt.strftime("%b %Y")  # Display: Sep 2025
+        # MONTHLY - Most important fix
+        df["period"] = df[date_col].dt.strftime("%Y-%m")  # Sortable: 2025-07
+        df["period_display"] = df[date_col].dt.strftime(
+            "%b-%y"
+        )  # Display: Jul-25 (NOT 25-Jul!)
         df["period_sort"] = df[date_col].dt.to_period("M").dt.start_time
 
+        print(f"   Created MONTHLY periods")
+        print(f"   Sample periods: {df['period_display'].head(5).tolist()}")
+        print(f"   Unique periods: {sorted(df['period_display'].unique())}")
+
     elif period_label == "Quarterly":
-        df["period"] = df[date_col].dt.to_period("Q").astype(str)  # Sortable: 2025Q1
-        df["period_display"] = df["period"].apply(
-            format_quarterly_label
-        )  # Use the improved formatting
+        df["period"] = df[date_col].dt.to_period("Q").astype(str)  # Sortable: 2025Q3
+        df["period_display"] = df["period"].apply(format_quarterly_label)
         df["period_sort"] = df[date_col].dt.to_period("Q").dt.start_time
+
+        print(f"   Created QUARTERLY periods")
 
     else:  # Yearly
         df["period"] = df[date_col].dt.strftime("%Y")  # Sortable: 2025
         df["period_display"] = df["period"]  # Display: 2025
         df["period_sort"] = df[date_col].dt.to_period("Y").dt.start_time
 
+        print(f"   Created YEARLY periods")
+
     # Sort the dataframe by period_sort to ensure chronological order
     df = df.sort_values("period_sort")
 
+    print(
+        f"   ✅ Successfully created {len(df['period_display'].unique())} unique periods\n"
+    )
     return df

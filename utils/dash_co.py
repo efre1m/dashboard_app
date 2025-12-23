@@ -1319,7 +1319,7 @@ def render_simple_filter_controls(patient_df, container=None, context="default")
         filters["start_date"] = start_date
         filters["end_date"] = end_date
 
-    # Aggregation Level
+    # Aggregation Level - CRITICAL SECTION
     available_aggregations = get_available_aggregations(
         filters["start_date"], filters["end_date"]
     )
@@ -1329,12 +1329,33 @@ def render_simple_filter_controls(patient_df, container=None, context="default")
         else 0
     )
 
+    # Get current value from session state if exists
+    current_period_label = st.session_state.get("period_label", "Monthly")
+    if current_period_label in available_aggregations:
+        default_index = available_aggregations.index(current_period_label)
+
     filters["period_label"] = container.selectbox(
         "⏰ Aggregation Level",
         available_aggregations,
         index=default_index,
         key=f"period_label{key_suffix}",
     )
+
+    # ✅ CRITICAL FIX: Save period_label to session state
+    st.session_state.period_label = filters["period_label"]
+    print(
+        f"🔧 DEBUG dash_co: Set period_label to session_state: {filters['period_label']}"
+    )
+
+    # Also save to filters dictionary in session state
+    if "filters" not in st.session_state:
+        st.session_state.filters = {}
+    st.session_state.filters["period_label"] = filters["period_label"]
+    st.session_state.filters["start_date"] = filters["start_date"]
+    st.session_state.filters["end_date"] = filters["end_date"]
+
+    print(f"🔧 DEBUG dash_co: Available aggregations: {available_aggregations}")
+    print(f"🔧 DEBUG dash_co: Selected period_label: {filters['period_label']}")
 
     # Background Color
     filters["bg_color"] = container.color_picker(
@@ -1362,25 +1383,46 @@ def _get_simple_date_range(patient_df):
     """Get min/max dates from transformed dataframe"""
     import datetime
 
-    if not patient_df.empty and "event_date" in patient_df.columns:
-        valid_dates = patient_df["event_date"].dropna()
-        if not valid_dates.empty:
-            min_date = valid_dates.min()
-            max_date = valid_dates.max()
-            if hasattr(min_date, "date"):
-                min_date = min_date.date()
-            if hasattr(max_date, "date"):
-                max_date = max_date.date()
-            return min_date, max_date
+    if not patient_df.empty:
+        # Try multiple date columns
+        date_columns = []
+        for col in patient_df.columns:
+            if "event_date" in col.lower():
+                date_columns.append(col)
+            elif "date" in col.lower() and "update" not in col.lower():
+                date_columns.append(col)
+
+        print(f"🔧 DEBUG _get_simple_date_range: Found date columns: {date_columns}")
+
+        for date_col in date_columns:
+            if date_col in patient_df.columns:
+                # Convert to datetime
+                dates = pd.to_datetime(patient_df[date_col], errors="coerce")
+                valid_dates = dates.dropna()
+
+                if not valid_dates.empty:
+                    min_date = valid_dates.min()
+                    max_date = valid_dates.max()
+
+                    if hasattr(min_date, "date"):
+                        min_date = min_date.date()
+                    if hasattr(max_date, "date"):
+                        max_date = max_date.date()
+
+                    print(f"🔧 DEBUG _get_simple_date_range: Using {date_col}")
+                    print(f"   Min date: {min_date}, Max date: {max_date}")
+                    return min_date, max_date
 
     # Fallback to current date
     today = datetime.date.today()
+    print(f"⚠️ _get_simple_date_range: Using fallback dates: {today} to {today}")
     return today, today
 
 
 def apply_simple_filters(patient_df, filters, facility_uids=None):
     """Apply simple filters to transformed dataframe"""
     if patient_df.empty:
+        print("⚠️ apply_simple_filters: Patient dataframe is empty")
         return patient_df
 
     df = patient_df.copy()
@@ -1389,19 +1431,112 @@ def apply_simple_filters(patient_df, filters, facility_uids=None):
     start_datetime = pd.to_datetime(filters["start_date"])
     end_datetime = pd.to_datetime(filters["end_date"])
 
+    print(f"🔧 DEBUG apply_simple_filters:")
+    print(f"   Date range: {start_datetime} to {end_datetime}")
+    print(f"   Original rows: {len(df)}")
+
+    # Check if event_date column exists
+    if "event_date" not in df.columns:
+        print(f"❌ apply_simple_filters: 'event_date' column not found!")
+        print(f"   Available columns: {list(df.columns)}")
+        # Try to find date columns
+        date_cols = [col for col in df.columns if "date" in col.lower()]
+        if date_cols:
+            print(f"   Found date columns: {date_cols}")
+            # Use first date column
+            df["event_date"] = pd.to_datetime(df[date_cols[0]], errors="coerce")
+        else:
+            print(f"❌ No date columns found at all!")
+            return df
+
+    # Filter by date range
+    initial_count = len(df)
     df = df[
         (df["event_date"] >= start_datetime) & (df["event_date"] <= end_datetime)
     ].copy()
+    filtered_count = len(df)
+
+    print(
+        f"   After date filtering: {filtered_count} rows (removed {initial_count - filtered_count})"
+    )
 
     # Apply facility filter if provided
     if facility_uids:
         if not isinstance(facility_uids, list):
             facility_uids = [facility_uids]
-        df = df[df["orgUnit"].isin(facility_uids)]
 
-    # Assign period
-    df = assign_period(df, "event_date", filters["period_label"])
+        if "orgUnit" in df.columns:
+            facility_count = len(df)
+            df = df[df["orgUnit"].isin(facility_uids)]
+            print(
+                f"   After facility filtering: {len(df)} rows (removed {facility_count - len(df)})"
+            )
+        else:
+            print(f"⚠️ 'orgUnit' column not found, cannot filter by facility")
 
+    # ✅ CRITICAL: Ensure period_label is in filters
+    if "period_label" not in filters:
+        print(f"❌ apply_simple_filters: period_label not in filters!")
+        print(f"   Available keys in filters: {list(filters.keys())}")
+        # Try to get from session state
+        if "period_label" in st.session_state:
+            filters["period_label"] = st.session_state.period_label
+            print(f"   Got period_label from session_state: {filters['period_label']}")
+        else:
+            filters["period_label"] = "Monthly"
+            print(f"⚠️ Using default period_label: Monthly")
+
+    print(
+        f"🔧 DEBUG apply_simple_filters: Using period_label = '{filters['period_label']}'"
+    )
+
+    # ✅ CRITICAL: Save to session state for prepare_data_for_trend_chart
+    st.session_state.period_label = filters["period_label"]
+    print(
+        f"🔧 DEBUG apply_simple_filters: Saved to session_state: '{filters['period_label']}'"
+    )
+
+    # Also ensure filters dict is in session state
+    if "filters" not in st.session_state:
+        st.session_state.filters = {}
+    st.session_state.filters.update(filters)
+
+    # ✅ DEBUG: Check event_date column before assign_period
+    if "event_date" in df.columns:
+        print(f"🔧 DEBUG apply_simple_filters: 'event_date' sample dates:")
+        print(f"   First 5: {df['event_date'].head(5).tolist()}")
+        print(f"   Data type: {df['event_date'].dtype}")
+        print(f"   Not null: {df['event_date'].notna().sum()}/{len(df)}")
+    else:
+        print(f"❌ ERROR: 'event_date' column missing before assign_period!")
+
+    # Assign period - THIS IS WHERE THE ACTUAL GROUPING HAPPENS
+    print(f"🔧 DEBUG apply_simple_filters: Calling assign_period with:")
+    print(f"   df shape: {df.shape}")
+    print(f"   date_col: 'event_date'")
+    print(f"   period_label: '{filters['period_label']}'")
+
+    try:
+        df = assign_period(df, "event_date", filters["period_label"])
+
+        # ✅ DEBUG: Check what periods were created
+        if "period_display" in df.columns:
+            unique_periods = df["period_display"].unique()
+            print(f"✅ assign_period created {len(unique_periods)} unique periods:")
+            for period in sorted(unique_periods):
+                count = df[df["period_display"] == period].shape[0]
+                print(f"   {period}: {count} rows")
+        else:
+            print(f"❌ assign_period did not create 'period_display' column!")
+            print(f"   Columns after assign_period: {list(df.columns)}")
+
+    except Exception as e:
+        print(f"❌ ERROR in assign_period: {str(e)}")
+        import traceback
+
+        print(f"Traceback: {traceback.format_exc()}")
+
+    print(f"✅ apply_simple_filters complete. Final shape: {df.shape}")
     return df
 
 

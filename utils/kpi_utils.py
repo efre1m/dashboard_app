@@ -300,7 +300,7 @@ def compute_maternal_death_count(df, facility_uids=None):
 
 
 def compute_stillbirth_count(df, facility_uids=None):
-    """Count stillbirth occurrences - COUNT ROWS ONLY (simpler)"""
+    """Count stillbirth occurrences - FIXED VERSION"""
     if df is None or df.empty:
         return 0
 
@@ -315,18 +315,37 @@ def compute_stillbirth_count(df, facility_uids=None):
     if BIRTH_OUTCOME_COL not in actual_events_df.columns:
         return 0
 
-    # Convert to numeric
-    outcome_series = pd.to_numeric(actual_events_df[BIRTH_OUTCOME_COL], errors="coerce")
+    # CONVERT TO STRING FIRST
+    actual_events_df[BIRTH_OUTCOME_COL] = actual_events_df[BIRTH_OUTCOME_COL].astype(
+        str
+    )
 
-    # Count rows with stillbirth outcome
-    stillbirth_mask = outcome_series == float(STILLBIRTH_CODE)
+    # EXTRACT THE NUMBER PART (handle "2", "2.0", "2.00", etc.)
+    actual_events_df["birth_outcome_clean"] = (
+        actual_events_df[BIRTH_OUTCOME_COL].str.split(".").str[0]
+    )
 
-    return int(stillbirth_mask.sum())
+    # CONVERT TO NUMERIC
+    actual_events_df["birth_outcome_numeric"] = pd.to_numeric(
+        actual_events_df["birth_outcome_clean"], errors="coerce"
+    )
+
+    # DEBUG: Check what values we found
+    unique_values = actual_events_df["birth_outcome_numeric"].dropna().unique()
+    print(f"DEBUG stillbirth_count: Found birth outcome values: {unique_values}")
+
+    # COUNT ROWS WHERE birth_outcome_numeric == 2 (stillbirth)
+    stillbirth_mask = actual_events_df["birth_outcome_numeric"] == 2
+
+    count = int(stillbirth_mask.sum())
+    print(f"DEBUG stillbirth_count: Counted {count} stillbirths")
+
+    return count
 
 
 # ---------------- KPI Computation Functions ----------------
 def compute_total_deliveries(df, facility_uids=None):
-    """Count total deliveries - VECTORIZED"""
+    """Count total deliveries - URGENT FIX: Count DELIVERY EVENTS, not enrollments"""
     cache_key = get_cache_key(df, facility_uids, "total_deliveries")
 
     if "kpi_cache" not in st.session_state:
@@ -341,19 +360,82 @@ def compute_total_deliveries(df, facility_uids=None):
         if facility_uids:
             df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-        if ENROLLMENT_DATE_COL in df.columns:
-            valid_enrollment_df = df[df[ENROLLMENT_DATE_COL].notna()].copy()
-            if "tei_id" in valid_enrollment_df.columns:
-                result = valid_enrollment_df["tei_id"].nunique()
-            else:
-                result = len(valid_enrollment_df)
+        print(f"\n🔍 compute_total_deliveries DEBUG:")
+        print(f"   Total rows: {len(df)}")
+
+        # DEBUG: Show what columns we have
+        debug_dataframe_info(df, "Inside compute_total_deliveries", max_rows=5)
+
+        # METHOD 1: Count rows with delivery data
+        # Look for delivery-related columns
+        delivery_columns = [
+            DELIVERY_DATE_COL,
+            BIRTH_OUTCOME_COL,
+            DELIVERY_MODE_COL,
+            "event_date_delivery_summary",
+            "birth_outcome_delivery_summary",
+            "mode_of_delivery_delivery_summary",
+        ]
+
+        # Find which delivery columns exist
+        existing_delivery_cols = [col for col in delivery_columns if col in df.columns]
+        print(f"   Delivery columns found: {existing_delivery_cols}")
+
+        if existing_delivery_cols:
+            # Count rows with ANY delivery data
+            delivery_mask = pd.Series([False] * len(df))
+
+            for col in existing_delivery_cols:
+                if col in df.columns:
+                    # Check if column has non-null values
+                    has_data = df[col].notna()
+                    delivery_mask = delivery_mask | has_data
+
+            result = delivery_mask.sum()
+            print(f"   Method 1: Counted {result} rows with delivery data")
+
+        # METHOD 2: If no delivery columns, try counting TEI IDs
         elif "tei_id" in df.columns:
             result = df["tei_id"].nunique()
+            print(f"   Method 2: Counted {result} unique TEI IDs")
+
+        # METHOD 3: Last resort - count all rows
         else:
             result = len(df)
+            print(f"   Method 3: Counted {result} rows (fallback)")
 
     st.session_state.kpi_cache[cache_key] = result
     return result
+
+
+def debug_birth_outcome_data(df, facility_uids=None):
+    """Debug function to see what's in birth_outcome column"""
+    if df.empty:
+        print("DEBUG: DataFrame is empty")
+        return
+
+    if facility_uids:
+        df = df[df["orgUnit"].isin(facility_uids)].copy()
+
+    if BIRTH_OUTCOME_COL not in df.columns:
+        print(f"DEBUG: {BIRTH_OUTCOME_COL} column not found in DataFrame")
+        print(f"Available columns: {list(df.columns)}")
+        return
+
+    # Show sample values
+    sample_values = df[BIRTH_OUTCOME_COL].dropna().unique()[:10]
+    print(f"DEBUG: Birth outcome sample values: {sample_values}")
+
+    # Show data types
+    print(f"DEBUG: Birth outcome dtype: {df[BIRTH_OUTCOME_COL].dtype}")
+
+    # Count by value
+    for value in [1.0, 2.0, 1, 2, "1", "2", "1.0", "2.0"]:
+        count = (df[BIRTH_OUTCOME_COL] == value).sum()
+        if count > 0:
+            print(
+                f"DEBUG: Value '{value}' (type: {type(value).__name__}): {count} occurrences"
+            )
 
 
 def compute_fp_acceptance(df, facility_uids=None):
@@ -1821,17 +1903,158 @@ def get_relevant_date_column_for_kpi(kpi_name):
 
 def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
     """
-    Prepare patient-level data for trend chart visualization
+    URGENT FIX: Properly prepare patient-level data for trend chart
+    This function MUST use the ACTUAL period label from filters
     """
+    # ADD DEBUG AT START
+    debug_dataframe_info(df, f"ENTERING prepare_data_for_trend_chart for {kpi_name}")
+
     if df.empty:
+        print(f"   ❌ DataFrame is empty for {kpi_name}")
         return pd.DataFrame()
 
+    # Get correct date column for this KPI
     date_column = get_relevant_date_column_for_kpi(kpi_name)
-    result_df = extract_period_columns(df, date_column)
+
+    print(f"\n🔍 prepare_data_for_trend_chart for {kpi_name}:")
+    print(f"   Using date column: {date_column}")
+    print(
+        f"   Available date columns: {[col for col in df.columns if 'date' in col.lower()]}"
+    )
+
+    if date_column not in df.columns:
+        # Try alternative date columns
+        alternative_dates = [
+            col
+            for col in df.columns
+            if "event_date" in col.lower() or "date" in col.lower()
+        ]
+        if alternative_dates:
+            date_column = alternative_dates[0]
+            print(f"   ⚠️ Using alternative date column: {date_column}")
+        else:
+            print(f"   ❌ No date column found!")
+            return pd.DataFrame()
+
+    result_df = df.copy()
+
+    # CONVERT TO DATETIME PROPERLY
+    result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
+
+    # Check conversion
+    valid_dates = result_df["event_date"].notna().sum()
+    print(f"   Valid dates after conversion: {valid_dates}/{len(result_df)}")
+
+    # Filter out invalid dates
+    result_df = result_df[result_df["event_date"].notna()]
+
+    if result_df.empty:
+        print(f"   ⚠️ No valid dates after filtering")
+        return pd.DataFrame()
+
+    # CRITICAL: Get period label from SESSION STATE or FILTERS
+    # This was the main bug - it was always using "Monthly"
+
+    # Try multiple ways to get period_label
+    period_label = "Monthly"  # Default
+
+    # 1. Try from session state (from filters)
+    if "period_label" in st.session_state:
+        period_label = st.session_state.period_label
+        print(f"   📅 Got period_label from session_state: {period_label}")
+
+    # 2. If not found, check filters in dash_co
+    elif "filters" in st.session_state:
+        filters = st.session_state.filters
+        if "period_label" in filters:
+            period_label = filters["period_label"]
+            print(f"   📅 Got period_label from filters: {period_label}")
+
+    print(f"   FINAL period_label being used: {period_label}")
+
+    # CREATE PERIOD COLUMNS USING assign_period
+    from utils.time_filter import assign_period
+
+    print(
+        f"   Calling assign_period with: column='event_date', period_label='{period_label}'"
+    )
+    result_df = assign_period(result_df, "event_date", period_label)
+
+    # Debug what periods were created
+    if "period_display" in result_df.columns:
+        unique_periods = result_df["period_display"].unique()
+        print(
+            f"   Created {len(unique_periods)} unique periods: {sorted(unique_periods)}"
+        )
+
+        # Show rows per period
+        period_counts = result_df["period_display"].value_counts()
+        print(f"   Rows per period: {dict(period_counts)}")
 
     if facility_uids:
         result_df = result_df[result_df["orgUnit"].isin(facility_uids)]
+        print(
+            f"   Filtered to {len(result_df)} rows for {len(facility_uids)} facilities"
+        )
 
-    result_df = result_df[result_df["event_date"].notna()]
+    # ADD DEBUG AT END
+    debug_dataframe_info(
+        result_df, f"EXITING prepare_data_for_trend_chart for {kpi_name}"
+    )
 
+    print(f"   ✅ Prepared {len(result_df)} rows for chart")
     return result_df
+
+
+def debug_dataframe_info(df, label="", max_rows=10):
+    """
+    Debug function to see what's in the dataframe at any point
+    """
+    print(f"\n{'='*60}")
+    print(f"🔍 DEBUG DATAFRAME: {label}")
+    print(f"{'='*60}")
+
+    if df is None or df.empty:
+        print(f"   DataFrame is EMPTY or None")
+        return
+
+    print(f"   Shape: {df.shape}")
+    print(f"   Columns ({len(df.columns)}): {list(df.columns)}")
+
+    # Show date columns
+    date_cols = [col for col in df.columns if "date" in col.lower() or "Date" in col]
+    print(f"   Date columns: {date_cols}")
+
+    for date_col in date_cols[:3]:  # Show first 3 date columns
+        if date_col in df.columns:
+            print(f"   '{date_col}' sample: {df[date_col].head(3).tolist()}")
+            print(f"   '{date_col}' dtype: {df[date_col].dtype}")
+
+    # Show event_date if exists
+    if "event_date" in df.columns:
+        print(f"\n   📅 'event_date' column:")
+        print(f"      Sample: {df['event_date'].head(5).tolist()}")
+        print(f"      Dtype: {df['event_date'].dtype}")
+        print(f"      Not null: {df['event_date'].notna().sum()}/{len(df)}")
+
+    # Show period columns if exist
+    period_cols = [col for col in df.columns if "period" in col.lower()]
+    if period_cols:
+        print(f"\n   📊 Period columns: {period_cols}")
+        for col in period_cols:
+            if col in df.columns:
+                print(f"      '{col}' unique: {df[col].unique()[:10]}")
+
+    # Show TEI/ID columns
+    id_cols = [col for col in df.columns if "tei" in col.lower() or "id" in col.lower()]
+    if id_cols:
+        print(f"\n   🆔 ID columns: {id_cols}")
+        for col in id_cols[:2]:
+            if col in df.columns:
+                print(f"      '{col}' unique count: {df[col].nunique()}")
+
+    # Show first few rows
+    print(f"\n   📋 First {min(max_rows, len(df))} rows:")
+    print(df.head(max_rows).to_string())
+
+    print(f"{'='*60}\n")

@@ -25,16 +25,13 @@ def get_data_directory(program_type: str = "maternal") -> str:
     Returns:
         Path to the data directory
     """
-    # Directory structure: utils/imnid/maternal/ and utils/imnid/newborn/
     base_dir = os.path.join(os.path.dirname(__file__), "imnid")
 
-    # Program-specific subdirectory
     if program_type == "maternal":
         return os.path.join(base_dir, "maternal")
     elif program_type == "newborn":
         return os.path.join(base_dir, "newborn")
     else:
-        # Fallback to base directory
         return base_dir
 
 
@@ -51,12 +48,9 @@ def normalize_region_name(region_name: str) -> str:
     if not region_name:
         return ""
 
-    # Convert to lowercase and replace spaces with underscores
     normalized = region_name.lower().strip()
-    normalized = re.sub(r"[^\w\s-]", "", normalized)  # Remove special characters
-    normalized = re.sub(
-        r"[\s-]+", "_", normalized
-    )  # Replace spaces/hyphens with underscore
+    normalized = re.sub(r"[^\w\s-]", "", normalized)
+    normalized = re.sub(r"[\s-]+", "_", normalized)
 
     return normalized
 
@@ -75,17 +69,14 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
     user_role = user.get("role", "")
     region_name = user.get("region_name", "")
 
-    # Get the program-specific directory
     data_dir = get_data_directory(program_type)
 
-    # Check if directory exists
     if not os.path.exists(data_dir):
         logging.error(f"❌ Directory does not exist: {data_dir}")
         return None
 
     logging.info(f"🔍 Looking for {program_type} data in: {data_dir}")
 
-    # List all CSV files for debugging
     all_files = glob.glob(os.path.join(data_dir, "*.csv"))
     if not all_files:
         logging.error(f"❌ No CSV files found in directory: {data_dir}")
@@ -94,43 +85,34 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
     logging.info(f"   Available files: {[os.path.basename(f) for f in all_files]}")
 
     if user_role == "national":
-        # National users use national-level CSV
-        # Look for exact match first
         exact_file = os.path.join(data_dir, f"national_{program_type}.csv")
         if os.path.exists(exact_file):
             logging.info(f"✅ Found exact national file: national_{program_type}.csv")
             return exact_file
 
-        # Look for any national file
         national_files = [
             f for f in all_files if "national" in os.path.basename(f).lower()
         ]
         if national_files:
-            # Get the most recent file
             national_files.sort(key=os.path.getmtime, reverse=True)
             selected_file = national_files[0]
             logging.info(f"✅ Found national file: {os.path.basename(selected_file)}")
             return selected_file
 
-        # Fallback to first available file
-        logging.warning(f"⚠️ No national file found, using first available file")
         all_files.sort(key=os.path.getmtime, reverse=True)
         return all_files[0]
 
     elif user_role == "regional":
-        # Regional users use regional-level CSV for their region
         if not region_name:
             logging.error("Regional user has no region_name - cannot determine file")
             return None
 
-        # Normalize region name for matching
         normalized_region = normalize_region_name(region_name)
 
         logging.info(
             f"   Looking for region: {region_name} (normalized: {normalized_region})"
         )
 
-        # Look for exact regional file with normalized name
         exact_pattern = f"regional_{normalized_region}_{program_type}.csv"
         exact_file = os.path.join(data_dir, exact_pattern)
 
@@ -138,22 +120,18 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
             logging.info(f"✅ Found exact regional file: {exact_pattern}")
             return exact_file
 
-        # Look for regional files matching this region
         region_files = []
         for filepath in all_files:
             filename = os.path.basename(filepath).lower()
-            # Check if region name appears in filename (case-insensitive)
             if normalized_region in filename and program_type in filename:
                 region_files.append(filepath)
 
         if region_files:
-            # Get the most recent file
             region_files.sort(key=os.path.getmtime, reverse=True)
             selected_file = region_files[0]
             logging.info(f"✅ Found regional file: {os.path.basename(selected_file)}")
             return selected_file
 
-        # Try to match with partial region name
         region_parts = normalized_region.split("_")
         for i in range(len(region_parts), 0, -1):
             partial_region = "_".join(region_parts[:i])
@@ -165,7 +143,6 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
                     )
                     return filepath
 
-        # If no region-specific file found, look for any regional file
         regional_files = [
             f for f in all_files if "regional" in os.path.basename(f).lower()
         ]
@@ -177,14 +154,10 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
             )
             return selected_file
 
-        # Fallback to first available file
-        logging.warning(f"⚠️ No regional file found, using first available file")
         all_files.sort(key=os.path.getmtime, reverse=True)
         return all_files[0]
 
     elif user_role == "facility":
-        # Facility users use national CSV and filter by facility
-        # Same logic as national users
         exact_file = os.path.join(data_dir, f"national_{program_type}.csv")
         if os.path.exists(exact_file):
             logging.info(
@@ -203,12 +176,9 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
             )
             return selected_file
 
-        # Fallback to first available file
-        logging.warning(f"⚠️ No national file found, using first available file")
         all_files.sort(key=os.path.getmtime, reverse=True)
         return all_files[0]
 
-    # Unknown role - fallback to first available file
     logging.warning(f"⚠️ Unknown user role '{user_role}', using first available file")
     all_files.sort(key=os.path.getmtime, reverse=True)
     return all_files[0]
@@ -231,22 +201,18 @@ def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
     user_role = user.get("role", "")
 
     if user_role == "national":
-        # National users see all data
         logging.info("🌍 National user - returning ALL data")
         return df
 
     elif user_role == "regional":
-        # Regional users see data from their region
         region_name = user.get("region_name", "")
         if not region_name:
             logging.warning("Regional user has no region_name - cannot filter data")
             return pd.DataFrame()
 
-        # Get facilities for this regional user
         user_facilities = get_facilities_for_user(user)
         facility_names_in_region = [facility[0] for facility in user_facilities]
 
-        # Get facility UIDs from mapping
         from utils.queries import get_facility_mapping_for_user
 
         facility_mapping = get_facility_mapping_for_user(user)
@@ -256,7 +222,6 @@ def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
             if facility_name in facility_mapping:
                 facility_uids_in_region.append(facility_mapping[facility_name])
 
-        # Filter DataFrame by facility UIDs
         if "orgUnit" in df.columns and facility_uids_in_region:
             filtered_df = df[df["orgUnit"].isin(facility_uids_in_region)]
         elif "orgUnit_name" in df.columns and facility_names_in_region:
@@ -273,13 +238,11 @@ def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
         return filtered_df
 
     elif user_role == "facility":
-        # Facility users see only their specific facility
         facility_name = user.get("facility_name", "")
         if not facility_name:
             logging.warning("Facility user has no facility_name - cannot filter data")
             return pd.DataFrame()
 
-        # Get facility UID
         from utils.queries import get_facility_mapping_for_user
 
         facility_mapping = get_facility_mapping_for_user(user)
@@ -305,6 +268,98 @@ def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def transform_patient_to_events(df: pd.DataFrame, program_type: str) -> pd.DataFrame:
+    """
+    Transform patient-level data to events DataFrame format for compatibility.
+    This creates the 'events' DataFrame that regional.py expects.
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    events_list = []
+
+    # Define program stage mappings
+    program_stages = {
+        "maternal": {
+            "delivery_summary": "mdw5BoS50mb",
+            "postpartum_care": "VpBHRE7FlJL",
+            "discharge_summary": "DLVsIxjhwMj",
+            "instrumental_delivery": "bwk9bBfYcsD",
+        },
+        "newborn": {
+            "microbiology_and_labs": "aCrttmnx7FI",
+            "admission_information": "l39SlVGlQGs",
+            "observations_and_nursing_care_1": "j0HI2eJjvbj",
+            "interventions": "ed8ErpgTCwx",
+            "observations_and_nursing_care_2": "VsVlpG1V2ub",
+            "discharge_and_final_diagnosis": "TOicTEwzSGj",
+        },
+    }
+
+    stages = program_stages.get(program_type, {})
+
+    for idx, row in df.iterrows():
+        tei_id = row.get("tei_id", f"patient_{idx}")
+        org_unit = row.get("orgUnit", "")
+        org_unit_name = row.get("orgUnit_name", "")
+
+        # Process each program stage
+        for stage_key, stage_uid in stages.items():
+            # Check if this stage exists in the data
+            event_col = f"event_{stage_key}"
+            event_date_col = f"event_date_{stage_key}"
+            period_col = f"period_{stage_key}"
+            period_display_col = f"period_display_{stage_key}"
+
+            if event_col in row and pd.notna(row.get(event_col)):
+                event_id = row[event_col]
+                event_date = row.get(event_date_col)
+                period = row.get(period_col, "")
+                period_display = row.get(period_display_col, "")
+
+                # Get all data elements for this stage
+                data_element_prefixes = [
+                    col.replace(f"{stage_key}_", "")
+                    for col in df.columns
+                    if col.startswith(f"{stage_key}_")
+                    and col
+                    not in [event_col, event_date_col, period_col, period_display_col]
+                ]
+
+                # Create events for each data element
+                for data_element in data_element_prefixes:
+                    value_col = f"{stage_key}_{data_element}"
+                    if value_col in row:
+                        event_data = {
+                            "tei_id": tei_id,
+                            "event": event_id,
+                            "programStage_uid": stage_uid,
+                            "programStageName": stage_key.replace("_", " ").title(),
+                            "orgUnit": org_unit,
+                            "orgUnit_name": org_unit_name,
+                            "eventDate": event_date,
+                            "dataElement_uid": data_element,  # Simplified
+                            "dataElementName": data_element.replace("_", " ").title(),
+                            "value": row[value_col],
+                            "has_actual_event": True,
+                            "period": period,
+                            "period_display": period_display,
+                            "period_sort": row.get(f"period_sort_{stage_key}", ""),
+                        }
+                        events_list.append(event_data)
+
+    events_df = pd.DataFrame(events_list)
+
+    # Add event_date column for compatibility with dash_co functions
+    if not events_df.empty and "eventDate" in events_df.columns:
+        events_df["event_date"] = pd.to_datetime(
+            events_df["eventDate"], errors="coerce"
+        )
+
+    logging.info(f"✅ Transformed {len(df)} patients to {len(events_df)} events")
+    return events_df
+
+
 def load_patient_data_for_user(
     user: dict, program_type: str = "maternal"
 ) -> pd.DataFrame:
@@ -318,7 +373,6 @@ def load_patient_data_for_user(
     Returns:
         Patient-level DataFrame filtered for user access
     """
-    # Get the appropriate CSV file for this user
     csv_file = get_user_csv_file(user, program_type)
 
     if not csv_file or not os.path.exists(csv_file):
@@ -330,7 +384,6 @@ def load_patient_data_for_user(
         return pd.DataFrame()
 
     try:
-        # Load the CSV file
         df = pd.read_csv(csv_file)
         logging.info(
             f"✅ Loaded {program_type} data from: {os.path.basename(csv_file)}"
@@ -338,26 +391,20 @@ def load_patient_data_for_user(
         logging.info(f"   📊 Total patients: {len(df)}")
         logging.info(f"   📋 Columns: {len(df.columns)}")
 
-        # Ensure program_type column exists
         if "program_type" not in df.columns:
             df["program_type"] = program_type
 
-        # Ensure tei_id column exists (critical for patient-level data)
         if "tei_id" not in df.columns:
-            # Try to find alternative ID column
             id_cols = [
                 col for col in df.columns if "id" in col.lower() or "tei" in col.lower()
             ]
             if id_cols:
-                # Rename the first ID-like column to tei_id
                 df = df.rename(columns={id_cols[0]: "tei_id"})
                 logging.info(f"   🔄 Renamed column '{id_cols[0]}' to 'tei_id'")
             else:
-                # Create a placeholder tei_id
                 df["tei_id"] = [f"patient_{i}" for i in range(len(df))]
                 logging.info(f"   📝 Created placeholder tei_id column")
 
-        # Filter based on user access
         filtered_df = filter_patient_data_by_user(df, user)
 
         if filtered_df.empty:
@@ -384,7 +431,6 @@ def fetch_program_data_for_user(
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
     Load pre-fetched program data for user from CSV files.
-    No live DHIS2 fetching - only loads from pre-generated CSV files.
 
     Args:
         user: User dictionary
@@ -396,7 +442,6 @@ def fetch_program_data_for_user(
     Returns:
         Dictionary with patient-level data and program info
     """
-    # Determine program type based on UID
     program_info = get_program_by_uid(program_uid) if program_uid else {}
     program_name = program_info.get("program_name", "Unknown Program")
 
@@ -414,11 +459,10 @@ def fetch_program_data_for_user(
     ):
         program_type = "newborn"
     else:
-        # Default based on common UID patterns
         if program_uid and program_uid == "aLoraiFNkng":
             program_type = "maternal"
         else:
-            program_type = "newborn"  # Default to newborn for other UIDs
+            program_type = "newborn"
 
     logging.info(f"📂 Loading {program_type} program data")
     logging.info(f"   Program UID: {program_uid}")
@@ -429,10 +473,12 @@ def fetch_program_data_for_user(
     # Load patient-level data from CSV
     patient_df = load_patient_data_for_user(user, program_type)
 
+    # ✅ TRANSFORM to events DataFrame for compatibility
+    events_df = transform_patient_to_events(patient_df, program_type)
+
     # Create empty dataframes for compatibility
     tei_df = pd.DataFrame()
     enr_df = pd.DataFrame()
-    evt_df = pd.DataFrame()
 
     # Create minimal program info if not found
     if not program_info:
@@ -445,21 +491,22 @@ def fetch_program_data_for_user(
     # Build result dictionary
     result = {
         "program_info": program_info,
-        "raw_json": [],  # Empty since we're not fetching from DHIS2
+        "raw_json": [],
         "tei": tei_df,
         "enrollments": enr_df,
-        "events": evt_df,
-        "patients": patient_df,  # ✅ Patient-level data
+        "events": events_df,  # ✅ TRANSFORMED events DataFrame
+        "patients": patient_df,  # Original patient-level data
         "optimization_stats": {
             "data_source": "pre_fetched_csv",
             "program_type": program_type,
             "patient_count": len(patient_df),
+            "events_count": len(events_df),
         },
     }
 
     if not patient_df.empty:
         logging.info(
-            f"✅ Successfully loaded {len(patient_df)} {program_type} patients"
+            f"✅ Successfully loaded {len(patient_df)} {program_type} patients, transformed to {len(events_df)} events"
         )
     else:
         logging.warning(f"⚠️ No {program_type} patient data loaded")
@@ -472,7 +519,6 @@ def fetch_odk_data_for_user(
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
     Load ODK data from pre-fetched CSV files.
-    For now, returns empty as we don't have ODK CSV files.
     """
     return {"odk_forms": {}}
 
@@ -506,14 +552,6 @@ def list_available_odk_forms() -> List[dict]:
     return []
 
 
-# Compatibility functions
-def transform_events_to_patient_level(
-    events_df: pd.DataFrame, program_uid: str
-) -> pd.DataFrame:
-    """Compatibility function - data is already transformed."""
-    return pd.DataFrame()
-
-
 def get_newborn_program_uid() -> str:
     """Get the newborn program UID from the database."""
     programs = get_all_programs()
@@ -521,7 +559,6 @@ def get_newborn_program_uid() -> str:
         if program.get("program_name") == "Newborn Care Form":
             return program.get("program_uid", "")
 
-    # Return default newborn UID if not found
     return "TIdYusMYiKl"
 
 
@@ -548,36 +585,6 @@ def get_patient_level_summary(patient_df: pd.DataFrame) -> Dict[str, Any]:
     return summary
 
 
-def optimize_patient_dataframe(patient_df: pd.DataFrame) -> pd.DataFrame:
-    """Optimize the patient-level DataFrame for better performance."""
-    if patient_df.empty:
-        return patient_df
-
-    df = patient_df.copy()
-
-    # Reorder columns: basic info first
-    basic_cols = []
-    if "tei_id" in df.columns:
-        basic_cols.append("tei_id")
-    if "orgUnit" in df.columns:
-        basic_cols.append("orgUnit")
-    if "orgUnit_name" in df.columns:
-        basic_cols.append("orgUnit_name")
-    if "program_type" in df.columns:
-        basic_cols.append("program_type")
-
-    other_cols = [col for col in df.columns if col not in basic_cols]
-
-    # Sort other columns alphabetically
-    other_cols.sort()
-
-    # Reorder DataFrame
-    ordered_cols = basic_cols + other_cols
-    df = df[ordered_cols]
-
-    return df
-
-
 # Debug: List files in directories on startup
 def list_available_files():
     """List available CSV files in each directory for debugging."""
@@ -594,7 +601,7 @@ def list_available_files():
                     f"   📁 {program_type.upper()} files ({len(files)} found):"
                 )
                 for f in sorted(files):
-                    file_size = os.path.getsize(f) / 1024  # Size in KB
+                    file_size = os.path.getsize(f) / 1024
                     logging.info(f"      • {os.path.basename(f)} ({file_size:.1f} KB)")
             else:
                 logging.warning(
