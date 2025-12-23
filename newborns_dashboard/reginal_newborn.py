@@ -7,14 +7,13 @@ from newborns_dashboard.kmc_coverage import compute_kmc_kpi
 
 # IMPORT FROM NEONATAL DASH CO, NOT MATERNAL DASH_CO
 from newborns_dashboard.dash_co_newborn import (
-    normalize_event_dates,
-    normalize_enrollment_dates,
     render_trend_chart_section,
     render_comparison_chart,
     get_text_color,
     apply_simple_filters,
     render_simple_filter_controls,
     render_kpi_tab_navigation,
+    normalize_event_dates,
 )
 
 from utils.kpi_utils import clear_cache
@@ -31,31 +30,21 @@ logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
 
 
-def count_unique_teis_filtered(tei_df, facility_uids, org_unit_column="tei_orgUnit"):
-    """Count unique TEIs from tei_df filtered by facility UIDs"""
-    if tei_df.empty or not facility_uids:
+def count_patients_from_patient_level(df, facility_uids, org_unit_column="orgUnit"):
+    """✅ Count unique patients from patient-level dataframe"""
+    if df.empty:
         return 0
 
-    # Filter TEI dataframe by the selected facility UIDs
-    if org_unit_column in tei_df.columns:
-        filtered_tei = tei_df[tei_df[org_unit_column].isin(facility_uids)]
+    # Filter by facilities if specified
+    if facility_uids and org_unit_column in df.columns:
+        filtered_df = df[df[org_unit_column].isin(facility_uids)]
+    elif facility_uids and "orgUnit" in df.columns:
+        filtered_df = df[df["orgUnit"].isin(facility_uids)]
     else:
-        # Fallback to orgUnit if tei_orgUnit doesn't exist
-        filtered_tei = (
-            tei_df[tei_df["orgUnit"].isin(facility_uids)]
-            if "orgUnit" in tei_df.columns
-            else tei_df
-        )
+        filtered_df = df
 
-    # Count unique TEIs from the filtered dataframe
-    if "tei_id" in filtered_tei.columns:
-        return filtered_tei["tei_id"].nunique()
-    elif "trackedEntityInstance" in filtered_tei.columns:
-        return filtered_tei["trackedEntityInstance"].nunique()
-    elif "tei" in filtered_tei.columns:
-        return filtered_tei["tei"].nunique()
-    else:
-        return len(filtered_tei)
+    # Count unique patients (each row is a patient)
+    return len(filtered_df)
 
 
 def get_earliest_date(df, date_column):
@@ -64,7 +53,9 @@ def get_earliest_date(df, date_column):
         return "N/A"
 
     try:
-        earliest_date = df[date_column].min()
+        # Find the earliest non-null date
+        date_series = pd.to_datetime(df[date_column], errors="coerce")
+        earliest_date = date_series.min()
         if pd.isna(earliest_date):
             return "N/A"
         return earliest_date.strftime("%Y-%m-%d")
@@ -72,25 +63,33 @@ def get_earliest_date(df, date_column):
         return "N/A"
 
 
-def calculate_newborn_indicators(newborn_events_df, facility_uids):
-    """Calculate newborn indicators using appropriate KPI functions"""
-    if newborn_events_df.empty:
+def calculate_newborn_indicators(patient_df, facility_uids):
+    """✅ OPTIMIZED newborn indicators calculation using patient-level data"""
+    if patient_df.empty:
         return {
             "total_admitted": 0,
+            "nmr": "N/A",
             "kmc_coverage_rate": 0.0,
             "kmc_cases": 0,
             "total_lbw": 0,
         }
 
-    # Use compute_kmc_kpi for KMC coverage indicators
-    kmc_data = compute_kmc_kpi(newborn_events_df, facility_uids)
+    # ✅ Use patient-level data directly
+    # Count newborns from patient-level dataframe
+    total_admitted = count_patients_from_patient_level(
+        patient_df, facility_uids, "orgUnit"
+    )
+
+    # Try to compute KMC coverage from patient data
+    kmc_data = compute_kmc_kpi(patient_df, facility_uids)
 
     kmc_coverage_rate = kmc_data.get("kmc_rate", 0.0)
     kmc_cases = kmc_data.get("kmc_count", 0)
     total_lbw = kmc_data.get("total_lbw", 0)
 
     return {
-        "total_admitted": 0,  # Will be set from filtered TEI count
+        "total_admitted": total_admitted,
+        "nmr": "N/A",  # Would need specific computation
         "kmc_coverage_rate": round(kmc_coverage_rate, 2),
         "kmc_cases": kmc_cases,
         "total_lbw": total_lbw,
@@ -106,63 +105,6 @@ def get_location_display_name(selected_facilities, region_name):
     else:
         # Join multiple facilities with comma - EXACTLY LIKE REGIONAL.PY
         return ", ".join(selected_facilities), "Facilities"
-
-
-def filter_data_by_facilities(data_dict, facility_uids):
-    """Filter all dataframes in a data dictionary by facility UIDs - FOLLOWING REGIONAL.PY PATTERN"""
-    if not data_dict or not facility_uids:
-        return data_dict
-
-    filtered_data = {}
-
-    for key, df in data_dict.items():
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            # Filter based on available organization unit columns
-            if "orgUnit" in df.columns:
-                filtered_df = df[df["orgUnit"].isin(facility_uids)].copy()
-            elif "tei_orgUnit" in df.columns:
-                filtered_df = df[df["tei_orgUnit"].isin(facility_uids)].copy()
-            else:
-                filtered_df = df.copy()  # No filtering possible
-            filtered_data[key] = filtered_df
-        else:
-            filtered_data[key] = df
-
-    return filtered_data
-
-
-def update_facility_selection(
-    filter_mode,
-    selected_regions,
-    selected_facilities,
-    facilities_by_region,
-    facility_mapping,
-):
-    """Update facility selection based on current mode and selections"""
-    if filter_mode == "All Facilities":
-        facility_uids = list(facility_mapping.values())
-        display_names = ["All Facilities"]
-        comparison_mode = "facility"
-    elif filter_mode == "By Region" and selected_regions:
-        facility_uids, display_names = [], selected_regions
-        for region in selected_regions:
-            if region in facilities_by_region:
-                for fac_name, fac_uid in facilities_by_region[region]:
-                    facility_uids.append(fac_uid)
-        comparison_mode = "region"
-    elif filter_mode == "By Facility" and selected_facilities:
-        facility_uids = [
-            facility_mapping[f] for f in selected_facilities if f in facility_mapping
-        ]
-        display_names = selected_facilities
-        comparison_mode = "facility"
-    else:
-        # Default fallback - all facilities
-        facility_uids = list(facility_mapping.values())
-        display_names = ["All Facilities"]
-        comparison_mode = "facility"
-
-    return facility_uids, display_names, comparison_mode
 
 
 def convert_patient_to_events_format(patient_df, program_type):
@@ -208,7 +150,6 @@ def convert_patient_to_events_format(patient_df, program_type):
                 continue
 
             # Try to infer program stage and data element from column name
-            # This is a simplified approach - you may need to adjust based on your column naming
             program_stage_name = "Unknown"
             data_element_name = col
 
@@ -257,36 +198,32 @@ def get_patient_data_for_dashboard(newborn_data, use_patient_level=True):
         use_patient_level: Whether to use patient-level data
 
     Returns:
-        Tuple of (tei_df, enrollments_df, events_df)
+        Tuple of (tei_df, enrollments_df, events_df, patient_df)
     """
     tei_df = pd.DataFrame()
     enrollments_df = pd.DataFrame()
     events_df = pd.DataFrame()
+    patient_df = pd.DataFrame()
 
     if newborn_data:
-        # Get TEI and enrollments data
-        tei_df = newborn_data.get("tei", pd.DataFrame())
-        enrollments_df = newborn_data.get("enrollments", pd.DataFrame())
+        # ✅ Always use patient-level data from CSV
+        patient_df = newborn_data.get("patients", pd.DataFrame())
 
-        # Handle events data based on format preference
-        if use_patient_level and "patients" in newborn_data:
-            patient_df = newborn_data.get("patients", pd.DataFrame())
-            if not patient_df.empty:
-                logging.info("✅ Using newborn patient-level data")
-                events_df = convert_patient_to_events_format(patient_df, "newborn")
-                # Store patient data in session state
-                st.session_state.newborn_patient_df = patient_df.copy()
-                st.session_state.newborn_original_events_df = newborn_data.get(
-                    "events", pd.DataFrame()
-                )
-            else:
-                events_df = newborn_data.get("events", pd.DataFrame())
-                st.session_state.newborn_patient_df = pd.DataFrame()
+        # Get empty dataframes for compatibility
+        tei_df = pd.DataFrame()
+        enrollments_df = pd.DataFrame()
+
+        # Create events format from patient data if needed
+        if use_patient_level and not patient_df.empty:
+            logging.info("✅ Using newborn patient-level data from CSV")
+            events_df = convert_patient_to_events_format(patient_df, "newborn")
+            # Store patient data in session state
+            st.session_state.newborn_patient_df = patient_df.copy()
         else:
-            events_df = newborn_data.get("events", pd.DataFrame())
+            events_df = pd.DataFrame()
             st.session_state.newborn_patient_df = pd.DataFrame()
 
-    return tei_df, enrollments_df, events_df
+    return tei_df, enrollments_df, events_df, patient_df
 
 
 def render_newborn_dashboard(
@@ -298,16 +235,16 @@ def render_newborn_dashboard(
     view_mode,
     facility_mapping,
     facility_names,
-    shared_newborn_data=None,  # ← NEW PARAMETER: Accept shared data from regional.py
-    use_transformed_data=True,  # ✅ NEW: Control whether to use patient-level data
+    shared_newborn_data=None,
+    use_patient_level=True,
 ):
-    """Render Newborn Care Form dashboard using shared data to avoid duplicate API calls"""
+    """✅ OPTIMIZED Newborn Dashboard rendering - USING PATIENT-LEVEL DATA FROM CSV"""
 
     # ✅ FIXED: Only run if this is the active tab
     if st.session_state.active_tab != "newborn":
         return
 
-    logging.info("🔄 Newborn dashboard rendering")
+    logging.info("🔄 Newborn dashboard rendering - USING PATIENT-LEVEL DATA FROM CSV")
 
     # Use shared data if provided (from regional.py), otherwise show error
     if shared_newborn_data is not None:
@@ -324,47 +261,38 @@ def render_newborn_dashboard(
         st.error("⚠️ Newborn data not available")
         return
 
-    # ✅ UPDATED: Get data in appropriate format
-    tei_df, enrollments_df, events_df = get_patient_data_for_dashboard(
-        newborn_data, use_patient_level=use_transformed_data
-    )
+    # ✅ GET PATIENT-LEVEL DATA DIRECTLY FROM CSV
+    patient_df = pd.DataFrame()
+    if "patients" in newborn_data:
+        patient_df = newborn_data.get("patients", pd.DataFrame())
+
+    if patient_df.empty:
+        st.error("No patient-level data available")
+        return
+
+    logging.info(f"✅ Using patient-level data from CSV: {len(patient_df)} patients")
+
+    # ✅ DATA IS ALREADY FILTERED BY USER ACCESS - loaded from appropriate CSV file
+    # The data from fetch_program_data_for_user is already filtered for the user's region/facilities
+
+    # ✅ Normalize dates for patient data
+    patient_df = normalize_event_dates(patient_df)
 
     # FILTER DATA BY SELECTED FACILITIES - FOLLOWING REGIONAL.PY PATTERN
     if facility_uids:
-        # Filter each dataframe separately
-        if not tei_df.empty and "tei_orgUnit" in tei_df.columns:
-            tei_df = tei_df[tei_df["tei_orgUnit"].isin(facility_uids)].copy()
+        patient_df = patient_df[patient_df["orgUnit"].isin(facility_uids)].copy()
 
-        if not enrollments_df.empty and "tei_orgUnit" in enrollments_df.columns:
-            enrollments_df = enrollments_df[
-                enrollments_df["tei_orgUnit"].isin(facility_uids)
-            ].copy()
+    # Store patient data in session state
+    st.session_state.newborn_patient_df = patient_df.copy()
 
-        if not events_df.empty and "orgUnit" in events_df.columns:
-            events_df = events_df[events_df["orgUnit"].isin(facility_uids)].copy()
+    # ✅ Add data source indicator
+    st.session_state.data_source = "csv"
 
-    # Normalize dates using common functions
-    enrollments_df = normalize_enrollment_dates(enrollments_df)
-    events_df = normalize_event_dates(events_df)
-
-    # Store in session state for data quality tracking
-    st.session_state.newborn_events_df = events_df.copy()
-    st.session_state.newborn_tei_df = tei_df.copy()
-
-    # ✅ DEBUG: Log what we're storing
-    logging.info(
-        f"✅ STORED newborn data for DQ: {len(events_df)} events, {len(tei_df)} TEIs"
-    )
-    if not events_df.empty and "has_actual_event" in events_df.columns:
-        logging.info(
-            f"✅ Newborn events has_actual_event values: {events_df['has_actual_event'].value_counts().to_dict()}"
-        )
-
-    render_connection_status(events_df, user=user)
+    # Show connection status
+    render_connection_status(patient_df, user=user)
 
     # Calculate total counts
     total_facilities = len(facility_mapping)
-    total_regions = 1  # Regional dashboard only shows one region
 
     # MAIN HEADING for Newborn program - FOLLOWING REGIONAL.PY PATTERN FOR FACILITY DISPLAY
     if selected_facilities == ["All Facilities"]:
@@ -383,12 +311,10 @@ def render_newborn_dashboard(
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
 
-    # ✅ Add data format indicator
-    if use_transformed_data and "patients" in newborn_data:
-        patient_count = len(newborn_data.get("patients", pd.DataFrame()))
-        st.info(f"📊 Using patient-level data format: {patient_count} patients")
+    # ✅ Add data source indicator
+    st.info(f"📁 Data loaded from CSV file: {len(patient_df)} patients")
 
-    # ✅ ADD PROGRESS INDICATOR (same pattern as national newborn)
+    # ✅ ADD PROGRESS INDICATOR (same pattern as maternal)
     progress_container = st.empty()
     with progress_container.container():
         st.markdown("---")
@@ -400,11 +326,11 @@ def render_newborn_dashboard(
             st.markdown(
                 """
             <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
-            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing Data</h4>
+            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing CSV Data</h4>
             <p style="margin: 5px 0; font-size: 14px;">• Computing newborn KPIs and indicators...</p>
             <p style="margin: 5px 0; font-size: 14px;">• Generating charts and visualizations...</p>
             <p style="margin: 5px 0; font-size: 14px;">• Preparing data tables...</p>
-            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 2-4 minutes</p>
+            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 1-2 minutes</p>
             </div>
             """,
                 unsafe_allow_html=True,
@@ -426,21 +352,21 @@ def render_newborn_dashboard(
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
 
-        # Use simple filter controls
+        # ✅ SIMPLE FILTER CONTROLS for patient-level data
         filters = render_simple_filter_controls(
-            events_df, container=col_ctrl, context="regional_newborn"
+            patient_df, container=col_ctrl, context="regional_newborn"
         )
-
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply simple filters
-    filtered_events = apply_simple_filters(events_df, filters, facility_uids)
+    # ✅ Apply filters to patient-level data
+    filtered_patients = apply_simple_filters(patient_df, filters, facility_uids)
 
-    # Store for gauge charts
-    st.session_state["newborn_filtered_events"] = filtered_events.copy()
+    # Store filtered data for later use
+    st.session_state["newborn_filtered_patients"] = filtered_patients.copy()
+    st.session_state["last_applied_selection"] = True
 
-    # Check for empty data - NO KPI CARDS
-    if filtered_events.empty or "event_date" not in filtered_events.columns:
+    # Check for empty data
+    if filtered_patients.empty:
         progress_container.empty()
         st.markdown(
             '<div class="no-data-warning">⚠️ No Newborn Care Data available for selected filters.</div>',
@@ -448,33 +374,33 @@ def render_newborn_dashboard(
         )
         return
 
-    # Get variables from filters for later use
-    bg_color = filters["bg_color"]
-    text_color = get_text_color(bg_color)
-
-    # ---------------- KPI Trend Charts ----------------
-    if filtered_events.empty:
-        progress_container.empty()
-        st.markdown(
-            f'<div class="no-data-warning">⚠️ No Newborn Care Data available for the selected period. Charts are hidden.</div>',
-            unsafe_allow_html=True,
-        )
-        return
-
     # ✅ COMPUTE and STORE newborn KPIs for reuse in summary dashboard
-    kmc_data = compute_kmc_kpi(filtered_events, facility_uids)
+    try:
+        kmc_data = compute_kmc_kpi(filtered_patients, facility_uids)
+    except Exception as e:
+        logging.error(f"Error computing KMC KPI: {e}")
+        kmc_data = {"kmc_rate": 0.0, "kmc_count": 0, "total_lbw": 0}
 
     # ✅ STORE computed newborn KPIs for reuse in summary tab
     newborn_kpis = {
         "kmc_coverage_rate": kmc_data.get("kmc_rate", 0.0),
         "kmc_cases": kmc_data.get("kmc_count", 0),
         "total_lbw": kmc_data.get("total_lbw", 0),
+        "total_admitted": len(filtered_patients),
     }
 
     st.session_state.last_computed_newborn_kpis = newborn_kpis
     st.session_state.last_computed_newborn_timestamp = time.time()
     logging.info("✅ STORED newborn KPIs for summary dashboard reuse")
 
+    # Get variables from filters for later use
+    bg_color = filters["bg_color"]
+    text_color = get_text_color(bg_color)
+
+    # ✅ CLEAR PROGRESS INDICATOR
+    progress_container.empty()
+
+    # ---------------- KPI Trend Charts ----------------
     with col_chart:
         # Use KPI tab navigation FROM NEONATAL
         selected_kpi = render_kpi_tab_navigation()
@@ -486,10 +412,10 @@ def render_newborn_dashboard(
                 unsafe_allow_html=True,
             )
 
-            # Use render_comparison_chart FROM NEONATAL
+            # ✅ PASS PATIENT-LEVEL DATA TO COMPARISON CHART
             render_comparison_chart(
                 kpi_selection=selected_kpi,
-                filtered_events=filtered_events,
+                filtered_events=filtered_patients,  # Pass patient-level data
                 comparison_mode="facility",
                 display_names=facility_names,
                 facility_uids=facility_uids,
@@ -504,24 +430,21 @@ def render_newborn_dashboard(
                 unsafe_allow_html=True,
             )
 
-            # Use render_trend_chart_section FROM NEONATAL
+            # ✅ PASS PATIENT-LEVEL DATA TO TREND CHART
             render_trend_chart_section(
                 selected_kpi,
-                filtered_events,
+                filtered_patients,  # Pass patient-level data
                 facility_uids,
                 facility_names,
                 bg_color,
                 text_color,
             )
 
-    # ✅ CLEAR PROGRESS when done
-    progress_container.empty()
-
 
 def render_newborn_summary(
     user, region_name, selected_facilities, facility_mapping, newborn_data
 ):
-    """Render newborn summary for the summary dashboard tab"""
+    """Render newborn summary for the summary dashboard tab using patient-level data"""
     if not newborn_data:
         return {
             "total_admitted": 0,
@@ -539,41 +462,43 @@ def render_newborn_summary(
             facility_mapping[f] for f in selected_facilities if f in facility_mapping
         ]
 
-    # ✅ UPDATED: Get data in appropriate format based on session state
-    use_patient_level = st.session_state.get("use_transformed_data", True)
-    tei_df, enrollments_df, events_df = get_patient_data_for_dashboard(
-        newborn_data, use_patient_level=use_patient_level
-    )
+    # ✅ Get patient-level data directly
+    patient_df = newborn_data.get("patients", pd.DataFrame())
 
-    # FILTER DATA BY SELECTED FACILITIES
+    if patient_df.empty:
+        return {
+            "total_admitted": 0,
+            "kmc_coverage_rate": 0.0,
+            "kmc_cases": 0,
+            "total_lbw": 0,
+            "start_date": "N/A",
+        }
+
+    # Filter by facilities
     if facility_uids:
-        # Filter each dataframe
-        if not tei_df.empty and "tei_orgUnit" in tei_df.columns:
-            tei_df = tei_df[tei_df["tei_orgUnit"].isin(facility_uids)].copy()
-
-        if not enrollments_df.empty and "tei_orgUnit" in enrollments_df.columns:
-            enrollments_df = enrollments_df[
-                enrollments_df["tei_orgUnit"].isin(facility_uids)
-            ].copy()
-
-        if not events_df.empty and "orgUnit" in events_df.columns:
-            events_df = events_df[events_df["orgUnit"].isin(facility_uids)].copy()
-
-    # Normalize dates
-    enrollments_df = normalize_enrollment_dates(enrollments_df)
+        patient_df = patient_df[patient_df["orgUnit"].isin(facility_uids)].copy()
 
     # Calculate indicators
-    newborn_indicators = calculate_newborn_indicators(events_df, facility_uids)
-
-    # Get filtered TEI count
-    newborn_tei_count = count_unique_teis_filtered(tei_df, facility_uids, "tei_orgUnit")
-    newborn_indicators["total_admitted"] = newborn_tei_count
+    newborn_indicators = calculate_newborn_indicators(patient_df, facility_uids)
 
     # Get earliest date
-    newborn_start_date = get_earliest_date(enrollments_df, "enrollmentDate")
+    newborn_start_date = "N/A"
+    # Look for date columns in patient data
+    if not patient_df.empty:
+        date_cols = [
+            col for col in patient_df.columns if "date" in col.lower() or "Date" in col
+        ]
+        for date_col in date_cols:
+            try:
+                earliest = pd.to_datetime(patient_df[date_col], errors="coerce").min()
+                if not pd.isna(earliest):
+                    newborn_start_date = earliest.strftime("%Y-%m-%d")
+                    break
+            except:
+                pass
 
     return {
-        "total_admitted": newborn_tei_count,
+        "total_admitted": newborn_indicators["total_admitted"],
         "kmc_coverage_rate": newborn_indicators["kmc_coverage_rate"],
         "kmc_cases": newborn_indicators["kmc_cases"],
         "total_lbw": newborn_indicators["total_lbw"],

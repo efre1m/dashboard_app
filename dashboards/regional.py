@@ -67,14 +67,14 @@ def fetch_shared_program_data(user, program_uid):
     if not program_uid:
         return None
     try:
-        # ✅ ALWAYS get patient-level data
+        # ✅ ALWAYS get patient-level data - data_service.py now loads from CSV
         return fetch_program_data_for_user(
             user,
             program_uid,
             transform_to_patient_level=True,  # ✅ Always get transformed data
         )
     except Exception as e:
-        logging.error(f"Error fetching data for program {program_uid}: {e}")
+        logging.error(f"Error loading data for program {program_uid}: {e}")
         return None
 
 
@@ -99,7 +99,7 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
         cache_expired = time_elapsed > 1800  # 30 minutes
         if cache_expired:
             logging.info(
-                f"🔄 Cache expired after {time_elapsed:.0f} seconds, fetching fresh data"
+                f"🔄 Cache expired after {time_elapsed:.0f} seconds, loading fresh data from CSV"
             )
 
     # ✅ Check if user changed (force fresh data)
@@ -115,7 +115,7 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
 
     if need_fresh_data:
         logging.info(
-            "🔄 Fetching FRESH data (cache expired, user changed, or manual refresh)"
+            "🔄 Loading FRESH data from CSV files (cache expired, user changed, or manual refresh)"
         )
 
         # Clear existing cache
@@ -124,7 +124,9 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
         st.session_state[shared_newborn_key] = None
 
         # Load fresh data in parallel - ONLY show spinner if requested
-        spinner_text = "🚀 Loading dashboard data..." if show_spinner else None
+        spinner_text = (
+            "🚀 Loading dashboard data from CSV files..." if show_spinner else None
+        )
 
         def load_data():
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -147,11 +149,11 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                 try:
                     if maternal_future:
                         st.session_state[shared_maternal_key] = maternal_future.result(
-                            timeout=120
+                            timeout=60  # Reduced timeout since we're loading from local CSV
                         )
                     if newborn_future:
                         st.session_state[shared_newborn_key] = newborn_future.result(
-                            timeout=120
+                            timeout=60  # Reduced timeout since we're loading from local CSV
                         )
 
                     st.session_state[shared_loaded_key] = True
@@ -186,10 +188,10 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                     )
 
                     logging.info(
-                        f"✅ FRESH DATA: {maternal_patient_count} maternal patient-level rows"
+                        f"✅ CSV DATA LOADED: {maternal_patient_count} maternal patient-level rows"
                     )
                     logging.info(
-                        f"✅ FRESH DATA: {newborn_patient_count} newborn patient-level rows"
+                        f"✅ CSV DATA LOADED: {newborn_patient_count} newborn patient-level rows"
                     )
 
                     # Reset refresh trigger and user changed flags
@@ -197,7 +199,7 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                     st.session_state.user_changed = False
 
                 except concurrent.futures.TimeoutError:
-                    logging.error("Data loading timeout")
+                    logging.error("Data loading timeout - check CSV files exist")
                     return False
             return True
 
@@ -206,7 +208,9 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
             with st.spinner(spinner_text):
                 success = load_data()
                 if not success:
-                    st.error("Data loading timeout. Please try refreshing.")
+                    st.error(
+                        "Data loading timeout. Please check if CSV files exist in utils/imnid/ directory."
+                    )
         else:
             success = load_data()
 
@@ -225,10 +229,10 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
 
         time_elapsed = current_time - st.session_state[shared_timestamp_key]
         logging.info(
-            f"✅ USING CACHED DATA: {maternal_patient_count} maternal patient-level rows ({time_elapsed:.0f}s old)"
+            f"✅ USING CACHED CSV DATA: {maternal_patient_count} maternal patient-level rows ({time_elapsed:.0f}s old)"
         )
         logging.info(
-            f"✅ USING CACHED DATA: {newborn_patient_count} newborn patient-level rows ({time_elapsed:.0f}s old)"
+            f"✅ USING CACHED CSV DATA: {newborn_patient_count} newborn patient-level rows ({time_elapsed:.0f}s old)"
         )
 
     return {
@@ -252,7 +256,7 @@ def clear_shared_cache(user=None):
         if shared_timestamp_key in st.session_state:
             del st.session_state[shared_timestamp_key]
 
-        logging.info("🧹 Cleared user-specific cache")
+        logging.info("🧹 Cleared user-specific CSV cache")
     else:
         # Clear all user caches
         keys_to_clear = [
@@ -265,7 +269,7 @@ def clear_shared_cache(user=None):
         ]
         for key in keys_to_clear:
             del st.session_state[key]
-        logging.info("🧹 Cleared ALL shared caches")
+        logging.info("🧹 Cleared ALL shared CSV caches")
 
     clear_cache()
 
@@ -328,7 +332,8 @@ def initialize_session_state():
         "facilities": [],
         "facility_mapping": {},
         "program_uid_map": {},
-        # ✅ NEW: Remove transformed data toggle - ALWAYS use patient-level
+        # ✅ Data source indicator
+        "data_source": "csv",  # ✅ NEW: Indicates data is loaded from CSV files
     }
 
     for key, default_value in session_vars.items():
@@ -566,7 +571,7 @@ def render_tab_placeholder(tab_name, icon, tab_key, description):
 def render_summary_dashboard_shared(
     user, region_name, facility_mapping, selected_facilities, shared_data
 ):
-    """✅ OPTIMIZED Summary Dashboard - USING PURE PATIENT-LEVEL DATA"""
+    """✅ OPTIMIZED Summary Dashboard - USING PURE PATIENT-LEVEL DATA FROM CSV"""
 
     # ✅ FIXED: Only run if this is the active tab
     if st.session_state.active_tab != "summary":
@@ -590,7 +595,7 @@ def render_summary_dashboard_shared(
         st.rerun()
 
     logging.info(
-        "🔄 Regional summary dashboard rendering - USING PURE PATIENT-LEVEL DATA"
+        "🔄 Regional summary dashboard rendering - USING PATIENT-LEVEL DATA FROM CSV"
     )
 
     # Get location display name
@@ -626,8 +631,8 @@ def render_summary_dashboard_shared(
         summary_data = st.session_state.summary_kpi_cache[cache_key]["data"]
         logging.info("✅ USING CACHED summary data")
     else:
-        # ✅ Compute summary data USING PURE PATIENT-LEVEL DATA
-        with st.spinner("🔄 Computing summary statistics using patient-level data..."):
+        # ✅ Compute summary data USING PATIENT-LEVEL DATA FROM CSV
+        with st.spinner("🔄 Computing summary statistics from CSV data..."):
             # ✅ Get patient-level data directly
             maternal_patient_df = pd.DataFrame()
             newborn_patient_df = pd.DataFrame()
@@ -635,12 +640,16 @@ def render_summary_dashboard_shared(
             if maternal_data and "patients" in maternal_data:
                 maternal_patient_df = maternal_data.get("patients", pd.DataFrame())
                 if not maternal_patient_df.empty:
-                    logging.info("✅ Using maternal patient-level data for summary")
+                    logging.info(
+                        "✅ Using maternal patient-level data from CSV for summary"
+                    )
 
             if newborn_data and "patients" in newborn_data:
                 newborn_patient_df = newborn_data.get("patients", pd.DataFrame())
                 if not newborn_patient_df.empty:
-                    logging.info("✅ Using newborn patient-level data for summary")
+                    logging.info(
+                        "✅ Using newborn patient-level data from CSV for summary"
+                    )
 
             # ✅ Get patient counts FROM PATIENT-LEVEL DATA
             maternal_patient_count = (
@@ -655,25 +664,47 @@ def render_summary_dashboard_shared(
                 else 0
             )
 
-            # Get enrollment dates for start date display
-            newborn_enrollments_df = normalize_enrollment_dates(
-                newborn_data.get("enrollments", pd.DataFrame())
-                if newborn_data
-                else pd.DataFrame()
-            )
-            maternal_enrollments_df = normalize_enrollment_dates(
-                maternal_data.get("enrollments", pd.DataFrame())
-                if maternal_data
-                else pd.DataFrame()
-            )
+            # Note: Since we're loading from CSV, enrollment dates might not be available
+            # We'll use date columns from patient data instead
 
-            # Get dates
-            newborn_start_date = get_earliest_date(
-                newborn_enrollments_df, "enrollmentDate"
-            )
-            maternal_start_date = get_earliest_date(
-                maternal_enrollments_df, "enrollmentDate"
-            )
+            # Try to find earliest date from patient data
+            maternal_start_date = "N/A"
+            newborn_start_date = "N/A"
+
+            # Look for date columns in patient data
+            if not maternal_patient_df.empty:
+                date_cols = [
+                    col
+                    for col in maternal_patient_df.columns
+                    if "date" in col.lower() or "Date" in col
+                ]
+                for date_col in date_cols:
+                    try:
+                        earliest = pd.to_datetime(
+                            maternal_patient_df[date_col], errors="coerce"
+                        ).min()
+                        if not pd.isna(earliest):
+                            maternal_start_date = earliest.strftime("%Y-%m-%d")
+                            break
+                    except:
+                        pass
+
+            if not newborn_patient_df.empty:
+                date_cols = [
+                    col
+                    for col in newborn_patient_df.columns
+                    if "date" in col.lower() or "Date" in col
+                ]
+                for date_col in date_cols:
+                    try:
+                        earliest = pd.to_datetime(
+                            newborn_patient_df[date_col], errors="coerce"
+                        ).min()
+                        if not pd.isna(earliest):
+                            newborn_start_date = earliest.strftime("%Y-%m-%d")
+                            break
+                    except:
+                        pass
 
             # ✅ Calculate maternal indicators USING PATIENT-LEVEL DATA
             maternal_indicators = (
@@ -764,6 +795,9 @@ def render_summary_dashboard_shared(
     """,
         unsafe_allow_html=True,
     )
+
+    # ✅ Add data source indicator
+    st.info("📁 Data loaded from pre-processed CSV files")
 
     # ✅ DIRECTLY SHOW TABLES WITHOUT SUMMARY BUTTON
     # Show quick statistics at the top
@@ -1073,19 +1107,19 @@ def render_maternal_dashboard_shared(
     facility_mapping=None,
     facility_names=None,
 ):
-    """✅ OPTIMIZED Maternal Dashboard rendering - USING PURE PATIENT-LEVEL DATA"""
+    """✅ OPTIMIZED Maternal Dashboard rendering - USING PATIENT-LEVEL DATA FROM CSV"""
 
     # ✅ FIXED: Only run if this is the active tab
     if st.session_state.active_tab != "maternal":
         return
 
-    logging.info("🔄 Maternal dashboard rendering - USING PURE PATIENT-LEVEL DATA")
+    logging.info("🔄 Maternal dashboard rendering - USING PATIENT-LEVEL DATA FROM CSV")
 
     if not maternal_data:
         st.error("No maternal data available")
         return
 
-    # ✅ DATA IS ALREADY FILTERED BY USER ACCESS - NO NEED FOR ADDITIONAL FILTERING
+    # ✅ DATA IS ALREADY FILTERED BY USER ACCESS - loaded from appropriate CSV file
     # The data from fetch_program_data_for_user is already filtered for the user's region/facilities
 
     # ✅ GET PATIENT-LEVEL DATA DIRECTLY
@@ -1097,30 +1131,16 @@ def render_maternal_dashboard_shared(
         st.error("No patient-level data available")
         return
 
-    logging.info(f"✅ Using pure patient-level data: {len(patient_df)} patients")
+    logging.info(f"✅ Using patient-level data from CSV: {len(patient_df)} patients")
 
     # Store patient data in session state
     st.session_state.maternal_patient_df = patient_df.copy()
 
-    # Get other dataframes
-    tei_df = maternal_data.get("tei", pd.DataFrame())
-    enrollments_df = maternal_data.get("enrollments", pd.DataFrame())
+    # Note: Since we're loading from CSV, we don't have tei_df or enrollments_df
+    # These dataframes will be empty from data_service.py
 
-    # Normalize dates efficiently
-    enrollments_df = normalize_enrollment_dates(enrollments_df)
-
-    # ✅ Store data in session state for data quality tracking
-    st.session_state.maternal_tei_df = tei_df.copy()
-
-    # ✅ DEBUG: Log what we're storing (data is already filtered by user access)
-    logging.info(
-        f"✅ STORED maternal data for DQ: {len(patient_df)} patients, {len(tei_df)} TEIs"
-    )
-    if not patient_df.empty and "orgUnit_name" in patient_df.columns:
-        facilities_in_data = patient_df["orgUnit_name"].unique()
-        logging.info(
-            f"🔍 MATERNAL - Facilities in data (already filtered by user access): {list(facilities_in_data)}"
-        )
+    # ✅ Add data source indicator
+    st.session_state.data_source = "csv"
 
     render_connection_status(patient_df, user=user)
 
@@ -1146,8 +1166,8 @@ def render_maternal_dashboard_shared(
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
 
-    # ✅ Add data format indicator
-    st.info(f"📊 Using pure patient-level data format: {len(patient_df)} patients")
+    # ✅ Add data source indicator
+    st.info(f"📁 Data loaded from CSV file: {len(patient_df)} patients")
 
     # ✅ IMPROVED: Single progress container with better messaging
     progress_container = st.empty()
@@ -1163,11 +1183,11 @@ def render_maternal_dashboard_shared(
             st.markdown(
                 """
             <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
-            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing Data</h4>
+            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing CSV Data</h4>
             <p style="margin: 5px 0; font-size: 14px;">• Computing KPIs and indicators...</p>
             <p style="margin: 5px 0; font-size: 14px;">• Generating charts and visualizations...</p>
             <p style="margin: 5px 0; font-size: 14px;">• Preparing data tables...</p>
-            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 2-4 minutes depending on data size</p>
+            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 1-2 minutes</p>
             </div>
             """,
                 unsafe_allow_html=True,
@@ -1201,7 +1221,7 @@ def render_maternal_dashboard_shared(
             date_columns = [
                 col
                 for col in patient_df.columns
-                if "eventDate_" in col or "event_date_" in col
+                if "eventDate_" in col or "event_date_" in col or "period_" in col
             ]
             if date_columns:
                 # Use the first date column found
@@ -1337,7 +1357,7 @@ def render():
 
     # Show user change notification if needed
     if st.session_state.get("user_changed", False):
-        st.sidebar.info("👤 User changed - loading fresh data...")
+        st.sidebar.info("👤 User changed - loading fresh data from CSV...")
         current_user = st.session_state.get("user", {})
         clear_shared_cache(current_user)
 
@@ -1497,7 +1517,7 @@ def render():
     # ✅ FIX: SINGLE DATA LOADING - Only load once and store in variable
     if not st.session_state.get("data_initialized", False):
         # First time or fresh data needed
-        with st.spinner("🚀 Loading dashboard data..."):
+        with st.spinner("🚀 Loading dashboard data from CSV files..."):
             shared_data = get_shared_program_data_optimized(
                 user, program_uid_map, show_spinner=False
             )
@@ -1505,13 +1525,15 @@ def render():
             st.session_state.cached_shared_data = (
                 shared_data  # ✅ Store in session state
             )
-            logging.info("✅ Initial data loading complete - PURE PATIENT-LEVEL DATA")
+            logging.info("✅ Initial data loading complete - FROM CSV FILES")
     else:
         # Use cached data from session state - no loading needed
         shared_data = st.session_state.cached_shared_data
-        logging.info(
-            "✅ Using cached shared data from session state - PURE PATIENT-LEVEL DATA"
-        )
+        logging.info("✅ Using cached shared data from session state - FROM CSV FILES")
+
+    # ✅ Add data source indicator in sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.info("📁 **Data Source:** Pre-processed CSV files")
 
     # ✅ Add cache status indicator in sidebar
     if st.session_state.get("data_initialized", False):
@@ -1524,9 +1546,11 @@ def render():
             seconds_old = int(time_elapsed % 60)
 
             if minutes_old < 30:
-                st.sidebar.info(f"🔄 Data: {minutes_old}m {seconds_old}s old")
+                st.sidebar.info(f"🔄 Data loaded {minutes_old}m {seconds_old}s ago")
             else:
-                st.sidebar.warning(f"🔄 Data: {minutes_old}m old (will auto-refresh)")
+                st.sidebar.warning(
+                    f"🔄 Data loaded {minutes_old}m ago (will auto-refresh)"
+                )
 
     # ================ COMPACT FACILITY SELECTION ================
     st.sidebar.markdown("---")
@@ -1629,7 +1653,7 @@ def render():
         # Update active tab only if this tab is clicked
         if st.session_state.active_tab != "maternal":
             st.session_state.active_tab = "maternal"
-            logging.info("🔄 Switched to Maternal tab - USING PURE PATIENT-LEVEL DATA")
+            logging.info("🔄 Switched to Maternal tab - USING CSV DATA")
 
         maternal_data = shared_data["maternal"]
         if maternal_data:
@@ -1645,6 +1669,7 @@ def render():
             )
         else:
             st.error("Maternal data not available")
+            st.info("Check if CSV files exist in `utils/imnid/maternal/` directory")
 
     with tab2:
         if st.session_state.active_tab != "newborn":
@@ -1669,6 +1694,7 @@ def render():
             )
         else:
             st.error("Newborn data not available")
+            st.info("Check if CSV files exist in `utils/imnid/newborn/` directory")
 
     with tab3:
         if st.session_state.active_tab != "summary":

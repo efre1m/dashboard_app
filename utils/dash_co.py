@@ -1,16 +1,12 @@
+# utils/dash_co.py
 import pandas as pd
 import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
+
+# REPLACE with this corrected import section:
 from utils.kpi_utils import (
     compute_kpis,
     auto_text_color,
-    compute_fp_acceptance_count,
-    compute_early_pnc_count,
-    compute_csection_count,
-    compute_maternal_death_count,
-    compute_stillbirth_count,
-    compute_birth_counts,
-    compute_total_deliveries,
     prepare_data_for_trend_chart,
     extract_period_columns,
     get_relevant_date_column_for_kpi,
@@ -1222,8 +1218,12 @@ def normalize_event_dates(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy()
 
-    # For transformed data, look for date columns
-    date_cols = [col for col in df.columns if "event_date" in col or "eventDate" in col]
+    # For transformed data, look for date columns - UPDATED COLUMN NAMES
+    date_cols = [
+        col
+        for col in df.columns
+        if "event_date" in col.lower() or "eventdate" in col.lower()
+    ]
 
     for col in date_cols:
         try:
@@ -1248,10 +1248,12 @@ def normalize_event_dates(df: pd.DataFrame) -> pd.DataFrame:
 
 def normalize_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure enrollmentDate is datetime from various formats."""
-    if df.empty or "enrollmentDate" not in df.columns:
+    if df.empty or "enrollment_date" not in df.columns:  # UPDATED: enrollment_date
         return df
     df = df.copy()
-    df["enrollmentDate"] = pd.to_datetime(df["enrollmentDate"], errors="coerce")
+    df["enrollment_date"] = pd.to_datetime(
+        df["enrollment_date"], errors="coerce"
+    )  # UPDATED
     return df
 
 
@@ -1491,13 +1493,13 @@ def compute_kpi_for_period(kpi_selection, period_df, facility_uids):
 
 def get_date_column_from_patient_df(df, kpi_selection):
     """Get the appropriate date column from patient-level data based on KPI"""
-    # Map KPIs to their relevant date columns
+    # Map KPIs to their relevant date columns - UPDATED WITH NEW COLUMN NAMES
     if kpi_selection in [
         "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
         "Early Postnatal Care (PNC) Coverage (%)",
     ]:
         # PNC-related KPIs use PNC date
-        for col in [PNC_DATE_COL, "event_date_Postpartum care"]:
+        for col in [PNC_DATE_COL, "event_date_postpartum_care"]:  # UPDATED
             if col in df.columns:
                 return col
 
@@ -1511,7 +1513,7 @@ def get_date_column_from_patient_df(df, kpi_selection):
         "Institutional Maternal Death Rate (per 100,000 births)",
     ]:
         # Delivery-related KPIs use delivery date
-        for col in [DELIVERY_DATE_COL, "event_date_Delivery summary"]:
+        for col in [DELIVERY_DATE_COL, "event_date_delivery_summary"]:  # UPDATED
             if col in df.columns:
                 return col
 
@@ -1520,21 +1522,21 @@ def get_date_column_from_patient_df(df, kpi_selection):
         for col in [
             PNC_DATE_COL,
             DELIVERY_DATE_COL,
-            "event_date_Postpartum care",
-            "event_date_Delivery summary",
+            "event_date_postpartum_care",  # UPDATED
+            "event_date_delivery_summary",  # UPDATED
         ]:
             if col in df.columns:
                 return col
 
     elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
         # LBW uses birth weight from delivery
-        for col in [DELIVERY_DATE_COL, "event_date_Delivery summary"]:
+        for col in [DELIVERY_DATE_COL, "event_date_delivery_summary"]:  # UPDATED
             if col in df.columns:
                 return col
 
     # Fallback to any event_date column
     for col in df.columns:
-        if "event_date" in col:
+        if "event_date" in col.lower():
             return col
 
     # Last resort

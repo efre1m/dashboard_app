@@ -1,3 +1,4 @@
+# utils/kpi_utils.py
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -5,6 +6,9 @@ import datetime as dt
 import streamlit as st
 import hashlib
 import numpy as np
+import warnings
+
+warnings.filterwarnings("ignore")
 
 # ---------------- Caching Setup ----------------
 if "kpi_cache" not in st.session_state:
@@ -41,9 +45,7 @@ def auto_text_color(bg):
 
 # ---------------- KPI Constants ----------------
 # Patient-level data columns
-FP_ACCEPTANCE_COL = (
-    "Q1p7CxWGUoi_VpBHRE7FlJL"  # FP_Counseling_and_Method_Provided_pp_Postpartum_care
-)
+FP_ACCEPTANCE_COL = "fp_counseling_and_method_provided_pp_postpartum_care"
 FP_ACCEPTED_CODES = {
     "1",
     "2",
@@ -52,39 +54,39 @@ FP_ACCEPTED_CODES = {
     "5",
 }  # Pills, Injectables, Implants, IUCD, Condom
 
-BIRTH_OUTCOME_COL = "wZig9cek3Gv_mdw5BoS50mb"  # Birth_Outcome_Delivery_summary
+# Birth outcome columns
+BIRTH_OUTCOME_COL = "birth_outcome_delivery_summary"
 ALIVE_CODE = "1"
 STILLBIRTH_CODE = "2"
 
-DELIVERY_MODE_COL = (
-    "lphtwP2ViZU_mdw5BoS50mb"  # Mode_of_Delivery_maternal_Delivery_summary
-)
+# Delivery mode columns
+DELIVERY_MODE_COL = "mode_of_delivery_maternal_delivery_summary"
 CSECTION_CODE = "2"
 
-PNC_TIMING_COL = "z7Eb2yFLOBI_VpBHRE7FlJL"  # z7Eb2yFLOBI_VpBHRE7FlJL
+# PNC timing columns
+PNC_TIMING_COL = "date_stay_pp_postpartum_care"
 PNC_EARLY_CODES = {"1", "2"}  # 1 = 24 hrs stay, 2 = 25-48 hrs
 
-CONDITION_OF_DISCHARGE_COL = (
-    "TjQOcW6tm8k_DLVsIxjhwMj"  # Condition_of_Discharge_Discharge_Summary
-)
+# Condition of discharge columns
+CONDITION_OF_DISCHARGE_COL = "condition_of_discharge_discharge_summary"
 DEAD_CODE = "4"
 
-NUMBER_OF_NEWBORNS_COL = (
-    "VzwnSBROvUm_mdw5BoS50mb"  # Number_of_Newborns_Delivery_summary
-)
-OTHER_NUMBER_OF_NEWBORNS_COL = (
-    "tIa0WvbPGLk_mdw5BoS50mb"  # Other_Number_of_Newborns_Delivery_summary
-)
+# Number of newborns columns
+NUMBER_OF_NEWBORNS_COL = "number_of_newborns_delivery_summary"
+OTHER_NUMBER_OF_NEWBORNS_COL = "other_number_of_newborns_delivery_summary"
 
 # Event status columns
-HAS_ACTUAL_DELIVERY_COL = "has_actual_event_mdw5BoS50mb"
-HAS_ACTUAL_PNC_COL = "has_actual_event_VpBHRE7FlJL"
-HAS_ACTUAL_DISCHARGE_COL = "has_actual_event_DLVsIxjhwMj"
+HAS_ACTUAL_DELIVERY_COL = "has_actual_event_delivery_summary"
+HAS_ACTUAL_PNC_COL = "has_actual_event_postpartum_care"
+HAS_ACTUAL_DISCHARGE_COL = "has_actual_event_discharge_summary"
 
 # Event date columns
-DELIVERY_DATE_COL = "event_date_Delivery summary"
-PNC_DATE_COL = "event_date_Postpartum care"
-DISCHARGE_DATE_COL = "event_date_Discharge Summary"
+DELIVERY_DATE_COL = "event_date_delivery_summary"
+PNC_DATE_COL = "event_date_postpartum_care"
+DISCHARGE_DATE_COL = "event_date_discharge_summary"
+
+# Enrollment date column
+ENROLLMENT_DATE_COL = "enrollment_date"
 
 
 def compute_birth_counts(df, facility_uids=None):
@@ -92,261 +94,264 @@ def compute_birth_counts(df, facility_uids=None):
     Compute birth counts accounting for multiple births (twins, triplets, etc.)
     Returns: total_births, live_births, stillbirths
     """
-    # Generate cache key for this specific computation
     cache_key = get_cache_key(df, facility_uids, "birth_counts")
 
-    # ✅ SAFE ACCESS: Check if cache exists first
     if "kpi_cache" not in st.session_state:
         st.session_state.kpi_cache = {}
 
-    # Check if we already computed this
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 
     if df is None or df.empty:
         result = (0, 0, 0)
     else:
-        # Filter by facilities if specified
         if facility_uids:
-            df = df[df["orgUnit"].isin(facility_uids)]
+            df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-        # Filter out placeholder events for calculation
-        # Use delivery event status column
         if HAS_ACTUAL_DELIVERY_COL in df.columns:
-            actual_events_df = df[df[HAS_ACTUAL_DELIVERY_COL] == True]
+            actual_events_df = df[df[HAS_ACTUAL_DELIVERY_COL] == True].copy()
         else:
-            actual_events_df = df
+            actual_events_df = df.copy()
 
-        # Initialize counts
-        total_births = 0
-        live_births = 0
-        stillbirths = 0
+        print(f"DEBUG compute_birth_counts: Processing {len(actual_events_df)} rows")
 
-        # Process each patient (each row is a patient in patient-level format)
-        for idx, row in actual_events_df.iterrows():
-            # Get number of newborns - this should represent the total babies born
-            num_newborns = 0
-            if NUMBER_OF_NEWBORNS_COL in row and pd.notna(row[NUMBER_OF_NEWBORNS_COL]):
-                try:
-                    num_newborns = int(float(row[NUMBER_OF_NEWBORNS_COL]))
-                except (ValueError, TypeError):
-                    num_newborns = 0  # If invalid, count as 0
+        # Initialize columns with zeros if they don't exist
+        if NUMBER_OF_NEWBORNS_COL not in actual_events_df.columns:
+            actual_events_df[NUMBER_OF_NEWBORNS_COL] = 0
+            print(f"DEBUG: Added {NUMBER_OF_NEWBORNS_COL} column with zeros")
 
-            num_other_newborns = 0
-            if OTHER_NUMBER_OF_NEWBORNS_COL in row and pd.notna(
-                row[OTHER_NUMBER_OF_NEWBORNS_COL]
-            ):
-                try:
-                    num_other_newborns = int(float(row[OTHER_NUMBER_OF_NEWBORNS_COL]))
-                except (ValueError, TypeError):
-                    num_other_newborns = 0  # If invalid, count as 0
+        if OTHER_NUMBER_OF_NEWBORNS_COL not in actual_events_df.columns:
+            actual_events_df[OTHER_NUMBER_OF_NEWBORNS_COL] = 0
+            print(f"DEBUG: Added {OTHER_NUMBER_OF_NEWBORNS_COL} column with zeros")
 
-            total_babies = num_newborns + num_other_newborns
+        if BIRTH_OUTCOME_COL not in actual_events_df.columns:
+            actual_events_df[BIRTH_OUTCOME_COL] = np.nan
+            print(f"DEBUG: Added {BIRTH_OUTCOME_COL} column with NaN")
 
-            # If no newborn count records exist, we cannot assume any births occurred
-            # Only count births if we have actual data
-            if total_babies == 0:
-                # Check if we have birth outcome records as evidence of births
-                if BIRTH_OUTCOME_COL in row and pd.notna(row[BIRTH_OUTCOME_COL]):
-                    # For patient-level data, we can't easily count multiple outcomes per patient
-                    # If there's a birth outcome, assume at least 1 birth
-                    total_babies = 1
-                else:
-                    # No evidence of any births for this patient, skip
-                    continue
+        # VECTORIZED: Convert to numeric and fill NaN
+        actual_events_df[NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
+            actual_events_df[NUMBER_OF_NEWBORNS_COL], errors="coerce"
+        ).fillna(0)
 
-            # Get birth outcome - in patient-level, we need to handle multiple outcomes
-            # For simplicity, we'll assume single outcome per patient for now
-            if BIRTH_OUTCOME_COL in row and pd.notna(row[BIRTH_OUTCOME_COL]):
-                outcome = str(row[BIRTH_OUTCOME_COL])
-                if outcome == ALIVE_CODE:
-                    alive_count = total_babies  # Assume all babies are alive
-                    stillbirth_count = 0
-                elif outcome == STILLBIRTH_CODE:
-                    alive_count = 0
-                    stillbirth_count = total_babies  # Assume all are stillbirths
-                else:
-                    # Unknown outcome - can't determine
-                    alive_count = 0
-                    stillbirth_count = 0
-            else:
-                # No outcome recorded
-                alive_count = 0
-                stillbirth_count = 0
+        actual_events_df[OTHER_NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
+            actual_events_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce"
+        ).fillna(0)
 
-            # Update counts
-            live_births += alive_count
-            stillbirths += stillbirth_count
-            total_births += total_babies
+        actual_events_df[BIRTH_OUTCOME_COL] = pd.to_numeric(
+            actual_events_df[BIRTH_OUTCOME_COL], errors="coerce"
+        )
 
-        result = (total_births, live_births, stillbirths)
+        # Calculate total babies per row
+        total_babies_per_row = (
+            actual_events_df[NUMBER_OF_NEWBORNS_COL]
+            + actual_events_df[OTHER_NUMBER_OF_NEWBORNS_COL]
+        )
 
-    # Store result in cache
+        print(f"DEBUG: Total babies per row sum: {total_babies_per_row.sum()}")
+
+        # If total babies is 0 but birth outcome exists, count as 1 baby
+        zero_babies_mask = (total_babies_per_row == 0) & actual_events_df[
+            BIRTH_OUTCOME_COL
+        ].notna()
+        print(f"DEBUG: {zero_babies_mask.sum()} rows with 0 babies but birth outcome")
+        total_babies_per_row = total_babies_per_row.where(~zero_babies_mask, 1)
+
+        # Vectorized outcome calculation
+        outcome_mask = actual_events_df[BIRTH_OUTCOME_COL].notna()
+        print(f"DEBUG: {outcome_mask.sum()} rows with birth outcome")
+
+        alive_mask = (
+            actual_events_df[BIRTH_OUTCOME_COL] == float(ALIVE_CODE)
+        ) & outcome_mask
+        stillbirth_mask = (
+            actual_events_df[BIRTH_OUTCOME_COL] == float(STILLBIRTH_CODE)
+        ) & outcome_mask
+
+        # For alive births: all babies are alive
+        live_births = total_babies_per_row[alive_mask].sum()
+
+        # For stillbirths: all babies are stillbirths
+        stillbirths = total_babies_per_row[stillbirth_mask].sum()
+
+        # Total births
+        total_births = total_babies_per_row[outcome_mask].sum()
+
+        result = (int(total_births), int(live_births), int(stillbirths))
+
     st.session_state.kpi_cache[cache_key] = result
     return result
 
 
 # ---------------- SEPARATE NUMERATOR COMPUTATION FUNCTIONS ----------------
 def compute_fp_acceptance_count(df, facility_uids=None):
-    """Count FP acceptance occurrences (not unique patients)"""
+    """Count FP acceptance occurrences - VECTORIZED"""
     if df is None or df.empty:
         return 0
 
-    # Filter by facilities if specified
     if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-    # Filter out placeholder events for numerator calculation
-    # Use PNC event status column
     if HAS_ACTUAL_PNC_COL in df.columns:
-        actual_events_df = df[df[HAS_ACTUAL_PNC_COL] == True]
+        actual_events_df = df[df[HAS_ACTUAL_PNC_COL] == True].copy()
     else:
-        actual_events_df = df
+        actual_events_df = df.copy()
 
-    # Count occurrences where FP acceptance is recorded with accepted codes
-    fp_count = 0
-    for _, row in actual_events_df.iterrows():
-        if FP_ACCEPTANCE_COL in row and pd.notna(row[FP_ACCEPTANCE_COL]):
-            if str(row[FP_ACCEPTANCE_COL]) in FP_ACCEPTED_CODES:
-                fp_count += 1
+    if FP_ACCEPTANCE_COL not in actual_events_df.columns:
+        return 0
 
-    return fp_count
+    # VECTORIZED: Convert to string, split decimal, check membership
+    fp_series = actual_events_df[FP_ACCEPTANCE_COL].dropna()
+
+    # Handle different data types
+    if fp_series.dtype in [np.float64, np.int64]:
+        # Convert float/int to string without decimal
+        fp_codes = fp_series.astype(int).astype(str)
+    else:
+        # Already string or object, extract integer part
+        fp_codes = fp_series.astype(str).str.split(".").str[0]
+
+    # Check if in accepted codes
+    accepted_mask = fp_codes.isin(FP_ACCEPTED_CODES)
+
+    return int(accepted_mask.sum())
 
 
 def compute_early_pnc_count(df, facility_uids=None):
-    """Count early PNC occurrences (not unique patients)"""
+    """Count early PNC occurrences - VECTORIZED"""
     if df is None or df.empty:
         return 0
 
-    # Filter by facilities if specified
     if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-    # Filter out placeholder events for numerator calculation
     if HAS_ACTUAL_PNC_COL in df.columns:
-        actual_events_df = df[df[HAS_ACTUAL_PNC_COL] == True]
+        actual_events_df = df[df[HAS_ACTUAL_PNC_COL] == True].copy()
     else:
-        actual_events_df = df
+        actual_events_df = df.copy()
 
-    # Count occurrences where early PNC timing is recorded
-    pnc_count = 0
-    for _, row in actual_events_df.iterrows():
-        if PNC_TIMING_COL in row and pd.notna(row[PNC_TIMING_COL]):
-            if str(row[PNC_TIMING_COL]) in PNC_EARLY_CODES:
-                pnc_count += 1
+    if PNC_TIMING_COL not in actual_events_df.columns:
+        return 0
 
-    return pnc_count
+    # VECTORIZED
+    pnc_series = actual_events_df[PNC_TIMING_COL].dropna()
+
+    # Handle different data types
+    if pnc_series.dtype in [np.float64, np.int64]:
+        pnc_codes = pnc_series.astype(int).astype(str)
+    else:
+        pnc_codes = pnc_series.astype(str).str.split(".").str[0]
+
+    # Check if in early codes
+    early_mask = pnc_codes.isin(PNC_EARLY_CODES)
+
+    return int(early_mask.sum())
 
 
 def compute_csection_count(df, facility_uids=None):
-    """Count C-section occurrences (not unique patients)"""
+    """Count C-section occurrences - VECTORIZED"""
     if df is None or df.empty:
         return 0
 
-    # Filter by facilities if specified
     if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-    # Filter out placeholder events for numerator calculation
     if HAS_ACTUAL_DELIVERY_COL in df.columns:
-        actual_events_df = df[df[HAS_ACTUAL_DELIVERY_COL] == True]
+        actual_events_df = df[df[HAS_ACTUAL_DELIVERY_COL] == True].copy()
     else:
-        actual_events_df = df
+        actual_events_df = df.copy()
 
-    # Count occurrences where delivery mode is C-section
-    csection_count = 0
-    for _, row in actual_events_df.iterrows():
-        if DELIVERY_MODE_COL in row and pd.notna(row[DELIVERY_MODE_COL]):
-            if str(row[DELIVERY_MODE_COL]) == CSECTION_CODE:
-                csection_count += 1
+    if DELIVERY_MODE_COL not in actual_events_df.columns:
+        return 0
 
-    return csection_count
+    # VECTORIZED
+    mode_series = actual_events_df[DELIVERY_MODE_COL].dropna()
+
+    # Convert to numeric and compare with CSECTION_CODE
+    mode_numeric = pd.to_numeric(mode_series, errors="coerce")
+    csection_mask = mode_numeric == float(CSECTION_CODE)
+
+    return int(csection_mask.sum())
 
 
 def compute_maternal_death_count(df, facility_uids=None):
-    """Count maternal death occurrences (not unique patients)"""
+    """Count maternal death occurrences - VECTORIZED"""
     if df is None or df.empty:
         return 0
 
-    # Filter by facilities if specified
     if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-    # Filter out placeholder events for calculation
     if HAS_ACTUAL_DISCHARGE_COL in df.columns:
-        actual_events_df = df[df[HAS_ACTUAL_DISCHARGE_COL] == True]
+        actual_events_df = df[df[HAS_ACTUAL_DISCHARGE_COL] == True].copy()
     else:
-        actual_events_df = df
+        actual_events_df = df.copy()
 
-    # Maternal deaths - count occurrences where condition of discharge is DEAD
-    deaths_count = 0
-    for _, row in actual_events_df.iterrows():
-        if CONDITION_OF_DISCHARGE_COL in row and pd.notna(
-            row[CONDITION_OF_DISCHARGE_COL]
-        ):
-            if str(row[CONDITION_OF_DISCHARGE_COL]) == DEAD_CODE:
-                deaths_count += 1
+    if CONDITION_OF_DISCHARGE_COL not in actual_events_df.columns:
+        return 0
 
-    return deaths_count
+    # VECTORIZED
+    condition_series = actual_events_df[CONDITION_OF_DISCHARGE_COL].dropna()
+
+    # Convert to numeric and compare with DEAD_CODE
+    condition_numeric = pd.to_numeric(condition_series, errors="coerce")
+    death_mask = condition_numeric == float(DEAD_CODE)
+
+    return int(death_mask.sum())
 
 
 def compute_stillbirth_count(df, facility_uids=None):
-    """Count stillbirth occurrences (not unique patients)"""
+    """Count stillbirth occurrences - COUNT ROWS ONLY (simpler)"""
     if df is None or df.empty:
         return 0
 
-    # Filter by facilities if specified
     if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-    # Filter out placeholder events for calculation
     if HAS_ACTUAL_DELIVERY_COL in df.columns:
-        actual_events_df = df[df[HAS_ACTUAL_DELIVERY_COL] == True]
+        actual_events_df = df[df[HAS_ACTUAL_DELIVERY_COL] == True].copy()
     else:
-        actual_events_df = df
+        actual_events_df = df.copy()
 
-    # Count occurrences where birth outcome is stillbirth
-    stillbirth_count = 0
-    for _, row in actual_events_df.iterrows():
-        if BIRTH_OUTCOME_COL in row and pd.notna(row[BIRTH_OUTCOME_COL]):
-            if str(row[BIRTH_OUTCOME_COL]) == STILLBIRTH_CODE:
-                stillbirth_count += 1
+    if BIRTH_OUTCOME_COL not in actual_events_df.columns:
+        return 0
 
-    return stillbirth_count
+    # Convert to numeric
+    outcome_series = pd.to_numeric(actual_events_df[BIRTH_OUTCOME_COL], errors="coerce")
+
+    # Count rows with stillbirth outcome
+    stillbirth_mask = outcome_series == float(STILLBIRTH_CODE)
+
+    return int(stillbirth_mask.sum())
 
 
 # ---------------- KPI Computation Functions ----------------
 def compute_total_deliveries(df, facility_uids=None):
-    """Count total deliveries - FIXED to count unique patients regardless of event status"""
-    # Generate cache key for this specific computation
+    """Count total deliveries - VECTORIZED"""
     cache_key = get_cache_key(df, facility_uids, "total_deliveries")
 
-    # ✅ SAFE ACCESS: Check if cache exists first
     if "kpi_cache" not in st.session_state:
         st.session_state.kpi_cache = {}
 
-    # Check if we already computed this
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 
-    # Count unique patients (tei_id) regardless of has_actual_event status
     if df is None or df.empty:
         result = 0
     else:
-        # Filter by facilities if specified
         if facility_uids:
-            df = df[df["orgUnit"].isin(facility_uids)]
+            df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-        # FIX: Count ALL unique patients in the dataset
-        # (Assuming the dataset contains only patients with deliveries)
-        if "tei_id" in df.columns:
-            # Count unique patients (tei_id)
+        if ENROLLMENT_DATE_COL in df.columns:
+            valid_enrollment_df = df[df[ENROLLMENT_DATE_COL].notna()].copy()
+            if "tei_id" in valid_enrollment_df.columns:
+                result = valid_enrollment_df["tei_id"].nunique()
+            else:
+                result = len(valid_enrollment_df)
+        elif "tei_id" in df.columns:
             result = df["tei_id"].nunique()
         else:
-            # If no tei_id column, count all rows as fallback
             result = len(df)
 
-    # Store result in cache
     st.session_state.kpi_cache[cache_key] = result
     return result
 
@@ -354,16 +359,13 @@ def compute_total_deliveries(df, facility_uids=None):
 def compute_fp_acceptance(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "fp_acceptance")
 
-    # ✅ SAFE ACCESS: Check if cache exists first
     if "kpi_cache" not in st.session_state:
         st.session_state.kpi_cache = {}
 
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 
-    # Use the new separate numerator computation
     result = compute_fp_acceptance_count(df, facility_uids)
-
     st.session_state.kpi_cache[cache_key] = result
     return result
 
@@ -372,7 +374,6 @@ def compute_stillbirth_rate(df, facility_uids=None):
     """Compute stillbirth rate per 1000 deliveries"""
     cache_key = get_cache_key(df, facility_uids, "stillbirth_rate")
 
-    # ✅ SAFE ACCESS: Check if cache exists first
     if "kpi_cache" not in st.session_state:
         st.session_state.kpi_cache = {}
 
@@ -382,17 +383,11 @@ def compute_stillbirth_rate(df, facility_uids=None):
     if df is None or df.empty:
         result = (0.0, 0, 0)
     else:
-        # Filter by facilities if specified
         if facility_uids:
-            df = df[df["orgUnit"].isin(facility_uids)]
+            df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-        # Count stillbirths
         stillbirths = compute_stillbirth_count(df, facility_uids)
-
-        # Count total deliveries (consistent denominator for all KPIs)
         total_deliveries = compute_total_deliveries(df, facility_uids)
-
-        # Calculate stillbirth rate per 1000 deliveries
         rate = (stillbirths / total_deliveries * 1000) if total_deliveries > 0 else 0.0
         result = (rate, stillbirths, total_deliveries)
 
@@ -403,7 +398,6 @@ def compute_stillbirth_rate(df, facility_uids=None):
 def compute_early_pnc_coverage(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "pnc_coverage")
 
-    # ✅ SAFE ACCESS: Check if cache exists first
     if "kpi_cache" not in st.session_state:
         st.session_state.kpi_cache = {}
 
@@ -414,14 +408,10 @@ def compute_early_pnc_coverage(df, facility_uids=None):
         result = (0.0, 0, 0)
     else:
         if facility_uids:
-            df = df[df["orgUnit"].isin(facility_uids)]
+            df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-        # Use the separate numerator computation
         early_pnc = compute_early_pnc_count(df, facility_uids)
-
-        # Use the SAME total deliveries logic for consistency
         total_deliveries = compute_total_deliveries(df, facility_uids)
-
         coverage = (early_pnc / total_deliveries * 100) if total_deliveries > 0 else 0.0
         result = (coverage, early_pnc, total_deliveries)
 
@@ -433,7 +423,6 @@ def compute_maternal_death_rate(df, facility_uids=None):
     """Compute maternal death rate per 100,000 deliveries"""
     cache_key = get_cache_key(df, facility_uids, "maternal_death_rate")
 
-    # ✅ SAFE ACCESS: Check if cache exists first
     if "kpi_cache" not in st.session_state:
         st.session_state.kpi_cache = {}
 
@@ -443,17 +432,11 @@ def compute_maternal_death_rate(df, facility_uids=None):
     if df is None or df.empty:
         result = (0.0, 0, 0)
     else:
-        # Filter by facilities if specified
         if facility_uids:
-            df = df[df["orgUnit"].isin(facility_uids)]
+            df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-        # Use the separate numerator computation
         maternal_deaths = compute_maternal_death_count(df, facility_uids)
-
-        # Use total deliveries as denominator (consistent with other KPIs)
         total_deliveries = compute_total_deliveries(df, facility_uids)
-
-        # Compute rate per 100,000 deliveries
         rate = (
             (maternal_deaths / total_deliveries * 100000)
             if total_deliveries > 0
@@ -468,7 +451,6 @@ def compute_maternal_death_rate(df, facility_uids=None):
 def compute_csection_rate(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "csection_rate")
 
-    # ✅ SAFE ACCESS: Check if cache exists first
     if "kpi_cache" not in st.session_state:
         st.session_state.kpi_cache = {}
 
@@ -478,12 +460,8 @@ def compute_csection_rate(df, facility_uids=None):
     if df is None or df.empty:
         result = (0.0, 0, 0)
     else:
-        # Use the separate numerator computation
         csection_deliveries = compute_csection_count(df, facility_uids)
-
-        # Use the SAME total deliveries logic for consistency
         total_deliveries = compute_total_deliveries(df, facility_uids)
-
         rate = (
             (csection_deliveries / total_deliveries * 100)
             if total_deliveries > 0
@@ -499,44 +477,31 @@ def compute_csection_rate(df, facility_uids=None):
 def compute_kpis(df, facility_uids=None):
     cache_key = get_cache_key(df, facility_uids, "main_kpis")
 
-    # ✅ SAFE ACCESS: Check if cache exists first
     if "kpi_cache" not in st.session_state:
         st.session_state.kpi_cache = {}
 
-    # ✅ NOW safe to access
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 
-    # Filter by facilities if specified
     if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-    # Use consistent total deliveries across all KPIs
     total_deliveries = compute_total_deliveries(df, facility_uids)
-
-    # Use updated functions with separate numerator computation
     fp_acceptance = compute_fp_acceptance(df, facility_uids)
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
 
-    # Use updated functions with consistent denominator
     stillbirth_rate, stillbirths, total_deliveries_sb = compute_stillbirth_rate(
         df, facility_uids
     )
-
     pnc_coverage, early_pnc, total_deliveries_pnc = compute_early_pnc_coverage(
         df, facility_uids
     )
-
-    # Use updated maternal death rate function with total deliveries denominator
     maternal_death_rate, maternal_deaths, total_deliveries_md = (
         compute_maternal_death_rate(df, facility_uids)
     )
-
     csection_rate, csection_deliveries, total_deliveries_cs = compute_csection_rate(
         df, facility_uids
     )
-
-    # Also compute birth counts for reference (but not used in main KPIs)
     total_births, live_births, stillbirths_count = compute_birth_counts(
         df, facility_uids
     )
@@ -547,24 +512,22 @@ def compute_kpis(df, facility_uids=None):
         "ippcar": float(ippcar),
         "stillbirth_rate": float(stillbirth_rate),
         "stillbirths": int(stillbirths),
-        "total_deliveries_sb": int(total_deliveries),  # Same as total_deliveries
+        "total_deliveries_sb": int(total_deliveries),
         "pnc_coverage": float(pnc_coverage),
         "early_pnc": int(early_pnc),
-        "total_deliveries_pnc": int(total_deliveries),  # Same as total_deliveries
+        "total_deliveries_pnc": int(total_deliveries),
         "maternal_death_rate": float(maternal_death_rate),
         "maternal_deaths": int(maternal_deaths),
-        "total_deliveries_md": int(total_deliveries),  # Same as total_deliveries
-        "live_births": int(live_births),  # For reference only
-        "total_births": int(total_births),  # For reference only
-        "stillbirths_count": int(stillbirths_count),  # For reference only
+        "total_deliveries_md": int(total_deliveries),
+        "live_births": int(live_births),
+        "total_births": int(total_births),
+        "stillbirths_count": int(stillbirths_count),
         "csection_rate": float(csection_rate),
         "csection_deliveries": int(csection_deliveries),
-        "total_deliveries_cs": int(total_deliveries),  # Same as total_deliveries
+        "total_deliveries_cs": int(total_deliveries),
     }
 
-    # Cache the results
     st.session_state.kpi_cache[cache_key] = result
-
     return result
 
 
@@ -577,16 +540,14 @@ def extract_event_date_for_period(df, event_name):
     if df.empty:
         return pd.DataFrame()
 
-    # Map event names to column names in patient-level data
     event_date_columns = {
-        "Delivery summary": "event_date_Delivery summary",
-        "Postpartum care": "event_date_Postpartum care",
-        "Discharge Summary": "event_date_Discharge Summary",
+        "Delivery summary": "event_date_delivery_summary",
+        "Postpartum care": "event_date_postpartum_care",
+        "Discharge Summary": "event_date_discharge_summary",
     }
 
     result_df = df.copy()
 
-    # Add period columns if they exist
     if event_date_columns.get(event_name) in df.columns:
         result_df["event_date"] = pd.to_datetime(
             result_df[event_date_columns[event_name]], errors="coerce"
@@ -606,14 +567,11 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
     if df is None or df.empty:
         return (0, 0, 0.0)
 
-    # Filter by facilities if specified
     if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        df = df[df["orgUnit"].isin(facility_uids)].copy()
 
-    # Compute KPIs
     kpi_data = compute_kpis(df, facility_uids)
 
-    # Map KPI names to the right values
     kpi_mapping = {
         "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {
             "numerator": "fp_acceptance",
@@ -677,7 +635,6 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
         },
     }
 
-    # Check if we have a mapping for this KPI
     if kpi_name in kpi_mapping:
         mapping = kpi_mapping[kpi_name]
         numerator = kpi_data.get(mapping["numerator"], 0)
@@ -685,7 +642,6 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
         value = kpi_data.get(mapping["value"], 0.0)
         return (numerator, denominator, value)
 
-    # For generic KPI matching
     if "IPPCAR" in kpi_name or "Contraceptive" in kpi_name:
         return (
             kpi_data.get("fp_acceptance", 0),
@@ -717,7 +673,6 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
             kpi_data.get("csection_rate", 0.0),
         )
 
-    # Default fallback
     return (0, 0, 0.0)
 
 
@@ -732,19 +687,15 @@ def aggregate_by_period_with_sorting(
     if df.empty:
         return pd.DataFrame()
 
-    # Group by both display and sort columns to preserve order
     grouped = df.groupby([period_col, period_sort_col])
 
     result_data = []
     for (period_display, period_sort), group_df in grouped:
-        # Compute KPI for this period group
         if kpi_name:
-            # Use the specific KPI computation
             numerator, denominator, value = get_numerator_denominator_for_kpi(
                 group_df, kpi_name, facility_uids
             )
         else:
-            # Use generic KPI function
             kpi_data = kpi_function(group_df, facility_uids)
             if isinstance(kpi_data, dict):
                 value = kpi_data.get("value", 0)
@@ -767,7 +718,6 @@ def aggregate_by_period_with_sorting(
 
     result_df = pd.DataFrame(result_data)
 
-    # Sort by period_sort column
     if not result_df.empty and period_sort_col in result_df.columns:
         result_df = result_df.sort_values(period_sort_col)
 
@@ -802,7 +752,6 @@ def render_trend_chart(
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
-    # Chart type selection
     chart_options = ["Line", "Bar", "Area"]
 
     if "Maternal Death Rate" in title:
@@ -812,7 +761,6 @@ def render_trend_chart(
     elif "C-Section Rate" in title:
         chart_options = ["Line", "Bar"]
 
-    # Add radio button for chart type selection
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
@@ -821,7 +769,6 @@ def render_trend_chart(
         key=f"chart_type_{title}_{str(facility_uids)}",
     ).lower()
 
-    # Prepare hover data
     if "numerator" in df.columns and "denominator" in df.columns:
         df[numerator_name] = df["numerator"]
         df[denominator_name] = df["denominator"]
@@ -831,7 +778,6 @@ def render_trend_chart(
         hover_columns = []
         use_hover_data = False
 
-    # Create chart based on selected type
     try:
         if chart_type == "line":
             fig = px.line(
@@ -927,7 +873,6 @@ def render_trend_chart(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Trend analysis
     if len(df) > 1:
         last_value = df[value_col].iloc[-1]
         prev_value = df[value_col].iloc[-2]
@@ -946,17 +891,13 @@ def render_trend_chart(
             unsafe_allow_html=True,
         )
 
-    # Prepare summary data for CSV download
     summary_df = df.copy().reset_index(drop=True)
 
-    # Ensure we have the right columns
     if "numerator" in summary_df.columns and "denominator" in summary_df.columns:
-        # Create a new DataFrame with properly named columns
         summary_df = summary_df[
             [x_axis_col, "numerator", "denominator", value_col]
         ].copy()
 
-        # Use the passed numerator and denominator names
         summary_df = summary_df.rename(
             columns={
                 "numerator": numerator_name,
@@ -965,11 +906,9 @@ def render_trend_chart(
             }
         )
 
-        # Calculate overall using the actual formula
         total_numerator = summary_df[numerator_name].sum()
         total_denominator = summary_df[denominator_name].sum()
 
-        # Calculate overall based on KPI type
         if "IPPCAR" in title or "Coverage" in title or "C-Section Rate" in title:
             overall_value = (
                 (total_numerator / total_denominator * 100)
@@ -991,7 +930,6 @@ def render_trend_chart(
         else:
             overall_value = summary_df[title].mean() if not summary_df.empty else 0
 
-        # Add overall row
         overall_row = pd.DataFrame(
             {
                 x_axis_col: [f"Overall {title}"],
@@ -1003,50 +941,40 @@ def render_trend_chart(
 
         summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
     else:
-        # If no numerator/denominator columns, just show the value
         summary_df = summary_df[[x_axis_col, value_col]].copy()
         summary_df = summary_df.rename(columns={value_col: title})
         summary_table = summary_df.copy()
 
-        # Calculate overall as average
         overall_value = summary_table[title].mean() if not summary_table.empty else 0
         overall_row = pd.DataFrame(
             {x_axis_col: [f"Overall {title}"], title: [overall_value]}
         )
         summary_table = pd.concat([summary_table, overall_row], ignore_index=True)
 
-    # Add row numbering
     summary_table.insert(0, "No", range(1, len(summary_table) + 1))
 
-    # Only show table if show_table parameter is True
     if show_table:
         st.subheader(f"📋 {title} Summary Table")
 
-        # Create a styled dataframe using st.dataframe
         styled_df = summary_table.copy()
 
-        # Format numeric columns
         if (
             numerator_name in styled_df.columns
             and denominator_name in styled_df.columns
         ):
-            # Apply formatting to the display dataframe
             display_df = styled_df.copy()
 
-            # Apply formatting to numeric columns
             for col in [numerator_name, denominator_name]:
                 if col in display_df.columns:
                     display_df[col] = display_df[col].apply(
                         lambda x: f"{int(x):,}" if pd.notnull(x) else "0"
                     )
 
-            # Format the title (KPI value) column
             if title in display_df.columns:
                 display_df[title] = display_df[title].apply(
                     lambda x: f"{float(x):.2f}" if pd.notnull(x) else "0.00"
                 )
 
-            # Display the dataframe
             st.dataframe(
                 display_df,
                 use_container_width=True,
@@ -1064,7 +992,6 @@ def render_trend_chart(
                 },
             )
         else:
-            # Simple display for value-only tables
             display_df = styled_df.copy()
             if title in display_df.columns:
                 display_df[title] = display_df[title].apply(
@@ -1077,7 +1004,6 @@ def render_trend_chart(
                 hide_index=True,
             )
 
-    # Always show download button for CSV
     csv = summary_table.to_csv(index=False)
     st.download_button(
         label="📥 Download Chart Data as CSV",
@@ -1105,7 +1031,6 @@ def render_facility_comparison_chart(
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    # Check if orgUnit column exists - FIX for KeyError
     if "orgUnit" not in df.columns:
         st.error(
             "❌ Column 'orgUnit' not found in the data. Cannot perform facility comparison."
@@ -1113,21 +1038,15 @@ def render_facility_comparison_chart(
         st.info("The data must contain an 'orgUnit' column with facility IDs.")
         return
 
-    # Create a mapping from facility UID to name
     facility_uid_to_name = dict(zip(facility_uids, facility_names))
-
-    # Filter to only include selected facilities
     filtered_df = df[df["orgUnit"].isin(facility_uids)].copy()
 
     if filtered_df.empty:
         st.info("⚠️ No data available for facility comparison.")
         return
 
-    # Group by period AND facility, then compute the KPI
     comparison_data = []
 
-    # Extract period information from patient-level data
-    # Use delivery date for most KPIs
     if DELIVERY_DATE_COL in filtered_df.columns:
         filtered_df["period_date"] = pd.to_datetime(
             filtered_df[DELIVERY_DATE_COL], errors="coerce"
@@ -1137,7 +1056,6 @@ def render_facility_comparison_chart(
             filtered_df[PNC_DATE_COL], errors="coerce"
         )
     else:
-        # Fallback to any date column
         date_columns = [col for col in filtered_df.columns if "event_date" in col]
         if date_columns:
             filtered_df["period_date"] = pd.to_datetime(
@@ -1146,12 +1064,10 @@ def render_facility_comparison_chart(
         else:
             filtered_df["period_date"] = pd.NaT
 
-    # Create period columns
     filtered_df["period"] = filtered_df["period_date"].dt.strftime("%Y-%m")
     filtered_df["period_display"] = filtered_df["period_date"].dt.strftime("%b-%y")
     filtered_df["period_sort"] = filtered_df["period_date"].dt.strftime("%Y%m")
 
-    # Get all unique periods in chronological order
     all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
     all_periods = all_periods.sort_values("period_sort")
     period_order = all_periods["period_display"].tolist()
@@ -1211,7 +1127,6 @@ def render_facility_comparison_chart(
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Create the chart - FORCE the x-axis order
     fig = px.line(
         comparison_df,
         x="period_display",
@@ -1220,11 +1135,10 @@ def render_facility_comparison_chart(
         markers=True,
         title=f"{title} - Facility Comparison",
         height=500,
-        category_orders={"period_display": period_order},  # This forces the order
-        hover_data=["numerator", "denominator"],  # Add hover data
+        category_orders={"period_display": period_order},
+        hover_data=["numerator", "denominator"],
     )
 
-    # Update hover template to show proper labels
     fig.update_traces(
         line=dict(width=3),
         marker=dict(size=7),
@@ -1272,7 +1186,6 @@ def render_facility_comparison_chart(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Show facility comparison table (summary) with styling only if requested
     if show_table:
         st.subheader("📋 Facility Comparison Summary")
         facility_table_data = []
@@ -1305,7 +1218,6 @@ def render_facility_comparison_chart(
                 denominator = kpi_data["total_deliveries"]
                 kpi_value = kpi_data["csection_rate"]
             else:
-                # fallback
                 numerator = 0
                 denominator = 0
                 kpi_value = 0
@@ -1325,7 +1237,6 @@ def render_facility_comparison_chart(
 
         facility_table_df = pd.DataFrame(facility_table_data)
 
-        # Compute overall aggregated KPI using table columns (robust to labels)
         overall_numerator = facility_table_df[numerator_name].sum()
         overall_denominator = facility_table_df[denominator_name].sum()
 
@@ -1368,10 +1279,8 @@ def render_facility_comparison_chart(
         facility_table_df = pd.concat(
             [facility_table_df, pd.DataFrame([overall_row])], ignore_index=True
         )
-        # Add row numbering
         facility_table_df.insert(0, "No", range(1, len(facility_table_df) + 1))
 
-        # Format & display with CSS styling
         html = """
         <style>
         .facility-comparison-table {
@@ -1436,11 +1345,9 @@ def render_facility_comparison_chart(
 
         st.markdown(html, unsafe_allow_html=True)
 
-    # Always show download button for CSV
     csv_data = []
     for period_display in period_order:
         for facility_uid, facility_name in zip(facility_uids, facility_names):
-            # Find matching data
             matching_rows = comparison_df[
                 (comparison_df["period_display"] == period_display)
                 & (comparison_df["Facility"] == facility_name)
@@ -1487,7 +1394,6 @@ def render_region_comparison_chart(
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    # Check if orgUnit column exists
     if "orgUnit" not in df.columns:
         st.error(
             "❌ Column 'orgUnit' not found in the data. Cannot perform region comparison."
@@ -1495,23 +1401,19 @@ def render_region_comparison_chart(
         st.info("The data must contain an 'orgUnit' column with facility IDs.")
         return
 
-    # Get all facility UIDs for selected regions
     all_facility_uids = []
     for region_name in region_names:
         facility_uids = [uid for _, uid in facilities_by_region.get(region_name, [])]
         all_facility_uids.extend(facility_uids)
 
-    # Filter to only include facilities in selected regions
     filtered_df = df[df["orgUnit"].isin(all_facility_uids)].copy()
 
     if filtered_df.empty:
         st.info("⚠️ No data available for region comparison.")
         return
 
-    # Group by period AND region, then compute the KPI
     comparison_data = []
 
-    # Extract period information from patient-level data
     if DELIVERY_DATE_COL in filtered_df.columns:
         filtered_df["period_date"] = pd.to_datetime(
             filtered_df[DELIVERY_DATE_COL], errors="coerce"
@@ -1521,7 +1423,6 @@ def render_region_comparison_chart(
             filtered_df[PNC_DATE_COL], errors="coerce"
         )
     else:
-        # Fallback to any date column
         date_columns = [col for col in filtered_df.columns if "event_date" in col]
         if date_columns:
             filtered_df["period_date"] = pd.to_datetime(
@@ -1530,12 +1431,10 @@ def render_region_comparison_chart(
         else:
             filtered_df["period_date"] = pd.NaT
 
-    # Create period columns
     filtered_df["period"] = filtered_df["period_date"].dt.strftime("%Y-%m")
     filtered_df["period_display"] = filtered_df["period_date"].dt.strftime("%b-%y")
     filtered_df["period_sort"] = filtered_df["period_date"].dt.strftime("%Y%m")
 
-    # Get all unique periods in chronological order
     all_periods = filtered_df[["period_display", "period_sort"]].drop_duplicates()
     all_periods = all_periods.sort_values("period_sort")
     period_order = all_periods["period_display"].tolist()
@@ -1549,7 +1448,6 @@ def render_region_comparison_chart(
         period_df = filtered_df[filtered_df["period_display"] == period_display]
 
         for region_name in region_names:
-            # Get all facility UIDs for this region
             region_facility_uids = [
                 uid for _, uid in facilities_by_region.get(region_name, [])
             ]
@@ -1600,7 +1498,6 @@ def render_region_comparison_chart(
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Create the chart - FORCE the x-axis order
     fig = px.line(
         comparison_df,
         x="period_display",
@@ -1609,11 +1506,10 @@ def render_region_comparison_chart(
         markers=True,
         title=f"{title} - Region Comparison",
         height=500,
-        category_orders={"period_display": period_order},  # This forces the order
-        hover_data=["numerator", "denominator"],  # Add hover data
+        category_orders={"period_display": period_order},
+        hover_data=["numerator", "denominator"],
     )
 
-    # Update hover template to show proper labels
     fig.update_traces(
         line=dict(width=3),
         marker=dict(size=7),
@@ -1661,7 +1557,6 @@ def render_region_comparison_chart(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Region comparison summary table only if requested
     if show_table:
         st.subheader("📋 Region Comparison Summary")
         region_table_data = []
@@ -1714,7 +1609,6 @@ def render_region_comparison_chart(
 
         region_table_df = pd.DataFrame(region_table_data)
 
-        # Compute overall
         overall_numerator = region_table_df[numerator_name].sum()
         overall_denominator = region_table_df[denominator_name].sum()
 
@@ -1759,7 +1653,6 @@ def render_region_comparison_chart(
         )
         region_table_df.insert(0, "No", range(1, len(region_table_df) + 1))
 
-        # Format with CSS styling
         html = """
         <style>
         .region-comparison-table {
@@ -1824,11 +1717,9 @@ def render_region_comparison_chart(
 
         st.markdown(html, unsafe_allow_html=True)
 
-    # Always show download button for CSV
     csv_data = []
     for period_display in period_order:
         for region_name in region_names:
-            # Find matching data
             matching_rows = comparison_df[
                 (comparison_df["period_display"] == period_display)
                 & (comparison_df["Region"] == region_name)
@@ -1860,16 +1751,52 @@ def render_region_comparison_chart(
 # ---------------- Additional Helper Functions ----------------
 def extract_period_columns(df, date_column):
     """
-    Extract period columns from a date column in patient-level data
+    SIMPLE VERSION: Assumes dates are already valid, just need proper grouping
     """
     if df.empty or date_column not in df.columns:
         return df
 
     result_df = df.copy()
-    result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
+
+    print(f"🔍 Processing '{date_column}' column...")
+    print(f"  - First 5 values: {result_df[date_column].head().tolist()}")
+    print(f"  - Data type: {result_df[date_column].dtype}")
+
+    # Convert to datetime if not already
+    if not pd.api.types.is_datetime64_any_dtype(result_df[date_column]):
+        print("  - Converting to datetime...")
+        result_df["event_date"] = pd.to_datetime(
+            result_df[date_column], errors="coerce"
+        )
+    else:
+        print("  - Already datetime, using as-is")
+        result_df["event_date"] = result_df[date_column]
+
+    # Check how many parsed successfully
+    valid_count = result_df["event_date"].notna().sum()
+    print(f"  - Valid dates: {valid_count}/{len(result_df)}")
+
+    if valid_count > 0:
+        # Show what the dates actually are
+        sample = result_df["event_date"].head(5)
+        print(f"  - Sample parsed dates:")
+        for i, date in enumerate(sample):
+            if pd.notna(date):
+                print(f"    {i}: {date} -> {date.strftime('%Y-%m-%d')}")
+
+    # Create period columns
     result_df["period"] = result_df["event_date"].dt.strftime("%Y-%m")
     result_df["period_display"] = result_df["event_date"].dt.strftime("%b-%y")
     result_df["period_sort"] = result_df["event_date"].dt.strftime("%Y%m")
+
+    # Debug: Show what periods we created
+    if valid_count > 0:
+        unique_periods = result_df["period_display"].dropna().unique()
+        print(f"  - Unique periods found: {sorted(unique_periods)}")
+
+        # Count rows per period
+        period_counts = result_df["period_display"].value_counts()
+        print(f"  - Rows per period: {dict(period_counts)}")
 
     return result_df
 
@@ -1899,17 +1826,12 @@ def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
     if df.empty:
         return pd.DataFrame()
 
-    # Get relevant date column for the KPI
     date_column = get_relevant_date_column_for_kpi(kpi_name)
-
-    # Extract period columns
     result_df = extract_period_columns(df, date_column)
 
-    # Filter by facilities if specified
     if facility_uids:
         result_df = result_df[result_df["orgUnit"].isin(facility_uids)]
 
-    # Remove rows without valid dates
     result_df = result_df[result_df["event_date"].notna()]
 
     return result_df
