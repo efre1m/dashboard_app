@@ -5,43 +5,224 @@ import logging
 import os
 import glob
 import re
-from utils.queries import (
-    get_all_programs,
-    get_orgunit_uids_for_user,
-    get_program_by_uid,
-    get_facilities_for_user,
-)
 
-# ========== NEW FUNCTION: Facility Name Normalization ==========
+# ========== IMPROVED FACILITY NAME NORMALIZATION ==========
 
 
 def normalize_facility_name(facility_name: str) -> str:
     """
-    Normalize facility names to handle spacing differences
+    AGGRESSIVE normalization: Treat facilities as same if they mean the same thing
+    regardless of spacing, capitalization, minor typos, or word order variations.
 
-    Example:
-    - 'Ambo  General Hospital' -> 'Ambo General Hospital'
-    - 'Ambo   university   Hospital' -> 'Ambo university Hospital'
+    Philosophy: "Abiadi General Hospital" == "abiadi general hospital" == "Abiadi   General   Hospital"
+                == "General Hospital Abiadi" == "Abiadi GH"
+
+    Returns a CONSISTENT normalized string for matching.
     """
-    if not facility_name:
+    if not facility_name or pd.isna(facility_name):
         return ""
 
-    # Remove extra spaces (multiple spaces to single space)
-    normalized = " ".join(facility_name.split())
+    # Convert to string and basic cleanup
+    name = str(facility_name).strip()
 
-    return normalized.strip()
+    # 1. Convert to lowercase for case-insensitive comparison
+    name = name.lower()
+
+    # 2. Remove ALL special characters except letters, numbers, and spaces
+    name = re.sub(r"[^\w\s]", "", name)
+
+    # 3. Fix common typos and abbreviations
+    typo_corrections = {
+        "prrimary": "primary",
+        "generl": "general",
+        "hospial": "hospital",
+        "hosp": "hospital",
+        "referal": "referral",
+        "specilized": "specialized",
+        "medcal": "medical",
+        "centr": "center",
+        "clinc": "clinic",
+        "despensary": "dispensary",
+        "despensery": "dispensary",
+        "univeristy": "university",
+        "uni": "university",
+        "govt": "government",
+        "gov": "government",
+        "moh": "ministry of health",
+        "phc": "primary health center",
+        "gh": "general hospital",
+        "rh": "referral hospital",
+        "sh": "specialized hospital",
+        "ph": "primary hospital",
+        "th": "teaching hospital",
+        "uh": "university hospital",
+        "mch": "maternal child health",
+    }
+
+    for typo, correction in typo_corrections.items():
+        name = re.sub(r"\b" + typo + r"\b", correction, name)
+
+    # 4. Standardize common facility type names (remove variations)
+    facility_type_standardization = {
+        "health center": "hc",
+        "primary hospital": "ph",
+        "general hospital": "gh",
+        "referral hospital": "rh",
+        "specialized hospital": "sh",
+        "teaching hospital": "th",
+        "university hospital": "uh",
+        "medical center": "mc",
+        "medical college": "mc",
+        "clinic": "cl",
+        "dispensary": "dp",
+        "health post": "hp",
+        "maternity": "mat",
+        "child health": "ch",
+        "maternal child health": "mch",
+        "regional hospital": "rh",
+        "zonal hospital": "zh",
+        "district hospital": "dh",
+        "health facility": "hf",
+    }
+
+    for old_type, new_type in facility_type_standardization.items():
+        name = re.sub(r"\b" + old_type + r"\b", new_type, name)
+
+    # 5. Remove common generic words that don't help identification
+    generic_words = [
+        "the",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "of",
+        "to",
+        "a",
+        "an",
+        "st",
+        "saint",
+        "dr",
+        "doctor",
+        "prof",
+        "professor",
+        "hospital",
+        "center",
+        "centre",
+        "clinic",
+        "facility",
+        "health",
+        "medical",
+        "care",
+        "unit",
+        "department",
+        "ward",
+        "building",
+    ]
+
+    for word in generic_words:
+        name = re.sub(r"\b" + word + r"\b", "", name)
+
+    # 6. Extract only the UNIQUE IDENTIFYING part (facility name without type)
+    # Keep only alphanumeric characters
+    name = re.sub(r"[^a-z0-9]", "", name)
+
+    # 7. Sort letters alphabetically to handle word order variations
+    # This makes "Abiadi General Hospital" and "General Hospital Abiadi" match
+    name = "".join(sorted(name))
+
+    # 8. Return a consistent short code
+    # If result is empty (shouldn't happen), return original hashed
+    if not name:
+        import hashlib
+
+        return hashlib.md5(str(facility_name).encode()).hexdigest()[:8]
+
+    return name
 
 
 def normalize_all_facility_names(
     df: pd.DataFrame, facility_column: str = "orgUnit_name"
 ) -> pd.DataFrame:
-    """Normalize facility names in dataframe"""
+    """Normalize facility names in dataframe with AGGRESSIVE matching"""
     if df.empty or facility_column not in df.columns:
         return df
 
     df = df.copy()
-    df[facility_column] = df[facility_column].apply(normalize_facility_name)
+
+    print(f"\n🔧 NORMALIZING FACILITY NAMES (AGGRESSIVE MODE):")
+    print(f"   Column: {facility_column}")
+    print(f"   Unique names before: {df[facility_column].nunique()}")
+
+    # Show examples of normalization
+    sample_data = df[facility_column].dropna().unique()[:10]
+    for original in sample_data:
+        normalized = normalize_facility_name(original)
+        print(f"     '{original}' → '{normalized}'")
+
+    # Apply normalization
+    df[facility_column + "_normalized"] = df[facility_column].apply(
+        normalize_facility_name
+    )
+
+    print(
+        f"   Unique normalized names: {df[facility_column + '_normalized'].nunique()}"
+    )
+
     return df
+
+
+def debug_facility_matching(user_facilities: List[str], csv_facilities: List[str]):
+    """Debug function to show facility matching process"""
+    print(f"\n{'='*100}")
+    print(f"🔍 DEBUG: FACILITY MATCHING PROCESS")
+    print(f"{'='*100}")
+
+    print(f"\n📊 DATABASE FACILITIES ({len(user_facilities)}):")
+    for i, fac in enumerate(user_facilities[:20]):
+        normalized = normalize_facility_name(fac)
+        print(f"   {i+1:2d}. '{fac}' → '{normalized}'")
+
+    print(f"\n📊 CSV FACILITIES ({len(csv_facilities)}):")
+    for i, fac in enumerate(csv_facilities[:20]):
+        normalized = normalize_facility_name(fac)
+        print(f"   {i+1:2d}. '{fac}' → '{normalized}'")
+
+    # Find matches
+    print(f"\n🔍 FINDING MATCHES:")
+
+    # Create normalized sets
+    db_normalized = {normalize_facility_name(f): f for f in user_facilities}
+    csv_normalized = {normalize_facility_name(f): f for f in csv_facilities}
+
+    matches = set(db_normalized.keys()) & set(csv_normalized.keys())
+    db_only = set(db_normalized.keys()) - set(csv_normalized.keys())
+    csv_only = set(csv_normalized.keys()) - set(db_normalized.keys())
+
+    print(f"   ✅ MATCHES FOUND: {len(matches)}")
+    for i, norm_key in enumerate(list(matches)[:10]):
+        db_original = db_normalized.get(norm_key, "Unknown")
+        csv_original = csv_normalized.get(norm_key, "Unknown")
+        print(f"     {i+1}. DB: '{db_original}' ↔ CSV: '{csv_original}'")
+
+    if db_only:
+        print(f"\n   ❌ IN DB ONLY: {len(db_only)}")
+        for i, norm_key in enumerate(list(db_only)[:10]):
+            original = db_normalized.get(norm_key, "Unknown")
+            print(f"     {i+1}. '{original}' → '{norm_key}'")
+
+    if csv_only:
+        print(f"\n   ❓ IN CSV ONLY: {len(csv_only)}")
+        for i, norm_key in enumerate(list(csv_only)[:10]):
+            original = csv_normalized.get(norm_key, "Unknown")
+            print(f"     {i+1}. '{original}' → '{norm_key}'")
+
+    print(f"\n{'='*100}")
+    print(f"🔍 DEBUG: END FACILITY MATCHING")
+    print(f"{'='*100}\n")
 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -216,17 +397,14 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
     return all_files[0]
 
 
+# Replace ONLY the filter_patient_data_by_user function in your current data_service.py
 def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
     """
-    Filter patient-level DataFrame based on user's access level.
-    FIXED: Normalizes facility names before filtering.
+    ✅ FIXED: Filter by orgUnit UID instead of facility names.
+    Uses 'orgUnit' column which has exact DHIS2 UIDs.
     """
     if df.empty:
         return df
-
-    # ✅ NORMALIZE facility names first
-    if "orgUnit_name" in df.columns:
-        df = normalize_all_facility_names(df, "orgUnit_name")
 
     user_role = user.get("role", "")
 
@@ -240,66 +418,69 @@ def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
             logging.warning("Regional user has no region_name - cannot filter data")
             return pd.DataFrame()
 
-        user_facilities = get_facilities_for_user(user)
-        # ✅ NORMALIZE facility names from database too
-        facility_names_in_region = [
-            normalize_facility_name(facility[0]) for facility in user_facilities
-        ]
+        # Get user facilities with UIDs
+        from utils.queries import get_facilities_for_user
+
+        user_facilities_raw = get_facilities_for_user(user)
+
+        # Extract UIDs
+        user_facility_uids = []
+        for facility in user_facilities_raw:
+            if isinstance(facility, (list, tuple)) and len(facility) >= 2:
+                user_facility_uids.append(facility[1])  # UID is second element
 
         logging.info(
-            f"🔍 Looking for facilities in region '{region_name}': {facility_names_in_region}"
+            f"🔍 Looking for facilities in region '{region_name}': {len(user_facility_uids)} facilities"
         )
 
-        if "orgUnit_name" in df.columns and facility_names_in_region:
-            # Find which facilities actually exist in the data
-            facilities_in_data = df["orgUnit_name"].unique()
-            logging.info(f"📊 Facilities in data: {list(facilities_in_data)}")
-
-            # Filter by normalized names
-            filtered_df = df[df["orgUnit_name"].isin(facility_names_in_region)]
-
-            # Log what was found
-            found_facilities = filtered_df["orgUnit_name"].unique()
-            missing_facilities = set(facility_names_in_region) - set(found_facilities)
-
-            if missing_facilities:
-                logging.warning(
-                    f"⚠️ Some facilities not found in data: {missing_facilities}"
-                )
+        if "orgUnit" in df.columns and user_facility_uids:
+            # Filter by UID
+            filtered_df = df[df["orgUnit"].isin(user_facility_uids)]
 
             logging.info(
-                f"🏞️ Regional user '{region_name}' - filtered to {len(filtered_df)} patients from {len(found_facilities)}/{len(facility_names_in_region)} facilities"
+                f"🏞️ Regional user '{region_name}' - filtered to {len(filtered_df)} patients"
             )
             return filtered_df
         else:
-            logging.warning(
-                "DataFrame has no orgUnit_name column - cannot filter by facility name"
-            )
-            return df
-
-    elif user_role == "facility":
-        facility_name = user.get("facility_name", "")
-        if not facility_name:
-            logging.warning("Facility user has no facility_name - cannot filter data")
+            if "orgUnit" not in df.columns:
+                logging.warning(
+                    "DataFrame has no orgUnit column - cannot filter by UID"
+                )
             return pd.DataFrame()
 
-        # ✅ NORMALIZE the user's facility name
-        normalized_facility_name = normalize_facility_name(facility_name)
+    elif user_role == "facility":
+        # For facility users, we need to find their facility UID
+        from utils.queries import get_facilities_for_user
 
-        if "orgUnit_name" in df.columns:
-            facilities_in_data = df["orgUnit_name"].unique()
-            logging.info(f"🔍 Looking for facility: '{normalized_facility_name}'")
-            logging.info(f"📊 Facilities in data: {list(facilities_in_data)}")
+        user_facilities_raw = get_facilities_for_user(user)
 
-            filtered_df = df[df["orgUnit_name"] == normalized_facility_name]
+        user_facility_uid = None
+        if (
+            user_facilities_raw
+            and isinstance(user_facilities_raw[0], (list, tuple))
+            and len(user_facilities_raw[0]) >= 2
+        ):
+            user_facility_uid = user_facilities_raw[0][1]  # UID is second element
 
-            logging.info(
-                f"🏥 Facility user '{facility_name}' (normalized: '{normalized_facility_name}') - filtered to {len(filtered_df)} patients"
-            )
-            return filtered_df
+        if not user_facility_uid:
+            logging.warning("Facility user has no facility UID - cannot filter data")
+            return pd.DataFrame()
+
+        if "orgUnit" in df.columns:
+            # Filter by single UID
+            filtered_df = df[df["orgUnit"] == user_facility_uid]
+
+            if not filtered_df.empty:
+                logging.info(f"🏥 Facility user - found {len(filtered_df)} patients")
+                return filtered_df
+            else:
+                logging.warning(
+                    f"⚠️ No data found for facility UID: {user_facility_uid}"
+                )
+                return pd.DataFrame()
         else:
-            logging.warning("DataFrame has no orgUnit_name column - cannot filter")
-            return df
+            logging.warning("DataFrame has no orgUnit column - cannot filter")
+            return pd.DataFrame()
 
     else:
         logging.warning(f"Unknown user role '{user_role}' - returning no data")
@@ -380,6 +561,8 @@ def fetch_program_data_for_user(
 
     ✅ FIXED: No transformation needed - we work directly with patient data
     """
+    from utils.queries import get_program_by_uid
+
     program_info = get_program_by_uid(program_uid) if program_uid else {}
     program_name = program_info.get("program_name", "Unknown Program")
 
@@ -493,6 +676,8 @@ def list_available_odk_forms() -> List[dict]:
 
 def get_newborn_program_uid() -> str:
     """Get the newborn program UID from the database."""
+    from utils.queries import get_all_programs
+
     programs = get_all_programs()
     for program in programs:
         if program.get("program_name") == "Newborn Care Form":

@@ -362,7 +362,7 @@ initialize_session_state()
 
 
 def count_unique_patients(patient_df, facility_uids, org_unit_column="orgUnit"):
-    """✅ Count unique patients from patient-level dataframe"""
+    """✅ Count unique patients from patient-level dataframe using UIDs"""
     if patient_df.empty:
         return 0
 
@@ -374,7 +374,11 @@ def count_unique_patients(patient_df, facility_uids, org_unit_column="orgUnit"):
 
     # Count unique TEI IDs
     if "tei_id" in filtered_patients.columns:
-        return filtered_patients["tei_id"].nunique()
+        count = filtered_patients["tei_id"].nunique()
+        print(f"\n🔍 COUNT_UNIQUE_PATIENTS:")
+        print(f"   Total patients: {len(filtered_patients)}")
+        print(f"   Unique TEI IDs: {count}")
+        return count
     else:
         return 0
 
@@ -561,7 +565,24 @@ def get_location_display_name(selected_facilities, region_name):
 def filter_patient_data_by_facilities(patient_df, facility_uids):
     """Filter patient dataframe by facility UIDs"""
     if not patient_df.empty and facility_uids and "orgUnit" in patient_df.columns:
-        return patient_df[patient_df["orgUnit"].isin(facility_uids)]
+        print(f"\n🔍 FILTER_PATIENT_DATA_BY_FACILITIES:")
+        print(f"   Before filter: {len(patient_df)} patients")
+        print(f"   Filtering by {len(facility_uids)} UIDs")
+
+        filtered_df = patient_df[patient_df["orgUnit"].isin(facility_uids)]
+
+        print(f"   After filter: {len(filtered_df)} patients")
+        print(f"   Removed: {len(patient_df) - len(filtered_df)} patients")
+
+        # Show breakdown
+        if "orgUnit_name" in filtered_df.columns:
+            for uid in facility_uids:
+                uid_data = filtered_df[filtered_df["orgUnit"] == uid]
+                if not uid_data.empty:
+                    facility_name = uid_data["orgUnit_name"].iloc[0]
+                    print(f"   UID {uid} ({facility_name}): {len(uid_data)} patients")
+
+        return filtered_df
     return patient_df
 
 
@@ -1130,19 +1151,16 @@ def render_maternal_dashboard_shared(
     maternal_data,
     region_name,
     selected_facilities,
-    facility_uids,
+    facility_uids,  # ✅ This should be UIDs
     view_mode="Normal Trend",
     facility_mapping=None,
     facility_names=None,
 ):
-    """Optimized Maternal Dashboard rendering using patient-level data"""
+    """Optimized Maternal Dashboard rendering using patient-level data with UID filtering"""
 
     print(f"\n{'='*80}")
     print(f"🚨 START render_maternal_dashboard_shared - DEBUG")
     print(f"{'='*80}")
-    print(f"Selected facilities: {selected_facilities}")
-    print(f"Facility UIDs: {facility_uids}")
-    print(f"View mode: {view_mode}")
 
     # ✅ FIXED: Only run if this is the active tab
     if st.session_state.active_tab != "maternal":
@@ -1157,11 +1175,77 @@ def render_maternal_dashboard_shared(
     # ✅ GET PATIENT-LEVEL DATA
     patients_df = maternal_data.get("patients", pd.DataFrame())
 
+    # ✅ DEBUG: Check data structure
+    print(f"\n📊 DATA STRUCTURE CHECK:")
+    print(f"  Total patients in data: {len(patients_df)}")
+    print(
+        f"  Columns containing 'org': {[col for col in patients_df.columns if 'org' in col.lower()]}"
+    )
+
+    if "orgUnit" in patients_df.columns:
+        print(f"  orgUnit column found (UIDs)")
+        print(f"  Sample UIDs: {patients_df['orgUnit'].unique()[:5]}")
+        print(f"  Unique orgUnits: {patients_df['orgUnit'].nunique()}")
+    else:
+        print(f"❌ ERROR: 'orgUnit' column not found in data!")
+        st.error("Missing 'orgUnit' column in data. Cannot filter by facility UIDs.")
+        return
+
+    if "orgUnit_name" in patients_df.columns:
+        print(f"  orgUnit_name column found (Names)")
+        print(f"  Sample names: {patients_df['orgUnit_name'].unique()[:5]}")
+
+    # ✅ VALIDATE UIDs are being passed correctly
+    print(f"\n🔧 PARAMETER VALIDATION:")
+    print(f"  Selected facilities (names): {selected_facilities}")
+    print(f"  Facility UIDs received: {facility_uids}")
+    print(f"  Facility names: {facility_names}")
+    print(f"  View mode: {view_mode}")
+
     # Use patient data directly
     working_df = patients_df.copy()
 
+    # ✅ CRITICAL FIX: Filter by UID EARLY
+    if facility_uids and "orgUnit" in working_df.columns:
+        before_filter = len(working_df)
+        working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
+        after_filter = len(working_df)
+        print(f"\n🔍 FILTERING BY UIDs:")
+        print(f"  Before UID filter: {before_filter} patients")
+        print(f"  After UID filter: {after_filter} patients")
+        print(f"  Removed: {before_filter - after_filter} patients")
+
+        # Check which UIDs actually exist in data
+        found_uids = [
+            uid for uid in facility_uids if uid in working_df["orgUnit"].values
+        ]
+        missing_uids = [
+            uid for uid in facility_uids if uid not in working_df["orgUnit"].values
+        ]
+        print(f"  UIDs found in data: {len(found_uids)}/{len(facility_uids)}")
+        if missing_uids:
+            print(f"  UIDs NOT in data: {missing_uids}")
+
+    # ✅ Validate patient counts with UIDs
+    print(f"\n🔍 PATIENT COUNT VALIDATION (USING UIDs):")
+    print(f"  Working dataframe: {len(working_df)} rows")
+    if "tei_id" in working_df.columns:
+        print(f"  Unique TEI IDs: {working_df['tei_id'].nunique()}")
+    if "orgUnit" in working_df.columns:
+        print(f"  Unique orgUnits: {working_df['orgUnit'].nunique()}")
+        # Show breakdown by UID
+        for uid in facility_uids:
+            uid_patients = working_df[working_df["orgUnit"] == uid]
+            uid_name = (
+                patients_df[patients_df["orgUnit"] == uid]["orgUnit_name"].iloc[0]
+                if not patients_df[patients_df["orgUnit"] == uid].empty
+                else "Unknown"
+            )
+            print(
+                f"  UID {uid} ({uid_name}): {len(uid_patients)} patients, {uid_patients['tei_id'].nunique()} unique TEI IDs"
+            )
+
     # ✅ CRITICAL FIX: Ensure ALL patients have a date for filtering
-    # Create a combined date column that uses event_date if available, otherwise enrollment_date
     if "event_date" not in working_df.columns:
         # Try to find event date columns
         event_date_cols = [
@@ -1172,8 +1256,10 @@ def render_maternal_dashboard_shared(
             working_df["event_date"] = pd.to_datetime(
                 working_df[event_date_cols[0]], errors="coerce"
             )
+            print(f"  Using date column: {event_date_cols[0]}")
         else:
             working_df["event_date"] = pd.NaT
+            print(f"⚠️ No event date columns found")
 
     # Ensure enrollment_date exists and is datetime
     if "enrollment_date" in working_df.columns:
@@ -1181,31 +1267,9 @@ def render_maternal_dashboard_shared(
             working_df["enrollment_date"], errors="coerce"
         )
     else:
-        # Try to find enrollment date
-        enrollment_cols = [
-            col
-            for col in working_df.columns
-            if "enrollment" in col.lower() or "incident" in col.lower()
-        ]
-        if enrollment_cols:
-            working_df["enrollment_date"] = pd.to_datetime(
-                working_df[enrollment_cols[0]], errors="coerce"
-            )
-        else:
-            # If no enrollment date, use the earliest available date
-            date_columns = [col for col in working_df.columns if "date" in col.lower()]
-            if date_columns:
-                working_df["enrollment_date"] = pd.to_datetime(
-                    working_df[date_columns[0]], errors="coerce"
-                )
-            else:
-                # Last resort: use event_date or current date
-                working_df["enrollment_date"] = working_df["event_date"].fillna(
-                    pd.Timestamp.now()
-                )
+        working_df["enrollment_date"] = working_df["event_date"]
 
     # ✅ CRITICAL: Create a combined date that always has a value
-    # Use event_date if available, otherwise enrollment_date
     working_df["combined_date"] = working_df["event_date"].combine_first(
         working_df["enrollment_date"]
     )
@@ -1217,35 +1281,9 @@ def render_maternal_dashboard_shared(
     print(f"\n📊 DATE ANALYSIS:")
     print(f"   Total patients: {total_patients}")
     print(f"   Patients with valid combined_date: {valid_dates}")
-    print(f"   Missing dates: {total_patients - valid_dates}")
 
-    if valid_dates < total_patients:
-        print(f"   ⚠️ Some patients don't have dates. Adding fallback dates...")
-        # Fill missing dates with the most common date or median date
-        if not working_df["combined_date"].isna().all():
-            # Use median date for missing values
-            median_date = working_df["combined_date"].median()
-            working_df["combined_date"] = working_df["combined_date"].fillna(
-                median_date
-            )
-            print(
-                f"   ✅ Filled {total_patients - valid_dates} missing dates with median: {median_date}"
-            )
-        else:
-            # All dates missing, use current date
-            working_df["combined_date"] = pd.Timestamp.now()
-            print(f"   ⚠️ All dates missing, using current date")
-
-    # ✅ Store the original df for KPI calculations (all patients)
+    # Store the original df for KPI calculations
     st.session_state.maternal_patients_df = working_df.copy()
-
-    # ✅ DEBUG: Log what we're storing
-    logging.info(f"✅ STORED maternal data: {len(working_df)} rows (patients)")
-    if not working_df.empty and "orgUnit_name" in working_df.columns:
-        facilities_in_data = working_df["orgUnit_name"].unique()
-        logging.info(
-            f"🔍 MATERNAL - Facilities in patient data: {list(facilities_in_data)}"
-        )
 
     render_connection_status(working_df, user=user)
 
@@ -1271,16 +1309,12 @@ def render_maternal_dashboard_shared(
     )
     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
 
-    # ✅ IMPROVED: Single progress container with better messaging
+    # ✅ IMPROVED: Single progress container
     progress_container = st.empty()
     with progress_container.container():
         st.markdown("---")
-
-        # Progress steps
         st.markdown("### 📈 Preparing Dashboard...")
-
         progress_col1, progress_col2 = st.columns([3, 1])
-
         with progress_col1:
             st.markdown(
                 """
@@ -1294,7 +1328,6 @@ def render_maternal_dashboard_shared(
             """,
                 unsafe_allow_html=True,
             )
-
         with progress_col2:
             st.markdown(
                 """
@@ -1319,27 +1352,26 @@ def render_maternal_dashboard_shared(
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ✅ IMPORTANT: Use working_df for KPI calculations (all 3,639 patients)
-    # But create a filtered version for charts
-    kpi_df = working_df.copy()  # Use ALL patients for KPI calculations
+    # ✅ CRITICAL FIX: Use THE SAME filtered data for BOTH KPIs and charts
+    # Apply date filters FIRST to get the correct time period
+    print(f"\n🔍 APPLYING DATE FILTERS...")
+    filtered_for_all = apply_simple_filters(working_df, filters, facility_uids)
 
-    # Create filtered version for charts (uses combined_date)
-    chart_df = working_df.copy()
-    chart_df["event_date"] = chart_df[
-        "combined_date"
-    ]  # Use combined_date for filtering
+    print(f"\n📊 FILTERING ANALYSIS:")
+    print(f"   Original patients (after UID filter): {len(working_df)}")
+    print(f"   After date filtering: {len(filtered_for_all)}")
 
-    # Apply filters to chart_df for trend analysis
-    filtered_for_charts = apply_simple_filters(chart_df, filters, facility_uids)
+    if "period_display" in filtered_for_all.columns:
+        unique_periods = filtered_for_all["period_display"].unique()
+        print(f"   Periods in filtered data: {list(unique_periods)}")
 
-    # Store both versions
-    st.session_state["filtered_patients"] = filtered_for_charts.copy()
+    # Store BOTH versions - but use filtered_for_all for everything
+    st.session_state["filtered_patients"] = filtered_for_all.copy()
     st.session_state["all_patients_for_kpi"] = (
-        kpi_df.copy()
-    )  # Store all patients for KPI
-    st.session_state["last_applied_selection"] = True
+        filtered_for_all.copy()
+    )  # ✅ FIX: Use FILTERED data
 
-    # KPI Cards with ALL data (not filtered by date)
+    # KPI Cards with FILTERED data (respects time period)
     with kpi_container:
         location_name, location_type = get_location_display_name(
             selected_facilities, region_name
@@ -1347,12 +1379,11 @@ def render_maternal_dashboard_shared(
 
         user_id = str(user.get("id", user.get("username", "default_user")))
 
-        # ✅ FIXED: Use ALL patients for KPI calculations
-        print(f"\n📊 KPI CALCULATION:")
-        print(f"   Using {len(kpi_df)} patients for KPI calculations")
-        print(f"   Using {len(filtered_for_charts)} patients for trend charts")
+        # ✅ FIX: Use FILTERED data for KPI calculations
+        print(f"\n📊 KPI CALCULATION (AFTER FIX):")
+        print(f"   Using {len(filtered_for_all)} patients for KPI calculations")
 
-        kpi_data = render_kpi_cards(kpi_df, location_name, user_id=user_id)
+        kpi_data = render_kpi_cards(filtered_for_all, location_name, user_id=user_id)
 
         # Save for summary dashboard to reuse
         st.session_state.last_computed_kpis = kpi_data
@@ -1376,10 +1407,10 @@ def render_maternal_dashboard_shared(
             )
             render_comparison_chart(
                 kpi_selection=selected_kpi,
-                filtered_events=filtered_for_charts,  # Use filtered data for charts
+                patient_df=filtered_for_all,  # ✅ Use same filtered data
                 comparison_mode="facility",
                 display_names=facility_names or selected_facilities,
-                facility_uids=facility_uids,
+                facility_uids=facility_uids,  # ✅ Pass UIDs
                 facilities_by_region=None,
                 region_names=None,
                 bg_color=bg_color,
@@ -1394,8 +1425,8 @@ def render_maternal_dashboard_shared(
             )
             render_trend_chart_section(
                 selected_kpi,
-                filtered_for_charts,  # Use filtered data for charts
-                facility_uids,
+                filtered_for_all,  # ✅ Use same filtered data
+                facility_uids,  # ✅ Pass UIDs
                 facility_names or selected_facilities,
                 bg_color,
                 text_color,
@@ -1406,11 +1437,291 @@ def render_maternal_dashboard_shared(
 
         render_additional_analytics(
             selected_kpi,
-            filtered_for_charts,  # Use filtered data for charts
-            facility_uids,
+            filtered_for_all,  # ✅ Use same filtered data
+            facility_uids,  # ✅ Pass UIDs
             bg_color,
             text_color,
         )
+
+
+def debug_facility_spacing_issues(maternal_data, facilities_from_db, facility_mapping):
+    """
+    Debug function to identify facility name spacing and formatting issues
+    """
+    print(f"\n{'='*100}")
+    print(f"🔍 DEBUG: FACILITY SPACING & FORMATTING ISSUES")
+    print(f"{'='*100}")
+
+    if not maternal_data:
+        print("❌ No maternal data available")
+        return
+
+    patients_df = maternal_data.get("patients", pd.DataFrame())
+
+    if patients_df.empty:
+        print("❌ Empty patients dataframe")
+        return
+
+    # Get facilities from CSV data
+    if "orgUnit_name" not in patients_df.columns:
+        print("❌ 'orgUnit_name' column not found in patient data")
+        return
+
+    csv_facilities = patients_df["orgUnit_name"].unique()
+    db_facility_names = [f[0] for f in facilities_from_db]
+
+    print(f"\n📊 OVERVIEW:")
+    print(f"   CSV facilities: {len(csv_facilities)}")
+    print(f"   DB facilities: {len(db_facility_names)}")
+    print(f"   Facility mapping entries: {len(facility_mapping)}")
+
+    # Create a function to normalize facility names for comparison
+    def normalize_facility_name(name):
+        """Normalize facility name by removing extra spaces and standardizing"""
+        if not name or pd.isna(name):
+            return ""
+
+        name = str(name).strip()
+
+        # Remove multiple spaces
+        import re
+
+        name = re.sub(r"\s+", " ", name)
+
+        # Standardize hospital types (lowercase for comparison)
+        name_lower = name.lower()
+
+        # Standardize common terms
+        replacements = [
+            ("health center", "hc"),
+            ("primary hospital", "ph"),
+            ("general hospital", "gh"),
+            ("specialized hospital", "sh"),
+            ("referral hospital", "rh"),
+            ("medical center", "mc"),
+            ("clinic", "cl"),
+            ("health post", "hp"),
+            ("dispensary", "disp"),
+        ]
+
+        for old, new in replacements:
+            if old in name_lower:
+                name_lower = name_lower.replace(old, new)
+
+        # Remove all spaces and punctuation for strict matching
+        name_strict = re.sub(r"[^a-z0-9]", "", name_lower)
+
+        return {"original": name, "normalized": name_lower, "strict": name_strict}
+
+    # Create normalized dictionaries
+    print(f"\n🔍 CREATING NORMALIZED DICTIONARIES...")
+
+    csv_normalized = {}
+    for fac in csv_facilities:
+        norm = normalize_facility_name(fac)
+        csv_normalized[norm["strict"]] = {
+            "original": norm["original"],
+            "normalized": norm["normalized"],
+            "strict": norm["strict"],
+            "patient_count": patients_df[patients_df["orgUnit_name"] == fac][
+                "tei_id"
+            ].nunique(),
+        }
+
+    db_normalized = {}
+    for fac in db_facility_names:
+        norm = normalize_facility_name(fac)
+        db_normalized[norm["strict"]] = {
+            "original": norm["original"],
+            "normalized": norm["normalized"],
+            "strict": norm["strict"],
+        }
+
+    mapping_normalized = {}
+    for fac in facility_mapping.keys():
+        norm = normalize_facility_name(fac)
+        mapping_normalized[norm["strict"]] = {
+            "original": norm["original"],
+            "normalized": norm["normalized"],
+            "strict": norm["strict"],
+        }
+
+    # Find matches and mismatches
+    print(f"\n📊 MATCHING ANALYSIS:")
+
+    # CSV vs DB
+    csv_in_db = set(csv_normalized.keys()) & set(db_normalized.keys())
+    csv_not_in_db = set(csv_normalized.keys()) - set(db_normalized.keys())
+    db_not_in_csv = set(db_normalized.keys()) - set(csv_normalized.keys())
+
+    print(f"   CSV facilities matched with DB: {len(csv_in_db)}/{len(csv_normalized)}")
+    print(f"   CSV facilities NOT in DB: {len(csv_not_in_db)}")
+    print(f"   DB facilities NOT in CSV: {len(db_not_in_csv)}")
+
+    # CSV vs Mapping
+    csv_in_mapping = set(csv_normalized.keys()) & set(mapping_normalized.keys())
+    csv_not_in_mapping = set(csv_normalized.keys()) - set(mapping_normalized.keys())
+
+    print(
+        f"\n   CSV facilities in mapping: {len(csv_in_mapping)}/{len(csv_normalized)}"
+    )
+    print(f"   CSV facilities NOT in mapping: {len(csv_not_in_mapping)}")
+
+    # Show specific mismatches
+    print(f"\n🔍 SPECIFIC MISMATCHES - CSV NOT IN MAPPING:")
+    if csv_not_in_mapping:
+        print(f"   Found {len(csv_not_in_mapping)} CSV facilities not in mapping")
+
+        # Sort by patient count (highest first)
+        mismatches_with_counts = []
+        for strict_name in csv_not_in_mapping:
+            csv_info = csv_normalized[strict_name]
+            mismatches_with_counts.append(
+                {
+                    "strict": strict_name,
+                    "original": csv_info["original"],
+                    "patient_count": csv_info["patient_count"],
+                    "normalized": csv_info["normalized"],
+                }
+            )
+
+        # Sort by patient count descending
+        mismatches_with_counts.sort(key=lambda x: x["patient_count"], reverse=True)
+
+        print(f"\n   Top 20 mismatches by patient count:")
+        for i, mismatch in enumerate(mismatches_with_counts[:20]):
+            print(f"   {i+1:2d}. '{mismatch['original']}'")
+            print(f"       Patients: {mismatch['patient_count']}")
+            print(f"       Normalized: {mismatch['normalized']}")
+            print(f"       Strict key: {mismatch['strict']}")
+
+            # Try to find similar names in mapping
+            similar_in_mapping = []
+            for map_strict, map_info in mapping_normalized.items():
+                # Check for partial matches
+                if (
+                    mismatch["strict"] in map_strict
+                    or map_strict in mismatch["strict"]
+                    or mismatch["normalized"].replace(" ", "")
+                    in map_info["normalized"].replace(" ", "")
+                    or map_info["normalized"].replace(" ", "")
+                    in mismatch["normalized"].replace(" ", "")
+                ):
+                    similar_in_mapping.append(map_info["original"])
+
+            if similar_in_mapping:
+                print(f"       Similar in mapping: {similar_in_mapping}")
+            print()
+
+    # Show facilities with many patients but no mapping
+    print(f"\n🔍 HIGH-IMPACT MISMATCHES (Many patients, no mapping):")
+    high_impact = [m for m in mismatches_with_counts if m["patient_count"] > 0]
+    if high_impact:
+        print(f"   Found {len(high_impact)} facilities with patients but no mapping")
+        for i, mismatch in enumerate(high_impact[:10]):
+            print(
+                f"   {i+1}. '{mismatch['original']}': {mismatch['patient_count']} patients"
+            )
+
+    # Show exact string differences for sample mismatches
+    print(f"\n🔍 STRING COMPARISON FOR SAMPLE MISMATCHES:")
+    sample_count = min(5, len(csv_not_in_mapping))
+    for i, strict_name in enumerate(list(csv_not_in_mapping)[:sample_count]):
+        csv_info = csv_normalized[strict_name]
+        print(f"\n   CSV facility {i+1}:")
+        print(f"     Original: '{csv_info['original']}'")
+        print(f"     Length: {len(csv_info['original'])} chars")
+        print(f"     ASCII codes: {[ord(c) for c in csv_info['original']]}")
+
+        # Show character by character
+        print(f"     Characters:")
+        for j, char in enumerate(csv_info["original"]):
+            print(f"       [{j:2d}] '{char}' (ASCII: {ord(char):3d})")
+
+    # Check for common patterns
+    print(f"\n🔍 COMMON PATTERN ANALYSIS:")
+
+    # Check for trailing/leading spaces
+    csv_with_spaces = []
+    for fac in csv_facilities:
+        if str(fac) != str(fac).strip():
+            csv_with_spaces.append(fac)
+
+    if csv_with_spaces:
+        print(f"   CSV facilities with extra spaces: {len(csv_with_spaces)}")
+        for fac in csv_with_spaces[:5]:
+            print(f"     '{fac}' (stripped: '{fac.strip()}')")
+
+    # Check for different capitalization
+    print(f"\n   CSV facility name variations:")
+    name_variations = {}
+    for fac in csv_facilities:
+        key = str(fac).lower().strip()
+        if key not in name_variations:
+            name_variations[key] = []
+        if str(fac) not in name_variations[key]:
+            name_variations[key].append(str(fac))
+
+    variations_with_multiple = {k: v for k, v in name_variations.items() if len(v) > 1}
+    if variations_with_multiple:
+        print(
+            f"   Found {len(variations_with_multiple)} names with multiple variations:"
+        )
+        for key, variations in list(variations_with_multiple.items())[:5]:
+            print(f"     '{key}':")
+            for var in variations:
+                print(f"       - '{var}'")
+
+    # Quick fix suggestions
+    print(f"\n🔧 QUICK FIX SUGGESTIONS:")
+
+    # 1. Create a manual mapping for mismatched facilities
+    print(f"\n   1. MANUAL MAPPING SCRIPT (add to your code):")
+    print(f"   manual_facility_fixes = {{")
+
+    for i, mismatch in enumerate(mismatches_with_counts[:10]):
+        if mismatch["patient_count"] > 0:
+            csv_name = mismatch["original"]
+            # Find the closest match in DB
+            closest_match = None
+            closest_score = 0
+
+            for db_fac in db_facility_names:
+                # Simple similarity check
+                csv_lower = csv_name.lower().replace(" ", "")
+                db_lower = db_fac.lower().replace(" ", "")
+
+                if csv_lower in db_lower or db_lower in csv_lower:
+                    similarity = len(set(csv_lower) & set(db_lower)) / max(
+                        len(csv_lower), len(db_lower)
+                    )
+                    if similarity > closest_score:
+                        closest_score = similarity
+                        closest_match = db_fac
+
+            if closest_match and closest_score > 0.7:
+                print(
+                    f"       '{csv_name}': '{closest_match}',  # {mismatch['patient_count']} patients"
+                )
+
+    print(f"   }}")
+
+    # 2. Auto-clean function
+    print(f"\n   2. AUTO-CLEAN FUNCTION:")
+    print(f"   def clean_facility_name(name):")
+    print(f"       import re")
+    print(f"       name = str(name).strip()")
+    print(f"       name = re.sub(r'\\s+', ' ', name)  # Remove extra spaces")
+    print(f"       # Common fixes")
+    print(f"       fixes = {{")
+    print(f"           'Abiadi  General hospital': 'Abiadi General hospital',")
+    print(f"           'Abiadi General  hospital': 'Abiadi General hospital',")
+    print(f"       }}")
+    print(f"       return fixes.get(name, name)")
+
+    print(f"\n{'='*100}")
+    print(f"🔍 DEBUG: END FACILITY SPACING ANALYSIS")
+    print(f"{'='*100}\n")
 
 
 def diagnose_data_issues(user, shared_data, selected_facilities, facility_mapping):
@@ -1525,6 +1836,86 @@ def diagnose_data_issues(user, shared_data, selected_facilities, facility_mappin
                         f"  - Non-null birth outcomes: {non_null} ({non_null/total_rows*100:.1f}%)"
                     )
                     st.write(f"  - Stillbirths found: {stillbirths}")
+
+
+def validate_patient_counts(maternal_data, facility_uids, facility_names):
+    """Validate that all patients are being counted correctly using UIDs"""
+    print(f"\n{'='*80}")
+    print(f"🔍 PATIENT COUNT VALIDATION (USING UIDs)")
+    print(f"{'='*80}")
+
+    if not maternal_data:
+        print("❌ No maternal data available")
+        return
+
+    patients_df = maternal_data.get("patients", pd.DataFrame())
+
+    if patients_df.empty:
+        print("❌ Empty patients dataframe")
+        return
+
+    print(f"Total patients in dataset: {len(patients_df)}")
+    print(f"Unique TEI IDs in dataset: {patients_df['tei_id'].nunique()}")
+
+    # Check if we have the orgUnit column (which contains UIDs)
+    if "orgUnit" in patients_df.columns:
+        print(f"✅ Found 'orgUnit' column (UIDs)")
+
+        # Get unique orgUnits in data
+        unique_orgunits = patients_df["orgUnit"].unique()
+        print(f"Unique orgUnits in data: {len(unique_orgunits)}")
+        print(
+            f"Sample orgUnits: {unique_orgunits[:10] if len(unique_orgunits) > 10 else unique_orgunits}"
+        )
+    else:
+        print("❌ 'orgUnit' column NOT FOUND - cannot filter by UID")
+        return
+
+    # Filter by selected facilities USING UIDs
+    if facility_uids:
+        print(f"\nFor selected facilities ({len(facility_uids)} facilities):")
+        print(f"  Selected facility UIDs: {facility_uids}")
+
+        # Find which UIDs exist in the data
+        existing_uids = [
+            uid for uid in facility_uids if uid in patients_df["orgUnit"].values
+        ]
+        missing_uids = [
+            uid for uid in facility_uids if uid not in patients_df["orgUnit"].values
+        ]
+
+        print(f"  UIDs found in data: {len(existing_uids)}")
+        print(f"  UIDs NOT in data: {len(missing_uids)}")
+
+        if missing_uids:
+            print(f"  Missing UIDs: {missing_uids}")
+
+        # Filter by UIDs
+        filtered_df = patients_df[patients_df["orgUnit"].isin(facility_uids)]
+        print(f"\n  Filtered patients: {len(filtered_df)}")
+        print(f"  Unique TEI IDs after filtering: {filtered_df['tei_id'].nunique()}")
+
+        # Show breakdown by facility UID
+        print(f"\nBreakdown by facility UID:")
+        for facility_name, facility_uid in zip(facility_names, facility_uids):
+            facility_patients = filtered_df[filtered_df["orgUnit"] == facility_uid]
+            unique_patients = facility_patients["tei_id"].nunique()
+            print(f"  {facility_name} ({facility_uid}): {unique_patients} patients")
+
+    # Also check if we have facility names for debugging
+    if "orgUnit_name" in patients_df.columns:
+        print(f"\n📋 Facility names in data (first 10):")
+        unique_names = patients_df["orgUnit_name"].unique()[:10]
+        for name in unique_names:
+            # Find the corresponding UID for this name
+            sample_uid = (
+                patients_df[patients_df["orgUnit_name"] == name]["orgUnit"].iloc[0]
+                if not patients_df[patients_df["orgUnit_name"] == name].empty
+                else "N/A"
+            )
+            print(f"  '{name}' → UID: {sample_uid}")
+
+    print(f"{'='*80}\n")
 
 
 def render():

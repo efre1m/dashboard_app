@@ -87,6 +87,7 @@ ENROLLMENT_DATE_COL = "enrollment_date"
 def compute_birth_counts(df, facility_uids=None):
     """
     Compute birth counts accounting for multiple births (twins, triplets, etc.)
+    Uses UID filtering
     Returns: total_births, live_births, stillbirths
     """
     cache_key = get_cache_key(df, facility_uids, "birth_counts")
@@ -100,11 +101,37 @@ def compute_birth_counts(df, facility_uids=None):
     if df is None or df.empty:
         result = (0, 0, 0)
     else:
-        if facility_uids:
-            df = df[df["orgUnit"].isin(facility_uids)].copy()
+        # ✅ Filter by facility UIDs
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            print(f"\n🔍 COMPUTE_BIRTH_COUNTS - UID FILTERING:")
+            print(f"   Filtering by {len(facility_uids)} facility UIDs")
+
+            before_filter = len(filtered_df)
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+            after_filter = len(filtered_df)
+            print(
+                f"   After UID filter: {after_filter} rows (removed {before_filter - after_filter})"
+            )
+
+            # Show UID breakdown
+            uid_found = False
+            for uid in facility_uids:
+                uid_data = filtered_df[filtered_df["orgUnit"] == uid]
+                if not uid_data.empty:
+                    uid_found = True
+                    facility_name = (
+                        uid_data["orgUnit_name"].iloc[0]
+                        if "orgUnit_name" in uid_data.columns
+                        else "Unknown"
+                    )
+                    print(f"   UID {uid} ({facility_name}): {len(uid_data)} rows")
+
+            if not uid_found:
+                print(f"   ⚠️ No UIDs found in data")
 
         # Use ALL patients (no event filtering)
-        actual_events_df = df.copy()
+        actual_events_df = filtered_df.copy()
 
         print(f"DEBUG compute_birth_counts: Processing {len(actual_events_df)} rows")
 
@@ -169,6 +196,11 @@ def compute_birth_counts(df, facility_uids=None):
         # Total births
         total_births = total_babies_per_row[outcome_mask].sum()
 
+        print(f"\n📊 BIRTH COUNT RESULTS (with UIDs):")
+        print(f"   Total births: {int(total_births)}")
+        print(f"   Live births: {int(live_births)}")
+        print(f"   Stillbirths: {int(stillbirths)}")
+
         result = (int(total_births), int(live_births), int(stillbirths))
 
     st.session_state.kpi_cache[cache_key] = result
@@ -177,15 +209,19 @@ def compute_birth_counts(df, facility_uids=None):
 
 # ---------------- SEPARATE NUMERATOR COMPUTATION FUNCTIONS ----------------
 def compute_fp_acceptance_count(df, facility_uids=None):
-    """Count FP acceptance occurrences - VECTORIZED - NO event filtering"""
+    """Count FP acceptance occurrences - VECTORIZED - with UID filtering"""
     if df is None or df.empty:
         return 0
 
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)].copy()
+    # ✅ Filter by facility UIDs
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        print(f"\n🔍 COMPUTE_FP_ACCEPTANCE_COUNT - UID FILTERING:")
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+        print(f"   After UID filter: {len(filtered_df)} rows")
 
-    # Use ALL patients
-    actual_events_df = df.copy()
+    # Use ALL patients in filtered data
+    actual_events_df = filtered_df.copy()
 
     if FP_ACCEPTANCE_COL not in actual_events_df.columns:
         return 0
@@ -204,19 +240,24 @@ def compute_fp_acceptance_count(df, facility_uids=None):
     # Check if in accepted codes
     accepted_mask = fp_codes.isin(FP_ACCEPTED_CODES)
 
-    return int(accepted_mask.sum())
+    count = int(accepted_mask.sum())
+    print(f"🔍 [FIXED] compute_fp_acceptance_count: {count} FP acceptances found")
+
+    return count
 
 
 def compute_early_pnc_count(df, facility_uids=None):
-    """Count early PNC occurrences - VECTORIZED - NO event filtering"""
+    """Count early PNC occurrences - VECTORIZED - with UID filtering"""
     if df is None or df.empty:
         return 0
 
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)].copy()
+    # ✅ Filter by facility UIDs
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Use ALL patients
-    actual_events_df = df.copy()
+    # Use ALL patients in filtered data
+    actual_events_df = filtered_df.copy()
 
     if PNC_TIMING_COL not in actual_events_df.columns:
         return 0
@@ -237,18 +278,20 @@ def compute_early_pnc_count(df, facility_uids=None):
 
 
 def compute_csection_count(df, facility_uids=None):
-    """Count C-section occurrences"""
+    """Count C-section occurrences with UID filtering"""
     if df is None or df.empty:
         return 0
 
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)].copy()
+    # ✅ Filter by facility UIDs
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    if DELIVERY_MODE_COL not in df.columns:
+    if DELIVERY_MODE_COL not in filtered_df.columns:
         return 0
 
     # Create a copy to avoid modifying original
-    df_copy = df.copy()
+    df_copy = filtered_df.copy()
 
     # Convert to string first, then extract numeric part
     df_copy["delivery_mode_clean"] = df_copy[DELIVERY_MODE_COL].astype(str)
@@ -266,15 +309,17 @@ def compute_csection_count(df, facility_uids=None):
 
 
 def compute_maternal_death_count(df, facility_uids=None):
-    """Count maternal death occurrences - VECTORIZED - NO event filtering"""
+    """Count maternal death occurrences - VECTORIZED - with UID filtering"""
     if df is None or df.empty:
         return 0
 
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)].copy()
+    # ✅ Filter by facility UIDs
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Use ALL patients
-    actual_events_df = df.copy()
+    # Use ALL patients in filtered data
+    actual_events_df = filtered_df.copy()
 
     if CONDITION_OF_DISCHARGE_COL not in actual_events_df.columns:
         return 0
@@ -290,22 +335,24 @@ def compute_maternal_death_count(df, facility_uids=None):
 
 
 def compute_stillbirth_count(df, facility_uids=None):
-    """Count stillbirth occurrences"""
+    """Count stillbirth occurrences with UID filtering"""
     if df is None or df.empty:
         return 0
 
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)].copy()
+    # ✅ Filter by facility UIDs
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    print(f"\n🔍 [FIXED] compute_stillbirth_count:")
-    print(f"   Processing {len(df)} rows")
+    print(f"\n🔍 [FIXED] compute_stillbirth_count (with UIDs):")
+    print(f"   Processing {len(filtered_df)} rows after UID filtering")
 
-    if BIRTH_OUTCOME_COL not in df.columns:
+    if BIRTH_OUTCOME_COL not in filtered_df.columns:
         print(f"   ❌ Column '{BIRTH_OUTCOME_COL}' not found!")
         return 0
 
     # Create a copy to avoid modifying original
-    df_copy = df.copy()
+    df_copy = filtered_df.copy()
 
     # Handle all possible data types: float, int, string, mixed
     df_copy["birth_outcome_clean"] = df_copy[BIRTH_OUTCOME_COL].astype(str)
@@ -331,7 +378,7 @@ def compute_stillbirth_count(df, facility_uids=None):
 
 # ---------------- KPI Computation Functions ----------------
 def compute_total_deliveries(df, facility_uids=None):
-    """Count total deliveries - counts unique TEI IDs (NOW RESPECTS DATE FILTERING)"""
+    """Count total deliveries - counts unique TEI IDs using UID filtering"""
     cache_key = get_cache_key(df, facility_uids, "total_deliveries")
 
     if "kpi_cache" not in st.session_state:
@@ -343,22 +390,66 @@ def compute_total_deliveries(df, facility_uids=None):
     if df is None or df.empty:
         result = 0
     else:
-        if facility_uids:
-            # Filter by facility UIDs
-            if "orgUnit" in df.columns:
-                df = df[df["orgUnit"].isin(facility_uids)].copy()
+        # ✅ CRITICAL: Filter by facility UIDs using orgUnit column
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            print(f"\n🔍 COMPUTE_TOTAL_DELIVERIES - UID FILTERING:")
+            print(f"   Filtering by {len(facility_uids)} facility UIDs")
+
+            before_filter = len(filtered_df)
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+            after_filter = len(filtered_df)
+            print(
+                f"   After UID filter: {after_filter} rows (removed {before_filter - after_filter})"
+            )
+
+            # Show UID breakdown
+            for uid in facility_uids:
+                uid_data = filtered_df[filtered_df["orgUnit"] == uid]
+                if not uid_data.empty:
+                    facility_name = (
+                        uid_data["orgUnit_name"].iloc[0]
+                        if "orgUnit_name" in uid_data.columns
+                        else "Unknown"
+                    )
+                    print(f"   UID {uid} ({facility_name}): {len(uid_data)} rows")
 
         print(f"\n🔍 compute_total_deliveries:")
-        print(f"   Total rows (already date-filtered): {len(df)}")
+        print(f"   Total rows after filtering: {len(filtered_df)}")
 
-        # ✅ FIX: Count UNIQUE TEI IDs from FILTERED dataframe
-        if "tei_id" in df.columns:
-            # Count ONLY the TEIs that remain after date filtering
-            result = df["tei_id"].nunique()
-            print(f"   ✅ Unique TEI IDs (AFTER date filtering): {result}")
+        # ✅ CRITICAL FIX 1: Count ALL patients, even those without event dates
+        if "tei_id" in filtered_df.columns:
+            # Count unique TEI IDs
+            total_tei_ids = filtered_df["tei_id"].nunique()
+            unique_tei_ids = filtered_df["tei_id"].dropna().nunique()
+
+            print(f"   Total TEI IDs in dataframe: {total_tei_ids}")
+            print(f"   Unique TEI IDs (after dropna): {unique_tei_ids}")
+
+            # ✅ CRITICAL FIX 2: Handle patients without event dates
+            # If we have event_date column, check which patients have dates
+            if "event_date" in filtered_df.columns:
+                patients_with_dates = filtered_df[filtered_df["event_date"].notna()][
+                    "tei_id"
+                ].nunique()
+                patients_without_dates = unique_tei_ids - patients_with_dates
+
+                print(f"   Patients WITH event dates: {patients_with_dates}")
+                print(f"   Patients WITHOUT event dates: {patients_without_dates}")
+
+                # ✅ IMPORTANT: Include ALL patients, even those without dates
+                result = unique_tei_ids
+
+                if patients_without_dates > 0:
+                    print(
+                        f"   ⚠️ WARNING: {patients_without_dates} patients have no event dates!"
+                    )
+                    print(f"   Will still include them in total deliveries count")
+            else:
+                result = unique_tei_ids
         else:
             # Fallback: count rows as deliveries
-            result = len(df)
+            result = len(filtered_df)
             print(f"   ⚠️ No tei_id column, counting rows: {result}")
 
     st.session_state.kpi_cache[cache_key] = result
@@ -492,27 +583,39 @@ def compute_kpis(df, facility_uids=None):
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
 
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)].copy()
+    print(f"\n🔍 COMPUTE_KPIS - START (with UID filtering)")
+    print(f"   Input shape: {df.shape}")
+    print(f"   Facility UIDs: {facility_uids}")
 
-    total_deliveries = compute_total_deliveries(df, facility_uids)
-    fp_acceptance = compute_fp_acceptance(df, facility_uids)
+    # ✅ Apply UID filtering at the start
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        before_filter = len(filtered_df)
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+        after_filter = len(filtered_df)
+        print(
+            f"   After UID filter: {after_filter} rows (removed {before_filter - after_filter})"
+        )
+
+    # Use filtered dataframe for all calculations
+    total_deliveries = compute_total_deliveries(filtered_df, facility_uids)
+    fp_acceptance = compute_fp_acceptance(filtered_df, facility_uids)
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
 
     stillbirth_rate, stillbirths, total_deliveries_sb = compute_stillbirth_rate(
-        df, facility_uids
+        filtered_df, facility_uids
     )
     pnc_coverage, early_pnc, total_deliveries_pnc = compute_early_pnc_coverage(
-        df, facility_uids
+        filtered_df, facility_uids
     )
     maternal_death_rate, maternal_deaths, total_deliveries_md = (
-        compute_maternal_death_rate(df, facility_uids)
+        compute_maternal_death_rate(filtered_df, facility_uids)
     )
     csection_rate, csection_deliveries, total_deliveries_cs = compute_csection_rate(
-        df, facility_uids
+        filtered_df, facility_uids
     )
     total_births, live_births, stillbirths_count = compute_birth_counts(
-        df, facility_uids
+        filtered_df, facility_uids
     )
 
     result = {
@@ -536,6 +639,11 @@ def compute_kpis(df, facility_uids=None):
         "total_deliveries_cs": int(total_deliveries),
     }
 
+    print(f"🔍 COMPUTE_KPIS - END")
+    print(
+        f"   Results: {result['total_deliveries']} deliveries, {result['maternal_deaths']} maternal deaths"
+    )
+
     st.session_state.kpi_cache[cache_key] = result
     return result
 
@@ -552,11 +660,21 @@ def get_combined_date_for_kpi(df, kpi_name):
     # Get relevant event date column for this KPI
     event_date_col = get_relevant_date_column_for_kpi(kpi_name)
 
+    print(f"\n🔍 get_combined_date_for_kpi for {kpi_name}:")
+    print(f"   Event date column: {event_date_col}")
+
     # Ensure enrollment_date column exists
     if ENROLLMENT_DATE_COL not in df.columns:
         print(f"⚠️ Warning: {ENROLLMENT_DATE_COL} column not found in dataframe")
         # If enrollment_date is missing, use only event_date
-        return pd.to_datetime(df[event_date_col], errors="coerce")
+        combined_dates = pd.to_datetime(df[event_date_col], errors="coerce")
+
+        # Check for missing dates
+        total_rows = len(df)
+        valid_dates = combined_dates.notna().sum()
+        print(f"   Without fallback: {valid_dates}/{total_rows} valid dates")
+
+        return combined_dates
 
     # Create copies to avoid modifying original
     df_copy = df.copy()
@@ -573,13 +691,44 @@ def get_combined_date_for_kpi(df, kpi_name):
     enrollment_count = enrollment_dates.notna().sum()
     combined_count = combined_dates.notna().sum()
     fallback_count = combined_count - event_count
+    missing_count = len(df) - combined_count
 
     print(f"📅 Date fallback for {kpi_name}:")
-    print(f"   Event date column: {event_date_col}")
-    print(f"   Event dates: {event_count}/{len(df)}")
-    print(f"   Enrollment dates: {enrollment_count}/{len(df)}")
-    print(f"   Combined dates: {combined_count}/{len(df)}")
+    print(f"   Total rows: {len(df)}")
+    print(f"   Event dates: {event_count}/{len(df)} ({event_count/len(df)*100:.1f}%)")
+    print(
+        f"   Enrollment dates: {enrollment_count}/{len(df)} ({enrollment_count/len(df)*100:.1f}%)"
+    )
+    print(
+        f"   Combined dates: {combined_count}/{len(df)} ({combined_count/len(df)*100:.1f}%)"
+    )
     print(f"   Used enrollment as fallback: {fallback_count}")
+    print(f"   Still missing dates: {missing_count}")
+
+    if missing_count > 0:
+        print(f"   ⚠️ WARNING: {missing_count} rows have NO dates at all!")
+
+        # Check if these rows have TEI IDs
+        if "tei_id" in df.columns:
+            missing_date_rows = df[combined_dates.isna()]
+            missing_patients = missing_date_rows["tei_id"].nunique()
+            print(f"   Patients affected: {missing_patients}")
+
+            # Show sample of affected patients
+            if missing_patients > 0:
+                sample_patients = missing_date_rows["tei_id"].unique()[:5]
+                print(f"   Sample affected patient IDs: {list(sample_patients)}")
+
+                # Check what columns these patients have
+                for patient_id in sample_patients[:3]:
+                    patient_data = df[df["tei_id"] == patient_id].iloc[0]
+                    print(f"     Patient {patient_id}:")
+                    print(
+                        f"       {event_date_col}: {patient_data.get(event_date_col, 'Missing')}"
+                    )
+                    print(
+                        f"       enrollment_date: {patient_data.get(ENROLLMENT_DATE_COL, 'Missing')}"
+                    )
 
     return combined_dates
 
@@ -624,6 +773,36 @@ def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
         print(f"   ❌ DataFrame is empty for {kpi_name}")
         return pd.DataFrame()
 
+    # ✅ CRITICAL DEBUG: Check TEI ID count before any filtering
+    original_tei_count = df["tei_id"].nunique() if "tei_id" in df.columns else 0
+    print(f"\n🔍 TEI ID ANALYSIS for {kpi_name}:")
+    print(f"   Original unique TEI IDs: {original_tei_count}")
+
+    # Check which patients have event dates vs enrollment dates
+    if "event_date" in df.columns and "enrollment_date" in df.columns:
+        patients_with_event_dates = df[df["event_date"].notna()]["tei_id"].nunique()
+        patients_with_enrollment_only = df[
+            (df["event_date"].isna()) & (df["enrollment_date"].notna())
+        ]["tei_id"].nunique()
+        patients_with_no_dates = df[
+            (df["event_date"].isna()) & (df["enrollment_date"].isna())
+        ]["tei_id"].nunique()
+
+        print(f"   Patients with event_date: {patients_with_event_dates}")
+        print(f"   Patients with enrollment_date only: {patients_with_enrollment_only}")
+        print(f"   Patients with NO dates: {patients_with_no_dates}")
+
+        # WARNING if we're losing patients
+        if patients_with_no_dates > 0:
+            print(
+                f"   ⚠️ WARNING: {patients_with_no_dates} patients have NO dates at all!"
+            )
+            # Show sample of patients without dates
+            no_date_patients = df[
+                (df["event_date"].isna()) & (df["enrollment_date"].isna())
+            ]["tei_id"].unique()[:5]
+            print(f"   Sample patients without dates: {list(no_date_patients)}")
+
     # Check if periods are already created
     has_periods = "period_display" in df.columns and "period_sort" in df.columns
 
@@ -653,8 +832,15 @@ def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
     # Add to dataframe
     result_df["event_date"] = combined_dates
 
-    # Check how many dates we have
+    # ✅ CRITICAL FIX: Check how many patients we're losing due to missing dates
+    before_filter_count = len(result_df)
+    before_filter_tei_count = (
+        result_df["tei_id"].nunique() if "tei_id" in result_df.columns else 0
+    )
+
+    # ✅ FIX: Get valid dates count BEFORE filtering
     valid_dates = result_df["event_date"].notna().sum()
+    print(f"\n📅 DATE FILTERING ANALYSIS:")
     print(f"   Total valid dates after fallback: {valid_dates}/{len(result_df)}")
 
     if valid_dates == 0:
@@ -663,6 +849,43 @@ def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
 
     # Filter out rows without any date
     result_df = result_df[result_df["event_date"].notna()].copy()
+
+    after_filter_count = len(result_df)
+    after_filter_tei_count = (
+        result_df["tei_id"].nunique() if "tei_id" in result_df.columns else 0
+    )
+
+    print(f"   Rows before date filtering: {before_filter_count}")
+    print(f"   Rows after date filtering: {after_filter_count}")
+    print(f"   Rows removed: {before_filter_count - after_filter_count}")
+    print(f"   TEI IDs before date filtering: {before_filter_tei_count}")
+    print(f"   TEI IDs after date filtering: {after_filter_tei_count}")
+    print(f"   TEI IDs removed: {before_filter_tei_count - after_filter_tei_count}")
+
+    if before_filter_tei_count > after_filter_tei_count:
+        print(
+            f"   ⚠️ CRITICAL: Lost {before_filter_tei_count - after_filter_tei_count} patients due to missing dates!"
+        )
+
+        # Find which patients were lost
+        if "tei_id" in df.columns:
+            all_patients = set(df["tei_id"].dropna().unique())
+            filtered_patients = set(result_df["tei_id"].dropna().unique())
+            lost_patients = all_patients - filtered_patients
+
+            if len(lost_patients) > 0:
+                print(f"   Lost patient IDs (first 5): {list(lost_patients)[:5]}")
+
+                # Show why they were lost (check their date columns)
+                lost_df = df[df["tei_id"].isin(lost_patients)]
+                if not lost_df.empty:
+                    print(f"   Sample of lost patients' date info:")
+                    for i, (_, row) in enumerate(lost_df.head(3).iterrows()):
+                        event_date = row.get("event_date", "Missing")
+                        enrollment_date = row.get("enrollment_date", "Missing")
+                        print(f"     Patient {row.get('tei_id', 'Unknown')}:")
+                        print(f"       event_date: {event_date}")
+                        print(f"       enrollment_date: {enrollment_date}")
 
     # Get period label
     period_label = "Monthly"  # Default
@@ -820,16 +1043,62 @@ def debug_dataframe_info(df, label="", max_rows=10):
 
 def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
     """
-    Get numerator and denominator for a specific KPI
+    Get numerator and denominator for a specific KPI with UID filtering
     Returns: (numerator, denominator, value)
     """
+    print(f"\n{'='*60}")
+    print(f"🔍 GET_NUMERATOR_DENOMINATOR_FOR_KPI: {kpi_name}")
+    print(f"{'='*60}")
+    print(f"   Input shape: {df.shape}")
+    print(f"   Facility UIDs: {facility_uids}")
+
     if df is None or df.empty:
+        print(f"   ❌ DataFrame is empty")
         return (0, 0, 0.0)
 
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)].copy()
+    # ✅ Check if orgUnit column exists
+    if "orgUnit" not in df.columns:
+        print(f"   ⚠️ WARNING: 'orgUnit' column not found in data!")
+        print(
+            f"   Available columns: {[col for col in df.columns if 'org' in col.lower()]}"
+        )
+    else:
+        print(f"   ✅ 'orgUnit' column found")
+        print(f"   Unique orgUnits in data: {df['orgUnit'].nunique()}")
 
-    kpi_data = compute_kpis(df, facility_uids)
+    # ✅ Apply UID filtering
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        before_filter = len(filtered_df)
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+        after_filter = len(filtered_df)
+        print(
+            f"   After UID filter: {after_filter} rows (removed {before_filter - after_filter})"
+        )
+
+        # Check which UIDs were found
+        found_uids = [uid for uid in facility_uids if uid in df["orgUnit"].values]
+        missing_uids = [uid for uid in facility_uids if uid not in df["orgUnit"].values]
+
+        print(f"   UIDs found in data: {len(found_uids)}/{len(facility_uids)}")
+        if missing_uids:
+            print(f"   UIDs NOT in data: {missing_uids}")
+
+            # Try to find facility names for missing UIDs
+            if "orgUnit_name" in df.columns:
+                for uid in missing_uids:
+                    print(f"     Missing UID: {uid}")
+    else:
+        print(f"   No UID filtering applied")
+
+    # Get KPI data
+    print(f"\n📊 COMPUTING KPI: {kpi_name}")
+    kpi_data = compute_kpis(filtered_df, facility_uids)
+
+    # Debug: show what data we have
+    print(f"   KPI data keys: {list(kpi_data.keys())}")
+    if "total_deliveries" in kpi_data:
+        print(f"   Total deliveries: {kpi_data['total_deliveries']}")
 
     kpi_mapping = {
         "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {
@@ -899,39 +1168,59 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
         numerator = kpi_data.get(mapping["numerator"], 0)
         denominator = kpi_data.get(mapping["denominator"], 1)
         value = kpi_data.get(mapping["value"], 0.0)
+
+        print(f"\n✅ KPI MAPPING FOUND:")
+        print(f"   Numerator ({mapping['numerator']}): {numerator}")
+        print(f"   Denominator ({mapping['denominator']}): {denominator}")
+        print(f"   Value ({mapping['value']}): {value}")
+
         return (numerator, denominator, value)
 
-    if "IPPCAR" in kpi_name or "Contraceptive" in kpi_name:
-        return (
-            kpi_data.get("fp_acceptance", 0),
-            kpi_data.get("total_deliveries", 1),
-            kpi_data.get("ippcar", 0.0),
-        )
-    elif "Stillbirth" in kpi_name:
-        return (
-            kpi_data.get("stillbirths", 0),
-            kpi_data.get("total_deliveries_sb", 1),
-            kpi_data.get("stillbirth_rate", 0.0),
-        )
-    elif "PNC" in kpi_name or "Postnatal" in kpi_name:
-        return (
-            kpi_data.get("early_pnc", 0),
-            kpi_data.get("total_deliveries", 1),
-            kpi_data.get("pnc_coverage", 0.0),
-        )
-    elif "Maternal Death" in kpi_name:
-        return (
-            kpi_data.get("maternal_deaths", 0),
-            kpi_data.get("total_deliveries_md", 1),
-            kpi_data.get("maternal_death_rate", 0.0),
-        )
-    elif "C-Section" in kpi_name:
-        return (
-            kpi_data.get("csection_deliveries", 0),
-            kpi_data.get("total_deliveries", 1),
-            kpi_data.get("csection_rate", 0.0),
-        )
+    # Fallback mappings for partial matches
+    print(f"\n🔍 Using fallback mapping for: {kpi_name}")
 
+    if "IPPCAR" in kpi_name or "Contraceptive" in kpi_name:
+        numerator = kpi_data.get("fp_acceptance", 0)
+        denominator = kpi_data.get("total_deliveries", 1)
+        value = kpi_data.get("ippcar", 0.0)
+        print(f"   Using IPPCAR mapping: {numerator}/{denominator} = {value}")
+        return (numerator, denominator, value)
+    elif "Stillbirth" in kpi_name:
+        numerator = kpi_data.get("stillbirths", 0)
+        denominator = kpi_data.get("total_deliveries_sb", 1)
+        value = kpi_data.get("stillbirth_rate", 0.0)
+        print(f"   Using Stillbirth mapping: {numerator}/{denominator} = {value}")
+        return (numerator, denominator, value)
+    elif "PNC" in kpi_name or "Postnatal" in kpi_name:
+        numerator = kpi_data.get("early_pnc", 0)
+        denominator = kpi_data.get("total_deliveries", 1)
+        value = kpi_data.get("pnc_coverage", 0.0)
+        print(f"   Using PNC mapping: {numerator}/{denominator} = {value}")
+        return (numerator, denominator, value)
+    elif "Maternal Death" in kpi_name:
+        numerator = kpi_data.get("maternal_deaths", 0)
+        denominator = kpi_data.get("total_deliveries_md", 1)
+        value = kpi_data.get("maternal_death_rate", 0.0)
+        print(f"   Using Maternal Death mapping: {numerator}/{denominator} = {value}")
+        return (numerator, denominator, value)
+    elif "C-Section" in kpi_name:
+        numerator = kpi_data.get("csection_deliveries", 0)
+        denominator = kpi_data.get("total_deliveries", 1)
+        value = kpi_data.get("csection_rate", 0.0)
+        print(f"   Using C-Section mapping: {numerator}/{denominator} = {value}")
+        return (numerator, denominator, value)
+    elif "Low Birth Weight" in kpi_name or "LBW" in kpi_name:
+        # For LBW, we need to compute differently
+        from utils.kpi_lbw import compute_lbw_kpi
+
+        lbw_data = compute_lbw_kpi(filtered_df, facility_uids)
+        numerator = lbw_data.get("lbw_count", 0)
+        denominator = lbw_data.get("total_weighed", 1)
+        value = lbw_data.get("lbw_rate", 0.0)
+        print(f"   Using LBW mapping: {numerator}/{denominator} = {value}")
+        return (numerator, denominator, value)
+
+    print(f"⚠️ No mapping found for KPI: {kpi_name}")
     return (0, 0, 0.0)
 
 
