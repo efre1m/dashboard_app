@@ -486,7 +486,7 @@ def render_kpi_cards(
         </div>
         <div class="kpi-card">
             <div class="kpi-value">{kpis.get("stillbirth_rate",0):.2f} <span class="{stillbirth_trend_class}">{stillbirth_trend}</span></div>
-            <div class="kpi-name">Stillbirth Rate (per 1000 births)</div>
+            <div class="kpi-name">Stillbirth Rate</div>
             <div class="kpi-metrics">
                 <span class="metric-label metric-stillbirth">Stillbirths: {kpis.get("stillbirths",0)}</span>
                 <span class="metric-label metric-total">Total Births: {kpis.get("total_births",0)}</span>
@@ -502,7 +502,7 @@ def render_kpi_cards(
         </div>
         <div class="kpi-card">
             <div class="kpi-value">{kpis.get("maternal_death_rate",0):.2f} <span class="{maternal_death_trend_class}">{maternal_death_trend}</span></div>
-            <div class="kpi-name">Maternal Death Rate (per 100,000 births)</div>
+            <div class="kpi-name">Maternal Death Rate</div>
             <div class="kpi-metrics">
                <span class="metric-label metric-maternal-death">Maternal Deaths: {kpis.get("maternal_deaths",0)}</span>
                <span class="metric-label metric-total">Live Births: {kpis.get("live_births",0)}</span>

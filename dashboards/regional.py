@@ -1,4 +1,3 @@
-# dashboards/regional.py
 import streamlit as st
 import pandas as pd
 import logging
@@ -14,31 +13,22 @@ from utils.queries import (
     get_facility_mapping_for_user,
 )
 from utils.dash_co import (
-    normalize_patient_dates,  # Changed from normalize_event_dates
+    normalize_patient_dates,
     normalize_enrollment_dates,
     render_trend_chart_section,
     render_comparison_chart,
     render_additional_analytics,
     get_text_color,
-    apply_simple_filters,
-    render_simple_filter_controls,
-    apply_patient_filters,  # Changed from apply_simple_filters
-    render_patient_filter_controls,  # Changed from render_simple_filter_controls
+    apply_patient_filters,
+    render_patient_filter_controls,
     render_kpi_tab_navigation,
 )
 from utils.kpi_utils import clear_cache, compute_kpis
 from utils.kpi_lbw import compute_lbw_kpi
-from utils.status import (
-    render_connection_status,
-    update_last_sync_time,
-    initialize_status_system,
-)
 from utils.odk_dashboard import display_odk_dashboard
 from dashboards.data_quality_tracking import render_data_quality_tracking
 from newborns_dashboard.kpi_nmr import compute_nmr_kpi
 
-# Initialize status system
-initialize_status_system()
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -90,30 +80,30 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
 
     current_time = time.time()
 
-    # ✅ Check if cache has expired (30 minutes = 1800 seconds)
+    # Check if cache has expired (30 minutes = 1800 seconds)
     cache_expired = False
     if shared_timestamp_key in st.session_state:
         time_elapsed = current_time - st.session_state[shared_timestamp_key]
-        cache_expired = time_elapsed > 1800  # 30 minutes
+        cache_expired = time_elapsed > 1800
         if cache_expired:
             logging.info(
-                f"🔄 Cache expired after {time_elapsed:.0f} seconds, fetching fresh data"
+                f"Cache expired after {time_elapsed:.0f} seconds, fetching fresh data"
             )
 
-    # ✅ Check if user changed (force fresh data)
+    # Check if user changed (force fresh data)
     user_changed = st.session_state.get("user_changed", False)
 
-    # ✅ Determine if we need fresh data
+    # Determine if we need fresh data
     need_fresh_data = (
-        not st.session_state.get(shared_loaded_key, False)  # First load
-        or cache_expired  # Cache expired
-        or user_changed  # User changed
-        or st.session_state.get("refresh_trigger", False)  # Manual refresh
+        not st.session_state.get(shared_loaded_key, False)
+        or cache_expired
+        or user_changed
+        or st.session_state.get("refresh_trigger", False)
     )
 
     if need_fresh_data:
         logging.info(
-            "🔄 Fetching FRESH data (cache expired, user changed, or manual refresh)"
+            "Fetching fresh data (cache expired, user changed, or manual refresh)"
         )
 
         # Clear existing cache
@@ -121,8 +111,8 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
         st.session_state[shared_maternal_key] = None
         st.session_state[shared_newborn_key] = None
 
-        # Load fresh data in parallel - ONLY show spinner if requested
-        spinner_text = "🚀 Loading dashboard data..." if show_spinner else None
+        # Load fresh data in parallel
+        spinner_text = "Loading dashboard data..." if show_spinner else None
 
         def load_data():
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -141,7 +131,6 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                     else None
                 )
 
-                # Get results with timeout
                 try:
                     if maternal_future:
                         st.session_state[shared_maternal_key] = maternal_future.result(
@@ -153,11 +142,9 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                         )
 
                     st.session_state[shared_loaded_key] = True
-                    st.session_state[shared_timestamp_key] = (
-                        current_time  # Update timestamp
-                    )
+                    st.session_state[shared_timestamp_key] = current_time
 
-                    # ✅ STORE in main cached_shared_data for easy access
+                    # Store in main cached_shared_data for easy access
                     st.session_state.cached_shared_data = {
                         "maternal": st.session_state[shared_maternal_key],
                         "newborn": st.session_state[shared_newborn_key],
@@ -183,7 +170,7 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
                         else 0
                     )
                     logging.info(
-                        f"✅ FRESH DATA: {maternal_patient_count} maternal patients, {newborn_patient_count} newborn patients"
+                        f"Fresh data: {maternal_patient_count} maternal patients, {newborn_patient_count} newborn patients"
                     )
 
                     # Reset refresh trigger and user changed flags
@@ -205,7 +192,7 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
             success = load_data()
 
     else:
-        # ✅ Use cached data
+        # Use cached data
         maternal_patient_count = (
             len(st.session_state[shared_maternal_key].get("patients", pd.DataFrame()))
             if st.session_state[shared_maternal_key]
@@ -218,7 +205,7 @@ def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
         )
         time_elapsed = current_time - st.session_state[shared_timestamp_key]
         logging.info(
-            f"✅ USING CACHED DATA: {maternal_patient_count} maternal patients, {newborn_patient_count} newborn patients ({time_elapsed:.0f}s old)"
+            f"Using cached data: {maternal_patient_count} maternal patients, {newborn_patient_count} newborn patients ({time_elapsed:.0f}s old)"
         )
 
     return {
@@ -242,7 +229,7 @@ def clear_shared_cache(user=None):
         if shared_timestamp_key in st.session_state:
             del st.session_state[shared_timestamp_key]
 
-        logging.info("🧹 Cleared user-specific cache")
+        logging.info("Cleared user-specific cache")
     else:
         # Clear all user caches
         keys_to_clear = [
@@ -255,7 +242,7 @@ def clear_shared_cache(user=None):
         ]
         for key in keys_to_clear:
             del st.session_state[key]
-        logging.info("🧹 Cleared ALL shared caches")
+        logging.info("Cleared ALL shared caches")
 
     clear_cache()
 
@@ -263,14 +250,14 @@ def clear_shared_cache(user=None):
 def initialize_session_state():
     """Optimized session state initialization with proper tab isolation"""
     session_vars = {
-        "refresh_trigger": False,  # ✅ Added for manual refresh tracking
+        "refresh_trigger": False,
         "selected_facilities": ["All Facilities"],
         "current_facility_uids": [],
         "current_display_names": ["All Facilities"],
         "current_comparison_mode": "facility",
-        "filtered_patients": pd.DataFrame(),  # Changed from filtered_events
+        "filtered_patients": pd.DataFrame(),
         "selection_applied": True,
-        "cached_patients_data": None,  # Changed from cached_events_data
+        "cached_patients_data": None,
         "cached_enrollments_data": None,
         "cached_tei_data": None,
         "last_applied_selection": "All Facilities",
@@ -281,14 +268,12 @@ def initialize_session_state():
         "facility_filter_applied": False,
         "current_user_identifier": None,
         "user_changed": False,
-        # KPI sharing
         "last_computed_kpis": None,
         "last_computed_facilities": None,
         "last_computed_timestamp": None,
         "last_computed_newborn_kpis": None,
         "last_computed_newborn_timestamp": None,
         "summary_kpi_cache": {},
-        # ✅ FIXED: Proper tab tracking
         "active_tab": "maternal",
         "data_initialized": False,
         "tab_initialized": {
@@ -298,22 +283,18 @@ def initialize_session_state():
             "mentorship": False,
             "data_quality": False,
         },
-        # ✅ NEW: Track which tabs have been activated by user
         "tab_data_loaded": {
-            "maternal": True,  # Always load maternal and newborn by default
-            "newborn": True,  # Always load newborn by default
-            "summary": False,  # Only load when user clicks button
-            "mentorship": False,  # Only load when user clicks button
-            "data_quality": True,  # Always load data quality by default
+            "maternal": True,
+            "newborn": True,
+            "summary": False,
+            "mentorship": False,
+            "data_quality": True,
         },
-        # ✅ NEW: Track loading state for each tab
         "tab_loading": {
             "summary": False,
             "mentorship": False,
         },
-        # ✅ NEW: Force show tables in summary dashboard
         "show_summarized_data_regional": True,
-        # Regional specific
         "facilities": [],
         "facility_mapping": {},
         "program_uid_map": {},
@@ -330,7 +311,6 @@ def initialize_session_state():
     if st.session_state.current_user_identifier != new_user_identifier:
         st.session_state.user_changed = True
         st.session_state.current_user_identifier = new_user_identifier
-        # Clear user-specific data when user changes
         st.session_state.static_data_loaded = False
         st.session_state.selected_facilities = ["All Facilities"]
         st.session_state.selection_applied = True
@@ -339,19 +319,15 @@ def initialize_session_state():
         st.session_state.last_computed_newborn_kpis = None
         st.session_state.summary_kpi_cache = {}
         st.session_state.data_initialized = False
-        # Reset all tab states
         for tab in st.session_state.tab_initialized.keys():
             st.session_state.tab_initialized[tab] = False
-        # Reset data loaded flags except for default tabs
         st.session_state.tab_data_loaded["maternal"] = True
         st.session_state.tab_data_loaded["newborn"] = True
         st.session_state.tab_data_loaded["summary"] = False
         st.session_state.tab_data_loaded["mentorship"] = False
         st.session_state.tab_data_loaded["data_quality"] = True
-        # Reset loading states
         st.session_state.tab_loading["summary"] = False
         st.session_state.tab_loading["mentorship"] = False
-        # Reset show tables
         st.session_state.show_summarized_data_regional = True
     else:
         st.session_state.user_changed = False
@@ -362,7 +338,7 @@ initialize_session_state()
 
 
 def count_unique_patients(patient_df, facility_uids, org_unit_column="orgUnit"):
-    """✅ Count unique patients from patient-level dataframe using UIDs"""
+    """Count unique patients from patient-level dataframe using UIDs"""
     if patient_df.empty:
         return 0
 
@@ -375,9 +351,6 @@ def count_unique_patients(patient_df, facility_uids, org_unit_column="orgUnit"):
     # Count unique TEI IDs
     if "tei_id" in filtered_patients.columns:
         count = filtered_patients["tei_id"].nunique()
-        print(f"\n🔍 COUNT_UNIQUE_PATIENTS:")
-        print(f"   Total patients: {len(filtered_patients)}")
-        print(f"   Unique TEI IDs: {count}")
         return count
     else:
         return 0
@@ -398,7 +371,7 @@ def get_earliest_date(df, date_column):
 
 
 def calculate_maternal_indicators_from_patients(patient_df, facility_uids):
-    """✅ Calculate maternal indicators from patient-level data"""
+    """Calculate maternal indicators from patient-level data"""
     if patient_df.empty:
         return {
             "total_deliveries": 0,
@@ -483,7 +456,7 @@ def calculate_maternal_indicators_from_patients(patient_df, facility_uids):
 
 
 def calculate_newborn_indicators_from_patients(patient_df, facility_uids):
-    """✅ Calculate newborn indicators from patient-level data"""
+    """Calculate newborn indicators from patient-level data"""
     if patient_df.empty:
         return {
             "total_admitted": 0,
@@ -562,111 +535,109 @@ def get_location_display_name(selected_facilities, region_name):
         return ", ".join(selected_facilities), "Facilities"
 
 
-def filter_patient_data_by_facilities(patient_df, facility_uids):
-    """Filter patient dataframe by facility UIDs"""
-    if not patient_df.empty and facility_uids and "orgUnit" in patient_df.columns:
-        print(f"\n🔍 FILTER_PATIENT_DATA_BY_FACILITIES:")
-        print(f"   Before filter: {len(patient_df)} patients")
-        print(f"   Filtering by {len(facility_uids)} UIDs")
+def shorten_facility_name(facility_name):
+    """Shorten facility name for compact display"""
+    remove_words = [
+        "Health Center",
+        "HC",
+        "Hospital",
+        "Hosp",
+        "Clinic",
+        "Health Facility",
+        "Health Post",
+        "Dispensary",
+        "Medical Center",
+        "Medical",
+        "Centre",
+        "Center",
+    ]
 
-        filtered_df = patient_df[patient_df["orgUnit"].isin(facility_uids)]
+    short_name = facility_name
+    for word in remove_words:
+        short_name = short_name.replace(word, "").strip()
 
-        print(f"   After filter: {len(filtered_df)} patients")
-        print(f"   Removed: {len(patient_df) - len(filtered_df)} patients")
+    short_name = " ".join(short_name.split())
+    short_name = short_name.replace(" ,", ",").replace(",", "").strip(" -")
 
-        # Show breakdown
-        if "orgUnit_name" in filtered_df.columns:
-            for uid in facility_uids:
-                uid_data = filtered_df[filtered_df["orgUnit"] == uid]
-                if not uid_data.empty:
-                    facility_name = uid_data["orgUnit_name"].iloc[0]
-                    print(f"   UID {uid} ({facility_name}): {len(uid_data)} patients")
+    # Take first 2-3 words max
+    words = short_name.split()
+    if len(words) > 2:
+        short_name = " ".join(words[:2])
 
-        return filtered_df
-    return patient_df
+    # Final length check
+    if len(short_name) > 20:
+        short_name = short_name[:18] + ".."
 
+    # If empty after processing, use first 15 chars of original
+    if not short_name:
+        short_name = (
+            facility_name[:15] + ".." if len(facility_name) > 15 else facility_name
+        )
 
-def render_loading_indicator(tab_name, icon):
-    """Render a loading indicator for tabs that are processing data"""
-    st.markdown(
-        f"""
-        <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); 
-             border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
-            <div style="font-size: 4rem; margin-bottom: 1rem;">{icon}</div>
-            <h2 style="color: #495057; margin-bottom: 1rem;">Loading {tab_name}...</h2>
-            <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
-                Please wait while we process the data. This may take 1-2 minutes.
-            </p>
-            <div style="display: inline-block; padding: 10px 20px; background: #007bff; color: white; 
-                 border-radius: 25px; font-weight: bold;">
-                ⏳ Processing Data...
-            </div>
-        </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-    # Simulate processing time
-    time.sleep(2)
-
-
-def render_tab_placeholder(tab_name, icon, tab_key, description):
-    """Render a placeholder with a button to load data for the tab"""
-    st.markdown(
-        f"""
-        <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); 
-             border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
-            <div style="font-size: 4rem; margin-bottom: 1rem;">{icon}</div>
-            <h2 style="color: #495057; margin-bottom: 1rem;">{tab_name}</h2>
-            <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
-                {description}
-            </p>
-        </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button(
-            f"🚀 Load {tab_name} Data",
-            use_container_width=True,
-            type="primary",
-            key=f"load_{tab_key}_data",
-        ):
-            # Set loading state and data loaded state
-            st.session_state.tab_loading[tab_key] = True
-            st.session_state.tab_data_loaded[tab_key] = True
-            st.rerun()
+    return short_name
 
 
 def render_summary_dashboard_shared(
     user, region_name, facility_mapping, selected_facilities, shared_data
 ):
-    """✅ OPTIMIZED Summary Dashboard using patient-level data"""
+    """Optimized Summary Dashboard using patient-level data"""
 
-    # ✅ FIXED: Only run if this is the active tab AND data is loaded
+    # Only run if this is the active tab
     if st.session_state.active_tab != "summary":
         return
 
-    # ✅ Check if user has clicked "View Data" button for this tab
+    # Check if user has clicked "View Data" button for this tab
     if not st.session_state.tab_data_loaded["summary"]:
-        render_tab_placeholder(
-            "Summary Dashboard",
-            "📊",
-            "summary",
-            "Get comprehensive overview of maternal and newborn health indicators across selected facilities",
+        st.markdown(
+            """
+        <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); 
+             border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📊</div>
+            <h2 style="color: #495057; margin-bottom: 1rem;">Summary Dashboard</h2>
+            <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+                Get comprehensive overview of maternal and newborn health indicators across selected facilities
+            </p>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
+
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button(
+                "Load Summary Data",
+                use_container_width=True,
+                type="primary",
+                key="load_summary_data",
+            ):
+                st.session_state.tab_loading["summary"] = True
+                st.session_state.tab_data_loaded["summary"] = True
+                st.rerun()
         return
 
-    # ✅ Show loading indicator if data is being processed
+    # Show loading indicator if data is being processed
     if st.session_state.tab_loading["summary"]:
-        render_loading_indicator("Summary Dashboard", "📊")
-        # After loading, set loading to False
+        st.markdown(
+            """
+        <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); 
+             border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📊</div>
+            <h2 style="color: #495057; margin-bottom: 1rem;">Loading Summary Dashboard...</h2>
+            <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+                Please wait while we process the data. This may take 1-2 minutes.
+            </p>
+            <div style="display: inline-block; padding: 10px 20px; background: #007bff; color: white; 
+                 border-radius: 25px; font-weight: bold;">
+                Processing Data...
+            </div>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
         st.session_state.tab_loading["summary"] = False
         st.rerun()
 
-    logging.info("🔄 Regional summary dashboard rendering - USING PATIENT-LEVEL DATA")
+    logging.info("Regional summary dashboard rendering - USING PATIENT-LEVEL DATA")
 
     # Get location display name
     location_name, location_type = get_location_display_name(
@@ -709,10 +680,9 @@ def render_summary_dashboard_shared(
         < 300
     ):
         summary_data = st.session_state.summary_kpi_cache[cache_key]["data"]
-        logging.info("✅ USING CACHED summary data")
     else:
-        # ✅ Compute summary data using patient-level data
-        with st.spinner("🔄 Computing summary statistics from patient-level data..."):
+        # Compute summary data using patient-level data
+        with st.spinner("Computing summary statistics from patient-level data..."):
             # Get TEI counts from patient data
             maternal_patient_count = count_unique_patients(
                 maternal_patients, facility_uids
@@ -734,17 +704,17 @@ def render_summary_dashboard_shared(
                     newborn_patients, "enrollment_date"
                 )
 
-            # ✅ Calculate maternal indicators from patient data
+            # Calculate maternal indicators from patient data
             maternal_indicators = calculate_maternal_indicators_from_patients(
                 maternal_patients, facility_uids
             )
 
-            # ✅ Calculate newborn indicators from patient data
+            # Calculate newborn indicators from patient data
             newborn_indicators = calculate_newborn_indicators_from_patients(
                 newborn_patients, facility_uids
             )
 
-            # ✅ Facility comparison using patient data
+            # Facility comparison using patient data
             facility_comparison_data = {}
             for facility_name, facility_uid in facility_mapping.items():
                 # Count maternal patients
@@ -822,7 +792,7 @@ def render_summary_dashboard_shared(
         unsafe_allow_html=True,
     )
 
-    # ✅ DIRECTLY SHOW TABLES WITHOUT SUMMARY BUTTON
+    # DIRECTLY SHOW TABLES WITHOUT SUMMARY BUTTON
     # Show quick statistics at the top
     st.markdown("### 📈 Quick Statistics")
 
@@ -830,48 +800,43 @@ def render_summary_dashboard_shared(
     metrics = [
         (
             col1,
-            "👩 Total Mothers",
+            "Total Mothers",
             maternal_tei_count,
-            "info-metric",
             "Unique mothers admitted",
         ),
         (
             col2,
-            "👶 Total Newborns",
+            "Total Newborns",
             newborn_tei_count,
-            "success-metric",
             "Unique newborns admitted",
         ),
         (
             col3,
-            "⚠️ Maternal Deaths",
+            "Maternal Deaths",
             maternal_indicators["maternal_deaths"],
-            "critical-metric",
             "Maternal mortality cases",
         ),
         (
             col4,
-            "📅 Coverage Start",
+            "Coverage Start",
             maternal_start_date,
-            "warning-metric",
             "Earliest data record",
         ),
     ]
 
-    for col, label, value, css_class, help_text in metrics:
+    for col, label, value, help_text in metrics:
         with col:
             st.markdown(
                 f"""
-            <div class="metric-card {css_class}" style="min-height: 120px; padding: 15px;">
-                <div class="metric-label">{label}</div>
-                <div class="metric-value">{value if isinstance(value, int) else value}</div>
-                <div class="metric-help">{help_text}</div>
+            <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; border-left: 4px solid #1f77b4; margin-bottom: 10px;">
+                <div style="font-size: 0.8rem; color: #666; margin-bottom: 5px;">{label}</div>
+                <div style="font-size: 1.5rem; font-weight: bold; color: #1f77b4; margin: 10px 0;">{value if isinstance(value, int) else value}</div>
+                <div style="font-size: 0.65rem; color: #888;">{help_text}</div>
             </div>
             """,
                 unsafe_allow_html=True,
             )
 
-    # ✅ DIRECTLY SHOW ALL TABLES (no button needed)
     st.markdown("---")
 
     # Newborn Overview Table
@@ -937,7 +902,7 @@ def render_summary_dashboard_shared(
         }
         newborn_df = pd.DataFrame(newborn_data_download)
         st.download_button(
-            "📥 Download Newborn Data",
+            "Download Newborn Data",
             data=newborn_df.to_csv(index=False),
             file_name=f"newborn_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
             mime="text/csv",
@@ -994,7 +959,7 @@ def render_summary_dashboard_shared(
         }
         maternal_df = pd.DataFrame(maternal_data_download)
         st.download_button(
-            "📥 Download Maternal Data",
+            "Download Maternal Data",
             data=maternal_df.to_csv(index=False),
             file_name=f"maternal_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
             mime="text/csv",
@@ -1071,7 +1036,7 @@ def render_summary_dashboard_shared(
             )
             download_df = pd.DataFrame(download_data)
             st.download_button(
-                "📥 Download Facility Data",
+                "Download Facility Data",
                 data=download_df.to_csv(index=False),
                 file_name=f"facility_comparison_{region_name.replace(' ', '_')}.csv",
                 mime="text/csv",
@@ -1081,171 +1046,48 @@ def render_summary_dashboard_shared(
         st.info("No facility data available for comparison.")
 
 
-def calculate_facility_comparison_data_from_patients(
-    maternal_patients, newborn_patients, facility_mapping
-):
-    """Optimized facility comparison data calculation using patient data"""
-    facility_data = {}
-
-    for facility_name, facility_uid in facility_mapping.items():
-        # Count patients
-        maternal_count = count_unique_patients(maternal_patients, [facility_uid])
-        newborn_count = count_unique_patients(newborn_patients, [facility_uid])
-
-        # Only include facilities with data
-        if maternal_count > 0 or newborn_count > 0:
-            short_name = shorten_facility_name(facility_name)
-            facility_data[short_name] = {
-                "mothers": maternal_count,
-                "newborns": newborn_count,
-                "full_name": facility_name,
-            }
-
-    return facility_data
-
-
-def shorten_facility_name(facility_name):
-    """Shorten facility name for compact display"""
-    remove_words = [
-        "Health Center",
-        "HC",
-        "Hospital",
-        "Hosp",
-        "Clinic",
-        "Health Facility",
-        "Health Post",
-        "Dispensary",
-        "Medical Center",
-        "Medical",
-        "Centre",
-        "Center",
-    ]
-
-    short_name = facility_name
-    for word in remove_words:
-        short_name = short_name.replace(word, "").strip()
-
-    short_name = " ".join(short_name.split())
-    short_name = short_name.replace(" ,", ",").replace(",", "").strip(" -")
-
-    # Take first 2-3 words max
-    words = short_name.split()
-    if len(words) > 2:
-        short_name = " ".join(words[:2])
-
-    # Final length check
-    if len(short_name) > 20:
-        short_name = short_name[:18] + ".."
-
-    # If empty after processing, use first 15 chars of original
-    if not short_name:
-        short_name = (
-            facility_name[:15] + ".." if len(facility_name) > 15 else facility_name
-        )
-
-    return short_name
-
-
 def render_maternal_dashboard_shared(
     user,
     maternal_data,
     region_name,
     selected_facilities,
-    facility_uids,  # ✅ This should be UIDs
+    facility_uids,
     view_mode="Normal Trend",
     facility_mapping=None,
     facility_names=None,
 ):
     """Optimized Maternal Dashboard rendering using patient-level data with UID filtering"""
 
-    print(f"\n{'='*80}")
-    print(f"🚨 START render_maternal_dashboard_shared - DEBUG")
-    print(f"{'='*80}")
-
-    # ✅ FIXED: Only run if this is the active tab
+    # Only run if this is the active tab
     if st.session_state.active_tab != "maternal":
         return
 
-    logging.info("🔄 Maternal dashboard rendering with patient-level data")
+    logging.info("Maternal dashboard rendering with patient-level data")
 
     if not maternal_data:
         st.error("No maternal data available")
         return
 
-    # ✅ GET PATIENT-LEVEL DATA
+    # GET PATIENT-LEVEL DATA
     patients_df = maternal_data.get("patients", pd.DataFrame())
 
-    # ✅ DEBUG: Check data structure
-    print(f"\n📊 DATA STRUCTURE CHECK:")
-    print(f"  Total patients in data: {len(patients_df)}")
-    print(
-        f"  Columns containing 'org': {[col for col in patients_df.columns if 'org' in col.lower()]}"
-    )
-
-    if "orgUnit" in patients_df.columns:
-        print(f"  orgUnit column found (UIDs)")
-        print(f"  Sample UIDs: {patients_df['orgUnit'].unique()[:5]}")
-        print(f"  Unique orgUnits: {patients_df['orgUnit'].nunique()}")
-    else:
-        print(f"❌ ERROR: 'orgUnit' column not found in data!")
-        st.error("Missing 'orgUnit' column in data. Cannot filter by facility UIDs.")
+    if patients_df.empty:
+        st.error("No patient data available")
         return
 
-    if "orgUnit_name" in patients_df.columns:
-        print(f"  orgUnit_name column found (Names)")
-        print(f"  Sample names: {patients_df['orgUnit_name'].unique()[:5]}")
-
-    # ✅ VALIDATE UIDs are being passed correctly
-    print(f"\n🔧 PARAMETER VALIDATION:")
-    print(f"  Selected facilities (names): {selected_facilities}")
-    print(f"  Facility UIDs received: {facility_uids}")
-    print(f"  Facility names: {facility_names}")
-    print(f"  View mode: {view_mode}")
+    # Ensure orgUnit column exists
+    if "orgUnit" not in patients_df.columns:
+        st.error("❌ Missing 'orgUnit' column in data. Cannot filter by facility UIDs.")
+        return
 
     # Use patient data directly
     working_df = patients_df.copy()
 
-    # ✅ CRITICAL FIX: Filter by UID EARLY
+    # Filter by UID EARLY
     if facility_uids and "orgUnit" in working_df.columns:
-        before_filter = len(working_df)
         working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
-        after_filter = len(working_df)
-        print(f"\n🔍 FILTERING BY UIDs:")
-        print(f"  Before UID filter: {before_filter} patients")
-        print(f"  After UID filter: {after_filter} patients")
-        print(f"  Removed: {before_filter - after_filter} patients")
 
-        # Check which UIDs actually exist in data
-        found_uids = [
-            uid for uid in facility_uids if uid in working_df["orgUnit"].values
-        ]
-        missing_uids = [
-            uid for uid in facility_uids if uid not in working_df["orgUnit"].values
-        ]
-        print(f"  UIDs found in data: {len(found_uids)}/{len(facility_uids)}")
-        if missing_uids:
-            print(f"  UIDs NOT in data: {missing_uids}")
-
-    # ✅ Validate patient counts with UIDs
-    print(f"\n🔍 PATIENT COUNT VALIDATION (USING UIDs):")
-    print(f"  Working dataframe: {len(working_df)} rows")
-    if "tei_id" in working_df.columns:
-        print(f"  Unique TEI IDs: {working_df['tei_id'].nunique()}")
-    if "orgUnit" in working_df.columns:
-        print(f"  Unique orgUnits: {working_df['orgUnit'].nunique()}")
-        # Show breakdown by UID
-        for uid in facility_uids:
-            uid_patients = working_df[working_df["orgUnit"] == uid]
-            uid_name = (
-                patients_df[patients_df["orgUnit"] == uid]["orgUnit_name"].iloc[0]
-                if not patients_df[patients_df["orgUnit"] == uid].empty
-                else "Unknown"
-            )
-            print(
-                f"  UID {uid} ({uid_name}): {len(uid_patients)} patients, {uid_patients['tei_id'].nunique()} unique TEI IDs"
-            )
-
-    # ✅ CRITICAL FIX: Ensure ALL patients have a date for filtering
+    # Ensure ALL patients have a date for filtering
     if "event_date" not in working_df.columns:
         # Try to find event date columns
         event_date_cols = [
@@ -1256,10 +1098,8 @@ def render_maternal_dashboard_shared(
             working_df["event_date"] = pd.to_datetime(
                 working_df[event_date_cols[0]], errors="coerce"
             )
-            print(f"  Using date column: {event_date_cols[0]}")
         else:
             working_df["event_date"] = pd.NaT
-            print(f"⚠️ No event date columns found")
 
     # Ensure enrollment_date exists and is datetime
     if "enrollment_date" in working_df.columns:
@@ -1269,23 +1109,13 @@ def render_maternal_dashboard_shared(
     else:
         working_df["enrollment_date"] = working_df["event_date"]
 
-    # ✅ CRITICAL: Create a combined date that always has a value
+    # Create a combined date that always has a value
     working_df["combined_date"] = working_df["event_date"].combine_first(
         working_df["enrollment_date"]
     )
 
-    # Check how many dates we have
-    total_patients = len(working_df)
-    valid_dates = working_df["combined_date"].notna().sum()
-
-    print(f"\n📊 DATE ANALYSIS:")
-    print(f"   Total patients: {total_patients}")
-    print(f"   Patients with valid combined_date: {valid_dates}")
-
     # Store the original df for KPI calculations
     st.session_state.maternal_patients_df = working_df.copy()
-
-    render_connection_status(working_df, user=user)
 
     # Update session state
     st.session_state.current_facility_uids = facility_uids
@@ -1307,9 +1137,9 @@ def render_maternal_dashboard_shared(
         f'<div class="main-header" style="margin-bottom: 0.3rem;">{header_title}</div>',
         unsafe_allow_html=True,
     )
-    st.markdown(f"**📊 Displaying data from {header_subtitle}**")
+    st.markdown(f"**Displaying data from {header_subtitle}**")
 
-    # ✅ IMPROVED: Single progress container
+    # Progress container
     progress_container = st.empty()
     with progress_container.container():
         st.markdown("---")
@@ -1319,11 +1149,11 @@ def render_maternal_dashboard_shared(
             st.markdown(
                 """
             <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
-            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing Data</h4>
+            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">Processing Data</h4>
             <p style="margin: 5px 0; font-size: 14px;">• Computing KPIs and indicators...</p>
             <p style="margin: 5px 0; font-size: 14px;">• Generating charts and visualizations...</p>
             <p style="margin: 5px 0; font-size: 14px;">• Preparing data tables...</p>
-            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 2-4 minutes depending on data size</p>
+            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">This may take 2-4 minutes depending on data size</p>
             </div>
             """,
                 unsafe_allow_html=True,
@@ -1347,42 +1177,25 @@ def render_maternal_dashboard_shared(
 
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-        filters = render_simple_filter_controls(
+        filters = render_patient_filter_controls(
             working_df, container=col_ctrl, context="regional_maternal"
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ✅ CRITICAL FIX: Use THE SAME filtered data for BOTH KPIs and charts
     # Apply date filters FIRST to get the correct time period
-    print(f"\n🔍 APPLYING DATE FILTERS...")
-    filtered_for_all = apply_simple_filters(working_df, filters, facility_uids)
+    filtered_for_all = apply_patient_filters(working_df, filters, facility_uids)
 
-    print(f"\n📊 FILTERING ANALYSIS:")
-    print(f"   Original patients (after UID filter): {len(working_df)}")
-    print(f"   After date filtering: {len(filtered_for_all)}")
-
-    if "period_display" in filtered_for_all.columns:
-        unique_periods = filtered_for_all["period_display"].unique()
-        print(f"   Periods in filtered data: {list(unique_periods)}")
-
-    # Store BOTH versions - but use filtered_for_all for everything
+    # Store BOTH versions
     st.session_state["filtered_patients"] = filtered_for_all.copy()
-    st.session_state["all_patients_for_kpi"] = (
-        filtered_for_all.copy()
-    )  # ✅ FIX: Use FILTERED data
+    st.session_state["all_patients_for_kpi"] = filtered_for_all.copy()
 
-    # KPI Cards with FILTERED data (respects time period)
+    # KPI Cards with FILTERED data
     with kpi_container:
         location_name, location_type = get_location_display_name(
             selected_facilities, region_name
         )
 
         user_id = str(user.get("id", user.get("username", "default_user")))
-
-        # ✅ FIX: Use FILTERED data for KPI calculations
-        print(f"\n📊 KPI CALCULATION (AFTER FIX):")
-        print(f"   Using {len(filtered_for_all)} patients for KPI calculations")
-
         kpi_data = render_kpi_cards(filtered_for_all, location_name, user_id=user_id)
 
         # Save for summary dashboard to reuse
@@ -1390,10 +1203,10 @@ def render_maternal_dashboard_shared(
         st.session_state.last_computed_facilities = facility_uids
         st.session_state.last_computed_timestamp = time.time()
 
-    # ✅ CLEAR THE PROGRESS INDICATOR ONCE KPI CARDS ARE DONE
+    # CLEAR THE PROGRESS INDICATOR ONCE KPI CARDS ARE DONE
     progress_container.empty()
 
-    # Charts section with optimized rendering
+    # Charts section
     bg_color = filters["bg_color"]
     text_color = get_text_color(bg_color)
 
@@ -1407,16 +1220,16 @@ def render_maternal_dashboard_shared(
             )
             render_comparison_chart(
                 kpi_selection=selected_kpi,
-                patient_df=filtered_for_all,  # ✅ Use same filtered data
+                patient_df=filtered_for_all,
                 comparison_mode="facility",
                 display_names=facility_names or selected_facilities,
-                facility_uids=facility_uids,  # ✅ Pass UIDs
+                facility_uids=facility_uids,
                 facilities_by_region=None,
                 region_names=None,
                 bg_color=bg_color,
                 text_color=text_color,
                 is_national=False,
-                show_table=filters.get("show_table", False),
+                filtered_patients=filtered_for_all,
             )
         else:
             st.markdown(
@@ -1425,8 +1238,8 @@ def render_maternal_dashboard_shared(
             )
             render_trend_chart_section(
                 selected_kpi,
-                filtered_for_all,  # ✅ Use same filtered data
-                facility_uids,  # ✅ Pass UIDs
+                filtered_for_all,
+                facility_uids,
                 facility_names or selected_facilities,
                 bg_color,
                 text_color,
@@ -1437,485 +1250,11 @@ def render_maternal_dashboard_shared(
 
         render_additional_analytics(
             selected_kpi,
-            filtered_for_all,  # ✅ Use same filtered data
-            facility_uids,  # ✅ Pass UIDs
+            filtered_for_all,
+            facility_uids,
             bg_color,
             text_color,
         )
-
-
-def debug_facility_spacing_issues(maternal_data, facilities_from_db, facility_mapping):
-    """
-    Debug function to identify facility name spacing and formatting issues
-    """
-    print(f"\n{'='*100}")
-    print(f"🔍 DEBUG: FACILITY SPACING & FORMATTING ISSUES")
-    print(f"{'='*100}")
-
-    if not maternal_data:
-        print("❌ No maternal data available")
-        return
-
-    patients_df = maternal_data.get("patients", pd.DataFrame())
-
-    if patients_df.empty:
-        print("❌ Empty patients dataframe")
-        return
-
-    # Get facilities from CSV data
-    if "orgUnit_name" not in patients_df.columns:
-        print("❌ 'orgUnit_name' column not found in patient data")
-        return
-
-    csv_facilities = patients_df["orgUnit_name"].unique()
-    db_facility_names = [f[0] for f in facilities_from_db]
-
-    print(f"\n📊 OVERVIEW:")
-    print(f"   CSV facilities: {len(csv_facilities)}")
-    print(f"   DB facilities: {len(db_facility_names)}")
-    print(f"   Facility mapping entries: {len(facility_mapping)}")
-
-    # Create a function to normalize facility names for comparison
-    def normalize_facility_name(name):
-        """Normalize facility name by removing extra spaces and standardizing"""
-        if not name or pd.isna(name):
-            return ""
-
-        name = str(name).strip()
-
-        # Remove multiple spaces
-        import re
-
-        name = re.sub(r"\s+", " ", name)
-
-        # Standardize hospital types (lowercase for comparison)
-        name_lower = name.lower()
-
-        # Standardize common terms
-        replacements = [
-            ("health center", "hc"),
-            ("primary hospital", "ph"),
-            ("general hospital", "gh"),
-            ("specialized hospital", "sh"),
-            ("referral hospital", "rh"),
-            ("medical center", "mc"),
-            ("clinic", "cl"),
-            ("health post", "hp"),
-            ("dispensary", "disp"),
-        ]
-
-        for old, new in replacements:
-            if old in name_lower:
-                name_lower = name_lower.replace(old, new)
-
-        # Remove all spaces and punctuation for strict matching
-        name_strict = re.sub(r"[^a-z0-9]", "", name_lower)
-
-        return {"original": name, "normalized": name_lower, "strict": name_strict}
-
-    # Create normalized dictionaries
-    print(f"\n🔍 CREATING NORMALIZED DICTIONARIES...")
-
-    csv_normalized = {}
-    for fac in csv_facilities:
-        norm = normalize_facility_name(fac)
-        csv_normalized[norm["strict"]] = {
-            "original": norm["original"],
-            "normalized": norm["normalized"],
-            "strict": norm["strict"],
-            "patient_count": patients_df[patients_df["orgUnit_name"] == fac][
-                "tei_id"
-            ].nunique(),
-        }
-
-    db_normalized = {}
-    for fac in db_facility_names:
-        norm = normalize_facility_name(fac)
-        db_normalized[norm["strict"]] = {
-            "original": norm["original"],
-            "normalized": norm["normalized"],
-            "strict": norm["strict"],
-        }
-
-    mapping_normalized = {}
-    for fac in facility_mapping.keys():
-        norm = normalize_facility_name(fac)
-        mapping_normalized[norm["strict"]] = {
-            "original": norm["original"],
-            "normalized": norm["normalized"],
-            "strict": norm["strict"],
-        }
-
-    # Find matches and mismatches
-    print(f"\n📊 MATCHING ANALYSIS:")
-
-    # CSV vs DB
-    csv_in_db = set(csv_normalized.keys()) & set(db_normalized.keys())
-    csv_not_in_db = set(csv_normalized.keys()) - set(db_normalized.keys())
-    db_not_in_csv = set(db_normalized.keys()) - set(csv_normalized.keys())
-
-    print(f"   CSV facilities matched with DB: {len(csv_in_db)}/{len(csv_normalized)}")
-    print(f"   CSV facilities NOT in DB: {len(csv_not_in_db)}")
-    print(f"   DB facilities NOT in CSV: {len(db_not_in_csv)}")
-
-    # CSV vs Mapping
-    csv_in_mapping = set(csv_normalized.keys()) & set(mapping_normalized.keys())
-    csv_not_in_mapping = set(csv_normalized.keys()) - set(mapping_normalized.keys())
-
-    print(
-        f"\n   CSV facilities in mapping: {len(csv_in_mapping)}/{len(csv_normalized)}"
-    )
-    print(f"   CSV facilities NOT in mapping: {len(csv_not_in_mapping)}")
-
-    # Show specific mismatches
-    print(f"\n🔍 SPECIFIC MISMATCHES - CSV NOT IN MAPPING:")
-    if csv_not_in_mapping:
-        print(f"   Found {len(csv_not_in_mapping)} CSV facilities not in mapping")
-
-        # Sort by patient count (highest first)
-        mismatches_with_counts = []
-        for strict_name in csv_not_in_mapping:
-            csv_info = csv_normalized[strict_name]
-            mismatches_with_counts.append(
-                {
-                    "strict": strict_name,
-                    "original": csv_info["original"],
-                    "patient_count": csv_info["patient_count"],
-                    "normalized": csv_info["normalized"],
-                }
-            )
-
-        # Sort by patient count descending
-        mismatches_with_counts.sort(key=lambda x: x["patient_count"], reverse=True)
-
-        print(f"\n   Top 20 mismatches by patient count:")
-        for i, mismatch in enumerate(mismatches_with_counts[:20]):
-            print(f"   {i+1:2d}. '{mismatch['original']}'")
-            print(f"       Patients: {mismatch['patient_count']}")
-            print(f"       Normalized: {mismatch['normalized']}")
-            print(f"       Strict key: {mismatch['strict']}")
-
-            # Try to find similar names in mapping
-            similar_in_mapping = []
-            for map_strict, map_info in mapping_normalized.items():
-                # Check for partial matches
-                if (
-                    mismatch["strict"] in map_strict
-                    or map_strict in mismatch["strict"]
-                    or mismatch["normalized"].replace(" ", "")
-                    in map_info["normalized"].replace(" ", "")
-                    or map_info["normalized"].replace(" ", "")
-                    in mismatch["normalized"].replace(" ", "")
-                ):
-                    similar_in_mapping.append(map_info["original"])
-
-            if similar_in_mapping:
-                print(f"       Similar in mapping: {similar_in_mapping}")
-            print()
-
-    # Show facilities with many patients but no mapping
-    print(f"\n🔍 HIGH-IMPACT MISMATCHES (Many patients, no mapping):")
-    high_impact = [m for m in mismatches_with_counts if m["patient_count"] > 0]
-    if high_impact:
-        print(f"   Found {len(high_impact)} facilities with patients but no mapping")
-        for i, mismatch in enumerate(high_impact[:10]):
-            print(
-                f"   {i+1}. '{mismatch['original']}': {mismatch['patient_count']} patients"
-            )
-
-    # Show exact string differences for sample mismatches
-    print(f"\n🔍 STRING COMPARISON FOR SAMPLE MISMATCHES:")
-    sample_count = min(5, len(csv_not_in_mapping))
-    for i, strict_name in enumerate(list(csv_not_in_mapping)[:sample_count]):
-        csv_info = csv_normalized[strict_name]
-        print(f"\n   CSV facility {i+1}:")
-        print(f"     Original: '{csv_info['original']}'")
-        print(f"     Length: {len(csv_info['original'])} chars")
-        print(f"     ASCII codes: {[ord(c) for c in csv_info['original']]}")
-
-        # Show character by character
-        print(f"     Characters:")
-        for j, char in enumerate(csv_info["original"]):
-            print(f"       [{j:2d}] '{char}' (ASCII: {ord(char):3d})")
-
-    # Check for common patterns
-    print(f"\n🔍 COMMON PATTERN ANALYSIS:")
-
-    # Check for trailing/leading spaces
-    csv_with_spaces = []
-    for fac in csv_facilities:
-        if str(fac) != str(fac).strip():
-            csv_with_spaces.append(fac)
-
-    if csv_with_spaces:
-        print(f"   CSV facilities with extra spaces: {len(csv_with_spaces)}")
-        for fac in csv_with_spaces[:5]:
-            print(f"     '{fac}' (stripped: '{fac.strip()}')")
-
-    # Check for different capitalization
-    print(f"\n   CSV facility name variations:")
-    name_variations = {}
-    for fac in csv_facilities:
-        key = str(fac).lower().strip()
-        if key not in name_variations:
-            name_variations[key] = []
-        if str(fac) not in name_variations[key]:
-            name_variations[key].append(str(fac))
-
-    variations_with_multiple = {k: v for k, v in name_variations.items() if len(v) > 1}
-    if variations_with_multiple:
-        print(
-            f"   Found {len(variations_with_multiple)} names with multiple variations:"
-        )
-        for key, variations in list(variations_with_multiple.items())[:5]:
-            print(f"     '{key}':")
-            for var in variations:
-                print(f"       - '{var}'")
-
-    # Quick fix suggestions
-    print(f"\n🔧 QUICK FIX SUGGESTIONS:")
-
-    # 1. Create a manual mapping for mismatched facilities
-    print(f"\n   1. MANUAL MAPPING SCRIPT (add to your code):")
-    print(f"   manual_facility_fixes = {{")
-
-    for i, mismatch in enumerate(mismatches_with_counts[:10]):
-        if mismatch["patient_count"] > 0:
-            csv_name = mismatch["original"]
-            # Find the closest match in DB
-            closest_match = None
-            closest_score = 0
-
-            for db_fac in db_facility_names:
-                # Simple similarity check
-                csv_lower = csv_name.lower().replace(" ", "")
-                db_lower = db_fac.lower().replace(" ", "")
-
-                if csv_lower in db_lower or db_lower in csv_lower:
-                    similarity = len(set(csv_lower) & set(db_lower)) / max(
-                        len(csv_lower), len(db_lower)
-                    )
-                    if similarity > closest_score:
-                        closest_score = similarity
-                        closest_match = db_fac
-
-            if closest_match and closest_score > 0.7:
-                print(
-                    f"       '{csv_name}': '{closest_match}',  # {mismatch['patient_count']} patients"
-                )
-
-    print(f"   }}")
-
-    # 2. Auto-clean function
-    print(f"\n   2. AUTO-CLEAN FUNCTION:")
-    print(f"   def clean_facility_name(name):")
-    print(f"       import re")
-    print(f"       name = str(name).strip()")
-    print(f"       name = re.sub(r'\\s+', ' ', name)  # Remove extra spaces")
-    print(f"       # Common fixes")
-    print(f"       fixes = {{")
-    print(f"           'Abiadi  General hospital': 'Abiadi General hospital',")
-    print(f"           'Abiadi General  hospital': 'Abiadi General hospital',")
-    print(f"       }}")
-    print(f"       return fixes.get(name, name)")
-
-    print(f"\n{'='*100}")
-    print(f"🔍 DEBUG: END FACILITY SPACING ANALYSIS")
-    print(f"{'='*100}\n")
-
-
-def diagnose_data_issues(user, shared_data, selected_facilities, facility_mapping):
-    """Diagnostic function to identify data issues"""
-    st.sidebar.markdown("---")
-    if st.sidebar.button("🔍 Run Data Diagnostics", use_container_width=True):
-        with st.expander("📊 Data Diagnostics Report", expanded=True):
-            st.markdown("### 🩺 Data Health Check")
-
-            # Get data
-            maternal_data = shared_data.get("maternal", {})
-            newborn_data = shared_data.get("newborn", {})
-
-            maternal_patients = maternal_data.get("patients", pd.DataFrame())
-            newborn_patients = newborn_data.get("patients", pd.DataFrame())
-
-            # Facility analysis
-            st.markdown("#### 🏥 Facility Analysis")
-
-            # Get normalized facility names
-            from utils.data_service import normalize_facility_name
-
-            db_facilities = [f[0] for f in st.session_state.facilities]
-            normalized_db = [normalize_facility_name(f) for f in db_facilities]
-
-            if (
-                "orgUnit_name" in maternal_patients.columns
-                and not maternal_patients.empty
-            ):
-                data_facilities = maternal_patients["orgUnit_name"].unique()
-                normalized_data = [normalize_facility_name(f) for f in data_facilities]
-
-                # Find matches and mismatches
-                matches = set(normalized_db) & set(normalized_data)
-                db_only = set(normalized_db) - set(normalized_data)
-                data_only = set(normalized_data) - set(normalized_db)
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("✅ Matches", len(matches))
-                with col2:
-                    st.metric("❌ DB Only", len(db_only))
-                with col3:
-                    st.metric("❓ Data Only", len(data_only))
-
-                if db_only:
-                    st.warning("Facilities in DB but not in data:")
-                    for fac in sorted(db_only)[:10]:
-                        st.write(f"  - {fac}")
-
-                if data_only:
-                    st.info("Facilities in data but not in DB:")
-                    for fac in sorted(data_only)[:10]:
-                        st.write(f"  - {fac}")
-            else:
-                st.warning("No facility names found in maternal patient data")
-
-            # Patient count analysis
-            st.markdown("#### 👥 Patient Count Analysis")
-
-            if not maternal_patients.empty and "tei_id" in maternal_patients.columns:
-                total_patients = maternal_patients["tei_id"].nunique()
-                st.write(f"**Total unique patients:** {total_patients}")
-
-                # Count by facility
-                if "orgUnit_name" in maternal_patients.columns:
-                    facility_counts = maternal_patients.groupby("orgUnit_name")[
-                        "tei_id"
-                    ].nunique()
-
-                    st.write("**Top 10 facilities by patient count:**")
-                    for facility, count in (
-                        facility_counts.sort_values(ascending=False).head(10).items()
-                    ):
-                        st.write(f"  - {facility}: {count} patients")
-
-            # Data quality checks
-            st.markdown("#### 📋 Data Quality Checks")
-
-            if not maternal_patients.empty:
-                # Check for missing critical columns
-                critical_columns = [
-                    "birth_outcome_delivery_summary",
-                    "mode_of_delivery_maternal_delivery_summary",
-                    "event_date_delivery_summary",
-                ]
-
-                missing_cols = [
-                    col
-                    for col in critical_columns
-                    if col not in maternal_patients.columns
-                ]
-                if missing_cols:
-                    st.error(f"Missing critical columns: {missing_cols}")
-
-                # Check birth outcome data
-                if "birth_outcome_delivery_summary" in maternal_patients.columns:
-                    total_rows = len(maternal_patients)
-                    non_null = (
-                        maternal_patients["birth_outcome_delivery_summary"]
-                        .notna()
-                        .sum()
-                    )
-
-                    from utils.kpi_utils import compute_stillbirth_count
-
-                    stillbirths = compute_stillbirth_count(maternal_patients)
-
-                    st.write(f"**Birth Outcome Analysis:**")
-                    st.write(f"  - Total rows: {total_rows}")
-                    st.write(
-                        f"  - Non-null birth outcomes: {non_null} ({non_null/total_rows*100:.1f}%)"
-                    )
-                    st.write(f"  - Stillbirths found: {stillbirths}")
-
-
-def validate_patient_counts(maternal_data, facility_uids, facility_names):
-    """Validate that all patients are being counted correctly using UIDs"""
-    print(f"\n{'='*80}")
-    print(f"🔍 PATIENT COUNT VALIDATION (USING UIDs)")
-    print(f"{'='*80}")
-
-    if not maternal_data:
-        print("❌ No maternal data available")
-        return
-
-    patients_df = maternal_data.get("patients", pd.DataFrame())
-
-    if patients_df.empty:
-        print("❌ Empty patients dataframe")
-        return
-
-    print(f"Total patients in dataset: {len(patients_df)}")
-    print(f"Unique TEI IDs in dataset: {patients_df['tei_id'].nunique()}")
-
-    # Check if we have the orgUnit column (which contains UIDs)
-    if "orgUnit" in patients_df.columns:
-        print(f"✅ Found 'orgUnit' column (UIDs)")
-
-        # Get unique orgUnits in data
-        unique_orgunits = patients_df["orgUnit"].unique()
-        print(f"Unique orgUnits in data: {len(unique_orgunits)}")
-        print(
-            f"Sample orgUnits: {unique_orgunits[:10] if len(unique_orgunits) > 10 else unique_orgunits}"
-        )
-    else:
-        print("❌ 'orgUnit' column NOT FOUND - cannot filter by UID")
-        return
-
-    # Filter by selected facilities USING UIDs
-    if facility_uids:
-        print(f"\nFor selected facilities ({len(facility_uids)} facilities):")
-        print(f"  Selected facility UIDs: {facility_uids}")
-
-        # Find which UIDs exist in the data
-        existing_uids = [
-            uid for uid in facility_uids if uid in patients_df["orgUnit"].values
-        ]
-        missing_uids = [
-            uid for uid in facility_uids if uid not in patients_df["orgUnit"].values
-        ]
-
-        print(f"  UIDs found in data: {len(existing_uids)}")
-        print(f"  UIDs NOT in data: {len(missing_uids)}")
-
-        if missing_uids:
-            print(f"  Missing UIDs: {missing_uids}")
-
-        # Filter by UIDs
-        filtered_df = patients_df[patients_df["orgUnit"].isin(facility_uids)]
-        print(f"\n  Filtered patients: {len(filtered_df)}")
-        print(f"  Unique TEI IDs after filtering: {filtered_df['tei_id'].nunique()}")
-
-        # Show breakdown by facility UID
-        print(f"\nBreakdown by facility UID:")
-        for facility_name, facility_uid in zip(facility_names, facility_uids):
-            facility_patients = filtered_df[filtered_df["orgUnit"] == facility_uid]
-            unique_patients = facility_patients["tei_id"].nunique()
-            print(f"  {facility_name} ({facility_uid}): {unique_patients} patients")
-
-    # Also check if we have facility names for debugging
-    if "orgUnit_name" in patients_df.columns:
-        print(f"\n📋 Facility names in data (first 10):")
-        unique_names = patients_df["orgUnit_name"].unique()[:10]
-        for name in unique_names:
-            # Find the corresponding UID for this name
-            sample_uid = (
-                patients_df[patients_df["orgUnit_name"] == name]["orgUnit"].iloc[0]
-                if not patients_df[patients_df["orgUnit_name"] == name].empty
-                else "N/A"
-            )
-            print(f"  '{name}' → UID: {sample_uid}")
-
-    print(f"{'='*80}\n")
 
 
 def render():
@@ -1932,7 +1271,7 @@ def render():
 
     # Show user change notification if needed
     if st.session_state.get("user_changed", False):
-        st.sidebar.info("👤 User changed - loading fresh data...")
+        st.sidebar.info("User changed - loading fresh data...")
         current_user = st.session_state.get("user", {})
         clear_shared_cache(current_user)
 
@@ -1955,6 +1294,7 @@ def render():
     .metric-help { font-size: 0.65rem !important; margin-top: 2px !important; }
     .summary-table th, .summary-table td { padding: 6px 8px !important; font-size: 12px !important; }
     .stCheckbox label { color: #000000 !important; font-size: 0.9rem !important; }
+    .filter-box { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 15px; }
     </style>
     """,
         unsafe_allow_html=True,
@@ -1992,10 +1332,10 @@ def render():
     )
 
     # Refresh Data Button
-    if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
+    if st.sidebar.button("Refresh Data", use_container_width=True):
         st.cache_data.clear()
         clear_shared_cache(user)
-        st.session_state.refresh_trigger = True  # ✅ Set refresh trigger
+        st.session_state.refresh_trigger = True
         st.session_state.selection_applied = True
         st.session_state.facility_filter_applied = False
         st.session_state.last_computed_kpis = None
@@ -2021,7 +1361,7 @@ def render():
         "user_changed", False
     ):
         with st.sidebar:
-            with st.spinner("🚀 Loading facility data..."):
+            with st.spinner("Loading facility data..."):
                 static_data = get_static_data(user)
                 st.session_state.facilities = static_data["facilities"]
                 st.session_state.facility_mapping = static_data["facility_mapping"]
@@ -2033,24 +1373,22 @@ def render():
     facility_mapping = st.session_state.facility_mapping
     program_uid_map = st.session_state.program_uid_map
 
-    # ✅ FIX: SINGLE DATA LOADING - Only load once and store in variable
+    # SINGLE DATA LOADING - Only load once and store in variable
     if not st.session_state.get("data_initialized", False):
         # First time or fresh data needed
-        with st.spinner("🚀 Loading dashboard data..."):
+        with st.spinner("Loading dashboard data..."):
             shared_data = get_shared_program_data_optimized(
                 user, program_uid_map, show_spinner=False
             )
             st.session_state.data_initialized = True
-            st.session_state.cached_shared_data = (
-                shared_data  # ✅ Store in session state
-            )
-            logging.info("✅ Initial data loading complete")
+            st.session_state.cached_shared_data = shared_data
+            logging.info("Initial data loading complete")
     else:
         # Use cached data from session state - no loading needed
         shared_data = st.session_state.cached_shared_data
-        logging.info("✅ Using cached shared data from session state")
+        logging.info("Using cached shared data from session state")
 
-    # ✅ Add cache status indicator in sidebar
+    # Add cache status indicator in sidebar
     if st.session_state.get("data_initialized", False):
         user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
         timestamp_key = f"shared_data_timestamp_{user_key}"
@@ -2061,9 +1399,9 @@ def render():
             seconds_old = int(time_elapsed % 60)
 
             if minutes_old < 30:
-                st.sidebar.info(f"🔄 Data: {minutes_old}m {seconds_old}s old")
+                st.sidebar.info(f"Data: {minutes_old}m {seconds_old}s old")
             else:
-                st.sidebar.warning(f"🔄 Data: {minutes_old}m old (will auto-refresh)")
+                st.sidebar.warning(f"Data: {minutes_old}m old (will auto-refresh)")
 
     # ================ COMPACT FACILITY SELECTION ================
     st.sidebar.markdown("---")
@@ -2101,7 +1439,7 @@ def render():
                 selected_facilities = ["All Facilities"]
 
         selection_submitted = st.form_submit_button(
-            "✅ Apply Selection", use_container_width=True
+            "Apply Selection", use_container_width=True
         )
         if selection_submitted:
             st.session_state.selected_facilities = selected_facilities
@@ -2151,9 +1489,6 @@ def render():
             label_visibility="collapsed",
         )
 
-    # ================ DIAGNOSTIC TOOL ================
-    diagnose_data_issues(user, shared_data, selected_facilities, facility_mapping)
-
     # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
@@ -2169,7 +1504,7 @@ def render():
         # Update active tab only if this tab is clicked
         if st.session_state.active_tab != "maternal":
             st.session_state.active_tab = "maternal"
-            logging.info("🔄 Switched to Maternal tab")
+            logging.info("Switched to Maternal tab")
 
         maternal_data = shared_data["maternal"]
         if maternal_data:
@@ -2189,12 +1524,10 @@ def render():
     with tab2:
         if st.session_state.active_tab != "newborn":
             st.session_state.active_tab = "newborn"
-            logging.info("🔄 Switched to Newborn tab")
+            logging.info("Switched to Newborn tab")
 
         newborn_data = shared_data["newborn"]
         if newborn_data:
-            # Note: You'll need to update render_newborn_dashboard similarly
-            # For now, let it use the transformed events data
             render_newborn_dashboard(
                 user=user,
                 program_uid=program_uid_map.get("Newborn Care Form"),
@@ -2212,7 +1545,7 @@ def render():
     with tab3:
         if st.session_state.active_tab != "summary":
             st.session_state.active_tab = "summary"
-            logging.info("🔄 Switched to Summary tab")
+            logging.info("Switched to Summary tab")
 
         render_summary_dashboard_shared(
             user,
@@ -2225,21 +1558,55 @@ def render():
     with tab4:
         if st.session_state.active_tab != "mentorship":
             st.session_state.active_tab = "mentorship"
-            logging.info("🔄 Switched to Mentorship tab")
+            logging.info("Switched to Mentorship tab")
 
-        # ✅ NEW: Check if mentorship data should be loaded
+        # Check if mentorship data should be loaded
         if not st.session_state.tab_data_loaded["mentorship"]:
-            render_tab_placeholder(
-                "Mentorship Dashboard",
-                "📋",
-                "mentorship",
-                "View mentorship tracking data and ODK form submissions",
+            st.markdown(
+                """
+            <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); 
+                 border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
+                <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+                <h2 style="color: #495057; margin-bottom: 1rem;">Mentorship Dashboard</h2>
+                <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+                    View mentorship tracking data and ODK form submissions
+                </p>
+            </div>
+            """,
+                unsafe_allow_html=True,
             )
+
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button(
+                    "Load Mentorship Data",
+                    use_container_width=True,
+                    type="primary",
+                    key="load_mentorship_data",
+                ):
+                    st.session_state.tab_loading["mentorship"] = True
+                    st.session_state.tab_data_loaded["mentorship"] = True
+                    st.rerun()
         else:
-            # ✅ Show loading indicator if data is being processed
+            # Show loading indicator if data is being processed
             if st.session_state.tab_loading["mentorship"]:
-                render_loading_indicator("Mentorship Dashboard", "📋")
-                # After loading, set loading to False
+                st.markdown(
+                    """
+                <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); 
+                     border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
+                    <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+                    <h2 style="color: #495057; margin-bottom: 1rem;">Loading Mentorship Dashboard...</h2>
+                    <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+                        Please wait while we process the data. This may take 1-2 minutes.
+                    </p>
+                    <div style="display: inline-block; padding: 10px 20px; background: #007bff; color: white; 
+                         border-radius: 25px; font-weight: bold;">
+                        Processing Data...
+                    </div>
+                </div>
+                """,
+                    unsafe_allow_html=True,
+                )
                 st.session_state.tab_loading["mentorship"] = False
                 st.rerun()
             display_odk_dashboard(user)
@@ -2247,9 +1614,9 @@ def render():
     with tab5:
         if st.session_state.active_tab != "data_quality":
             st.session_state.active_tab = "data_quality"
-            logging.info("🔄 Switched to Data Quality tab")
+            logging.info("Switched to Data Quality tab")
 
         render_data_quality_tracking(user)
 
     # Log current active tab state
-    logging.info(f"📊 Current active tab: {st.session_state.active_tab}")
+    logging.info(f"Current active tab: {st.session_state.active_tab}")
