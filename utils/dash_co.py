@@ -2,6 +2,7 @@
 import pandas as pd
 import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
+import datetime
 
 # CLEANED imports from kpi_utils - only what's actually used:
 from utils.kpi_utils import (
@@ -1741,7 +1742,7 @@ def apply_simple_filters(patient_df, filters, facility_uids=None):
 
 
 def render_patient_filter_controls(patient_df, container=None, context="default"):
-    """Simple filter controls for patient data without KPI selection - COMPLETE UPDATED VERSION"""
+    """Simple filter controls for patient data"""
     if container is None:
         container = st
 
@@ -1750,73 +1751,94 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
     # Generate unique key suffix
     key_suffix = f"_{context}"
 
-    # Time Period
     print(f"\n🔧 DEBUG render_patient_filter_controls for {context}")
+
+    # Time Period options
+    time_options = [
+        "All Time",  # Default/first option
+        "Custom Range",
+        "Today",
+        "This Week",
+        "Last Week",
+        "This Month",
+        "Last Month",
+        "This Year",
+        "Last Year",
+    ]
+
+    # Get current selection
+    current_selection = st.session_state.get(f"quick_range{key_suffix}", "All Time")
+
+    # Ensure the value is valid
+    if current_selection not in time_options:
+        current_selection = "All Time"
 
     filters["quick_range"] = container.selectbox(
         "📅 Time Period",
-        [
-            "Custom Range",
-            "Today",
-            "This Week",
-            "Last Week",
-            "This Month",
-            "Last Month",
-            "This Year",
-            "Last Year",
-            "All Time",  # ✅ ADDED: Option to show all data
-        ],
-        index=8,  # ✅ DEFAULT: "All Time" (index 8 in the list)
+        time_options,
+        index=time_options.index(current_selection),
         key=f"quick_range{key_suffix}",
     )
 
     print(f"   Selected quick_range: {filters['quick_range']}")
 
-    # Get dates from patient dataframe
+    # Get REAL VALID dates from patient dataframe
     min_date, max_date = _get_patient_date_range(patient_df)
-    print(f"   Data date range: {min_date} to {max_date}")
+    print(f"   REAL VALID data date range: {min_date} to {max_date}")
 
-    # Handle Custom Range vs Predefined Ranges
-    if filters["quick_range"] == "Custom Range":
+    # Ensure min_date is not earlier than 2000 (for date_input constraints)
+    if min_date < datetime.date(2000, 1, 1):
+        min_date = datetime.date(2000, 1, 1)
+
+    # Ensure max_date is not later than 2035 (for date_input constraints)
+    if max_date > datetime.date(2035, 12, 31):
+        max_date = datetime.date(2035, 12, 31)
+
+    # Set dates based on selection
+    if filters["quick_range"] == "All Time":
+        print("   All Time selected")
+        filters["start_date"] = min_date
+        filters["end_date"] = max_date
+
+    elif filters["quick_range"] == "Custom Range":
         print("   Custom Range selected")
+
+        # For Custom Range, use CURRENT YEAR as default (Jan to Dec of current year)
+        today = datetime.date.today()
+        default_start = datetime.date(today.year, 1, 1)  # Jan 1 of current year
+        default_end = datetime.date(today.year, 12, 31)  # Dec 31 of current year
+
+        # Ensure defaults are within min/max bounds
+        if default_start < min_date:
+            default_start = min_date
+        if default_end > max_date:
+            default_end = max_date
+
         col1, col2 = container.columns(2)
         with col1:
             filters["start_date"] = col1.date_input(
                 "Start Date",
-                value=min_date,
-                min_value=min_date,
+                value=default_start,  # Current year Jan 1
+                min_value=datetime.date(2000, 1, 1),
                 max_value=max_date,
                 key=f"start_date{key_suffix}",
             )
         with col2:
             filters["end_date"] = col2.date_input(
                 "End Date",
-                value=max_date,
+                value=default_end,  # Current year Dec 31
                 min_value=min_date,
-                max_value=max_date,
+                max_value=datetime.date(2035, 12, 31),
                 key=f"end_date{key_suffix}",
             )
         print(f"   Custom range: {filters['start_date']} to {filters['end_date']}")
 
-    elif filters["quick_range"] == "All Time":
-        # ✅ FIX: For "All Time", use the full date range
-        print("   All Time selected - using full date range")
-        filters["start_date"] = min_date
-        filters["end_date"] = max_date
-        print(f"   All Time range: {filters['start_date']} to {filters['end_date']}")
-
     else:
-        # For predefined ranges
         print(f"   Predefined range: {filters['quick_range']}")
         temp_df = patient_df.copy()
-        if "event_date" not in temp_df.columns:
-            temp_df = normalize_patient_dates(temp_df)
 
-        _df_for_dates = (
-            temp_df[["event_date"]].copy()
-            if not temp_df.empty and "event_date" in temp_df.columns
-            else pd.DataFrame()
-        )
+        # Use the REAL data for date calculation
+        _df_for_dates = temp_df.copy()
         start_date, end_date = get_date_range(_df_for_dates, filters["quick_range"])
         filters["start_date"] = start_date
         filters["end_date"] = end_date
@@ -1852,11 +1874,8 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
 
     print(f"   Selected period_label: {filters['period_label']}")
 
-    # ✅ CRITICAL FIX: Save period_label to session state
+    # Save to session state
     st.session_state.period_label = filters["period_label"]
-    print(
-        f"🔧 DEBUG dash_co: Set period_label to session_state: {filters['period_label']}"
-    )
 
     # Also save to filters dictionary in session state
     if "filters" not in st.session_state:
@@ -1891,34 +1910,68 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
 
 
 def _get_patient_date_range(patient_df):
-    """Get min/max dates from patient dataframe"""
+    """Get REAL min/max dates from patient dataframe - FILTERS OUT INVALID DATES"""
     import datetime
+    import pandas as pd
 
-    if not patient_df.empty:
-        # Normalize dates first
-        temp_df = normalize_patient_dates(patient_df.copy())
+    if patient_df.empty:
+        today = datetime.date.today()
+        return today, today
 
-        if "event_date" in temp_df.columns:
-            dates = pd.to_datetime(temp_df["event_date"], errors="coerce")
-            valid_dates = dates.dropna()
+    print(f"🔧 DEBUG _get_patient_date_range: Finding REAL date range")
 
-            if not valid_dates.empty:
-                min_date = valid_dates.min()
-                max_date = valid_dates.max()
+    # Collect ALL VALID dates from ALL possible date columns
+    all_valid_dates = []
 
-                if hasattr(min_date, "date"):
-                    min_date = min_date.date()
-                if hasattr(max_date, "date"):
-                    max_date = max_date.date()
+    # Check ALL columns that might contain dates
+    for col in patient_df.columns:
+        if "date" in col.lower() or "Date" in col:
+            try:
+                # Try to convert to datetime
+                dates = pd.to_datetime(patient_df[col], errors="coerce")
+                # Drop NaT (invalid dates)
+                valid_dates = dates.dropna()
 
-                print(f"🔧 DEBUG _get_patient_date_range:")
-                print(f"   Min date: {min_date}, Max date: {max_date}")
-                return min_date, max_date
+                if not valid_dates.empty:
+                    # Filter out dates that are clearly invalid (like 1970-01-01)
+                    for date_val in valid_dates:
+                        try:
+                            date_dt = date_val.to_pydatetime()
+                            year = date_dt.year
+                            # Only accept dates from year 2000 onward (reasonable for your data)
+                            if year >= 2000 and year <= 2030:  # Reasonable range
+                                all_valid_dates.append(date_val)
+                        except:
+                            continue
 
-    # Fallback to current date
+                    if all_valid_dates:
+                        print(f"   Found {len(valid_dates)} dates in column '{col}'")
+            except Exception as e:
+                print(f"   Error parsing '{col}': {str(e)}")
+
+    if all_valid_dates:
+        # Find the REAL minimum and maximum VALID dates
+        min_date = min(all_valid_dates)
+        max_date = max(all_valid_dates)
+
+        # Convert to date objects
+        if hasattr(min_date, "date"):
+            min_date = min_date.date()
+        if hasattr(max_date, "date"):
+            max_date = max_date.date()
+
+        print(f"   REAL VALID date range: {min_date} to {max_date}")
+        return min_date, max_date
+
+    # If no valid dates found, use current year
     today = datetime.date.today()
-    print(f"⚠️ _get_patient_date_range: Using fallback dates: {today} to {today}")
-    return today, today
+    current_year_start = datetime.date(today.year, 1, 1)
+    current_year_end = datetime.date(today.year, 12, 31)
+
+    print(
+        f"⚠️ No valid dates found, using current year: {current_year_start} to {current_year_end}"
+    )
+    return current_year_start, current_year_end
 
 
 def apply_patient_filters(patient_df, filters, facility_uids=None):
@@ -1934,6 +1987,16 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
     print(f"🔧 DEBUG apply_patient_filters START:")
     print(f"{'='*60}")
     print(f"   Original rows: {len(df)}")
+    print(f"   Quick range: {filters.get('quick_range', 'Not specified')}")
+
+    # ✅ IMPORTANT: For "All Time", don't apply any date filtering at all!
+    quick_range = filters.get("quick_range", "")
+    skip_date_filtering = quick_range == "All Time"
+
+    if skip_date_filtering:
+        print("   ⚠️ 'All Time' selected - SKIPPING date filtering")
+    else:
+        print("   Date filtering WILL be applied")
 
     # ✅ CRITICAL: Verify orgUnit column exists
     if "orgUnit" not in df.columns:
@@ -2004,12 +2067,16 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
         print(f"   Available columns: {list(df.columns)}")
         return df
 
-    # ✅ CRITICAL FIX: Apply date filtering BEFORE period assignment
-    print(f"\n📅 DATE FILTERING:")
-    print(f"   Filter start_date: {filters.get('start_date')}")
-    print(f"   Filter end_date: {filters.get('end_date')}")
+    # ✅ CRITICAL FIX: Only apply date filtering if NOT "All Time"
+    if (
+        not skip_date_filtering
+        and filters.get("start_date")
+        and filters.get("end_date")
+    ):
+        print(f"\n📅 APPLYING DATE FILTERING:")
+        print(f"   Filter start_date: {filters.get('start_date')}")
+        print(f"   Filter end_date: {filters.get('end_date')}")
 
-    if filters.get("start_date") and filters.get("end_date"):
         try:
             # Convert filter dates to datetime
             start_dt = pd.Timestamp(filters["start_date"])
@@ -2018,10 +2085,14 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
             print(
                 f"   Applying date filter range: {start_dt.date()} to {end_dt.date()}"
             )
-            if valid_dates > 0:
-                print(
-                    f"   Original data date range: {df['event_date'].min().date()} to {df['event_date'].max().date()}"
-                )
+
+            # Ensure event_date exists
+            if "event_date" in df.columns:
+                valid_dates = df["event_date"].notna().sum()
+                if valid_dates > 0:
+                    print(
+                        f"   Original data date range: {df['event_date'].min().date()} to {df['event_date'].max().date()}"
+                    )
 
             # Filter by date range
             before_filter = len(df)
@@ -2034,16 +2105,14 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
                 f"   After date filtering: {after_filter} rows (removed {rows_removed})"
             )
 
-            # Check if any rows remain
-            if df.empty:
-                print("⚠️ WARNING: No data after date filtering!")
-                return df
-
         except Exception as e:
             print(f"❌ Error applying date filter: {str(e)}")
             import traceback
 
             print(f"Traceback: {traceback.format_exc()}")
+    else:
+        print(f"\n📅 SKIPPING DATE FILTERING (All Time or no dates specified)")
+        print(f"   Keeping all {len(df)} rows without date filtering")
 
     # ✅ CRITICAL FIX 4: Ensure period_label is in filters
     print(f"\n📊 PERIOD ASSIGNMENT:")

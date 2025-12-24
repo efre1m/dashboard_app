@@ -10,11 +10,56 @@ def get_date_range(
 ):
     """
     Returns start and end dates based on the quick_range.
-    Automatically chooses the first available date column from date_col_priority.
+    Filters out invalid dates like 1970-01-01.
     """
+    import datetime
+    import pandas as pd
+
     today = dt.date.today()
 
-    # Find which date column exists
+    # Handle "All Time" - use REAL data range
+    if quick_range == "All Time":
+        if not df.empty:
+            # Collect ALL VALID dates from ALL columns
+            all_valid_dates = []
+
+            for col in df.columns:
+                if "date" in col.lower() or "Date" in col:
+                    try:
+                        # Try to convert to datetime
+                        dates = pd.to_datetime(df[col], errors="coerce")
+                        # Drop NaT (invalid dates)
+                        valid_dates = dates.dropna()
+
+                        # Filter out invalid dates (like 1970-01-01)
+                        for date_val in valid_dates:
+                            try:
+                                year = date_val.year
+                                # Only accept dates from year 2000 onward
+                                if year >= 2000 and year <= 2030:  # Reasonable range
+                                    all_valid_dates.append(date_val)
+                            except:
+                                continue
+                    except:
+                        continue
+
+            if all_valid_dates:
+                min_date = min(all_valid_dates).date()
+                max_date = max(all_valid_dates).date()
+                print(
+                    f"🔧 get_date_range: All Time valid range = {min_date} to {max_date}"
+                )
+                return min_date, max_date
+
+        # Fallback to current year if no valid dates
+        current_year_start = datetime.date(today.year, 1, 1)
+        current_year_end = datetime.date(today.year, 12, 31)
+        print(
+            f"🔧 get_date_range: All Time fallback = {current_year_start} to {current_year_end}"
+        )
+        return current_year_start, current_year_end
+
+    # Find which date column exists for other ranges
     date_col = next((col for col in date_col_priority if col in df.columns), None)
 
     # Quick ranges
@@ -49,20 +94,46 @@ def get_date_range(
         )
 
     else:  # Custom range selection
+        # For Custom Range in this function (used when quick_range is "Custom Range")
+        # We need to get reasonable defaults
+
         if date_col and not df.empty:
-            start_default = df[date_col].min().date()
-            end_default = df[date_col].max().date()
+            # Get dates from the specified column
+            dates = pd.to_datetime(df[date_col], errors="coerce")
+            valid_dates = dates.dropna()
+
+            if not valid_dates.empty:
+                # Filter out invalid years
+                filtered_dates = []
+                for date_val in valid_dates:
+                    try:
+                        year = date_val.year
+                        if 2000 <= year <= 2030:
+                            filtered_dates.append(date_val)
+                    except:
+                        continue
+
+                if filtered_dates:
+                    min_date = min(filtered_dates)
+                    max_date = max(filtered_dates)
+                    start_default = min_date.date()
+                    end_default = max_date.date()
+                else:
+                    # No valid dates, use current year
+                    start_default = datetime.date(today.year, 1, 1)
+                    end_default = datetime.date(today.year, 12, 31)
+            else:
+                # No valid dates, use current year
+                start_default = datetime.date(today.year, 1, 1)
+                end_default = datetime.date(today.year, 12, 31)
         else:
-            start_default = today.replace(month=1, day=1)
-            end_default = today
+            # No date column, use current year
+            start_default = datetime.date(today.year, 1, 1)
+            end_default = datetime.date(today.year, 12, 31)
 
-        start_date = st.date_input("Start Date", value=start_default)
-        end_date = st.date_input("End Date", value=end_default)
-
-        if end_date < start_date:
-            st.error("⚠️ End date cannot be earlier than start date")
-
-        return start_date, end_date
+        # For the get_date_range function, we don't show the date inputs here
+        # That's handled in render_patient_filter_controls
+        return start_default, end_default
 
 
 def get_available_aggregations(start_date, end_date):
