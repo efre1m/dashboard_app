@@ -111,7 +111,7 @@ DELIVERY_DATE_COL = "event_date_delivery_summary"
 PNC_DATE_COL = "event_date_postpartum_care"
 DISCHARGE_DATE_COL = "event_date_discharge_summary"
 
-# Enrollment date column - FALLBACK DATE
+# Enrollment date column - KEPT FOR BACKWARD COMPATIBILITY ONLY
 ENROLLMENT_DATE_COL = "enrollment_date"
 
 
@@ -330,9 +330,9 @@ def compute_stillbirth_count(df, facility_uids=None):
 
 
 # ---------------- KPI Computation Functions ----------------
-def compute_total_deliveries(df, facility_uids=None):
-    """Count total deliveries - counts unique TEI IDs using UID filtering"""
-    cache_key = get_cache_key(df, facility_uids, "total_deliveries")
+def compute_total_deliveries(df, facility_uids=None, date_column=None):
+    """Count total deliveries - counts unique TEI IDs using UID filtering AND optional date filtering"""
+    cache_key = get_cache_key(df, facility_uids, f"total_deliveries_{date_column}")
 
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
@@ -341,10 +341,21 @@ def compute_total_deliveries(df, facility_uids=None):
         result = 0
     else:
         filtered_df = df.copy()
+
+        # Filter by facility UIDs
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
+        # Filter by specific date column if provided
+        if date_column and date_column in filtered_df.columns:
+            # Convert to datetime and filter
+            filtered_df[date_column] = pd.to_datetime(
+                filtered_df[date_column], errors="coerce"
+            )
+            filtered_df = filtered_df[filtered_df[date_column].notna()].copy()
+
         if "tei_id" in filtered_df.columns:
+            # Count unique TEI IDs that have this specific program stage date
             unique_tei_ids = filtered_df["tei_id"].dropna().nunique()
             result = unique_tei_ids
         else:
@@ -456,6 +467,7 @@ def compute_csection_rate(df, facility_uids=None):
 
 # ---------------- Master KPI Function ----------------
 def compute_kpis(df, facility_uids=None):
+    """Compute all KPIs with optional date filtering"""
     cache_key = get_cache_key(df, facility_uids, "main_kpis")
 
     if cache_key in st.session_state.kpi_cache:
@@ -465,7 +477,12 @@ def compute_kpis(df, facility_uids=None):
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    total_deliveries = compute_total_deliveries(filtered_df, facility_uids)
+    # IMPORTANT: The compute_total_deliveries function now filters by date
+    # Get the date column context if available (from get_numerator_denominator_for_kpi)
+    date_column = None
+    # We'll get this from the calling context
+
+    total_deliveries = compute_total_deliveries(filtered_df, facility_uids, date_column)
     fp_acceptance = compute_fp_acceptance(filtered_df, facility_uids)
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
 
@@ -510,57 +527,45 @@ def compute_kpis(df, facility_uids=None):
     return result
 
 
-# ---------------- Date Handling with Fallback ----------------
-def get_combined_date_for_kpi(df, kpi_name):
-    """
-    Get combined date for KPI analysis, falling back to enrollment_date when event date is missing
-    Returns a Series with dates for each row (event_date or enrollment_date)
-    """
-    if df is None or df.empty:
-        return pd.Series([], dtype="datetime64[ns]")
-
-    event_date_col = get_relevant_date_column_for_kpi(kpi_name)
-
-    # Create copies to avoid modifying original
-    df_copy = df.copy()
-
-    # Convert both date columns
-    event_dates = pd.to_datetime(df_copy[event_date_col], errors="coerce")
-
-    if ENROLLMENT_DATE_COL not in df_copy.columns:
-        return event_dates
-
-    enrollment_dates = pd.to_datetime(df_copy[ENROLLMENT_DATE_COL], errors="coerce")
-
-    # Use event date if available, otherwise use enrollment date
-    combined_dates = event_dates.combine_first(enrollment_dates)
-
-    return combined_dates
-
-
+# ---------------- Date Handling with Program Stage Specific Dates ----------------
 def get_relevant_date_column_for_kpi(kpi_name):
     """
-    Get the relevant event date column for a specific KPI
+    Get the relevant event date column for a specific KPI based on program stage
     """
-    date_column_map = {
-        "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": "event_date_postpartum_care",
-        "IPPCAR": "event_date_postpartum_care",
-        "FP Acceptance": "event_date_postpartum_care",
+    # Mapping of KPIs to their program stages and date columns
+    program_stage_date_mapping = {
+        # Delivery Summary KPIs
         "Stillbirth Rate (%)": "event_date_delivery_summary",
-        "Stillbirth Rate": "event_date_delivery_summary",
+        "C-Section Rate (%)": "event_date_delivery_summary",
+        # Postpartum Care KPIs
+        "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": "event_date_postpartum_care",
+        "FP Acceptance": "event_date_postpartum_care",
+        "IPPCAR": "event_date_postpartum_care",
         "Early Postnatal Care (PNC) Coverage (%)": "event_date_postpartum_care",
         "PNC Coverage": "event_date_postpartum_care",
         "Postnatal Care": "event_date_postpartum_care",
+        # Discharge Summary KPIs
         "Institutional Maternal Death Rate (%)": "event_date_discharge_summary",
         "Maternal Death Rate": "event_date_discharge_summary",
-        "C-Section Rate (%)": "event_date_delivery_summary",
-        "C-Section Rate": "event_date_delivery_summary",
     }
 
     # Try exact match first
-    for key in date_column_map:
+    for key in program_stage_date_mapping:
         if key in kpi_name:
-            return date_column_map[key]
+            return program_stage_date_mapping[key]
+
+    # Fallback based on keywords
+    if any(
+        word in kpi_name
+        for word in ["Delivery", "Birth", "Section", "PPH", "Uterotonic"]
+    ):
+        return "event_date_delivery_summary"
+    elif any(
+        word in kpi_name for word in ["PNC", "Postnatal", "Contraceptive", "Postpartum"]
+    ):
+        return "event_date_postpartum_care"
+    elif any(word in kpi_name for word in ["Death", "Discharge", "Maternal"]):
+        return "event_date_discharge_summary"
 
     # Default to delivery summary date
     return "event_date_delivery_summary"
@@ -568,35 +573,34 @@ def get_relevant_date_column_for_kpi(kpi_name):
 
 def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
     """
-    Prepare patient-level data for trend chart
+    Prepare patient-level data for trend chart using ONLY program stage specific dates
+    Returns: DataFrame filtered by KPI-specific dates AND the date column used
     """
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
     filtered_df = df.copy()
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Check if periods are already created
-    has_periods = (
-        "period_display" in filtered_df.columns and "period_sort" in filtered_df.columns
-    )
+    # Get the SPECIFIC date column for this KPI
+    date_column = get_relevant_date_column_for_kpi(kpi_name)
 
-    if has_periods:
-        return filtered_df
+    # Check if the SPECIFIC date column exists
+    if date_column not in filtered_df.columns:
+        st.warning(f"⚠️ Required date column '{date_column}' not found for {kpi_name}")
+        return pd.DataFrame(), date_column
 
-    # Create new period analysis with fallback logic
+    # Create result dataframe with ONLY rows that have this specific date
     result_df = filtered_df.copy()
+    result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
 
-    # Get combined dates (event_date or enrollment_date)
-    combined_dates = get_combined_date_for_kpi(result_df, kpi_name)
-    result_df["event_date"] = combined_dates
-
-    # Filter out rows without dates
+    # Filter out rows without this SPECIFIC date
     result_df = result_df[result_df["event_date"].notna()].copy()
 
     if result_df.empty:
-        return pd.DataFrame()
+        st.info(f"⚠️ No data with valid dates in '{date_column}' for {kpi_name}")
+        return pd.DataFrame(), date_column
 
     # Get period label
     period_label = st.session_state.get("period_label", "Monthly")
@@ -615,23 +619,14 @@ def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
     result_df["period_sort"] = temp_df["period_sort"]
 
     # Track which date source was used
-    event_date_col = get_relevant_date_column_for_kpi(kpi_name)
-    result_df["date_source"] = "event_date"
-
-    # Check which rows used enrollment_date as fallback
-    if event_date_col in df.columns and ENROLLMENT_DATE_COL in df.columns:
-        used_fallback_mask = (
-            result_df["event_date"].notna()
-            & df[event_date_col].isna()
-            & df[ENROLLMENT_DATE_COL].notna()
-        )
-        result_df.loc[used_fallback_mask, "date_source"] = "enrollment_date"
+    result_df["date_source"] = date_column
+    result_df["date_source_program_stage"] = date_column.replace("event_date_", "")
 
     # Filter by facility if needed
     if facility_uids and "orgUnit" in result_df.columns:
         result_df = result_df[result_df["orgUnit"].isin(facility_uids)].copy()
 
-    return result_df
+    return result_df, date_column
 
 
 def extract_event_date_for_period(df, event_name):
@@ -655,16 +650,8 @@ def extract_event_date_for_period(df, event_name):
             result_df[event_date_columns[event_name]], errors="coerce"
         )
 
-        # Fall back to enrollment_date if event date is missing
-        if ENROLLMENT_DATE_COL in result_df.columns:
-            enrollment_dates = pd.to_datetime(
-                result_df[ENROLLMENT_DATE_COL], errors="coerce"
-            )
-            combined_dates = event_dates.combine_first(enrollment_dates)
-        else:
-            combined_dates = event_dates
-
-        result_df["event_date"] = combined_dates
+        # Use only event date (no fallback)
+        result_df["event_date"] = event_dates
         result_df["period"] = result_df["event_date"].dt.strftime("%Y-%m")
         result_df["period_display"] = result_df["event_date"].dt.strftime("%b-%y")
         result_df["period_sort"] = result_df["event_date"].dt.strftime("%Y%m")
@@ -675,6 +662,7 @@ def extract_event_date_for_period(df, event_name):
 def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
     """
     Get numerator and denominator for a specific KPI with UID filtering
+    AND filtered by KPI-specific program stage dates
     Returns: (numerator, denominator, value)
     """
     if df is None or df.empty:
@@ -684,6 +672,21 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
+    # Get the SPECIFIC date column for this KPI
+    date_column = get_relevant_date_column_for_kpi(kpi_name)
+
+    # IMPORTANT: Filter to only include rows that have this specific date
+    if date_column in filtered_df.columns:
+        # Convert to datetime and filter out rows without this date
+        filtered_df[date_column] = pd.to_datetime(
+            filtered_df[date_column], errors="coerce"
+        )
+        filtered_df = filtered_df[filtered_df[date_column].notna()].copy()
+
+    if filtered_df.empty:
+        return (0, 0, 0.0)
+
+    # Now compute KPI on date-filtered data
     kpi_data = compute_kpis(filtered_df, facility_uids)
 
     kpi_mapping = {
@@ -711,41 +714,6 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
             "numerator": "csection_deliveries",
             "denominator": "total_deliveries",
             "value": "csection_rate",
-        },
-        "Postpartum Hemorrhage (PPH) Rate (%)": {
-            "numerator": "pph_count",
-            "denominator": "total_deliveries",
-            "value": "pph_rate",
-        },
-        "Delivered women who received uterotonic (%)": {
-            "numerator": "uterotonic_count",
-            "denominator": "total_deliveries",
-            "value": "uterotonic_rate",
-        },
-        "ARV Prophylaxis Rate (%)": {
-            "numerator": "arv_count",
-            "denominator": "hiv_exposed_infants",
-            "value": "arv_rate",
-        },
-        "Low Birth Weight (LBW) Rate (%)": {
-            "numerator": "lbw_count",
-            "denominator": "total_weighed",
-            "value": "lbw_rate",
-        },
-        "Assisted Delivery Rate (%)": {
-            "numerator": "assisted_deliveries",
-            "denominator": "total_deliveries",
-            "value": "assisted_delivery_rate",
-        },
-        "Normal Vaginal Delivery (SVD) Rate (%)": {
-            "numerator": "svd_deliveries",
-            "denominator": "total_deliveries",
-            "value": "svd_rate",
-        },
-        "Missing Mode of Delivery": {
-            "numerator": "missing_md_count",
-            "denominator": "total_deliveries",
-            "value": "missing_md_rate",
         },
     }
 
@@ -782,14 +750,6 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
         numerator = kpi_data.get("csection_deliveries", 0)
         denominator = kpi_data.get("total_deliveries", 1)
         value = kpi_data.get("csection_rate", 0.0)
-        return (numerator, denominator, value)
-    elif "Low Birth Weight" in kpi_name or "LBW" in kpi_name:
-        from utils.kpi_lbw import compute_lbw_kpi
-
-        lbw_data = compute_lbw_kpi(filtered_df, facility_uids)
-        numerator = lbw_data.get("lbw_count", 0)
-        denominator = lbw_data.get("total_weighed", 1)
-        value = lbw_data.get("lbw_rate", 0.0)
         return (numerator, denominator, value)
 
     return (0, 0, 0.0)
@@ -843,7 +803,7 @@ def aggregate_by_period_with_sorting(
     return result_df
 
 
-# ---------------- Chart Functions ----------------
+# ---------------- Chart Functions WITH TABLES ----------------
 def render_trend_chart(
     df,
     period_col,
@@ -856,7 +816,7 @@ def render_trend_chart(
     denominator_name="Denominator",
     facility_uids=None,
 ):
-    """Render a trend chart for a single facility/region with numerator/denominator data"""
+    """Render a trend chart for a single facility/region with numerator/denominator data AND TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -982,32 +942,108 @@ def render_trend_chart(
     if any(k in title for k in ["Deliveries", "Acceptance"]):
         fig.update_layout(yaxis_tickformat=",")
 
+    # Display the chart
     st.plotly_chart(fig, use_container_width=True)
 
-    if len(df) > 1:
-        last_value = df[value_col].iloc[-1]
-        prev_value = df[value_col].iloc[-2]
-        trend_symbol = (
-            "▲"
-            if last_value > prev_value
-            else ("▼" if last_value < prev_value else "–")
+    # =========== DISPLAY TABLE BELOW GRAPH ===========
+    st.markdown("---")
+    st.subheader("📋 Data Table")
+
+    # Create a clean display dataframe
+    display_df = df.copy()
+
+    # Select columns to show in table
+    table_columns = [x_axis_col, value_col]
+
+    # Add numerator and denominator if available
+    if "numerator" in display_df.columns and "denominator" in display_df.columns:
+        display_df[numerator_name] = display_df["numerator"]
+        display_df[denominator_name] = display_df["denominator"]
+        table_columns.extend([numerator_name, denominator_name])
+
+    # Format the dataframe for display
+    display_df = display_df[table_columns].copy()
+
+    # Format numbers
+    if "Rate" in title or "%" in title:
+        display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:.2f}%")
+    else:
+        display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:,.0f}")
+
+    if numerator_name in display_df.columns:
+        display_df[numerator_name] = display_df[numerator_name].apply(
+            lambda x: f"{x:,.0f}"
         )
-        trend_class = (
-            "trend-up"
-            if last_value > prev_value
-            else ("trend-down" if last_value < prev_value else "trend-neutral")
-        )
-        st.markdown(
-            f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.2f} <span class="{trend_class}">{trend_symbol}</span></p>',
-            unsafe_allow_html=True,
+    if denominator_name in display_df.columns:
+        display_df[denominator_name] = display_df[denominator_name].apply(
+            lambda x: f"{x:,.0f}"
         )
 
+    # Add Overall/Total row
+    if "numerator" in df.columns and "denominator" in df.columns:
+        total_numerator = df["numerator"].sum()
+        total_denominator = df["denominator"].sum()
+        overall_value = (
+            (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+        )
+    else:
+        overall_value = df[value_col].mean() if not df.empty else 0
+        total_numerator = df[value_col].sum() if not df.empty else 0
+        total_denominator = len(df)
+
+    # Create overall row with consistent date format
+    overall_row = {
+        x_axis_col: "Overall",
+        value_col: f"{overall_value:.2f}%" if "%" in title else f"{overall_value:,.0f}",
+    }
+
+    if numerator_name in display_df.columns:
+        overall_row[numerator_name] = f"{total_numerator:,.0f}"
+    if denominator_name in display_df.columns:
+        overall_row[denominator_name] = f"{total_denominator:,.0f}"
+
+    # Convert to DataFrame and append
+    overall_df = pd.DataFrame([overall_row])
+    display_df = pd.concat([display_df, overall_df], ignore_index=True)
+
+    # Display the table
+    st.dataframe(display_df, use_container_width=True)
+
+    # Add summary statistics
+    if len(df) > 1:
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("📈 Latest Value", f"{df[value_col].iloc[-1]:.2f}")
+
+        with col2:
+            st.metric("📊 Average", f"{df[value_col].mean():.2f}")
+
+        with col3:
+            # Calculate trend
+            last_value = df[value_col].iloc[-1]
+            prev_value = df[value_col].iloc[-2]
+            trend_change = last_value - prev_value
+            trend_symbol = (
+                "▲" if trend_change > 0 else ("▼" if trend_change < 0 else "–")
+            )
+            st.metric("📈 Trend from Previous", f"{trend_change:.2f} {trend_symbol}")
+
+    # Keep the download button - FIX DATE FORMAT ISSUE
     summary_df = df.copy().reset_index(drop=True)
 
     if "numerator" in summary_df.columns and "denominator" in summary_df.columns:
         summary_df = summary_df[
             [x_axis_col, "numerator", "denominator", value_col]
         ].copy()
+
+        # FIX: Ensure period column is in proper format before exporting
+        if x_axis_col in summary_df.columns:
+            # Convert any date-like strings to proper month-year format
+            summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+                format_period_month_year
+            )
 
         summary_df = summary_df.rename(
             columns={
@@ -1020,14 +1056,13 @@ def render_trend_chart(
         total_numerator = summary_df[numerator_name].sum()
         total_denominator = summary_df[denominator_name].sum()
 
-        # Calculate overall value based on KPI type
         overall_value = (
             (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
         )
 
         overall_row = pd.DataFrame(
             {
-                x_axis_col: [f"Overall {title}"],
+                x_axis_col: ["Overall"],
                 numerator_name: [total_numerator],
                 denominator_name: [total_denominator],
                 title: [overall_value],
@@ -1037,13 +1072,18 @@ def render_trend_chart(
         summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
     else:
         summary_df = summary_df[[x_axis_col, value_col]].copy()
+
+        # FIX: Ensure period column is in proper format before exporting
+        if x_axis_col in summary_df.columns:
+            summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+                format_period_month_year
+            )
+
         summary_df = summary_df.rename(columns={value_col: title})
         summary_table = summary_df.copy()
 
         overall_value = summary_table[title].mean() if not summary_table.empty else 0
-        overall_row = pd.DataFrame(
-            {x_axis_col: [f"Overall {title}"], title: [overall_value]}
-        )
+        overall_row = pd.DataFrame({x_axis_col: ["Overall"], title: [overall_value]})
         summary_table = pd.concat([summary_table, overall_row], ignore_index=True)
 
     summary_table.insert(0, "No", range(1, len(summary_table) + 1))
@@ -1070,29 +1110,27 @@ def render_facility_comparison_chart(
     numerator_name,
     denominator_name,
 ):
-    """Render a comparison chart showing each facility's performance over time"""
+    """Render a comparison chart showing each facility's performance over time WITH TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    # FIX: Check for different possible facility ID column names
-    facility_id_col = None
-    facility_name_col = None
+    # STANDARDIZE COLUMN NAMES - UPDATED TO MATCH YOUR DATA STRUCTURE
+    if "orgUnit" not in df.columns:
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in ["orgunit", "facility_uid", "facility_id", "uid", "ou"]:
+                df = df.rename(columns={col: "orgUnit"})
 
-    # Check for different possible column names
-    for col in df.columns:
-        col_lower = col.lower()
-        if col_lower in ["orgunit", "facility_uid", "facility_id", "uid", "ou"]:
-            facility_id_col = col
-        elif col_lower in ["orgunit_name", "facility_name", "facility", "name"]:
-            facility_name_col = col
-
-    # If we have a facility ID column but it's not named "orgUnit", rename it
-    if facility_id_col and facility_id_col != "orgUnit":
-        df = df.rename(columns={facility_id_col: "orgUnit"})
-
-    # If we have a facility name column but it's not named "Facility", rename it
-    if facility_name_col and facility_name_col != "Facility":
-        df = df.rename(columns={facility_name_col: "Facility"})
+    # Check for facility name column - LOOK FOR orgUnit_name FIRST
+    if "orgUnit_name" in df.columns:
+        df = df.rename(columns={"orgUnit_name": "Facility"})
+    elif "Facility" not in df.columns:
+        # Try to find other facility name columns
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in ["facility_name", "facility", "name", "display_name"]:
+                df = df.rename(columns={col: "Facility"})
+                break
 
     if "orgUnit" not in df.columns or "Facility" not in df.columns:
         st.error(
@@ -1101,15 +1139,11 @@ def render_facility_comparison_chart(
         )
         return
 
-    # Filter by facility UIDs if provided
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)].copy()
-
     if df.empty:
         st.info("⚠️ No data available for facility comparison.")
         return
 
-    # Create a mapping from orgUnit to facility name from the data
+    # Create a mapping from orgUnit to facility name
     facility_mapping = {}
     for _, row in df.iterrows():
         if pd.notna(row["orgUnit"]) and pd.notna(row["Facility"]):
@@ -1120,10 +1154,10 @@ def render_facility_comparison_chart(
         for uid, name in zip(facility_uids, facility_names):
             facility_mapping[str(uid)] = name
 
-    # Now create the chart
+    # Prepare comparison data
     comparison_data = []
 
-    # Get unique periods in order - FIXED: Sort by period_sort column
+    # Get unique periods in order
     if "period_sort" in df.columns:
         unique_periods = df[["period_display", "period_sort"]].drop_duplicates()
         unique_periods = unique_periods.sort_values("period_sort")
@@ -1185,7 +1219,6 @@ def render_facility_comparison_chart(
             key=lambda x: dt.datetime.strptime(x, "%b-%y"),
         )
     except:
-        # If sorting fails, use existing order
         pass
 
     # Create the chart
@@ -1248,7 +1281,56 @@ def render_facility_comparison_chart(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Create download data - SIMPLIFIED: Overall summary by facility
+    # =========== DISPLAY TABLE BELOW GRAPH ===========
+    st.markdown("---")
+    st.subheader("📋 Facility Comparison Data")
+
+    # Create pivot table for better display with Overall row
+    pivot_data = []
+
+    for facility_name in comparison_df["Facility"].unique():
+        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+        if not facility_data.empty:
+            total_numerator = facility_data["numerator"].sum()
+            total_denominator = facility_data["denominator"].sum()
+            overall_value = (
+                (total_numerator / total_denominator * 100)
+                if total_denominator > 0
+                else 0
+            )
+
+            pivot_data.append(
+                {
+                    "Facility": facility_name,
+                    numerator_name: f"{total_numerator:,.0f}",
+                    denominator_name: f"{total_denominator:,.0f}",
+                    "Overall Value": f"{overall_value:.2f}%",
+                    "Periods with Data": len(facility_data),
+                }
+            )
+
+    # Add Overall row for all facilities
+    if pivot_data:
+        all_numerators = comparison_df["numerator"].sum()
+        all_denominators = comparison_df["denominator"].sum()
+        grand_overall = (
+            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        )
+
+        pivot_data.append(
+            {
+                "Facility": "Overall",
+                numerator_name: f"{all_numerators:,.0f}",
+                denominator_name: f"{all_denominators:,.0f}",
+                "Overall Value": f"{grand_overall:.2f}%",
+                "Periods with Data": len(comparison_df["period_display"].unique()),
+            }
+        )
+
+        pivot_df = pd.DataFrame(pivot_data)
+        st.dataframe(pivot_df, use_container_width=True)
+
+    # Keep download functionality
     csv_data = []
     for facility_name in comparison_df["Facility"].unique():
         facility_data = comparison_df[comparison_df["Facility"] == facility_name]
@@ -1269,7 +1351,22 @@ def render_facility_comparison_chart(
                 }
             )
 
+    # Add overall row to CSV
     if csv_data:
+        all_numerators = sum(item[numerator_name] for item in csv_data)
+        all_denominators = sum(item[denominator_name] for item in csv_data)
+        grand_overall = (
+            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        )
+        csv_data.append(
+            {
+                "Facility": "Overall",
+                numerator_name: all_numerators,
+                denominator_name: all_denominators,
+                title: f"{grand_overall:.2f}%",
+            }
+        )
+
         csv_df = pd.DataFrame(csv_data)
         csv = csv_df.to_csv(index=False)
         st.download_button(
@@ -1294,11 +1391,10 @@ def render_region_comparison_chart(
     numerator_name,
     denominator_name,
 ):
-    """Render a comparison chart showing each region's performance over time"""
+    """Render a comparison chart showing each region's performance over time WITH TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    # FIX: Check for Region column (it should already be there from dash_co.py)
     if "Region" not in df.columns:
         st.error(
             f"❌ Region column not found in the data. Cannot perform region comparison.\n"
@@ -1310,16 +1406,15 @@ def render_region_comparison_chart(
         st.info("⚠️ No data available for region comparison.")
         return
 
-    # Create the chart
+    # Prepare comparison data
     comparison_data = []
 
-    # Get unique periods in order - FIXED: Sort by period_sort column
+    # Get unique periods in order
     if "period_sort" in df.columns:
         unique_periods = df[["period_display", "period_sort"]].drop_duplicates()
         unique_periods = unique_periods.sort_values("period_sort")
         period_order = unique_periods["period_display"].tolist()
     else:
-        # Try to sort by month-year
         try:
             period_order = sorted(
                 df["period_display"].unique().tolist(),
@@ -1386,7 +1481,6 @@ def render_region_comparison_chart(
             key=lambda x: dt.datetime.strptime(x, "%b-%y"),
         )
     except:
-        # If sorting fails, use existing order
         pass
 
     # Create the chart
@@ -1449,7 +1543,56 @@ def render_region_comparison_chart(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Create download data - SIMPLIFIED: Overall summary by region
+    # =========== DISPLAY TABLE BELOW GRAPH ===========
+    st.markdown("---")
+    st.subheader("📋 Region Comparison Data")
+
+    # Create pivot table for better display with Overall row
+    pivot_data = []
+
+    for region_name in comparison_df["Region"].unique():
+        region_data = comparison_df[comparison_df["Region"] == region_name]
+        if not region_data.empty:
+            total_numerator = region_data["numerator"].sum()
+            total_denominator = region_data["denominator"].sum()
+            overall_value = (
+                (total_numerator / total_denominator * 100)
+                if total_denominator > 0
+                else 0
+            )
+
+            pivot_data.append(
+                {
+                    "Region": region_name,
+                    numerator_name: f"{total_numerator:,.0f}",
+                    denominator_name: f"{total_denominator:,.0f}",
+                    "Overall Value": f"{overall_value:.2f}%",
+                    "Periods with Data": len(region_data),
+                }
+            )
+
+    # Add Overall row for all regions
+    if pivot_data:
+        all_numerators = comparison_df["numerator"].sum()
+        all_denominators = comparison_df["denominator"].sum()
+        grand_overall = (
+            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        )
+
+        pivot_data.append(
+            {
+                "Region": "Overall",
+                numerator_name: f"{all_numerators:,.0f}",
+                denominator_name: f"{all_denominators:,.0f}",
+                "Overall Value": f"{grand_overall:.2f}%",
+                "Periods with Data": len(comparison_df["period_display"].unique()),
+            }
+        )
+
+        pivot_df = pd.DataFrame(pivot_data)
+        st.dataframe(pivot_df, use_container_width=True)
+
+    # Keep download functionality
     csv_data = []
     for region_name in comparison_df["Region"].unique():
         region_data = comparison_df[comparison_df["Region"] == region_name]
@@ -1470,7 +1613,22 @@ def render_region_comparison_chart(
                 }
             )
 
+    # Add overall row to CSV
     if csv_data:
+        all_numerators = sum(item[numerator_name] for item in csv_data)
+        all_denominators = sum(item[denominator_name] for item in csv_data)
+        grand_overall = (
+            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        )
+        csv_data.append(
+            {
+                "Region": "Overall",
+                numerator_name: all_numerators,
+                denominator_name: all_denominators,
+                title: f"{grand_overall:.2f}%",
+            }
+        )
+
         csv_df = pd.DataFrame(csv_data)
         csv = csv_df.to_csv(index=False)
         st.download_button(

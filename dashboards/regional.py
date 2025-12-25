@@ -14,7 +14,6 @@ from utils.queries import (
 )
 from utils.dash_co import (
     normalize_patient_dates,
-    normalize_enrollment_dates,
     render_trend_chart_section,
     render_comparison_chart,
     render_additional_analytics,

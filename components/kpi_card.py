@@ -127,7 +127,7 @@ def generate_kpi_excel_report(
             "current_key": "stillbirth_rate",
             "prev_key": "stillbirth_rate",
             "higher_is_better": False,
-            "unit": "per 1000",
+            "unit": "%",
         },
         {
             "name": "PNC Coverage",
@@ -141,7 +141,7 @@ def generate_kpi_excel_report(
             "current_key": "maternal_death_rate",
             "prev_key": "maternal_death_rate",
             "higher_is_better": False,
-            "unit": "per 100,000",
+            "unit": "%",
         },
         {
             "name": "C-Section Rate",
@@ -161,12 +161,10 @@ def generate_kpi_excel_report(
 
         # Format values with units for display
         current_display = (
-            f"{current_value:.2f}{kpi['unit'].replace('per ', '/')}"
-            if current_value is not None
-            else "N/A"
+            f"{current_value:.2f}{kpi['unit']}" if current_value is not None else "N/A"
         )
         prev_display = (
-            f"{prev_value:.2f}{kpi['unit'].replace('per ', '/')}"
+            f"{prev_value:.2f}{kpi['unit']}"
             if prev_value is not None
             else "No Previous Data"
         )
@@ -474,6 +472,7 @@ def render_kpi_cards(
         )
 
     # KPI Cards HTML - Show current values with persistent trend indicators
+    # FIXED: Stillbirth and Maternal Death rates are over total deliveries, not total births/live births
     kpi_html = f"""
     <div class="kpi-grid">
         <div class="kpi-card">
@@ -485,11 +484,11 @@ def render_kpi_cards(
             </div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-value">{kpis.get("stillbirth_rate",0):.2f} <span class="{stillbirth_trend_class}">{stillbirth_trend}</span></div>
+            <div class="kpi-value">{kpis.get("stillbirth_rate",0):.2f}% <span class="{stillbirth_trend_class}">{stillbirth_trend}</span></div>
             <div class="kpi-name">Stillbirth Rate</div>
             <div class="kpi-metrics">
                 <span class="metric-label metric-stillbirth">Stillbirths: {kpis.get("stillbirths",0)}</span>
-                <span class="metric-label metric-total">Total Births: {kpis.get("total_births",0)}</span>
+                <span class="metric-label metric-total">Total Deliveries: {kpis.get("total_deliveries",0)}</span>
             </div>
         </div>
         <div class="kpi-card">
@@ -497,15 +496,15 @@ def render_kpi_cards(
             <div class="kpi-name">Early PNC Coverage (within 48 hrs)</div>
             <div class="kpi-metrics">
                <span class="metric-label metric-fp">PNC ≤48 hrs: {kpis.get("early_pnc",0)}</span>
-               <span class="metric-label metric-total">Total Deliveries: {kpis.get("total_deliveries_pnc",0)}</span>
+               <span class="metric-label metric-total">Total Deliveries: {kpis.get("total_deliveries",0)}</span>
             </div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-value">{kpis.get("maternal_death_rate",0):.2f} <span class="{maternal_death_trend_class}">{maternal_death_trend}</span></div>
+            <div class="kpi-value">{kpis.get("maternal_death_rate",0):.2f}% <span class="{maternal_death_trend_class}">{maternal_death_trend}</span></div>
             <div class="kpi-name">Maternal Death Rate</div>
             <div class="kpi-metrics">
                <span class="metric-label metric-maternal-death">Maternal Deaths: {kpis.get("maternal_deaths",0)}</span>
-               <span class="metric-label metric-total">Live Births: {kpis.get("live_births",0)}</span>
+               <span class="metric-label metric-total">Total Deliveries: {kpis.get("total_deliveries",0)}</span>
             </div>
         </div>
         <div class="kpi-card">
@@ -513,7 +512,7 @@ def render_kpi_cards(
             <div class="kpi-name">C-Section Rate</div>
             <div class="kpi-metrics">
                <span class="metric-label metric-csection">C-Sections: {kpis.get("csection_deliveries",0)}</span>
-               <span class="metric-label metric-total">Total Deliveries: {kpis.get("total_deliveries_cs",0)}</span>
+               <span class="metric-label metric-total">Total Deliveries: {kpis.get("total_deliveries",0)}</span>
             </div>
         </div>
     </div>
@@ -524,4 +523,106 @@ def render_kpi_cards(
     # Add information about trend persistence
     st.caption(
         "💡 Trend indicators compare current values with the last saved baseline. The baseline resets automatically after ~3 minutes, refresh, or new login."
+    )
+
+
+# ---------------- Helper function for dashboard compatibility ----------------
+def get_kpi_comparison_data(
+    df,
+    period_col="period_display",
+    value_col="value",
+    kpi_name="KPI",
+    facility_uids=None,
+):
+    """
+    Helper function to prepare KPI comparison data for dashboard charts
+    Compatible with the updated kpi_utils.py functions
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    # Apply facility filtering if needed
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    # Group by period
+    grouped = filtered_df.groupby(period_col)
+
+    result_data = []
+    for period, group_df in grouped:
+        # Compute KPIs for this period group
+        kpis = compute_kpis(group_df)
+
+        # Extract relevant KPI based on kpi_name
+        if "IPPCAR" in kpi_name or "Contraceptive" in kpi_name:
+            value = kpis.get("ippcar", 0)
+            numerator = kpis.get("fp_acceptance", 0)
+            denominator = kpis.get("total_deliveries", 1)
+        elif "Stillbirth" in kpi_name:
+            value = kpis.get("stillbirth_rate", 0)
+            numerator = kpis.get("stillbirths", 0)
+            denominator = kpis.get("total_deliveries", 1)
+        elif "PNC" in kpi_name or "Postnatal" in kpi_name:
+            value = kpis.get("pnc_coverage", 0)
+            numerator = kpis.get("early_pnc", 0)
+            denominator = kpis.get("total_deliveries", 1)
+        elif "Maternal Death" in kpi_name:
+            value = kpis.get("maternal_death_rate", 0)
+            numerator = kpis.get("maternal_deaths", 0)
+            denominator = kpis.get("total_deliveries", 1)
+        elif "C-Section" in kpi_name:
+            value = kpis.get("csection_rate", 0)
+            numerator = kpis.get("csection_deliveries", 0)
+            denominator = kpis.get("total_deliveries", 1)
+        else:
+            value = 0
+            numerator = 0
+            denominator = 1
+
+        result_data.append(
+            {
+                period_col: period,
+                value_col: value,
+                "numerator": numerator,
+                "denominator": denominator,
+            }
+        )
+
+    return pd.DataFrame(result_data)
+
+
+# ---------------- Additional helper for time series data ----------------
+def prepare_kpi_timeseries_data(
+    df, kpi_name="KPI", facility_uids=None, period_col="period_display"
+):
+    """
+    Prepare time series data for KPI trend charts
+    Works with the updated kpi_utils.py
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    # Ensure we have period columns
+    if period_col not in df.columns and "event_date" in df.columns:
+        # Create period columns if not present
+        df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
+        df[period_col] = df["event_date"].dt.strftime("%b-%y")
+        df["period_sort"] = df["event_date"].dt.strftime("%Y%m")
+
+    if period_col not in df.columns:
+        return pd.DataFrame()
+
+    # Apply facility filtering if needed
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    # Sort by period if sort column exists
+    if "period_sort" in filtered_df.columns:
+        filtered_df = filtered_df.sort_values("period_sort")
+
+    # Get grouped data
+    return get_kpi_comparison_data(
+        filtered_df, period_col, "value", kpi_name, facility_uids
     )

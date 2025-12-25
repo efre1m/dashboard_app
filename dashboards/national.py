@@ -4,6 +4,7 @@
 # import logging
 # import concurrent.futures
 # import time
+# from datetime import datetime
 # from components.kpi_card import render_kpi_cards
 # from newborns_dashboard.national_newborn import render_newborn_dashboard
 # from utils.data_service import fetch_program_data_for_user
@@ -13,32 +14,25 @@
 #     get_facility_mapping_for_user,
 # )
 # from utils.dash_co import (
-#     normalize_event_dates,
+#     normalize_patient_dates,
 #     normalize_enrollment_dates,
 #     render_trend_chart_section,
 #     render_comparison_chart,
 #     render_additional_analytics,
 #     get_text_color,
-#     apply_simple_filters,
-#     render_simple_filter_controls,
+#     apply_patient_filters,
+#     render_patient_filter_controls,
 #     render_kpi_tab_navigation,
 # )
 # from utils.kpi_utils import clear_cache, compute_kpis
 # from utils.kpi_lbw import compute_lbw_kpi
-# from utils.status import (
-#     render_connection_status,
-#     update_last_sync_time,
-#     initialize_status_system,
-# )
 # from utils.odk_dashboard import display_odk_dashboard
 # from dashboards.data_quality_tracking import render_data_quality_tracking
 # from newborns_dashboard.kpi_nmr import compute_nmr_kpi
 
-# # Initialize status system
-# initialize_status_system()
 
 # logging.basicConfig(level=logging.INFO)
-# CACHE_TTL = 2700  # 45 minutes
+# CACHE_TTL = 1800  # 30 minutes
 
 
 # # Performance optimization: Pre-load essential data with user-specific caching
@@ -74,7 +68,7 @@
 
 
 # def get_shared_program_data_optimized(user, program_uid_map, show_spinner=True):
-#     """Smart data loading with 45-minute auto-refresh and user-specific caching"""
+#     """Smart data loading with 30-minute auto-refresh and user-specific caching"""
 #     maternal_program_uid = program_uid_map.get("Maternal Inpatient Data")
 #     newborn_program_uid = program_uid_map.get("Newborn Care Form")
 
@@ -87,30 +81,30 @@
 
 #     current_time = time.time()
 
-#     # ✅ INCREASED CACHE TIME: 45 minutes = 2700 seconds
+#     # Check if cache has expired (30 minutes = 1800 seconds)
 #     cache_expired = False
 #     if shared_timestamp_key in st.session_state:
 #         time_elapsed = current_time - st.session_state[shared_timestamp_key]
-#         cache_expired = time_elapsed > 2700
+#         cache_expired = time_elapsed > 1800
 #         if cache_expired:
 #             logging.info(
-#                 f"🔄 Cache expired after {time_elapsed:.0f} seconds, fetching fresh data"
+#                 f"Cache expired after {time_elapsed:.0f} seconds, fetching fresh data"
 #             )
 
-#     # ✅ Check if user changed (force fresh data)
+#     # Check if user changed (force fresh data)
 #     user_changed = st.session_state.get("user_changed", False)
 
-#     # ✅ Determine if we need fresh data
+#     # Determine if we need fresh data
 #     need_fresh_data = (
-#         not st.session_state.get(shared_loaded_key, False)  # First load
-#         or cache_expired  # Cache expired
-#         or user_changed  # User changed
-#         or st.session_state.get("refresh_trigger", False)  # Manual refresh
+#         not st.session_state.get(shared_loaded_key, False)
+#         or cache_expired
+#         or user_changed
+#         or st.session_state.get("refresh_trigger", False)
 #     )
 
 #     if need_fresh_data:
 #         logging.info(
-#             "🔄 Fetching FRESH data (cache expired, user changed, or manual refresh)"
+#             "Fetching fresh data (cache expired, user changed, or manual refresh)"
 #         )
 
 #         # Clear existing cache
@@ -118,10 +112,11 @@
 #         st.session_state[shared_maternal_key] = None
 #         st.session_state[shared_newborn_key] = None
 
+#         # Load fresh data in parallel
+#         spinner_text = "Loading dashboard data..." if show_spinner else None
+
 #         def load_data():
-#             # Use ThreadPoolExecutor with timeout handling
 #             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-#                 # Submit both data fetching tasks
 #                 maternal_future = (
 #                     executor.submit(
 #                         fetch_shared_program_data, user, maternal_program_uid
@@ -137,110 +132,81 @@
 #                     else None
 #                 )
 
-#                 # ✅ INCREASED TIMEOUT: 300 seconds (5 minutes)
 #                 try:
-#                     maternal_data = None
-#                     newborn_data = None
-
-#                     # Get maternal data with timeout
 #                     if maternal_future:
-#                         maternal_data = maternal_future.result(timeout=300)
-#                         logging.info(
-#                             f"✅ Maternal data loaded: {len(maternal_data.get('tei', pd.DataFrame())) if maternal_data else 0} TEIs"
+#                         st.session_state[shared_maternal_key] = maternal_future.result(
+#                             timeout=120
 #                         )
-
-#                     # Get newborn data with timeout
 #                     if newborn_future:
-#                         newborn_data = newborn_future.result(timeout=300)
-#                         logging.info(
-#                             f"✅ Newborn data loaded: {len(newborn_data.get('tei', pd.DataFrame())) if newborn_data else 0} TEIs"
+#                         st.session_state[shared_newborn_key] = newborn_future.result(
+#                             timeout=120
 #                         )
 
-#                     # Store results
-#                     st.session_state[shared_maternal_key] = maternal_data
-#                     st.session_state[shared_newborn_key] = newborn_data
 #                     st.session_state[shared_loaded_key] = True
 #                     st.session_state[shared_timestamp_key] = current_time
 
-#                     # ✅ STORE in main cached_shared_data for easy access
+#                     # Store in main cached_shared_data for easy access
 #                     st.session_state.cached_shared_data = {
-#                         "maternal": maternal_data,
-#                         "newborn": newborn_data,
+#                         "maternal": st.session_state[shared_maternal_key],
+#                         "newborn": st.session_state[shared_newborn_key],
 #                     }
 
 #                     # Log fresh data stats
-#                     maternal_tei_count = (
-#                         len(maternal_data.get("tei", pd.DataFrame()))
-#                         if maternal_data
+#                     maternal_patient_count = (
+#                         len(
+#                             st.session_state[shared_maternal_key].get(
+#                                 "patients", pd.DataFrame()
+#                             )
+#                         )
+#                         if st.session_state[shared_maternal_key]
 #                         else 0
 #                     )
-#                     newborn_tei_count = (
-#                         len(newborn_data.get("tei", pd.DataFrame()))
-#                         if newborn_data
+#                     newborn_patient_count = (
+#                         len(
+#                             st.session_state[shared_newborn_key].get(
+#                                 "patients", pd.DataFrame()
+#                             )
+#                         )
+#                         if st.session_state[shared_newborn_key]
 #                         else 0
 #                     )
 #                     logging.info(
-#                         f"✅ FRESH DATA COMPLETE: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs"
+#                         f"Fresh data: {maternal_patient_count} maternal patients, {newborn_patient_count} newborn patients"
 #                     )
 
 #                     # Reset refresh trigger and user changed flags
 #                     st.session_state.refresh_trigger = False
 #                     st.session_state.user_changed = False
 
-#                     return True
-
 #                 except concurrent.futures.TimeoutError:
-#                     logging.error("❌ Data loading timeout after 300 seconds")
-#                     # Store whatever data we managed to get
-#                     maternal_data = (
-#                         maternal_data if "maternal_data" in locals() else None
-#                     )
-#                     newborn_data = newborn_data if "newborn_data" in locals() else None
-
-#                     st.session_state[shared_maternal_key] = maternal_data
-#                     st.session_state[shared_newborn_key] = newborn_data
-#                     st.session_state[shared_loaded_key] = (
-#                         True  # Mark as loaded even if partial
-#                     )
-#                     st.session_state[shared_timestamp_key] = current_time
-
-#                     # Store partial data
-#                     st.session_state.cached_shared_data = {
-#                         "maternal": maternal_data,
-#                         "newborn": newborn_data,
-#                     }
-
-#                     logging.warning("⚠️ Using partially loaded data due to timeout")
-#                     return True  # Continue with partial data
-
-#                 except Exception as e:
-#                     logging.error(f"❌ Error during data loading: {e}")
+#                     logging.error("Data loading timeout")
 #                     return False
+#             return True
 
 #         # Show spinner only if requested
 #         if show_spinner:
-#             with st.spinner("🚀 Loading dashboard data..."):
+#             with st.spinner(spinner_text):
 #                 success = load_data()
 #                 if not success:
-#                     st.error("Data loading failed. Please try refreshing.")
+#                     st.error("Data loading timeout. Please try refreshing.")
 #         else:
 #             success = load_data()
 
 #     else:
-#         # ✅ Use cached data
-#         maternal_tei_count = (
-#             len(st.session_state[shared_maternal_key].get("tei", pd.DataFrame()))
+#         # Use cached data
+#         maternal_patient_count = (
+#             len(st.session_state[shared_maternal_key].get("patients", pd.DataFrame()))
 #             if st.session_state[shared_maternal_key]
 #             else 0
 #         )
-#         newborn_tei_count = (
-#             len(st.session_state[shared_newborn_key].get("tei", pd.DataFrame()))
+#         newborn_patient_count = (
+#             len(st.session_state[shared_newborn_key].get("patients", pd.DataFrame()))
 #             if st.session_state[shared_newborn_key]
 #             else 0
 #         )
 #         time_elapsed = current_time - st.session_state[shared_timestamp_key]
 #         logging.info(
-#             f"✅ USING CACHED DATA: {maternal_tei_count} maternal TEIs, {newborn_tei_count} newborn TEIs ({time_elapsed:.0f}s old)"
+#             f"Using cached data: {maternal_patient_count} maternal patients, {newborn_patient_count} newborn patients ({time_elapsed:.0f}s old)"
 #         )
 
 #     return {
@@ -264,7 +230,7 @@
 #         if shared_timestamp_key in st.session_state:
 #             del st.session_state[shared_timestamp_key]
 
-#         logging.info("🧹 Cleared user-specific cache")
+#         logging.info("Cleared user-specific cache")
 #     else:
 #         # Clear all user caches
 #         keys_to_clear = [
@@ -277,7 +243,7 @@
 #         ]
 #         for key in keys_to_clear:
 #             del st.session_state[key]
-#         logging.info("🧹 Cleared ALL shared caches")
+#         logging.info("Cleared ALL shared caches")
 
 #     clear_cache()
 
@@ -286,15 +252,15 @@
 #     """Optimized session state initialization with proper tab isolation"""
 #     session_vars = {
 #         "refresh_trigger": False,
-#         "selected_facilities": [],
+#         "selected_facilities": ["All Facilities"],
 #         "selected_regions": [],
 #         "current_facility_uids": [],
 #         "current_display_names": ["All Facilities"],
 #         "current_comparison_mode": "facility",
 #         "filter_mode": "All Facilities",
-#         "filtered_events": pd.DataFrame(),
+#         "filtered_patients": pd.DataFrame(),
 #         "selection_applied": True,
-#         "cached_events_data": None,
+#         "cached_patients_data": None,
 #         "cached_enrollments_data": None,
 #         "cached_tei_data": None,
 #         "last_applied_selection": "All Facilities",
@@ -305,14 +271,12 @@
 #         "facility_filter_applied": False,
 #         "current_user_identifier": None,
 #         "user_changed": False,
-#         # KPI sharing
 #         "last_computed_kpis": None,
 #         "last_computed_facilities": None,
 #         "last_computed_timestamp": None,
 #         "last_computed_newborn_kpis": None,
 #         "last_computed_newborn_timestamp": None,
 #         "summary_kpi_cache": {},
-#         # ✅ FIXED: Proper tab tracking
 #         "active_tab": "maternal",
 #         "data_initialized": False,
 #         "tab_initialized": {
@@ -322,7 +286,6 @@
 #             "mentorship": False,
 #             "data_quality": False,
 #         },
-#         # ✅ NEW: Track which tabs have been activated by user
 #         "tab_data_loaded": {
 #             "maternal": True,
 #             "newborn": True,
@@ -330,13 +293,14 @@
 #             "mentorship": False,
 #             "data_quality": True,
 #         },
-#         # ✅ NEW: Track loading state for each tab
 #         "tab_loading": {
 #             "summary": False,
 #             "mentorship": False,
 #         },
-#         # ✅ NEW: Force show tables in summary dashboard
 #         "show_summarized_data": True,
+#         "facilities_by_region": {},
+#         "facility_mapping": {},
+#         "program_uid_map": {},
 #     }
 
 #     for key, default_value in session_vars.items():
@@ -350,29 +314,24 @@
 #     if st.session_state.current_user_identifier != new_user_identifier:
 #         st.session_state.user_changed = True
 #         st.session_state.current_user_identifier = new_user_identifier
-#         # Clear user-specific data when user changes
 #         st.session_state.static_data_loaded = False
+#         st.session_state.selected_facilities = ["All Facilities"]
 #         st.session_state.selected_regions = []
-#         st.session_state.selected_facilities = []
 #         st.session_state.selection_applied = True
 #         st.session_state.facility_filter_applied = False
 #         st.session_state.last_computed_kpis = None
 #         st.session_state.last_computed_newborn_kpis = None
 #         st.session_state.summary_kpi_cache = {}
 #         st.session_state.data_initialized = False
-#         # Reset all tab states
 #         for tab in st.session_state.tab_initialized.keys():
 #             st.session_state.tab_initialized[tab] = False
-#         # Reset data loaded flags except for default tabs
 #         st.session_state.tab_data_loaded["maternal"] = True
 #         st.session_state.tab_data_loaded["newborn"] = True
 #         st.session_state.tab_data_loaded["summary"] = False
 #         st.session_state.tab_data_loaded["mentorship"] = False
 #         st.session_state.tab_data_loaded["data_quality"] = True
-#         # Reset loading states
 #         st.session_state.tab_loading["summary"] = False
 #         st.session_state.tab_loading["mentorship"] = False
-#         # Reset show tables
 #         st.session_state.show_summarized_data = True
 #     else:
 #         st.session_state.user_changed = False
@@ -382,67 +341,23 @@
 # initialize_session_state()
 
 
-# # ✅ CONSISTENT COUNTING FUNCTIONS
-# def count_unique_newborns_consistent(
-#     tei_df, facility_uids=None, org_unit_column="tei_orgUnit"
-# ):
-#     """✅ FIX: Consistent counting of unique newborns across entire dashboard"""
-#     if tei_df.empty:
+# def count_unique_patients(patient_df, facility_uids, org_unit_column="orgUnit"):
+#     """Count unique patients from patient-level dataframe using UIDs"""
+#     if patient_df.empty:
 #         return 0
 
-#     # Filter TEI dataframe by the selected facility UIDs if provided
-#     if facility_uids and org_unit_column in tei_df.columns:
-#         filtered_tei = tei_df[tei_df[org_unit_column].isin(facility_uids)]
-#     elif facility_uids and "orgUnit" in tei_df.columns:
-#         filtered_tei = tei_df[tei_df["orgUnit"].isin(facility_uids)]
+#     # Filter by facilities if specified
+#     if facility_uids and org_unit_column in patient_df.columns:
+#         filtered_patients = patient_df[patient_df[org_unit_column].isin(facility_uids)]
 #     else:
-#         filtered_tei = tei_df
+#         filtered_patients = patient_df
 
-#     # Count unique newborns using the same column consistently
-#     if "tei_id" in filtered_tei.columns:
-#         return filtered_tei["tei_id"].nunique()
-#     elif "trackedEntityInstance" in filtered_tei.columns:
-#         return filtered_tei["trackedEntityInstance"].nunique()
+#     # Count unique TEI IDs
+#     if "tei_id" in filtered_patients.columns:
+#         count = filtered_patients["tei_id"].nunique()
+#         return count
 #     else:
-#         return filtered_tei.index.nunique()
-
-
-# def count_unique_mothers_consistent(enrollments_df, facility_uids=None):
-#     """✅ FIX: Consistent counting of unique mothers across entire dashboard"""
-#     if enrollments_df.empty:
 #         return 0
-
-#     # Filter enrollments by facility if provided
-#     if facility_uids and "orgUnit" in enrollments_df.columns:
-#         filtered_enrollments = enrollments_df[
-#             enrollments_df["orgUnit"].isin(facility_uids)
-#         ]
-#     else:
-#         filtered_enrollments = enrollments_df
-
-#     # Count unique mothers using the same column consistently
-#     if "tei_id" in filtered_enrollments.columns:
-#         return filtered_enrollments["tei_id"].nunique()
-#     elif "trackedEntityInstance" in filtered_enrollments.columns:
-#         return filtered_enrollments["trackedEntityInstance"].nunique()
-#     else:
-#         return filtered_enrollments.index.nunique()
-
-
-# def count_unique_teis_from_events(
-#     events_df, facility_uids=None, org_unit_column="orgUnit"
-# ):
-#     """Count unique TEI IDs from events DataFrame - CONSISTENT WITH REGIONAL"""
-#     if events_df.empty or "tei_id" not in events_df.columns:
-#         return 0
-
-#     # Filter by facility if specified
-#     if facility_uids and org_unit_column in events_df.columns:
-#         filtered_events = events_df[events_df[org_unit_column].isin(facility_uids)]
-#     else:
-#         filtered_events = events_df
-
-#     return filtered_events["tei_id"].nunique()
 
 
 # def get_earliest_date(df, date_column):
@@ -457,6 +372,161 @@
 #         )
 #     except Exception:
 #         return "N/A"
+
+
+# def calculate_maternal_indicators_from_patients(patient_df, facility_uids):
+#     """Calculate maternal indicators from patient-level data"""
+#     if patient_df.empty:
+#         return {
+#             "total_deliveries": 0,
+#             "maternal_deaths": 0,
+#             "maternal_death_rate": 0.0,
+#             "live_births": 0,
+#             "stillbirths": 0,
+#             "total_births": 0,
+#             "stillbirth_rate": 0.0,
+#             "low_birth_weight_rate": 0.0,
+#             "low_birth_weight_count": 0,
+#         }
+
+#     # Filter by facilities if specified
+#     if facility_uids and "orgUnit" in patient_df.columns:
+#         filtered_df = patient_df[patient_df["orgUnit"].isin(facility_uids)]
+#     else:
+#         filtered_df = patient_df
+
+#     # Count total patients (each patient is a delivery)
+#     total_deliveries = filtered_df["tei_id"].nunique()
+
+#     # Initialize counts
+#     maternal_deaths = 0
+#     live_births = 0
+#     stillbirths = 0
+#     low_birth_weight_count = 0
+#     total_weighed = 0
+
+#     # Check for maternal death indicators in patient data
+#     if "delivery_summary_maternal_death" in filtered_df.columns:
+#         maternal_deaths = filtered_df["delivery_summary_maternal_death"].sum()
+
+#     # Count live births and stillbirths
+#     if "delivery_summary_live_birth" in filtered_df.columns:
+#         live_births = filtered_df["delivery_summary_live_birth"].sum()
+#     if "delivery_summary_stillbirth" in filtered_df.columns:
+#         stillbirths = filtered_df["delivery_summary_stillbirth"].sum()
+
+#     total_births = live_births + stillbirths
+
+#     # Calculate low birth weight
+#     if "delivery_summary_birth_weight" in filtered_df.columns:
+#         # Filter out null weights
+#         weight_df = filtered_df[filtered_df["delivery_summary_birth_weight"].notna()]
+#         total_weighed = len(weight_df)
+#         if total_weighed > 0:
+#             # Convert to numeric
+#             weight_df["delivery_summary_birth_weight"] = pd.to_numeric(
+#                 weight_df["delivery_summary_birth_weight"], errors="coerce"
+#             )
+#             low_birth_weight_count = weight_df[
+#                 weight_df["delivery_summary_birth_weight"] < 2500
+#             ].shape[0]
+#             low_birth_weight_rate = (
+#                 (low_birth_weight_count / total_weighed * 100)
+#                 if total_weighed > 0
+#                 else 0
+#             )
+#         else:
+#             low_birth_weight_rate = 0
+#     else:
+#         low_birth_weight_rate = 0
+
+#     # Calculate rates
+#     maternal_death_rate = (
+#         (maternal_deaths / total_deliveries * 100000) if total_deliveries > 0 else 0
+#     )
+#     stillbirth_rate = (stillbirths / total_births * 1000) if total_births > 0 else 0
+
+#     return {
+#         "total_deliveries": total_deliveries,
+#         "maternal_deaths": int(maternal_deaths),
+#         "maternal_death_rate": round(maternal_death_rate, 2),
+#         "live_births": int(live_births),
+#         "stillbirths": int(stillbirths),
+#         "total_births": int(total_births),
+#         "stillbirth_rate": round(stillbirth_rate, 2),
+#         "low_birth_weight_rate": round(low_birth_weight_rate, 2),
+#         "low_birth_weight_count": int(low_birth_weight_count),
+#     }
+
+
+# def calculate_newborn_indicators_from_patients(patient_df, facility_uids):
+#     """Calculate newborn indicators from patient-level data"""
+#     if patient_df.empty:
+#         return {
+#             "total_admitted": 0,
+#             "nmr": 0.0,
+#             "nmr_dead_count": 0,
+#             "nmr_total_admitted": 0,
+#             "kmc_coverage_rate": 0.0,
+#             "kmc_cases": 0,
+#             "total_lbw": 0,
+#         }
+
+#     # Filter by facilities if specified
+#     if facility_uids and "orgUnit" in patient_df.columns:
+#         filtered_df = patient_df[patient_df["orgUnit"].isin(facility_uids)]
+#     else:
+#         filtered_df = patient_df
+
+#     # Count total admitted newborns
+#     total_admitted = filtered_df["tei_id"].nunique()
+
+#     # Calculate NMR from discharge status
+#     nmr_dead_count = 0
+#     if (
+#         "discharge_and_final_diagnosis_newborn_status_at_discharge"
+#         in filtered_df.columns
+#     ):
+#         dead_cases = filtered_df[
+#             filtered_df["discharge_and_final_diagnosis_newborn_status_at_discharge"]
+#             == "dead"
+#         ]
+#         nmr_dead_count = len(dead_cases)
+
+#     nmr_rate = (nmr_dead_count / total_admitted * 1000) if total_admitted > 0 else 0
+
+#     # Calculate KMC coverage
+#     kmc_cases = 0
+#     if "interventions_kmc_administered" in filtered_df.columns:
+#         kmc_cases = filtered_df[
+#             filtered_df["interventions_kmc_administered"] == 1
+#         ].shape[0]
+#     kmc_coverage_rate = (kmc_cases / total_admitted * 100) if total_admitted > 0 else 0
+
+#     # Count low birth weight newborns
+#     total_lbw = 0
+#     if "admission_information_weight_on_admission" in filtered_df.columns:
+#         weight_df = filtered_df[
+#             filtered_df["admission_information_weight_on_admission"].notna()
+#         ]
+#         if not weight_df.empty:
+#             weight_df["admission_information_weight_on_admission"] = pd.to_numeric(
+#                 weight_df["admission_information_weight_on_admission"], errors="coerce"
+#             )
+#             total_lbw = weight_df[
+#                 weight_df["admission_information_weight_on_admission"] < 2500
+#             ].shape[0]
+
+#     return {
+#         "total_admitted": total_admitted,
+#         "nmr": round(nmr_rate, 2),
+#         "nmr_raw": nmr_rate,
+#         "nmr_dead_count": nmr_dead_count,
+#         "nmr_total_admitted": total_admitted,
+#         "kmc_coverage_rate": round(kmc_coverage_rate, 2),
+#         "kmc_cases": kmc_cases,
+#         "total_lbw": total_lbw,
+#     }
 
 
 # def get_location_display_name(
@@ -487,147 +557,145 @@
 #         return country_name, "Country"
 
 
-# def filter_data_by_facilities(data_dict, facility_uids):
-#     """Filter all dataframes in a data dictionary by facility UIDs"""
-#     if not data_dict or not facility_uids:
-#         return data_dict
+# def shorten_facility_name(facility_name):
+#     """Shorten facility name for compact display"""
+#     remove_words = [
+#         "Health Center",
+#         "HC",
+#         "Hospital",
+#         "Hosp",
+#         "Clinic",
+#         "Health Facility",
+#         "Health Post",
+#         "Dispensary",
+#         "Medical Center",
+#         "Medical",
+#         "Centre",
+#         "Center",
+#     ]
 
-#     filtered_data = {}
-#     for key, df in data_dict.items():
-#         if isinstance(df, pd.DataFrame) and not df.empty:
-#             if "orgUnit" in df.columns:
-#                 filtered_df = df[df["orgUnit"].isin(facility_uids)].copy()
-#             elif "tei_orgUnit" in df.columns:
-#                 filtered_df = df[df["tei_orgUnit"].isin(facility_uids)].copy()
-#             else:
-#                 filtered_df = df.copy()
-#             filtered_data[key] = filtered_df
-#         else:
-#             filtered_data[key] = df
+#     short_name = facility_name
+#     for word in remove_words:
+#         short_name = short_name.replace(word, "").strip()
 
-#     return filtered_data
+#     short_name = " ".join(short_name.split())
+#     short_name = short_name.replace(" ,", ",").replace(",", "").strip(" -")
+
+#     # Take first 2-3 words max
+#     words = short_name.split()
+#     if len(words) > 2:
+#         short_name = " ".join(words[:2])
+
+#     # Final length check
+#     if len(short_name) > 20:
+#         short_name = short_name[:18] + ".."
+
+#     # If empty after processing, use first 15 chars of original
+#     if not short_name:
+#         short_name = (
+#             facility_name[:15] + ".." if len(facility_name) > 15 else facility_name
+#         )
+
+#     return short_name
 
 
-# def calculate_regional_comparison_data(
-#     maternal_events_df,
-#     newborn_events_df,
+# def update_facility_selection(
+#     filter_mode,
+#     selected_regions,
+#     selected_facilities,
 #     facilities_by_region,
 #     facility_mapping,
-#     maternal_enrollments_df=None,
-#     newborn_tei_df=None,
 # ):
-#     """✅ FIX: Regional comparison data calculation using EVENTS dataframe (same as kpi_utils)"""
-#     regional_data = {}
+#     """Optimized facility selection update"""
+#     if filter_mode == "All Facilities":
+#         facility_uids = list(facility_mapping.values())
+#         display_names = ["All Facilities"]
+#         comparison_mode = "facility"
+#     elif filter_mode == "By Region" and selected_regions:
+#         facility_uids = []
+#         display_names = []
+#         for region in selected_regions:
+#             if region in facilities_by_region:
+#                 facility_uids.extend(
+#                     fac_uid for _, fac_uid in facilities_by_region[region]
+#                 )
+#                 display_names.append(region)
+#         comparison_mode = "region"
+#     elif filter_mode == "By Facility" and selected_facilities:
+#         facility_uids = [
+#             facility_mapping[f] for f in selected_facilities if f in facility_mapping
+#         ]
+#         display_names = selected_facilities
+#         comparison_mode = "facility"
+#     else:
+#         facility_uids = list(facility_mapping.values())
+#         display_names = ["All Facilities"]
+#         comparison_mode = "facility"
 
-#     for region_name, facilities in facilities_by_region.items():
-#         region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
-
-#         # ✅ FIX: Use events dataframe for counting (same as kpi_utils.compute_total_deliveries())
-#         if not maternal_events_df.empty and "tei_id" in maternal_events_df.columns:
-#             if region_facility_uids:
-#                 region_maternal_events = maternal_events_df[
-#                     maternal_events_df["orgUnit"].isin(region_facility_uids)
-#                 ]
-#                 maternal_count = region_maternal_events["tei_id"].nunique()
-#             else:
-#                 maternal_count = 0
-#         else:
-#             maternal_count = 0
-
-#         # ✅ FIX: Use events dataframe for newborns too (consistent approach)
-#         if not newborn_events_df.empty and "tei_id" in newborn_events_df.columns:
-#             if region_facility_uids:
-#                 region_newborn_events = newborn_events_df[
-#                     newborn_events_df["orgUnit"].isin(region_facility_uids)
-#                 ]
-#                 newborn_count = region_newborn_events["tei_id"].nunique()
-#             else:
-#                 newborn_count = 0
-#         else:
-#             newborn_count = 0
-
-#         regional_data[region_name] = {
-#             "mothers": maternal_count,
-#             "newborns": newborn_count,
-#         }
-
-#     return regional_data
-
-
-# def render_loading_indicator(tab_name, icon):
-#     """Render a loading indicator for tabs that are processing data"""
-#     st.markdown(
-#         f"""
-#         <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
-#              border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
-#             <div style="font-size: 4rem; margin-bottom: 1rem;">{icon}</div>
-#             <h2 style="color: #495057; margin-bottom: 1rem;">Loading {tab_name}...</h2>
-#             <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
-#                 Please wait while we process the data. This may take 1-2 minutes.
-#             </p>
-#             <div style="display: inline-block; padding: 10px 20px; background: #007bff; color: white;
-#                  border-radius: 25px; font-weight: bold;">
-#                 ⏳ Processing Data...
-#             </div>
-#         </div>
-#     """,
-#         unsafe_allow_html=True,
-#     )
-
-
-# def render_tab_placeholder(tab_name, icon, tab_key, description):
-#     """Render a placeholder with a button to load data for the tab"""
-#     st.markdown(
-#         f"""
-#         <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
-#              border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
-#             <div style="font-size: 4rem; margin-bottom: 1rem;">{icon}</div>
-#             <h2 style="color: #495057; margin-bottom: 1rem;">{tab_name}</h2>
-#             <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
-#                 {description}
-#             </p>
-#         </div>
-#     """,
-#         unsafe_allow_html=True,
-#     )
-
-#     col1, col2, col3 = st.columns([1, 2, 1])
-#     with col2:
-#         if st.button(
-#             f"🚀 Load {tab_name} Data",
-#             use_container_width=True,
-#             type="primary",
-#             key=f"load_{tab_key}_data",
-#         ):
-#             st.session_state.tab_loading[tab_key] = True
-#             st.session_state.tab_data_loaded[tab_key] = True
-#             st.rerun()
+#     return facility_uids, display_names, comparison_mode
 
 
 # def render_summary_dashboard_shared(
 #     user, country_name, facilities_by_region, facility_mapping, shared_data
 # ):
-#     """✅ FIX: OPTIMIZED Summary Dashboard with CONSISTENT counting - NOW SAME AS KPI_UTILS"""
+#     """Optimized Summary Dashboard using patient-level data"""
+
+#     # Only run if this is the active tab
 #     if st.session_state.active_tab != "summary":
 #         return
 
-#     # ✅ Check if user has clicked "View Data" button for this tab
+#     # Check if user has clicked "View Data" button for this tab
 #     if not st.session_state.tab_data_loaded["summary"]:
-#         render_tab_placeholder(
-#             "Summary Dashboard",
-#             "📊",
-#             "summary",
-#             "Get comprehensive overview of maternal and newborn health indicators across all facilities",
+#         st.markdown(
+#             """
+#         <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+#              border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
+#             <div style="font-size: 4rem; margin-bottom: 1rem;">📊</div>
+#             <h2 style="color: #495057; margin-bottom: 1rem;">Summary Dashboard</h2>
+#             <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+#                 Get comprehensive overview of maternal and newborn health indicators across all facilities
+#             </p>
+#         </div>
+#         """,
+#             unsafe_allow_html=True,
 #         )
+
+#         col1, col2, col3 = st.columns([1, 2, 1])
+#         with col2:
+#             if st.button(
+#                 "Load Summary Data",
+#                 use_container_width=True,
+#                 type="primary",
+#                 key="load_summary_data",
+#             ):
+#                 st.session_state.tab_loading["summary"] = True
+#                 st.session_state.tab_data_loaded["summary"] = True
+#                 st.rerun()
 #         return
 
-#     # ✅ Show loading indicator if data is being processed
+#     # Show loading indicator if data is being processed
 #     if st.session_state.tab_loading["summary"]:
-#         render_loading_indicator("Summary Dashboard", "📊")
+#         st.markdown(
+#             """
+#         <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+#              border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
+#             <div style="font-size: 4rem; margin-bottom: 1rem;">📊</div>
+#             <h2 style="color: #495057; margin-bottom: 1rem;">Loading Summary Dashboard...</h2>
+#             <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+#                 Please wait while we process the data. This may take 1-2 minutes.
+#             </p>
+#             <div style="display: inline-block; padding: 10px 20px; background: #007bff; color: white;
+#                  border-radius: 25px; font-weight: bold;">
+#                 Processing Data...
+#             </div>
+#         </div>
+#         """,
+#             unsafe_allow_html=True,
+#         )
 #         st.session_state.tab_loading["summary"] = False
 #         st.rerun()
 
-#     logging.info("🔄 Summary dashboard rendering - USING KPI_UTILS LOGIC")
+#     logging.info("National summary dashboard rendering - USING PATIENT-LEVEL DATA")
 
 #     # Get facility selection
 #     filter_mode = st.session_state.get("filter_mode", "All Facilities")
@@ -648,7 +716,7 @@
 #         filter_mode, selected_regions, selected_facilities, country_name
 #     )
 
-#     # Use shared data
+#     # Use patient-level data
 #     maternal_data = shared_data["maternal"]
 #     newborn_data = shared_data["newborn"]
 
@@ -656,8 +724,18 @@
 #         st.error("No data available for summary dashboard")
 #         return
 
+#     # Get patient dataframes
+#     maternal_patients = (
+#         maternal_data.get("patients", pd.DataFrame())
+#         if maternal_data
+#         else pd.DataFrame()
+#     )
+#     newborn_patients = (
+#         newborn_data.get("patients", pd.DataFrame()) if newborn_data else pd.DataFrame()
+#     )
+
 #     # Create cache key for summary data
-#     cache_key = f"summary_{location_name}_{len(facility_uids)}"
+#     cache_key = f"summary_{location_name}_{len(facility_uids)}_{len(maternal_patients)}_{len(newborn_patients)}"
 
 #     # Check if we have cached summary data
 #     if (
@@ -666,94 +744,63 @@
 #         < 300
 #     ):
 #         summary_data = st.session_state.summary_kpi_cache[cache_key]["data"]
-#         logging.info("✅ USING CACHED summary data")
 #     else:
-#         # Compute summary data - NOW USING SAME LOGIC AS KPI_UTILS
-#         with st.spinner("🔄 Computing summary statistics using KPI_UTILS logic..."):
-#             # Extract dataframes
-#             maternal_events_df = (
-#                 maternal_data.get("events", pd.DataFrame())
-#                 if maternal_data
-#                 else pd.DataFrame()
+#         # Compute summary data using patient-level data
+#         with st.spinner("Computing summary statistics from patient-level data..."):
+#             # Get TEI counts from patient data
+#             maternal_patient_count = count_unique_patients(
+#                 maternal_patients, facility_uids
 #             )
-#             newborn_events_df = (
-#                 newborn_data.get("events", pd.DataFrame())
-#                 if newborn_data
-#                 else pd.DataFrame()
+#             newborn_patient_count = count_unique_patients(
+#                 newborn_patients, facility_uids
 #             )
 
-#             # ✅ FIX: Use events dataframe for counting mothers - SAME AS KPI_UTILS
-#             # Count unique mothers from events dataframe (same as kpi_utils)
-#             if not maternal_events_df.empty and "tei_id" in maternal_events_df.columns:
-#                 if facility_uids:
-#                     filtered_events = maternal_events_df[
-#                         maternal_events_df["orgUnit"].isin(facility_uids)
-#                     ]
-#                 else:
-#                     filtered_events = maternal_events_df
-#                 maternal_tei_count = filtered_events["tei_id"].nunique()
-#             else:
-#                 maternal_tei_count = 0
+#             # Get enrollment dates
+#             maternal_start_date = "N/A"
+#             newborn_start_date = "N/A"
 
-#             # ✅ FIX: Count unique newborns from events dataframe (consistent approach)
-#             if not newborn_events_df.empty and "tei_id" in newborn_events_df.columns:
-#                 if facility_uids:
-#                     filtered_newborn_events = newborn_events_df[
-#                         newborn_events_df["orgUnit"].isin(facility_uids)
-#                     ]
-#                 else:
-#                     filtered_newborn_events = newborn_events_df
-#                 newborn_tei_count = filtered_newborn_events["tei_id"].nunique()
-#             else:
-#                 newborn_tei_count = 0
+#             if "enrollment_date" in maternal_patients.columns:
+#                 maternal_start_date = get_earliest_date(
+#                     maternal_patients, "enrollment_date"
+#                 )
+#             if "enrollment_date" in newborn_patients.columns:
+#                 newborn_start_date = get_earliest_date(
+#                     newborn_patients, "enrollment_date"
+#                 )
 
-#             # Get dates from enrollments
-#             maternal_enrollments_df = normalize_enrollment_dates(
-#                 maternal_data.get("enrollments", pd.DataFrame())
-#                 if maternal_data
-#                 else pd.DataFrame()
-#             )
-#             newborn_enrollments_df = normalize_enrollment_dates(
-#                 newborn_data.get("enrollments", pd.DataFrame())
-#                 if newborn_data
-#                 else pd.DataFrame()
+#             # Calculate maternal indicators from patient data
+#             maternal_indicators = calculate_maternal_indicators_from_patients(
+#                 maternal_patients, facility_uids
 #             )
 
-#             newborn_start_date = get_earliest_date(
-#                 newborn_enrollments_df, "enrollmentDate"
-#             )
-#             maternal_start_date = get_earliest_date(
-#                 maternal_enrollments_df, "enrollmentDate"
+#             # Calculate newborn indicators from patient data
+#             newborn_indicators = calculate_newborn_indicators_from_patients(
+#                 newborn_patients, facility_uids
 #             )
 
-#             # ✅ FIX: Regional comparison - using events dataframe (same as kpi_utils)
+#             # Regional comparison using patient data
 #             regional_comparison_data = {}
 #             for region_name, facilities in facilities_by_region.items():
 #                 region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
 
-#                 # Count mothers from events (same as kpi_utils)
+#                 # Count maternal patients
 #                 if (
-#                     not maternal_events_df.empty
-#                     and "tei_id" in maternal_events_df.columns
-#                     and region_facility_uids
+#                     not maternal_patients.empty
+#                     and "orgUnit" in maternal_patients.columns
 #                 ):
-#                     region_maternal_events = maternal_events_df[
-#                         maternal_events_df["orgUnit"].isin(region_facility_uids)
+#                     region_maternal_patients = maternal_patients[
+#                         maternal_patients["orgUnit"].isin(region_facility_uids)
 #                     ]
-#                     maternal_count = region_maternal_events["tei_id"].nunique()
+#                     maternal_count = region_maternal_patients["tei_id"].nunique()
 #                 else:
 #                     maternal_count = 0
 
-#                 # Count newborns from events
-#                 if (
-#                     not newborn_events_df.empty
-#                     and "tei_id" in newborn_events_df.columns
-#                     and region_facility_uids
-#                 ):
-#                     region_newborn_events = newborn_events_df[
-#                         newborn_events_df["orgUnit"].isin(region_facility_uids)
+#                 # Count newborn patients
+#                 if not newborn_patients.empty and "orgUnit" in newborn_patients.columns:
+#                     region_newborn_patients = newborn_patients[
+#                         newborn_patients["orgUnit"].isin(region_facility_uids)
 #                     ]
-#                     newborn_count = region_newborn_events["tei_id"].nunique()
+#                     newborn_count = region_newborn_patients["tei_id"].nunique()
 #                 else:
 #                     newborn_count = 0
 
@@ -762,115 +809,11 @@
 #                     "newborns": newborn_count,
 #                 }
 
-#             # Use pre-computed KPIs from kpi_utils
-#             if (
-#                 st.session_state.get("last_computed_kpis")
-#                 and st.session_state.get("last_computed_facilities") == facility_uids
-#                 and time.time() - st.session_state.get("last_computed_timestamp", 0)
-#                 < 300
-#             ):
-#                 kpi_data = st.session_state.last_computed_kpis
-#                 logging.info("✅ REUSING pre-computed MATERNAL KPIs from kpi_utils")
-#             else:
-#                 # Fallback computation using kpi_utils
-#                 if (
-#                     st.session_state.get("filtered_events") is not None
-#                     and not st.session_state.filtered_events.empty
-#                 ):
-#                     kpi_data = compute_kpis(
-#                         st.session_state.filtered_events, facility_uids
-#                     )
-#                 elif not maternal_events_df.empty:
-#                     kpi_data = compute_kpis(maternal_events_df, facility_uids)
-#                 else:
-#                     kpi_data = {
-#                         "total_deliveries": maternal_tei_count,
-#                         "maternal_deaths": 0,
-#                         "maternal_death_rate": 0.0,
-#                         "live_births": 0,
-#                         "stillbirths": 0,
-#                         "total_births": 0,
-#                         "stillbirth_rate": 0.0,
-#                     }
-#                 logging.info("🔄 Computing MATERNAL KPIs for summary using kpi_utils")
-
-#             # Extract KPI values from kpi_utils computation
-#             maternal_indicators = {
-#                 "total_deliveries": kpi_data.get(
-#                     "total_deliveries", maternal_tei_count
-#                 ),
-#                 "maternal_deaths": kpi_data.get("maternal_deaths", 0),
-#                 "maternal_death_rate": kpi_data.get("maternal_death_rate", 0.0),
-#                 "live_births": kpi_data.get("live_births", 0),
-#                 "stillbirths": kpi_data.get("stillbirths", 0),
-#                 "total_births": kpi_data.get("total_births", 0),
-#                 "stillbirth_rate": kpi_data.get("stillbirth_rate", 0.0),
-#             }
-
-#             # For LBW, use minimal computation from kpi_utils
-#             lbw_events_df = (
-#                 st.session_state.filtered_events
-#                 if st.session_state.get("filtered_events") is not None
-#                 else maternal_events_df
-#             )
-#             lbw_data = compute_lbw_kpi(lbw_events_df, facility_uids)
-#             maternal_indicators.update(
-#                 {
-#                     "low_birth_weight_rate": lbw_data.get("lbw_rate", 0.0),
-#                     "low_birth_weight_count": lbw_data.get("lbw_count", 0),
-#                 }
-#             )
-
-#             # ✅ FIX: COMPUTE NMR USING THE NEW FUNCTION
-#             nmr_result = compute_nmr_kpi(newborn_events_df, facility_uids, tei_df=None)
-
-#             # Extract NMR data
-#             nmr_rate = nmr_result.get("nmr_rate", 0.0)
-#             nmr_dead_count = nmr_result.get("dead_count", 0)
-#             nmr_total_admitted = nmr_result.get("total_admitted_newborns", 0)
-
-#             logging.info(
-#                 f"✅ Computed NMR: {nmr_rate:.2f}% ({nmr_dead_count}/{nmr_total_admitted})"
-#             )
-
-#             # Use pre-computed NEWBORN KPIs
-#             if (
-#                 st.session_state.get("last_computed_newborn_kpis")
-#                 and time.time()
-#                 - st.session_state.get("last_computed_newborn_timestamp", 0)
-#                 < 300
-#             ):
-#                 newborn_kpi_data = st.session_state.last_computed_newborn_kpis
-#                 logging.info("✅ REUSING pre-computed NEWBORN KPIs")
-#             else:
-#                 newborn_kpi_data = {
-#                     "kmc_coverage_rate": 0.0,
-#                     "kmc_cases": 0,
-#                     "total_lbw": 0,
-#                     "total_newborns": newborn_tei_count,  # Using events count
-#                     "total_mothers": maternal_tei_count,  # Using events count
-#                 }
-#                 logging.info("🔄 Using placeholder NEWBORN KPIs")
-
-#             # ✅ FIX: Update newborn indicators with computed NMR
-#             newborn_indicators = {
-#                 "total_admitted": newborn_kpi_data.get(
-#                     "total_newborns", newborn_tei_count
-#                 ),
-#                 "nmr": f"{nmr_rate:.2f}%",  # ← NOW USING COMPUTED VALUE!
-#                 "nmr_raw": nmr_rate,  # Store raw value
-#                 "nmr_dead_count": nmr_dead_count,
-#                 "nmr_total_admitted": nmr_total_admitted,
-#                 "kmc_coverage_rate": newborn_kpi_data.get("kmc_coverage_rate", 0.0),
-#                 "kmc_cases": newborn_kpi_data.get("kmc_cases", 0),
-#                 "total_lbw": newborn_kpi_data.get("total_lbw", 0),
-#             }
-
 #             summary_data = {
 #                 "maternal_indicators": maternal_indicators,
 #                 "newborn_indicators": newborn_indicators,
-#                 "maternal_tei_count": maternal_tei_count,  # Now from events (same as kpi_utils)
-#                 "newborn_tei_count": newborn_tei_count,  # Now from events (consistent)
+#                 "maternal_tei_count": maternal_patient_count,
+#                 "newborn_tei_count": newborn_patient_count,
 #                 "newborn_start_date": newborn_start_date,
 #                 "maternal_start_date": maternal_start_date,
 #                 "regional_comparison_data": regional_comparison_data,
@@ -911,55 +854,51 @@
 #         unsafe_allow_html=True,
 #     )
 
-#     # ✅ Show quick statistics at the top
+#     # DIRECTLY SHOW TABLES WITHOUT SUMMARY BUTTON
+#     # Show quick statistics at the top
 #     st.markdown("### 📈 Quick Statistics")
 
 #     col1, col2, col3, col4 = st.columns(4)
 #     metrics = [
 #         (
 #             col1,
-#             "👩 Total Mothers",
+#             "Total Mothers",
 #             maternal_tei_count,
-#             "info-metric",
 #             "Unique mothers admitted",
 #         ),
 #         (
 #             col2,
-#             "👶 Total Newborns",
+#             "Total Newborns",
 #             newborn_tei_count,
-#             "success-metric",
 #             "Unique newborns admitted",
 #         ),
 #         (
 #             col3,
-#             "⚠️ Maternal Deaths",
+#             "Maternal Deaths",
 #             maternal_indicators["maternal_deaths"],
-#             "critical-metric",
 #             "Maternal mortality cases",
 #         ),
 #         (
 #             col4,
-#             "📅 Coverage Start",
+#             "Coverage Start",
 #             maternal_start_date,
-#             "warning-metric",
 #             "Earliest data record",
 #         ),
 #     ]
 
-#     for col, label, value, css_class, help_text in metrics:
+#     for col, label, value, help_text in metrics:
 #         with col:
 #             st.markdown(
 #                 f"""
-#             <div class="metric-card {css_class}" style="min-height: 120px; padding: 15px;">
-#                 <div class="metric-label">{label}</div>
-#                 <div class="metric-value">{value if isinstance(value, int) else value}</div>
-#                 <div class="metric-help">{help_text}</div>
+#             <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; border-left: 4px solid #1f77b4; margin-bottom: 10px;">
+#                 <div style="font-size: 0.8rem; color: #666; margin-bottom: 5px;">{label}</div>
+#                 <div style="font-size: 1.5rem; font-weight: bold; color: #1f77b4; margin: 10px 0;">{value if isinstance(value, int) else value}</div>
+#                 <div style="font-size: 0.65rem; color: #888;">{help_text}</div>
 #             </div>
 #             """,
 #                 unsafe_allow_html=True,
 #             )
 
-#     # ✅ DIRECTLY SHOW ALL TABLES (no button needed)
 #     st.markdown("---")
 
 #     # Newborn Overview Table
@@ -972,8 +911,8 @@
 #             "Start Date",
 #             location_type,
 #             "Total Admitted Newborns",
-#             "NMR",
-#             "Stillbirth Rate",
+#             "NMR (per 1000)",
+#             "Stillbirth Rate (per 1000)",
 #             "Live Births",
 #             "Stillbirths",
 #             "Total Births",
@@ -983,9 +922,8 @@
 #             newborn_start_date,
 #             location_name,
 #             f"{newborn_tei_count:,}",
-#             # ✅ FIX: Use computed NMR value instead of "N/A"
-#             f"{newborn_indicators['nmr']}",
-#             f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births",
+#             f"{newborn_indicators['nmr']:.2f}",
+#             f"{maternal_indicators['stillbirth_rate']:.2f}",
 #             f"{maternal_indicators['live_births']:,}",
 #             f"{maternal_indicators['stillbirths']:,}",
 #             f"{maternal_indicators['total_births']:,}",
@@ -1013,9 +951,9 @@
 #             "Start Date": [newborn_start_date],
 #             f"{location_type}": [location_name],
 #             "Total Admitted Newborns": [newborn_tei_count],
-#             "NMR": [f"{newborn_indicators['nmr']}"],
-#             "Stillbirth Rate": [
-#                 f"{maternal_indicators['stillbirth_rate']:.2f} per 1000 births"
+#             "NMR (per 1000)": [f"{newborn_indicators['nmr']:.2f}"],
+#             "Stillbirth Rate (per 1000)": [
+#                 f"{maternal_indicators['stillbirth_rate']:.2f}"
 #             ],
 #             "Live Births": [maternal_indicators["live_births"]],
 #             "Stillbirths": [maternal_indicators["stillbirths"]],
@@ -1026,7 +964,7 @@
 #         }
 #         newborn_df = pd.DataFrame(newborn_data_download)
 #         st.download_button(
-#             "📥 Download Newborn Data",
+#             "Download Newborn Data",
 #             data=newborn_df.to_csv(index=False),
 #             file_name=f"newborn_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
 #             mime="text/csv",
@@ -1045,14 +983,14 @@
 #             location_type,
 #             "Total Admitted Mothers",
 #             "Total Deliveries",
-#             "Maternal Death Rate",
+#             "Maternal Death Rate (per 100,000)",
 #         ],
 #         "Value": [
 #             maternal_start_date,
 #             location_name,
 #             f"{maternal_tei_count:,}",
 #             f"{maternal_indicators['total_deliveries']:,}",
-#             f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births",
+#             f"{maternal_indicators['maternal_death_rate']:.2f}",
 #         ],
 #     }
 
@@ -1077,13 +1015,13 @@
 #             f"{location_type}": [location_name],
 #             "Total Admitted Mothers": [maternal_tei_count],
 #             "Total Deliveries": [maternal_indicators["total_deliveries"]],
-#             "Maternal Death Rate": [
-#                 f"{maternal_indicators['maternal_death_rate']:.2f} per 100,000 births"
+#             "Maternal Death Rate (per 100,000)": [
+#                 f"{maternal_indicators['maternal_death_rate']:.2f}"
 #             ],
 #         }
 #         maternal_df = pd.DataFrame(maternal_data_download)
 #         st.download_button(
-#             "📥 Download Maternal Data",
+#             "Download Maternal Data",
 #             data=maternal_df.to_csv(index=False),
 #             file_name=f"maternal_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
 #             mime="text/csv",
@@ -1159,7 +1097,7 @@
 #             )
 #             download_df = pd.DataFrame(download_data)
 #             st.download_button(
-#                 "📥 Download Regional Data",
+#                 "Download Regional Data",
 #                 data=download_df.to_csv(index=False),
 #                 file_name=f"regional_comparison_{country_name.replace(' ', '_')}.csv",
 #                 mime="text/csv",
@@ -1177,120 +1115,130 @@
 #     facility_mapping,
 #     view_mode="Normal Trend",
 # ):
-#     """Optimized Maternal Dashboard rendering - Only runs when tab is active"""
+#     """Optimized Maternal Dashboard rendering using patient-level data with UID filtering"""
+
+#     # Only run if this is the active tab
 #     if st.session_state.active_tab != "maternal":
 #         return
 
-#     logging.info("🔄 Maternal dashboard rendering")
+#     logging.info("Maternal dashboard rendering with patient-level data")
 
 #     if not maternal_data:
 #         st.error("No maternal data available")
 #         return
 
-#     # Efficient data extraction
-#     tei_df = maternal_data.get("tei", pd.DataFrame())
-#     enrollments_df = maternal_data.get("enrollments", pd.DataFrame())
-#     events_df = maternal_data.get("events", pd.DataFrame())
+#     # GET PATIENT-LEVEL DATA
+#     patients_df = maternal_data.get("patients", pd.DataFrame())
 
-#     # Normalize dates efficiently
-#     enrollments_df = normalize_enrollment_dates(enrollments_df)
-#     events_df = normalize_event_dates(events_df)
+#     if patients_df.empty:
+#         st.error("No patient data available")
+#         return
 
-#     events_df.to_csv("debug_maternal_events.csv", index=False)
-
-#     # Store in session state for quick access
-#     st.session_state.maternal_events_df = events_df.copy()
-#     st.session_state.maternal_tei_df = tei_df.copy()
-
-#     render_connection_status(events_df, user=user)
-
-#     # Calculate totals
-#     total_facilities = len(facility_mapping)
-#     total_regions = len(facilities_by_region.keys())
+#     # Ensure orgUnit column exists
+#     if "orgUnit" not in patients_df.columns:
+#         st.error("❌ Missing 'orgUnit' column in data. Cannot filter by facility UIDs.")
+#         return
 
 #     # Update facility selection
+#     filter_mode = st.session_state.get("filter_mode", "All Facilities")
+#     selected_regions = st.session_state.get("selected_regions", [])
+#     selected_facilities = st.session_state.get("selected_facilities", [])
+
 #     facility_uids, display_names, comparison_mode = update_facility_selection(
-#         st.session_state.filter_mode,
-#         st.session_state.selected_regions,
-#         st.session_state.selected_facilities,
+#         filter_mode,
+#         selected_regions,
+#         selected_facilities,
 #         facilities_by_region,
 #         facility_mapping,
 #     )
+
+#     # Use patient data directly
+#     working_df = patients_df.copy()
+
+#     # Filter by UID EARLY
+#     if facility_uids and "orgUnit" in working_df.columns:
+#         working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
+
+#     # Ensure ALL patients have a date for filtering
+#     if "event_date" not in working_df.columns:
+#         # Try to find event date columns
+#         event_date_cols = [
+#             col for col in working_df.columns if "event_date" in col.lower()
+#         ]
+#         if event_date_cols:
+#             # Use the first event date column
+#             working_df["event_date"] = pd.to_datetime(
+#                 working_df[event_date_cols[0]], errors="coerce"
+#             )
+#         else:
+#             working_df["event_date"] = pd.NaT
+
+#     # Ensure enrollment_date exists and is datetime
+#     if "enrollment_date" in working_df.columns:
+#         working_df["enrollment_date"] = pd.to_datetime(
+#             working_df["enrollment_date"], errors="coerce"
+#         )
+#     else:
+#         working_df["enrollment_date"] = working_df["event_date"]
+
+#     # Create a combined date that always has a value
+#     working_df["combined_date"] = working_df["event_date"].combine_first(
+#         working_df["enrollment_date"]
+#     )
+
+#     # Store the original df for KPI calculations
+#     st.session_state.maternal_patients_df = working_df.copy()
 
 #     # Update session state
 #     st.session_state.current_facility_uids = facility_uids
 #     st.session_state.current_display_names = display_names
 #     st.session_state.current_comparison_mode = comparison_mode
 
-#     # FILTER DATA BY SELECTED FACILITIES
-#     if facility_uids and st.session_state.get("facility_filter_applied", False):
-#         maternal_data = filter_data_by_facilities(maternal_data, facility_uids)
-#         tei_df = maternal_data.get("tei", pd.DataFrame())
-#         events_df = maternal_data.get("events", pd.DataFrame())
-
 #     # Optimized header rendering
-#     selected_facilities_count = len(facility_uids)
-
-#     header_configs = {
-#         ("facility", True, 1): (
-#             f"🤰 Maternal Inpatient Data - {display_names[0]}",
-#             "1 facility",
-#         ),
-#         ("facility", True, "multiple"): (
-#             "🤰 Maternal Inpatient Data - Multiple Facilities",
-#             f"{selected_facilities_count} facilities",
-#         ),
-#         ("region", True, 1): (
-#             f"🤰 Maternal Inpatient Data - {display_names[0]} Region",
-#             f"{sum(len(facilities_by_region.get(region, [])) for region in display_names)} facilities in 1 region",
-#         ),
-#         ("region", True, "multiple"): (
-#             "🤰 Maternal Inpatient Data - Multiple Regions",
-#             f"{selected_facilities_count} facilities across {len(display_names)} regions",
-#         ),
-#     }
-
-#     key = (
-#         comparison_mode,
-#         "All Facilities" not in display_names,
-#         1 if len(display_names) == 1 else "multiple",
-#     )
-#     header_title, header_subtitle = header_configs.get(
-#         key,
-#         (
-#             f"🤰 Maternal Inpatient Data - {country_name}",
-#             f"all {total_facilities} facilities",
-#         ),
-#     )
+#     if filter_mode == "All Facilities":
+#         header_title = f"🤰 Maternal Inpatient Data - {country_name}"
+#         header_subtitle = f"all {len(facility_mapping)} facilities"
+#     elif filter_mode == "By Region" and display_names:
+#         if len(display_names) == 1:
+#             header_title = f"🤰 Maternal Inpatient Data - {display_names[0]} Region"
+#         else:
+#             header_title = "🤰 Maternal Inpatient Data - Multiple Regions"
+#         header_subtitle = f"{len(facility_uids)} facilities"
+#     elif filter_mode == "By Facility" and display_names:
+#         if len(display_names) == 1:
+#             header_title = f"🤰 Maternal Inpatient Data - {display_names[0]}"
+#         else:
+#             header_title = "🤰 Maternal Inpatient Data - Multiple Facilities"
+#         header_subtitle = f"{len(display_names)} facilities"
+#     else:
+#         header_title = f"🤰 Maternal Inpatient Data - {country_name}"
+#         header_subtitle = f"all {len(facility_mapping)} facilities"
 
 #     st.markdown(
 #         f'<div class="main-header" style="margin-bottom: 0.3rem;">{header_title}</div>',
 #         unsafe_allow_html=True,
 #     )
-#     st.markdown(f"**📊 Displaying data from {header_subtitle}**")
+#     st.markdown(f"**Displaying data from {header_subtitle}**")
 
 #     # Progress container
 #     progress_container = st.empty()
 #     with progress_container.container():
 #         st.markdown("---")
 #         st.markdown("### 📈 Preparing Dashboard...")
-
 #         progress_col1, progress_col2 = st.columns([3, 1])
-
 #         with progress_col1:
 #             st.markdown(
 #                 """
 #             <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
-#             <h4 style="margin: 0 0 10px 0; color: #1f77b4;">🔄 Processing Data</h4>
+#             <h4 style="margin: 0 0 10px 0; color: #1f77b4;">Processing Data</h4>
 #             <p style="margin: 5px 0; font-size: 14px;">• Computing KPIs and indicators...</p>
 #             <p style="margin: 5px 0; font-size: 14px;">• Generating charts and visualizations...</p>
 #             <p style="margin: 5px 0; font-size: 14px;">• Preparing data tables...</p>
-#             <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 2-4 minutes depending on data size</p>
+#             <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">This may take 2-4 minutes depending on data size</p>
 #             </div>
 #             """,
 #                 unsafe_allow_html=True,
 #             )
-
 #         with progress_col2:
 #             st.markdown(
 #                 """
@@ -1310,47 +1258,36 @@
 
 #     with col_ctrl:
 #         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-#         filters = render_simple_filter_controls(
-#             events_df, container=col_ctrl, context="national_maternal"
+#         filters = render_patient_filter_controls(
+#             working_df, container=col_ctrl, context="national_maternal"
 #         )
 #         st.markdown("</div>", unsafe_allow_html=True)
 
-#     # Apply filters efficiently
-#     filtered_events = apply_simple_filters(events_df, filters, facility_uids)
-#     st.session_state["filtered_events"] = filtered_events.copy()
-#     st.session_state["last_applied_selection"] = True
+#     # Apply date filters FIRST to get the correct time period
+#     filtered_for_all = apply_patient_filters(working_df, filters, facility_uids)
 
-#     # KPI Cards with filtered data
+#     # Store BOTH versions
+#     st.session_state["filtered_patients"] = filtered_for_all.copy()
+#     st.session_state["all_patients_for_kpi"] = filtered_for_all.copy()
+
+#     # KPI Cards with FILTERED data
 #     with kpi_container:
-#         if filtered_events.empty or "event_date" not in filtered_events.columns:
-#             progress_container.empty()
-#             st.markdown(
-#                 '<div class="no-data-warning">⚠️ No Maternal Inpatient Data available for selected filters.</div>',
-#                 unsafe_allow_html=True,
-#             )
-#             return
-
 #         location_name, location_type = get_location_display_name(
-#             st.session_state.filter_mode,
-#             st.session_state.selected_regions,
-#             st.session_state.selected_facilities,
-#             country_name,
+#             filter_mode, selected_regions, selected_facilities, country_name
 #         )
 
 #         user_id = str(user.get("id", user.get("username", "default_user")))
-
-#         # ✅ STORE computed KPIs for reuse in summary tab
-#         kpi_data = render_kpi_cards(filtered_events, location_name, user_id=user_id)
+#         kpi_data = render_kpi_cards(filtered_for_all, location_name, user_id=user_id)
 
 #         # Save for summary dashboard to reuse
 #         st.session_state.last_computed_kpis = kpi_data
 #         st.session_state.last_computed_facilities = facility_uids
 #         st.session_state.last_computed_timestamp = time.time()
 
-#     # ✅ CLEAR THE PROGRESS INDICATOR ONCE KPI CARDS ARE DONE
+#     # CLEAR THE PROGRESS INDICATOR ONCE KPI CARDS ARE DONE
 #     progress_container.empty()
 
-#     # Charts section with optimized rendering
+#     # Charts section
 #     bg_color = filters["bg_color"]
 #     text_color = get_text_color(bg_color)
 
@@ -1364,14 +1301,16 @@
 #             )
 #             render_comparison_chart(
 #                 kpi_selection=selected_kpi,
-#                 filtered_events=filtered_events,
+#                 patient_df=filtered_for_all,
 #                 comparison_mode=comparison_mode,
 #                 display_names=display_names,
 #                 facility_uids=facility_uids,
 #                 facilities_by_region=facilities_by_region,
+#                 region_names=display_names if comparison_mode == "region" else None,
 #                 bg_color=bg_color,
 #                 text_color=text_color,
 #                 is_national=True,
+#                 filtered_patients=filtered_for_all,
 #             )
 #         else:
 #             st.markdown(
@@ -1380,56 +1319,23 @@
 #             )
 #             render_trend_chart_section(
 #                 selected_kpi,
-#                 filtered_events,
+#                 filtered_for_all,
 #                 facility_uids,
 #                 display_names,
 #                 bg_color,
 #                 text_color,
-#                 comparison_mode=comparison_mode,  # ADD THIS
-#                 facilities_by_region=facilities_by_region,  # ADD THIS
-#                 region_names=(
-#                     display_names if comparison_mode == "region" else None
-#                 ),  # ADD THIS
+#                 comparison_mode=comparison_mode,
+#                 facilities_by_region=facilities_by_region,
+#                 region_names=display_names if comparison_mode == "region" else None,
 #             )
 
 #         render_additional_analytics(
-#             selected_kpi, filtered_events, facility_uids, bg_color, text_color
+#             selected_kpi,
+#             filtered_for_all,
+#             facility_uids,
+#             bg_color,
+#             text_color,
 #         )
-
-
-# def update_facility_selection(
-#     filter_mode,
-#     selected_regions,
-#     selected_facilities,
-#     facilities_by_region,
-#     facility_mapping,
-# ):
-#     """Optimized facility selection update"""
-#     if filter_mode == "All Facilities":
-#         facility_uids = list(facility_mapping.values())
-#         display_names = ["All Facilities"]
-#         comparison_mode = "facility"
-#     elif filter_mode == "By Region" and selected_regions:
-#         facility_uids = []
-#         for region in selected_regions:
-#             if region in facilities_by_region:
-#                 facility_uids.extend(
-#                     fac_uid for _, fac_uid in facilities_by_region[region]
-#                 )
-#         display_names = selected_regions
-#         comparison_mode = "region"
-#     elif filter_mode == "By Facility" and selected_facilities:
-#         facility_uids = [
-#             facility_mapping[f] for f in selected_facilities if f in facility_mapping
-#         ]
-#         display_names = selected_facilities
-#         comparison_mode = "facility"
-#     else:
-#         facility_uids = list(facility_mapping.values())
-#         display_names = ["All Facilities"]
-#         comparison_mode = "facility"
-
-#     return facility_uids, display_names, comparison_mode
 
 
 # def render():
@@ -1446,7 +1352,7 @@
 
 #     # Show user change notification if needed
 #     if st.session_state.get("user_changed", False):
-#         st.sidebar.info("👤 User changed - loading fresh data...")
+#         st.sidebar.info("User changed - loading fresh data...")
 #         current_user = st.session_state.get("user", {})
 #         clear_shared_cache(current_user)
 
@@ -1469,6 +1375,7 @@
 #     .metric-help { font-size: 0.65rem !important; margin-top: 2px !important; }
 #     .summary-table th, .summary-table td { padding: 6px 8px !important; font-size: 12px !important; }
 #     .stCheckbox label { color: #000000 !important; font-size: 0.9rem !important; }
+#     .filter-box { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 15px; }
 #     </style>
 #     """,
 #         unsafe_allow_html=True,
@@ -1491,7 +1398,7 @@
 #     user = st.session_state.get("user", {})
 #     username = user.get("username", "Unknown User")
 #     role = user.get("role", "Unknown Role")
-#     country_name = user.get("country_name", "Unknown country")
+#     country_name = user.get("country_name", "Unknown Country")
 
 #     # Compact sidebar user info
 #     st.sidebar.markdown(
@@ -1506,7 +1413,7 @@
 #     )
 
 #     # Refresh Data Button
-#     if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
+#     if st.sidebar.button("Refresh Data", use_container_width=True):
 #         st.cache_data.clear()
 #         clear_shared_cache(user)
 #         st.session_state.refresh_trigger = True
@@ -1535,7 +1442,7 @@
 #         "user_changed", False
 #     ):
 #         with st.sidebar:
-#             with st.spinner("🚀 Loading facility data..."):
+#             with st.spinner("Loading facility data..."):
 #                 static_data = get_static_data(user)
 #                 st.session_state.facilities_by_region = static_data[
 #                     "facilities_by_region"
@@ -1549,57 +1456,22 @@
 #     facility_mapping = st.session_state.facility_mapping
 #     program_uid_map = st.session_state.program_uid_map
 
-#     # ✅ FIX: SINGLE DATA LOADING with PROGRESS INDICATOR
+#     # SINGLE DATA LOADING - Only load once and store in variable
 #     if not st.session_state.get("data_initialized", False):
-#         # Show progress indicator for first load
-#         progress_container = st.empty()
-#         with progress_container.container():
-#             st.markdown("---")
-#             st.markdown("### 🚀 Loading Dashboard Data...")
-
-#             col1, col2 = st.columns([3, 1])
-#             with col1:
-#                 st.markdown(
-#                     """
-#                 <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
-#                 <h4 style="margin: 0 0 10px 0; color: #1f77b4;">📥 Fetching Data from DHIS2</h4>
-#                 <p style="margin: 5px 0; font-size: 14px;">• Loading maternal inpatient data...</p>
-#                 <p style="margin: 5px 0; font-size: 14px;">• Loading newborn care data...</p>
-#                 <p style="margin: 5px 0; font-size: 14px;">• Processing and caching results...</p>
-#                 <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">⏱️ This may take 3-5 minutes for initial load</p>
-#                 </div>
-#                 """,
-#                     unsafe_allow_html=True,
-#                 )
-
-#             with col2:
-#                 st.markdown(
-#                     """
-#                 <div style="text-align: center; padding: 10px;">
-#                 <div style="font-size: 24px;">⏳</div>
-#                 <div style="font-size: 12px; margin-top: 5px;">Loading</div>
-#                 </div>
-#                 """,
-#                     unsafe_allow_html=True,
-#                 )
-
-#         # Load the data
-#         shared_data = get_shared_program_data_optimized(
-#             user, program_uid_map, show_spinner=False
-#         )
-
-#         # Clear progress indicator
-#         progress_container.empty()
-
-#         st.session_state.data_initialized = True
-#         st.session_state.cached_shared_data = shared_data
-#         logging.info("✅ Initial data loading complete")
+#         # First time or fresh data needed
+#         with st.spinner("Loading dashboard data..."):
+#             shared_data = get_shared_program_data_optimized(
+#                 user, program_uid_map, show_spinner=False
+#             )
+#             st.session_state.data_initialized = True
+#             st.session_state.cached_shared_data = shared_data
+#             logging.info("Initial data loading complete")
 #     else:
 #         # Use cached data from session state - no loading needed
 #         shared_data = st.session_state.cached_shared_data
-#         logging.info("✅ Using cached shared data from session state")
+#         logging.info("Using cached shared data from session state")
 
-#     # ✅ Add cache status indicator in sidebar
+#     # Add cache status indicator in sidebar
 #     if st.session_state.get("data_initialized", False):
 #         user_key = f"{user.get('username', 'unknown')}_{user.get('role', 'unknown')}"
 #         timestamp_key = f"shared_data_timestamp_{user_key}"
@@ -1610,9 +1482,9 @@
 #             seconds_old = int(time_elapsed % 60)
 
 #             if minutes_old < 30:
-#                 st.sidebar.info(f"🔄 Data: {minutes_old}m {seconds_old}s old")
+#                 st.sidebar.info(f"Data: {minutes_old}m {seconds_old}s old")
 #             else:
-#                 st.sidebar.warning(f"🔄 Data: {minutes_old}m old (will auto-refresh)")
+#                 st.sidebar.warning(f"Data: {minutes_old}m old (will auto-refresh)")
 
 #     # ================ COMPACT FACILITY SELECTION ================
 #     st.sidebar.markdown("---")
@@ -1621,6 +1493,7 @@
 #         unsafe_allow_html=True,
 #     )
 
+#     # Filter mode selection
 #     radio_options = ["All Facilities", "By Region", "By Facility"]
 #     try:
 #         current_index = radio_options.index(st.session_state.filter_mode)
@@ -1669,60 +1542,36 @@
 #             ]
 
 #         elif st.session_state.filter_mode == "By Facility":
-#             st.markdown("**Select facilities:**")
-#             updated_facilities = temp_selected_facilities.copy()
-
+#             # Simple facility selection
+#             all_facilities = []
 #             for region_name, facilities in facilities_by_region.items():
-#                 total_count = len(facilities)
-#                 selected_count = sum(
-#                     1 for fac, _ in facilities if fac in updated_facilities
-#                 )
-#                 icon = (
-#                     "✅"
-#                     if selected_count == total_count
-#                     else "⚠️" if selected_count > 0 else "○"
-#                 )
+#                 all_facilities.extend([fac_name for fac_name, _ in facilities])
 
-#                 with st.expander(
-#                     f"{icon} {region_name} ({selected_count}/{total_count})",
-#                     expanded=False,
-#                 ):
-#                     all_currently_selected = all(
-#                         fac in updated_facilities for fac, _ in facilities
-#                     )
-#                     select_all_checked = st.checkbox(
-#                         "Select all facilities in this region",
-#                         value=all_currently_selected,
-#                         key=f"select_all_fixed_{region_name}",
-#                     )
+#             facility_options = ["All Facilities"] + all_facilities
+#             selected_facilities = st.multiselect(
+#                 "Choose facilities:",
+#                 options=facility_options,
+#                 default=st.session_state.selected_facilities,
+#                 help="Select facilities",
+#                 key="facility_multiselect",
+#                 label_visibility="collapsed",
+#             )
 
-#                     if select_all_checked:
-#                         for fac_name, _ in facilities:
-#                             if fac_name not in updated_facilities:
-#                                 updated_facilities.append(fac_name)
-#                     else:
-#                         if all_currently_selected:
-#                             for fac_name, _ in facilities:
-#                                 if fac_name in updated_facilities:
-#                                     updated_facilities.remove(fac_name)
+#             # Handle "All Facilities" logic
+#             if "All Facilities" in selected_facilities:
+#                 if len(selected_facilities) > 1:
+#                     # Remove "All Facilities" if other facilities are selected
+#                     selected_facilities = [
+#                         f for f in selected_facilities if f != "All Facilities"
+#                     ]
+#                 else:
+#                     # Only "All Facilities" is selected
+#                     selected_facilities = all_facilities.copy()
 
-#                     for fac_name, _ in facilities:
-#                         is_currently_selected = fac_name in updated_facilities
-#                         facility_checked = st.checkbox(
-#                             fac_name,
-#                             value=is_currently_selected,
-#                             key=f"fac_fixed_{region_name}_{fac_name}",
-#                         )
-#                         if facility_checked and not is_currently_selected:
-#                             updated_facilities.append(fac_name)
-#                         elif not facility_checked and is_currently_selected:
-#                             if fac_name in updated_facilities:
-#                                 updated_facilities.remove(fac_name)
-
-#             temp_selected_facilities = updated_facilities
+#             temp_selected_facilities = selected_facilities
 
 #         selection_submitted = st.form_submit_button(
-#             "✅ Apply", use_container_width=True
+#             "Apply Selection", use_container_width=True
 #         )
 #         if selection_submitted:
 #             st.session_state.selected_regions = temp_selected_regions
@@ -1731,19 +1580,44 @@
 #             st.session_state.facility_filter_applied = True
 #             st.rerun()
 
+#     # Display selection summary
+#     total_facilities = len(facility_mapping)
+#     if st.session_state.filter_mode == "All Facilities":
+#         display_text = f"Selected: All ({total_facilities})"
+#     elif (
+#         st.session_state.filter_mode == "By Region"
+#         and st.session_state.selected_regions
+#     ):
+#         display_text = f"Selected: {len(st.session_state.selected_regions)} regions"
+#     elif (
+#         st.session_state.filter_mode == "By Facility"
+#         and st.session_state.selected_facilities
+#     ):
+#         display_text = f"Selected: {len(st.session_state.selected_facilities)} / {total_facilities} facilities"
+#     else:
+#         display_text = f"Selected: All ({total_facilities})"
+
+#     st.sidebar.markdown(
+#         f"<p style='color: white; font-size: 13px; margin-top: -10px;'>{display_text}</p>",
+#         unsafe_allow_html=True,
+#     )
+
 #     # ================ COMPACT VIEW MODE ================
 #     st.sidebar.markdown("---")
 #     st.sidebar.markdown(
 #         '<p style="color: white; font-weight: 600; margin-bottom: 3px;">📊 View Mode</p>',
 #         unsafe_allow_html=True,
 #     )
-#     view_mode = st.sidebar.radio(
-#         "View:",
-#         ["Normal Trend", "Comparison View"],
-#         index=0,
-#         key="view_mode_shared",
-#         label_visibility="collapsed",
-#     )
+
+#     view_mode = "Normal Trend"
+#     if st.session_state.filter_mode != "All Facilities":
+#         view_mode = st.sidebar.radio(
+#             "View:",
+#             ["Normal Trend", "Comparison View"],
+#             index=0,
+#             key="view_mode_national",
+#             label_visibility="collapsed",
+#         )
 
 #     # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
 #     tab1, tab2, tab3, tab4, tab5 = st.tabs(
@@ -1760,7 +1634,7 @@
 #         # Update active tab only if this tab is clicked
 #         if st.session_state.active_tab != "maternal":
 #             st.session_state.active_tab = "maternal"
-#             logging.info("🔄 Switched to Maternal tab")
+#             logging.info("Switched to Maternal tab")
 
 #         maternal_data = shared_data["maternal"]
 #         if maternal_data:
@@ -1778,16 +1652,17 @@
 #     with tab2:
 #         if st.session_state.active_tab != "newborn":
 #             st.session_state.active_tab = "newborn"
-#             logging.info("🔄 Switched to Newborn tab")
+#             logging.info("Switched to Newborn tab")
 
 #         newborn_data = shared_data["newborn"]
 #         if newborn_data:
+#             # Need to update render_newborn_dashboard to accept patient-level data
 #             render_newborn_dashboard(
-#                 user,
-#                 program_uid_map.get("Newborn Care Form"),
-#                 country_name,
-#                 facilities_by_region,
-#                 facility_mapping,
+#                 user=user,
+#                 program_uid=program_uid_map.get("Newborn Care Form"),
+#                 country_name=country_name,
+#                 facilities_by_region=facilities_by_region,
+#                 facility_mapping=facility_mapping,
 #                 view_mode=view_mode,
 #                 shared_newborn_data=newborn_data,
 #             )
@@ -1797,29 +1672,68 @@
 #     with tab3:
 #         if st.session_state.active_tab != "summary":
 #             st.session_state.active_tab = "summary"
-#             logging.info("🔄 Switched to Summary tab")
+#             logging.info("Switched to Summary tab")
 
 #         render_summary_dashboard_shared(
-#             user, country_name, facilities_by_region, facility_mapping, shared_data
+#             user,
+#             country_name,
+#             facilities_by_region,
+#             facility_mapping,
+#             shared_data,
 #         )
 
 #     with tab4:
 #         if st.session_state.active_tab != "mentorship":
 #             st.session_state.active_tab = "mentorship"
-#             logging.info("🔄 Switched to Mentorship tab")
+#             logging.info("Switched to Mentorship tab")
 
-#         # ✅ NEW: Check if mentorship data should be loaded
+#         # Check if mentorship data should be loaded
 #         if not st.session_state.tab_data_loaded["mentorship"]:
-#             render_tab_placeholder(
-#                 "Mentorship Dashboard",
-#                 "📋",
-#                 "mentorship",
-#                 "View mentorship tracking data and ODK form submissions",
+#             st.markdown(
+#                 """
+#             <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+#                  border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
+#                 <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+#                 <h2 style="color: #495057; margin-bottom: 1rem;">Mentorship Dashboard</h2>
+#                 <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+#                     View mentorship tracking data and ODK form submissions
+#                 </p>
+#             </div>
+#             """,
+#                 unsafe_allow_html=True,
 #             )
+
+#             col1, col2, col3 = st.columns([1, 2, 1])
+#             with col2:
+#                 if st.button(
+#                     "Load Mentorship Data",
+#                     use_container_width=True,
+#                     type="primary",
+#                     key="load_mentorship_data",
+#                 ):
+#                     st.session_state.tab_loading["mentorship"] = True
+#                     st.session_state.tab_data_loaded["mentorship"] = True
+#                     st.rerun()
 #         else:
-#             # ✅ Show loading indicator if data is being processed
+#             # Show loading indicator if data is being processed
 #             if st.session_state.tab_loading["mentorship"]:
-#                 render_loading_indicator("Mentorship Dashboard", "📋")
+#                 st.markdown(
+#                     """
+#                 <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+#                      border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
+#                     <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+#                     <h2 style="color: #495057; margin-bottom: 1rem;">Loading Mentorship Dashboard...</h2>
+#                     <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+#                         Please wait while we process the data. This may take 1-2 minutes.
+#                     </p>
+#                     <div style="display: inline-block; padding: 10px 20px; background: #007bff; color: white;
+#                          border-radius: 25px; font-weight: bold;">
+#                         Processing Data...
+#                     </div>
+#                 </div>
+#                 """,
+#                     unsafe_allow_html=True,
+#                 )
 #                 st.session_state.tab_loading["mentorship"] = False
 #                 st.rerun()
 #             display_odk_dashboard(user)
@@ -1827,9 +1741,9 @@
 #     with tab5:
 #         if st.session_state.active_tab != "data_quality":
 #             st.session_state.active_tab = "data_quality"
-#             logging.info("🔄 Switched to Data Quality tab")
+#             logging.info("Switched to Data Quality tab")
 
 #         render_data_quality_tracking(user)
 
 #     # Log current active tab state
-#     logging.info(f"📊 Current active tab: {st.session_state.active_tab}")
+#     # logging.info(f"Current active tab: {st.session_state.active_tab}")
