@@ -1082,13 +1082,13 @@ def render_maternal_dashboard_shared(
     facility_mapping,
     view_mode="Normal Trend",
 ):
-    """Optimized Maternal Dashboard rendering using patient-level data with UID filtering"""
+    """Optimized Maternal Dashboard rendering using patient-level data with UID filtering - FIXED FOR ALL FACILITIES"""
 
     # Only run if this is the active tab
     if st.session_state.active_tab != "maternal":
         return
 
-    logging.info("Maternal dashboard rendering with patient-level data")
+    logging.info("Maternal dashboard rendering with patient-level data - NATIONAL")
 
     if not maternal_data:
         st.error("No maternal data available")
@@ -1119,39 +1119,62 @@ def render_maternal_dashboard_shared(
         facility_mapping,
     )
 
-    # Use patient data directly
+    # Use patient data directly - EXACTLY LIKE REGIONAL.PY
     working_df = patients_df.copy()
 
-    # Filter by UID EARLY
+    # Filter by UID EARLY - EXACTLY LIKE REGIONAL.PY
     if facility_uids and "orgUnit" in working_df.columns:
         working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
-
-    # Ensure ALL patients have a date for filtering
-    if "event_date" not in working_df.columns:
-        # Try to find event date columns
-        event_date_cols = [
-            col for col in working_df.columns if "event_date" in col.lower()
-        ]
-        if event_date_cols:
-            # Use the first event date column
-            working_df["event_date"] = pd.to_datetime(
-                working_df[event_date_cols[0]], errors="coerce"
-            )
-        else:
-            working_df["event_date"] = pd.NaT
-
-    # Ensure enrollment_date exists and is datetime
-    if "enrollment_date" in working_df.columns:
-        working_df["enrollment_date"] = pd.to_datetime(
-            working_df["enrollment_date"], errors="coerce"
+        logging.info(
+            f"✅ NATIONAL: Filtered by {len(facility_uids)} facility UIDs: {len(working_df)} patients remain"
         )
     else:
-        working_df["enrollment_date"] = working_df["event_date"]
+        logging.info(
+            f"⚠️ NATIONAL: No facility UIDs or orgUnit column. Keeping all {len(working_df)} patients"
+        )
 
-    # Create a combined date that always has a value
-    working_df["combined_date"] = working_df["event_date"].combine_first(
-        working_df["enrollment_date"]
+    # =========== CRITICAL: USE normalize_patient_dates ===========
+    # Use the same function as regional.py to ensure consistency
+    from utils.dash_co import normalize_patient_dates
+
+    # This will create proper event_date column
+    working_df = normalize_patient_dates(working_df)
+
+    # Log date statistics
+    valid_dates = working_df["event_date"].notna().sum()
+    total_patients = len(working_df)
+    logging.info(
+        f"📅 NATIONAL: event_date - {valid_dates}/{total_patients} valid dates"
     )
+
+    # Log sample dates to verify they're correct
+    if valid_dates > 0:
+        sample_dates = working_df["event_date"].dropna().head(3).tolist()
+        logging.info(f"📅 NATIONAL: Sample dates: {sample_dates}")
+    # =========== END OF CRITICAL ADDITION ===========
+
+    # Get current KPI selection to know which date column we need
+    current_kpi = st.session_state.get(
+        "selected_kpi", "Institutional Maternal Death Rate (%)"
+    )
+    from utils.kpi_utils import get_relevant_date_column_for_kpi
+
+    kpi_date_column = get_relevant_date_column_for_kpi(current_kpi)
+
+    # Log which date column will be used
+    if kpi_date_column and kpi_date_column in working_df.columns:
+        valid_dates = working_df[kpi_date_column].notna().sum()
+        total_patients = len(working_df)
+        logging.info(
+            f"📅 NATIONAL: KPI '{current_kpi}' will use date column: {kpi_date_column}"
+        )
+        logging.info(
+            f"📅 NATIONAL: Date stats for {kpi_date_column}: {valid_dates}/{total_patients} valid dates"
+        )
+    else:
+        logging.warning(
+            f"⚠️ NATIONAL: KPI date column '{kpi_date_column}' not found in data"
+        )
 
     # Store the original df for KPI calculations
     st.session_state.maternal_patients_df = working_df.copy()
@@ -1186,6 +1209,7 @@ def render_maternal_dashboard_shared(
         unsafe_allow_html=True,
     )
     st.markdown(f"**Displaying data from {header_subtitle}**")
+    # REMOVED: st.markdown(f"**Total patients in dataset: {len(working_df):,}**")
 
     # Progress container
     progress_container = st.empty()
@@ -1220,7 +1244,7 @@ def render_maternal_dashboard_shared(
     # Create containers for better performance
     kpi_container = st.container()
 
-    # Optimized filter layout
+    # Optimized filter layout - EXACTLY LIKE REGIONAL.PY
     col_chart, col_ctrl = st.columns([3, 1])
 
     with col_ctrl:
@@ -1230,10 +1254,25 @@ def render_maternal_dashboard_shared(
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply date filters FIRST to get the correct time period
+    # Apply date filters FIRST to get the correct time period - EXACTLY LIKE REGIONAL.PY
+    logging.info(
+        f"🔍 NATIONAL: Calling apply_patient_filters with {len(working_df)} patients"
+    )
+    logging.info(f"   - Quick range: {filters.get('quick_range', 'N/A')}")
+    if "start_date" in filters and "end_date" in filters:
+        logging.info(
+            f"   - Date range: {filters['start_date']} to {filters['end_date']}"
+        )
+    logging.info(f"   - Period label: {filters.get('period_label', 'Monthly')}")
+    logging.info(f"   - Facility UIDs: {len(facility_uids)}")
+
     filtered_for_all = apply_patient_filters(working_df, filters, facility_uids)
 
-    # Store BOTH versions
+    logging.info(
+        f"🔍 NATIONAL: After apply_patient_filters: {len(filtered_for_all)} patients"
+    )
+
+    # Store BOTH versions - EXACTLY LIKE REGIONAL.PY
     st.session_state["filtered_patients"] = filtered_for_all.copy()
     st.session_state["all_patients_for_kpi"] = filtered_for_all.copy()
 
@@ -1244,6 +1283,12 @@ def render_maternal_dashboard_shared(
         )
 
         user_id = str(user.get("id", user.get("username", "default_user")))
+
+        # Log before KPI computation
+        logging.info(
+            f"📊 NATIONAL: Computing KPIs for {len(filtered_for_all):,} filtered patients"
+        )
+
         kpi_data = render_kpi_cards(filtered_for_all, location_name, user_id=user_id)
 
         # Save for summary dashboard to reuse

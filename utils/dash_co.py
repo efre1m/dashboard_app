@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
 import datetime
+import logging
 
 from utils.kpi_utils import (
     compute_kpis,
@@ -1292,24 +1293,55 @@ def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy()
 
-    # Look for program stage event dates first
-    program_stage_date_columns = [
-        col
-        for col in df.columns
-        if col.startswith("event_date_") or col == "event_date"
-    ]
+    # Get current KPI to use the right date column
+    current_kpi = st.session_state.get(
+        "selected_kpi", "Institutional Maternal Death Rate (%)"
+    )
+    from utils.kpi_utils import get_relevant_date_column_for_kpi
 
-    for col in program_stage_date_columns:
-        try:
-            df["event_date"] = pd.to_datetime(df[col], errors="coerce")
-            if not df["event_date"].isna().all():
-                break
-        except:
-            continue
+    kpi_date_column = get_relevant_date_column_for_kpi(current_kpi)
 
-    # If no program stage date found, use current date
+    # Try KPI-specific date column first
+    if kpi_date_column and kpi_date_column in df.columns:
+        df["event_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
+        logging.info(
+            f"✅ normalize_patient_dates: Using KPI-specific '{kpi_date_column}'"
+        )
+    elif "combined_date" in df.columns:
+        df["event_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
+        logging.info("✅ normalize_patient_dates: Using combined_date")
+    else:
+        # Look for program stage event dates
+        program_stage_date_columns = [
+            col
+            for col in df.columns
+            if col.startswith("event_date_") or col == "event_date"
+        ]
+
+        for col in program_stage_date_columns:
+            try:
+                df["event_date"] = pd.to_datetime(df[col], errors="coerce")
+                if not df["event_date"].isna().all():
+                    logging.info(
+                        f"✅ normalize_patient_dates: Using {col} for event_date"
+                    )
+                    break
+            except:
+                continue
+
+    # If no program stage date found, try enrollment_date
+    if (
+        "event_date" not in df.columns or df["event_date"].isna().all()
+    ) and "enrollment_date" in df.columns:
+        df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
+        logging.info("✅ normalize_patient_dates: Using enrollment_date for event_date")
+
+    # If still no date found, use current date
     if "event_date" not in df.columns or df["event_date"].isna().all():
         df["event_date"] = pd.Timestamp.now().normalize()
+        logging.warning(
+            "⚠️ normalize_patient_dates: No valid date column found, using current date"
+        )
 
     return df
 
@@ -1397,11 +1429,13 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
                 key=f"end_date{key_suffix}",
             )
     else:
-        temp_df = patient_df.copy()
-        _df_for_dates = temp_df.copy()
-        start_date, end_date = get_date_range(_df_for_dates, filters["quick_range"])
+        # Use the FULL patient dataframe directly
+        start_date, end_date = get_date_range(patient_df, filters["quick_range"])
         filters["start_date"] = start_date
         filters["end_date"] = end_date
+        logging.info(
+            f"📅 Filter dates set: {start_date} to {end_date} for '{filters['quick_range']}'"
+        )
 
     # Aggregation Level
     available_aggregations = get_available_aggregations(
@@ -1452,67 +1486,42 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
 
 
 def _get_patient_date_range(patient_df):
-    """Get REAL min/max dates from patient dataframe"""
+    """Get REAL min/max dates from patient dataframe - HARDCODED ALL TIME"""
     import datetime
-    import pandas as pd
+    import logging
 
-    if patient_df.empty:
-        today = datetime.date.today()
-        return today, today
+    # ALWAYS return the full 2000-2035 range
+    all_time_start = datetime.date(2000, 1, 1)
+    all_time_end = datetime.date(2035, 12, 31)
 
-    # Collect ALL VALID dates from ALL possible date columns
-    all_valid_dates = []
+    logging.info(
+        f"📅 _get_patient_date_range: Using ALL TIME range: {all_time_start} to {all_time_end}"
+    )
 
-    # Check ALL columns that might contain dates
-    for col in patient_df.columns:
-        if "date" in col.lower() or "Date" in col:
-            try:
-                # Try to convert to datetime
-                dates = pd.to_datetime(patient_df[col], errors="coerce")
-                # Drop NaT (invalid dates)
-                valid_dates = dates.dropna()
-
-                if not valid_dates.empty:
-                    # Filter out dates that are clearly invalid
-                    for date_val in valid_dates:
-                        try:
-                            date_dt = date_val.to_pydatetime()
-                            year = date_dt.year
-                            # Only accept dates from year 2000 onward
-                            if year >= 2000 and year <= 2030:
-                                all_valid_dates.append(date_val)
-                        except:
-                            continue
-            except Exception:
-                continue
-
-    if all_valid_dates:
-        # Find the REAL minimum and maximum VALID dates
-        min_date = min(all_valid_dates)
-        max_date = max(all_valid_dates)
-
-        # Convert to date objects
-        if hasattr(min_date, "date"):
-            min_date = min_date.date()
-        if hasattr(max_date, "date"):
-            max_date = max_date.date()
-
-        return min_date, max_date
-
-    # If no valid dates found, use current year
-    today = datetime.date.today()
-    current_year_start = datetime.date(today.year, 1, 1)
-    current_year_end = datetime.date(today.year, 12, 31)
-
-    return current_year_start, current_year_end
+    return all_time_start, all_time_end
 
 
 def apply_patient_filters(patient_df, filters, facility_uids=None):
-    """Apply filters to patient dataframe"""
+    """Apply filters to patient dataframe - USING KPI-SPECIFIC DATES - FIXED FOR ALL FACILITIES"""
     if patient_df.empty:
         return patient_df
 
     df = patient_df.copy()
+
+    # Get current KPI selection from session state
+    current_kpi = st.session_state.get(
+        "selected_kpi", "Institutional Maternal Death Rate (%)"
+    )
+
+    # Get the SPECIFIC date column for this KPI
+    from utils.kpi_utils import get_relevant_date_column_for_kpi
+
+    kpi_date_column = get_relevant_date_column_for_kpi(current_kpi)
+
+    logging.info(f"🔍 apply_patient_filters for KPI: {current_kpi}")
+    logging.info(f"   - Using date column: {kpi_date_column}")
+    logging.info(f"   - Quick range: {filters.get('quick_range', 'N/A')}")
+    logging.info(f"   - Facility UIDs: {facility_uids if facility_uids else 'All'}")
 
     # For "All Time", don't apply any date filtering at all!
     quick_range = filters.get("quick_range", "")
@@ -1526,37 +1535,95 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
                 df = df.rename(columns={col: "orgUnit"})
                 break
 
-    # Apply facility filter FIRST using UIDs if orgUnit exists
+    # CRITICAL FIX: Apply facility filter ONLY if we have specific facility UIDs
+    # Skip if "All Facilities" or empty
     if facility_uids and "orgUnit" in df.columns:
         if not isinstance(facility_uids, list):
             facility_uids = [facility_uids]
 
-        facility_mask = df["orgUnit"].isin(facility_uids)
-        df = df[facility_mask].copy()
+        # Check if this is "All Facilities" or actual facility UIDs
+        # "All Facilities" should have actual UID strings, not the text "All Facilities"
+        is_all_facilities = (
+            len(facility_uids) == 0
+            or facility_uids == ["All Facilities"]
+            or (len(facility_uids) == 1 and facility_uids[0] == "All Facilities")
+        )
 
-    # Check for 'combined_date' first (from regional.py)
-    if "combined_date" in df.columns:
-        df["event_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
-    elif "event_date" not in df.columns:
-        # Normalize dates if no event_date column
-        df = normalize_patient_dates(df)
+        if not is_all_facilities:
+            facility_mask = df["orgUnit"].isin(facility_uids)
+            df = df[facility_mask].copy()
+            logging.info(f"   - After facility filter: {len(df)} patients")
+        else:
+            logging.info("   - Skipping facility filter (All Facilities selected)")
+    else:
+        logging.info("   - No facility filter applied")
 
-    # Only apply date filtering if NOT "All Time"
-    if (
-        not skip_date_filtering
-        and filters.get("start_date")
-        and filters.get("end_date")
-    ):
+    # CRITICAL FIX: Always use normalize_patient_dates for consistency
+    # This ensures we have a proper event_date column
+    df = normalize_patient_dates(df)
+
+    # Use event_date for all filtering (KPI-specific filtering happens in get_numerator_denominator_for_kpi)
+    logging.info(f"   ✅ Using normalized event_date for date filtering")
+
+    # STEP 1: Check if we should filter by date
+    should_filter_by_date = (
+        not skip_date_filtering  # Not "All Time"
+        and filters.get("start_date")  # Has start date
+        and filters.get("end_date")  # Has end date
+        and "event_date" in df.columns  # Has event_date column
+    )
+
+    if should_filter_by_date:
         try:
-            # Convert filter dates to datetime
-            start_dt = pd.Timestamp(filters["start_date"])
-            end_dt = pd.Timestamp(filters["end_date"])
+            # STEP 2: Get the start and end dates from filters
+            start_date = pd.Timestamp(filters["start_date"])
+            end_date = pd.Timestamp(filters["end_date"])
 
-            # Filter by date range
-            date_mask = (df["event_date"] >= start_dt) & (df["event_date"] <= end_dt)
-            df = df[date_mask].copy()
-        except Exception:
-            pass
+            logging.info(
+                f"🔍 DATE FILTER: Filtering from {start_date.date()} to {end_date.date()}"
+            )
+
+            # STEP 3: Use event_date for filtering (already created by normalize_patient_dates)
+            date_column_to_use = "event_date"
+
+            # Check if event_date has data
+            event_dates_valid = df["event_date"].notna().sum()
+            logging.info(
+                f"📅 Using 'event_date' column ({event_dates_valid} valid dates)"
+            )
+
+            # STEP 4: Apply the date filter
+            if date_column_to_use and event_dates_valid > 0:
+                # Make sure the date column is properly formatted as datetime
+                df[date_column_to_use] = pd.to_datetime(
+                    df[date_column_to_use], errors="coerce"
+                )
+
+                # Create a mask: keep rows where date is between start_date and end_date
+                date_is_after_start = df[date_column_to_use] >= start_date
+                date_is_before_end = df[date_column_to_use] <= end_date
+                date_mask = date_is_after_start & date_is_before_end
+
+                # Apply the filter
+                df = df[date_mask].copy()
+
+                # Log how many patients are left
+                patients_before = len(patient_df)
+                patients_after = len(df)
+                patients_lost = patients_before - patients_after
+                logging.info(
+                    f"✅ DATE FILTER COMPLETE: {patients_after} patients remain (lost {patients_lost})"
+                )
+            else:
+                logging.warning(
+                    "⚠️ No valid dates found for filtering. Keeping all patients."
+                )
+
+        except Exception as error:
+            logging.error(f"❌ ERROR in date filtering: {error}")
+            # If there's an error, keep all patients (don't filter)
+    else:
+        logging.info("⏰ Skipping date filtering (All Time selected or no dates)")
 
     # Ensure period_label is in filters
     if "period_label" not in filters:
@@ -1573,39 +1640,32 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
         st.session_state.filters = {}
     st.session_state.filters.update(filters)
 
-    # Assign period AFTER date filtering
+    # Assign period AFTER date filtering - using event_date
     try:
         valid_date_rows = df["event_date"].notna().sum()
         if valid_date_rows > 0:
             df = assign_period(df, "event_date", filters["period_label"])
+            logging.info(
+                f"   📊 Assigned {filters['period_label']} periods: {valid_date_rows} valid dates"
+            )
         else:
             # Create empty period columns
             df["period_display"] = ""
             df["period_sort"] = 0
-    except Exception:
+            logging.warning("   ⚠️ No valid dates for period assignment")
+    except Exception as e:
         # Create empty period columns as fallback
         df["period_display"] = ""
         df["period_sort"] = 0
-
-    # Make sure orgUnit is preserved
-    if "orgUnit" not in df.columns and "orgUnit" in patient_df.columns:
-        # Try to add it back using tei_id
-        if "tei_id" in df.columns and "tei_id" in patient_df.columns:
-            tei_ids = df["tei_id"].unique()
-            # Get orgUnit from original data for these TEI IDs
-            orgunit_mapping = patient_df[["tei_id", "orgUnit"]].drop_duplicates()
-            df = pd.merge(df, orgunit_mapping, on="tei_id", how="left")
+        logging.error(f"   ❌ Error assigning periods: {e}")
 
     # OPTIMIZATION: Filter for current KPI
-    # Get current KPI selection from session state
-    current_kpi = st.session_state.get(
-        "selected_kpi", "Institutional Maternal Death Rate (%)"
-    )
-
     # Filter DataFrame to only include columns needed for this KPI
     if current_kpi in KPI_COLUMN_REQUIREMENTS:
         df = get_kpi_filtered_dataframe(df, current_kpi)
+        logging.info(f"   🔍 KPI filter applied for '{current_kpi}'")
 
+    logging.info(f"🔄 apply_patient_filters: Final result - {len(df)} patients")
     return df
 
 

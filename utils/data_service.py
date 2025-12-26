@@ -212,7 +212,7 @@ def debug_facility_matching(user_facilities: List[str], csv_facilities: List[str
         print(f"\n   ❌ IN DB ONLY: {len(db_only)}")
         for i, norm_key in enumerate(list(db_only)[:10]):
             original = db_normalized.get(norm_key, "Unknown")
-            print(f"     {i+1}. '{original}' → '{norm_key}'")
+            print(f"     {i+1}. '{original}' → '{normalized}'")
 
     if csv_only:
         print(f"\n   ❓ IN CSV ONLY: {len(csv_only)}")
@@ -271,6 +271,9 @@ def normalize_region_name(region_name: str) -> str:
 def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
     """
     Determine which CSV file to load based on user role and program type.
+
+    ✅ UPDATED: Facility users now try to load REGIONAL file first (more efficient)
+                Falls back to national file if regional not found.
 
     Args:
         user: User dictionary with role, region_name, facility_name
@@ -371,10 +374,59 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
         return all_files[0]
 
     elif user_role == "facility":
+        # ✅ UPDATED: Facility users try REGIONAL file first (more efficient)
+        # Only fall back to national if regional file not found
+
+        if region_name:
+            # Try to find regional file first
+            normalized_region = normalize_region_name(region_name)
+
+            # Look for exact regional file
+            exact_pattern = f"regional_{normalized_region}_{program_type}.csv"
+            exact_file = os.path.join(data_dir, exact_pattern)
+
+            if os.path.exists(exact_file):
+                logging.info(f"✅ Facility user using REGIONAL file: {exact_pattern}")
+                logging.info(f"   This is more efficient than loading national file")
+                return exact_file
+
+            # Look for any regional file with region name
+            region_files = []
+            for filepath in all_files:
+                filename = os.path.basename(filepath).lower()
+                if normalized_region in filename and program_type in filename:
+                    region_files.append(filepath)
+
+            if region_files:
+                region_files.sort(key=os.path.getmtime, reverse=True)
+                selected_file = region_files[0]
+                logging.info(
+                    f"✅ Facility user using REGIONAL file: {os.path.basename(selected_file)}"
+                )
+                logging.info(f"   This is more efficient than loading national file")
+                return selected_file
+
+            # Try partial region match
+            region_parts = normalized_region.split("_")
+            for i in range(len(region_parts), 0, -1):
+                partial_region = "_".join(region_parts[:i])
+                for filepath in all_files:
+                    filename = os.path.basename(filepath).lower()
+                    if partial_region in filename and program_type in filename:
+                        logging.info(
+                            f"✅ Facility user using REGIONAL file with partial match: {os.path.basename(filepath)}"
+                        )
+                        return filepath
+
+        # Fallback to national file if regional not found
+        logging.info(
+            f"⚠️ Regional file not found for facility user, falling back to national file"
+        )
+
         exact_file = os.path.join(data_dir, f"national_{program_type}.csv")
         if os.path.exists(exact_file):
             logging.info(
-                f"✅ Found exact national file for facility user: national_{program_type}.csv"
+                f"✅ Facility user using NATIONAL file: national_{program_type}.csv"
             )
             return exact_file
 
@@ -385,7 +437,7 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
             national_files.sort(key=os.path.getmtime, reverse=True)
             selected_file = national_files[0]
             logging.info(
-                f"✅ Found national file for facility user: {os.path.basename(selected_file)}"
+                f"✅ Facility user using NATIONAL file: {os.path.basename(selected_file)}"
             )
             return selected_file
 
@@ -397,7 +449,6 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
     return all_files[0]
 
 
-# Replace ONLY the filter_patient_data_by_user function in your current data_service.py
 def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
     """
     ✅ FIXED: Filter by orgUnit UID instead of facility names.

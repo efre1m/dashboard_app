@@ -3,137 +3,69 @@ import pandas as pd
 import streamlit as st
 
 
-def get_date_range(
-    df: pd.DataFrame,
-    quick_range: str,
-    date_col_priority=["enrollmentDate", "event_date"],
-):
+def get_date_range(df, period_option):
     """
-    Returns start and end dates based on the quick_range.
-    Filters out invalid dates like 1970-01-01.
+    Calculate date range based on period option.
+    FIXED: Now returns correct full month/year ranges
     """
     import datetime
-    import pandas as pd
+    import logging
 
-    today = dt.date.today()
+    today = datetime.date.today()
 
-    # Handle "All Time" - use REAL data range
-    if quick_range == "All Time":
-        if not df.empty:
-            # Collect ALL VALID dates from ALL columns
-            all_valid_dates = []
+    logging.info(
+        f"📅 get_date_range called with period_option: '{period_option}', today: {today}"
+    )
 
-            for col in df.columns:
-                if "date" in col.lower() or "Date" in col:
-                    try:
-                        # Try to convert to datetime
-                        dates = pd.to_datetime(df[col], errors="coerce")
-                        # Drop NaT (invalid dates)
-                        valid_dates = dates.dropna()
-
-                        # Filter out invalid dates (like 1970-01-01)
-                        for date_val in valid_dates:
-                            try:
-                                year = date_val.year
-                                # Only accept dates from year 2000 onward
-                                if year >= 2000 and year <= 2030:  # Reasonable range
-                                    all_valid_dates.append(date_val)
-                            except:
-                                continue
-                    except:
-                        continue
-
-            if all_valid_dates:
-                min_date = min(all_valid_dates).date()
-                max_date = max(all_valid_dates).date()
-                print(
-                    f"🔧 get_date_range: All Time valid range = {min_date} to {max_date}"
-                )
-                return min_date, max_date
-
-        # Fallback to current year if no valid dates
-        current_year_start = datetime.date(today.year, 1, 1)
-        current_year_end = datetime.date(today.year, 12, 31)
-        print(
-            f"🔧 get_date_range: All Time fallback = {current_year_start} to {current_year_end}"
-        )
-        return current_year_start, current_year_end
-
-    # Find which date column exists for other ranges
-    date_col = next((col for col in date_col_priority if col in df.columns), None)
-
-    # Quick ranges
-    if quick_range == "Today":
-        return today, today
-
-    elif quick_range == "This Week":
-        start = today - dt.timedelta(days=today.weekday())
-        return start, start + dt.timedelta(days=6)
-
-    elif quick_range == "Last Week":
-        end = today - dt.timedelta(days=today.weekday() + 1)
-        return end - dt.timedelta(days=6), end
-
-    elif quick_range == "This Month":
-        start = today.replace(day=1)
-        next_month = (today.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
-        return start, next_month - dt.timedelta(days=1)
-
-    elif quick_range == "Last Month":
-        first_this_month = today.replace(day=1)
-        last_month_end = first_this_month - dt.timedelta(days=1)
-        return last_month_end.replace(day=1), last_month_end
-
-    elif quick_range == "This Year":
-        return today.replace(month=1, day=1), today
-
-    elif quick_range == "Last Year":
-        return (
-            today.replace(year=today.year - 1, month=1, day=1),
-            today.replace(year=today.year - 1, month=12, day=31),
-        )
-
-    else:  # Custom range selection
-        # For Custom Range in this function (used when quick_range is "Custom Range")
-        # We need to get reasonable defaults
-
-        if date_col and not df.empty:
-            # Get dates from the specified column
-            dates = pd.to_datetime(df[date_col], errors="coerce")
-            valid_dates = dates.dropna()
-
-            if not valid_dates.empty:
-                # Filter out invalid years
-                filtered_dates = []
-                for date_val in valid_dates:
-                    try:
-                        year = date_val.year
-                        if 2000 <= year <= 2030:
-                            filtered_dates.append(date_val)
-                    except:
-                        continue
-
-                if filtered_dates:
-                    min_date = min(filtered_dates)
-                    max_date = max(filtered_dates)
-                    start_default = min_date.date()
-                    end_default = max_date.date()
-                else:
-                    # No valid dates, use current year
-                    start_default = datetime.date(today.year, 1, 1)
-                    end_default = datetime.date(today.year, 12, 31)
-            else:
-                # No valid dates, use current year
-                start_default = datetime.date(today.year, 1, 1)
-                end_default = datetime.date(today.year, 12, 31)
+    if period_option == "Today":
+        start_date = today
+        end_date = today
+    elif period_option == "This Week":
+        # Week starts on Monday (0=Monday, 6=Sunday)
+        start_date = today - datetime.timedelta(days=today.weekday())
+        end_date = start_date + datetime.timedelta(days=6)
+    elif period_option == "Last Week":
+        start_date = today - datetime.timedelta(days=today.weekday() + 7)
+        end_date = start_date + datetime.timedelta(days=6)
+    elif period_option == "This Month":
+        start_date = datetime.date(today.year, today.month, 1)
+        # Last day of current month - CORRECT VERSION
+        if today.month == 12:
+            end_date = datetime.date(today.year, 12, 31)
         else:
-            # No date column, use current year
-            start_default = datetime.date(today.year, 1, 1)
-            end_default = datetime.date(today.year, 12, 31)
+            end_date = datetime.date(
+                today.year, today.month + 1, 1
+            ) - datetime.timedelta(days=1)
+    elif period_option == "Last Month":
+        # First day of last month
+        if today.month == 1:
+            start_date = datetime.date(today.year - 1, 12, 1)
+            end_date = datetime.date(today.year - 1, 12, 31)
+        else:
+            start_date = datetime.date(today.year, today.month - 1, 1)
+            # Last day of last month
+            end_date = datetime.date(today.year, today.month, 1) - datetime.timedelta(
+                days=1
+            )
+    elif period_option == "This Year":
+        start_date = datetime.date(today.year, 1, 1)
+        end_date = datetime.date(today.year, 12, 31)
+    elif period_option == "Last Year":
+        start_date = datetime.date(today.year - 1, 1, 1)
+        end_date = datetime.date(today.year - 1, 12, 31)
+    elif period_option == "All Time":
+        # Get min/max from data
+        from utils.dash_co import _get_patient_date_range
 
-        # For the get_date_range function, we don't show the date inputs here
-        # That's handled in render_patient_filter_controls
-        return start_default, end_default
+        min_date, max_date = _get_patient_date_range(df)
+        return min_date, max_date
+    else:
+        # Default to current year
+        start_date = datetime.date(today.year, 1, 1)
+        end_date = datetime.date(today.year, 12, 31)
+
+    logging.info(f"📅 get_date_range result: {start_date} to {end_date}")
+    return start_date, end_date
 
 
 def get_available_aggregations(start_date, end_date):
