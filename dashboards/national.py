@@ -1343,6 +1343,12 @@ def render():
     .summary-table th, .summary-table td { padding: 6px 8px !important; font-size: 12px !important; }
     .stCheckbox label { color: #000000 !important; font-size: 0.9rem !important; }
     .filter-box { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 15px; }
+    /* Expander styles for facility grouping */
+    .streamlit-expanderHeader { background-color: #f8f9fa !important; border: 1px solid #dee2e6 !important; border-radius: 6px !important; margin-bottom: 5px !important; }
+    .streamlit-expanderHeader:hover { background-color: #e9ecef !important; }
+    .streamlit-expanderContent { padding: 10px !important; background-color: #ffffff !important; border: 1px solid #dee2e6 !important; border-top: none !important; border-radius: 0 0 6px 6px !important; }
+    .facility-checkbox { margin-left: 20px !important; margin-bottom: 8px !important; }
+    .select-all-btn { margin-bottom: 10px !important; }
     </style>
     """,
         unsafe_allow_html=True,
@@ -1453,7 +1459,7 @@ def render():
             else:
                 st.sidebar.warning(f"Data: {minutes_old}m old (will auto-refresh)")
 
-    # ================ COMPACT FACILITY SELECTION ================
+    # ================ FACILITY SELECTION GROUPED BY REGION ================
     st.sidebar.markdown("---")
     st.sidebar.markdown(
         '<p style="color: white; font-weight: 600; margin-bottom: 3px;">🏥 Facility Selection</p>',
@@ -1482,7 +1488,7 @@ def render():
         st.session_state.selected_facilities = []
         st.session_state.facility_filter_applied = False
 
-    # Ultra-compact selection form
+    # Facility selection form with grouping by region
     with st.sidebar.form("selection_form", border=False):
         temp_selected_regions = st.session_state.selected_regions.copy()
         temp_selected_facilities = st.session_state.selected_facilities.copy()
@@ -1509,33 +1515,102 @@ def render():
             ]
 
         elif st.session_state.filter_mode == "By Facility":
-            # Simple facility selection
-            all_facilities = []
+            temp_selected_facilities = []
+
+            # Track which regions had "Select All" checked in the previous render
+            if "prev_select_all_state" not in st.session_state:
+                st.session_state.prev_select_all_state = {}
+
+            # Track if we need to clear individual checkboxes
+            if "clear_individual_boxes" not in st.session_state:
+                st.session_state.clear_individual_boxes = {}
+
             for region_name, facilities in facilities_by_region.items():
-                all_facilities.extend([fac_name for fac_name, _ in facilities])
+                facility_names = [fac_name for fac_name, _ in facilities]
 
-            facility_options = ["All Facilities"] + all_facilities
-            selected_facilities = st.multiselect(
-                "Choose facilities:",
-                options=facility_options,
-                default=st.session_state.selected_facilities,
-                help="Select facilities",
-                key="facility_multiselect",
-                label_visibility="collapsed",
-            )
+                with st.expander(
+                    f"📁 {region_name} ({len(facilities)} facilities)", expanded=False
+                ):
 
-            # Handle "All Facilities" logic
-            if "All Facilities" in selected_facilities:
-                if len(selected_facilities) > 1:
-                    # Remove "All Facilities" if other facilities are selected
-                    selected_facilities = [
-                        f for f in selected_facilities if f != "All Facilities"
-                    ]
-                else:
-                    # Only "All Facilities" is selected
-                    selected_facilities = all_facilities.copy()
+                    # "Select All" checkbox
+                    select_all_key = f"select_all_{region_name}"
+                    select_all = st.checkbox(
+                        f"Select all in {region_name}",
+                        value=False,  # Always start unchecked
+                        key=select_all_key,
+                    )
 
-            temp_selected_facilities = selected_facilities
+                    # Check if select_all was just unchecked (went from True to False)
+                    prev_state = st.session_state.prev_select_all_state.get(
+                        region_name, False
+                    )
+                    select_all_just_unchecked = (
+                        prev_state is True and select_all is False
+                    )
+
+                    # Update previous state
+                    st.session_state.prev_select_all_state[region_name] = select_all
+
+                    # If select_all_just_unchecked, set a flag to clear individual boxes
+                    if select_all_just_unchecked:
+                        st.session_state.clear_individual_boxes[region_name] = True
+
+                    # If "Select All" is currently checked, select all facilities
+                    if select_all:
+                        temp_selected_facilities.extend(facility_names)
+                        st.info(f"✓ All {len(facility_names)} facilities selected")
+                        continue
+
+                    # Show individual checkboxes when "Select All" is NOT checked
+                    col1, col2 = st.columns(2)
+                    facilities_col1 = facility_names[: len(facility_names) // 2]
+                    facilities_col2 = facility_names[len(facility_names) // 2 :]
+
+                    # Check if we need to clear individual checkboxes for this region
+                    should_clear = st.session_state.clear_individual_boxes.get(
+                        region_name, False
+                    )
+
+                    with col1:
+                        for fac_name in facilities_col1:
+                            checkbox_key = f"fac_{region_name}_{fac_name}"
+
+                            # Determine default value:
+                            # - If we should clear (select_all was just unchecked): False
+                            # - Otherwise: check if previously selected
+                            default_value = (
+                                False
+                                if should_clear
+                                else (fac_name in st.session_state.selected_facilities)
+                            )
+
+                            is_checked = st.checkbox(
+                                fac_name, value=default_value, key=checkbox_key
+                            )
+                            if is_checked:
+                                temp_selected_facilities.append(fac_name)
+
+                    with col2:
+                        for fac_name in facilities_col2:
+                            checkbox_key = f"fac_{region_name}_{fac_name}"
+
+                            # Determine default value:
+                            # - If we should clear (select_all was just unchecked): False
+                            # - Otherwise: check if previously selected
+                            default_value = (
+                                False
+                                if should_clear
+                                else (fac_name in st.session_state.selected_facilities)
+                            )
+
+                            is_checked = st.checkbox(
+                                fac_name, value=default_value, key=checkbox_key
+                            )
+                            if is_checked:
+                                temp_selected_facilities.append(fac_name)
+
+            # Reset the clear flags after rendering
+            st.session_state.clear_individual_boxes = {}
 
         selection_submitted = st.form_submit_button(
             "Apply Selection", use_container_width=True
@@ -1560,7 +1635,39 @@ def render():
         st.session_state.filter_mode == "By Facility"
         and st.session_state.selected_facilities
     ):
-        display_text = f"Selected: {len(st.session_state.selected_facilities)} / {total_facilities} facilities"
+        # Group selected facilities by region for better display
+        selected_by_region = {}
+        for fac_name in st.session_state.selected_facilities:
+            # Find which region this facility belongs to
+            for region_name, facilities in facilities_by_region.items():
+                facility_names = [name for name, _ in facilities]
+                if fac_name in facility_names:
+                    if region_name not in selected_by_region:
+                        selected_by_region[region_name] = 0
+                    selected_by_region[region_name] += 1
+                    break
+
+        # Create a compact display
+        if len(selected_by_region) == 0:
+            display_text = f"Selected: 0/{total_facilities}"
+        elif len(selected_by_region) == 1:
+            region_name = list(selected_by_region.keys())[0]
+            count = selected_by_region[region_name]
+            total_in_region = len(facilities_by_region.get(region_name, []))
+            display_text = f"Selected: {count}/{total_in_region} in {region_name}"
+        elif len(selected_by_region) <= 3:
+            region_texts = []
+            for region_name, count in selected_by_region.items():
+                total_in_region = len(facilities_by_region.get(region_name, []))
+                # Shorten region name if too long
+                short_region_name = (
+                    region_name[:15] + "..." if len(region_name) > 15 else region_name
+                )
+                region_texts.append(f"{count}/{total_in_region} in {short_region_name}")
+            display_text = f"Selected: {', '.join(region_texts)}"
+        else:
+            total_selected = len(st.session_state.selected_facilities)
+            display_text = f"Selected: {total_selected}/{total_facilities} in {len(selected_by_region)} regions"
     else:
         display_text = f"Selected: All ({total_facilities})"
 
