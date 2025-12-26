@@ -571,15 +571,20 @@ def get_relevant_date_column_for_kpi(kpi_name):
     return "event_date_delivery_summary"
 
 
-def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
+def prepare_data_for_trend_chart(
+    df, kpi_name, facility_uids=None, date_range_filters=None
+):
     """
     Prepare patient-level data for trend chart using ONLY program stage specific dates
-    Returns: DataFrame filtered by KPI-specific dates AND the date column used
+    WITH DATE RANGE FILTERING
+    Returns: DataFrame filtered by KPI-specific dates AND date range AND the date column used
     """
     if df.empty:
         return pd.DataFrame(), None
 
     filtered_df = df.copy()
+
+    # Filter by facility UIDs if provided
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
@@ -588,14 +593,41 @@ def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
 
     # Check if the SPECIFIC date column exists
     if date_column not in filtered_df.columns:
-        st.warning(f"⚠️ Required date column '{date_column}' not found for {kpi_name}")
-        return pd.DataFrame(), date_column
+        # Try to use event_date as fallback
+        if "event_date" in filtered_df.columns:
+            date_column = "event_date"
+            st.warning(
+                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'event_date' instead"
+            )
+        else:
+            st.warning(
+                f"⚠️ Required date column '{date_column}' not found for {kpi_name}"
+            )
+            return pd.DataFrame(), date_column
 
-    # Create result dataframe with ONLY rows that have this specific date
+    # Create result dataframe
     result_df = filtered_df.copy()
+
+    # Convert to datetime
     result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
 
-    # Filter out rows without this SPECIFIC date
+    # CRITICAL: Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+
+        if start_date and end_date:
+            # Convert to datetime for comparison
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)  # Include end date
+
+            # Filter by date range
+            result_df = result_df[
+                (result_df["event_date"] >= start_dt)
+                & (result_df["event_date"] < end_dt)
+            ].copy()
+
+    # Filter out rows without valid dates
     result_df = result_df[result_df["event_date"].notna()].copy()
 
     if result_df.empty:
@@ -610,17 +642,7 @@ def prepare_data_for_trend_chart(df, kpi_name, facility_uids=None):
     # Create period columns using time_filter utility
     from utils.time_filter import assign_period
 
-    temp_df = result_df[["event_date"]].copy()
-    temp_df = assign_period(temp_df, "event_date", period_label)
-
-    # Merge period columns back
-    result_df["period"] = temp_df["period"]
-    result_df["period_display"] = temp_df["period_display"]
-    result_df["period_sort"] = temp_df["period_sort"]
-
-    # Track which date source was used
-    result_df["date_source"] = date_column
-    result_df["date_source_program_stage"] = date_column.replace("event_date_", "")
+    result_df = assign_period(result_df, "event_date", period_label)
 
     # Filter by facility if needed
     if facility_uids and "orgUnit" in result_df.columns:
@@ -659,10 +681,12 @@ def extract_event_date_for_period(df, event_name):
     return result_df
 
 
-def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
+def get_numerator_denominator_for_kpi(
+    df, kpi_name, facility_uids=None, date_range_filters=None
+):
     """
     Get numerator and denominator for a specific KPI with UID filtering
-    AND filtered by KPI-specific program stage dates
+    AND filtered by KPI-specific program stage dates AND date range
     Returns: (numerator, denominator, value)
     """
     if df is None or df.empty:
@@ -682,6 +706,20 @@ def get_numerator_denominator_for_kpi(df, kpi_name, facility_uids=None):
             filtered_df[date_column], errors="coerce"
         )
         filtered_df = filtered_df[filtered_df[date_column].notna()].copy()
+
+        # Apply date range filtering if provided
+        if date_range_filters:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+                filtered_df = filtered_df[
+                    (filtered_df[date_column] >= start_dt)
+                    & (filtered_df[date_column] < end_dt)
+                ].copy()
 
     if filtered_df.empty:
         return (0, 0, 0.0)
@@ -1192,13 +1230,21 @@ def render_facility_comparison_chart(
                 # Get the first row for this facility/period combination
                 row = period_group.iloc[0]
                 formatted_period = format_period_month_year(period_display)
+
+                # Skip if both numerator and denominator are 0
+                numerator_val = row.get("numerator", 0)
+                denominator_val = row.get("denominator", 1)
+
+                if numerator_val == 0 and denominator_val == 0:
+                    continue  # Skip this period for this facility
+
                 comparison_data.append(
                     {
                         "period_display": formatted_period,
                         "Facility": facility_name,
                         "value": row.get(value_col, 0) if value_col in row else 0,
-                        "numerator": row.get("numerator", 0),
-                        "denominator": row.get("denominator", 1),
+                        "numerator": numerator_val,
+                        "denominator": denominator_val,
                     }
                 )
 
@@ -1220,6 +1266,26 @@ def render_facility_comparison_chart(
         )
     except:
         pass
+
+    # Filter out facilities that have no data (all periods with 0 numerator and denominator)
+    facilities_with_data = []
+    for facility_name in comparison_df["Facility"].unique():
+        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+        # Check if facility has any non-zero data
+        if not (
+            facility_data["numerator"].sum() == 0
+            and facility_data["denominator"].sum() == 0
+        ):
+            facilities_with_data.append(facility_name)
+
+    # Filter comparison_df to only include facilities with data
+    comparison_df = comparison_df[
+        comparison_df["Facility"].isin(facilities_with_data)
+    ].copy()
+
+    if comparison_df.empty:
+        st.info("⚠️ No valid comparison data available (all facilities have zero data).")
+        return
 
     # Create the chart
     fig = px.line(
@@ -1285,7 +1351,7 @@ def render_facility_comparison_chart(
     st.markdown("---")
     st.subheader("📋 Facility Comparison Data")
 
-    # Create pivot table for better display with Overall row
+    # Create pivot table for better display with Overall row - REMOVED "Periods with Data" column
     pivot_data = []
 
     for facility_name in comparison_df["Facility"].unique():
@@ -1305,7 +1371,6 @@ def render_facility_comparison_chart(
                     numerator_name: f"{total_numerator:,.0f}",
                     denominator_name: f"{total_denominator:,.0f}",
                     "Overall Value": f"{overall_value:.2f}%",
-                    "Periods with Data": len(facility_data),
                 }
             )
 
@@ -1323,7 +1388,6 @@ def render_facility_comparison_chart(
                 numerator_name: f"{all_numerators:,.0f}",
                 denominator_name: f"{all_denominators:,.0f}",
                 "Overall Value": f"{grand_overall:.2f}%",
-                "Periods with Data": len(comparison_df["period_display"].unique()),
             }
         )
 
@@ -1453,6 +1517,10 @@ def render_region_comparison_chart(
                     else 1
                 )
 
+                # Skip if both numerator and denominator are 0
+                if total_numerator == 0 and total_denominator == 0:
+                    continue
+
                 formatted_period = format_period_month_year(period_display)
                 comparison_data.append(
                     {
@@ -1482,6 +1550,26 @@ def render_region_comparison_chart(
         )
     except:
         pass
+
+    # Filter out regions that have no data (all periods with 0 numerator and denominator)
+    regions_with_data = []
+    for region_name in comparison_df["Region"].unique():
+        region_data = comparison_df[comparison_df["Region"] == region_name]
+        # Check if region has any non-zero data
+        if not (
+            region_data["numerator"].sum() == 0
+            and region_data["denominator"].sum() == 0
+        ):
+            regions_with_data.append(region_name)
+
+    # Filter comparison_df to only include regions with data
+    comparison_df = comparison_df[
+        comparison_df["Region"].isin(regions_with_data)
+    ].copy()
+
+    if comparison_df.empty:
+        st.info("⚠️ No valid comparison data available (all regions have zero data).")
+        return
 
     # Create the chart
     fig = px.line(
@@ -1547,7 +1635,7 @@ def render_region_comparison_chart(
     st.markdown("---")
     st.subheader("📋 Region Comparison Data")
 
-    # Create pivot table for better display with Overall row
+    # Create pivot table for better display with Overall row - REMOVED "Periods with Data" column
     pivot_data = []
 
     for region_name in comparison_df["Region"].unique():
@@ -1567,7 +1655,6 @@ def render_region_comparison_chart(
                     numerator_name: f"{total_numerator:,.0f}",
                     denominator_name: f"{total_denominator:,.0f}",
                     "Overall Value": f"{overall_value:.2f}%",
-                    "Periods with Data": len(region_data),
                 }
             )
 
@@ -1585,7 +1672,6 @@ def render_region_comparison_chart(
                 numerator_name: f"{all_numerators:,.0f}",
                 denominator_name: f"{all_denominators:,.0f}",
                 "Overall Value": f"{grand_overall:.2f}%",
-                "Periods with Data": len(comparison_df["period_display"].unique()),
             }
         )
 

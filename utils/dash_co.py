@@ -608,9 +608,17 @@ def render_trend_chart_section(
     # Get the SPECIFIC date column for this KPI
     date_column = get_relevant_date_column_for_kpi(kpi_selection)
 
-    # CRITICAL FIX: Use prepare_data_for_trend_chart to get data filtered by KPI-specific dates
+    # Get date range filters from session state
+    date_range_filters = {}
+    if "filters" in st.session_state:
+        date_range_filters = {
+            "start_date": st.session_state.filters.get("start_date"),
+            "end_date": st.session_state.filters.get("end_date"),
+        }
+
+    # CRITICAL FIX: Use prepare_data_for_trend_chart to get data filtered by KPI-specific dates AND date range
     prepared_df, date_column_used = prepare_data_for_trend_chart(
-        working_df, kpi_selection, facility_uids
+        working_df, kpi_selection, facility_uids, date_range_filters
     )
 
     if prepared_df.empty:
@@ -704,9 +712,8 @@ def render_trend_chart_section(
 
             # Compute KPI using date-filtered data
             numerator, denominator, _ = get_numerator_denominator_for_kpi(
-                period_patient_data, kpi_selection, facility_uids
+                period_patient_data, kpi_selection, facility_uids, date_range_filters
             )
-
             # Calculate value
             value = (numerator / denominator * 100) if denominator > 0 else 0
 
@@ -840,6 +847,13 @@ def render_comparison_chart(
     is_national=False,
     filtered_patients=None,
 ):
+    # Get date range filters
+    date_range_filters = {}
+    if "filters" in st.session_state:
+        date_range_filters = {
+            "start_date": st.session_state.filters.get("start_date"),
+            "end_date": st.session_state.filters.get("end_date"),
+        }
     """Render comparison charts for both national and regional views WITH TABLES using KPI-specific dates"""
 
     df_to_use = filtered_patients if filtered_patients is not None else patient_df
@@ -903,9 +917,9 @@ def render_comparison_chart(
                 )
                 continue
 
-            # Prepare facility-specific data with KPI-specific dates
+            # Prepare facility-specific data with KPI-specific dates AND date range filters
             prepared_df, _ = prepare_data_for_trend_chart(
-                facility_df, kpi_selection, [facility_uid]
+                facility_df, kpi_selection, [facility_uid], date_range_filters
             )
 
             if prepared_df.empty:
@@ -947,7 +961,7 @@ def render_comparison_chart(
 
                     # Compute KPI for this period
                     numerator, denominator, _ = get_numerator_denominator_for_kpi(
-                        period_data, kpi_selection, [facility_uid]
+                        period_data, kpi_selection, [facility_uid], date_range_filters
                     )
 
                     value = (numerator / denominator * 100) if denominator > 0 else 0
@@ -1090,9 +1104,9 @@ def render_comparison_chart(
             if region_df.empty:
                 continue
 
-            # Prepare region-specific data with KPI-specific dates
+            # Prepare region-specific data with KPI-specific dates AND date range filters
             prepared_df, _ = prepare_data_for_trend_chart(
-                region_df, kpi_selection, region_facility_uids
+                region_df, kpi_selection, region_facility_uids, date_range_filters
             )
 
             if prepared_df.empty:
@@ -1121,7 +1135,10 @@ def render_comparison_chart(
 
                     # Compute KPI for this period
                     numerator, denominator, _ = get_numerator_denominator_for_kpi(
-                        period_data, kpi_selection, region_facility_uids
+                        period_data,
+                        kpi_selection,
+                        region_facility_uids,
+                        date_range_filters,
                     )
 
                     value = (numerator / denominator * 100) if denominator > 0 else 0
