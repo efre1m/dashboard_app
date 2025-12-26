@@ -130,6 +130,142 @@ KPI_MAPPING = {
     },
 }
 
+# KPI Column Requirements - What each KPI actually needs
+KPI_COLUMN_REQUIREMENTS = {
+    "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "fp_counseling_and_method_provided_pp_postpartum_care",
+        "event_date_postpartum_care",
+    ],
+    "Stillbirth Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "birth_outcome_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "Early Postnatal Care (PNC) Coverage (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "date_stay_pp_postpartum_care",
+        "event_date_postpartum_care",
+    ],
+    "Institutional Maternal Death Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "condition_of_discharge_discharge_summary",
+        "event_date_discharge_summary",
+    ],
+    "C-Section Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "mode_of_delivery_maternal_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "Postpartum Hemorrhage (PPH) Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "obstetric_condition_at_admission_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "Delivered women who received uterotonic (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "uterotonic_given_pp_delivery_summary",
+        "uterotonic_type_pp_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "ARV Prophylaxis Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "arv_for_newborn_delivery_summary",
+        "maternal_hiv_status_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "Low Birth Weight (LBW) Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "newborn_birth_weight_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "Assisted Delivery Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "mode_of_delivery_maternal_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "Normal Vaginal Delivery (SVD) Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "mode_of_delivery_maternal_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "Missing Mode of Delivery": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "mode_of_delivery_maternal_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+}
+
+
+def get_kpi_filtered_dataframe(df, kpi_name):
+    """
+    Filter DataFrame to only include columns needed for the selected KPI
+    """
+    if df is None or df.empty:
+        return df
+
+    if kpi_name not in KPI_COLUMN_REQUIREMENTS:
+        # If KPI not in mapping, return all columns
+        return df.copy()
+
+    # Get required columns for this KPI
+    required_columns = KPI_COLUMN_REQUIREMENTS[kpi_name]
+
+    # Find which columns actually exist in the DataFrame
+    available_columns = []
+    for col in required_columns:
+        if col in df.columns:
+            available_columns.append(col)
+
+    # Always include these essential columns if they exist
+    essential_cols = ["orgUnit", "tei_id", "enrollment_date"]
+    for col in essential_cols:
+        if col in df.columns and col not in available_columns:
+            available_columns.append(col)
+
+    # If we have no columns after filtering, return original DataFrame
+    if not available_columns:
+        return df.copy()
+
+    # Create filtered DataFrame
+    filtered_df = df[available_columns].copy()
+
+    # Log the optimization
+    original_size = len(df.columns)
+    filtered_size = len(filtered_df.columns)
+    print(f"✅ KPI Filter: {kpi_name}")
+    print(f"   Before: {original_size} columns")
+    print(f"   After: {filtered_size} columns")
+    print(
+        f"   Reduction: {((original_size - filtered_size) / original_size * 100):.1f}%"
+    )
+
+    return filtered_df
+
 
 def get_text_color(bg_color):
     """Get auto text color for background"""
@@ -426,11 +562,10 @@ def render_trend_chart_section(
     facilities_by_region=None,
     region_names=None,
 ):
-    """Render the trend chart with KPI-specific program stage dates - BOTH numerator and denominator filtered"""
+    """Render the trend chart with KPI-specific program stage dates - FIXED VERSION"""
 
     # STANDARDIZE COLUMN NAMES
     if "orgUnit" not in patient_df.columns:
-        # Try to find the facility ID column
         for col in patient_df.columns:
             if col.lower() in ["orgunit", "facility_uid", "facility_id", "ou", "uid"]:
                 patient_df = patient_df.rename(columns={col: "orgUnit"})
@@ -452,28 +587,33 @@ def render_trend_chart_section(
         )
         return
 
+    # OPTIMIZATION: Filter DataFrame for this KPI
+    kpi_df = get_kpi_filtered_dataframe(patient_df, kpi_selection)
+
     # Get KPI configuration for labels
     kpi_config = get_kpi_config(kpi_selection)
     numerator_label = kpi_config.get("numerator_name", "Numerator")
     denominator_label = kpi_config.get("denominator_name", "Denominator")
     chart_title = kpi_config.get("title", kpi_selection)
 
-    if patient_df.empty:
+    if kpi_df.empty:
         st.info("⚠️ No data available for trend analysis.")
         return
 
     # Apply UID filter
-    working_df = patient_df.copy()
+    working_df = kpi_df.copy()
     if facility_uids and "orgUnit" in working_df.columns:
         working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Prepare data for trend chart using KPI-SPECIFIC program stage dates
+    # Get the SPECIFIC date column for this KPI
+    date_column = get_relevant_date_column_for_kpi(kpi_selection)
+
+    # CRITICAL FIX: Use prepare_data_for_trend_chart to get data filtered by KPI-specific dates
     prepared_df, date_column_used = prepare_data_for_trend_chart(
         working_df, kpi_selection, facility_uids
     )
 
     if prepared_df.empty:
-        # Show which date column was needed
         st.warning(
             f"⚠️ No data available for {kpi_selection} using its specific program stage date: '{date_column_used}'"
         )
@@ -481,22 +621,19 @@ def render_trend_chart_section(
 
     # Ensure period columns exist with proper formatting
     if "period_display" not in prepared_df.columns:
-        if "period" in prepared_df.columns:
-            prepared_df["period_display"] = prepared_df["period"]
+        if "event_date" in prepared_df.columns:
+            prepared_df["period_display"] = (
+                prepared_df["event_date"].dt.strftime("%b-%y").str.capitalize()
+            )  # Format as "Sep-25"
         else:
-            if "event_date" in prepared_df.columns:
-                prepared_df["period_display"] = (
-                    prepared_df["event_date"].dt.strftime("%b-%y").str.capitalize()
-                )  # Format as "Sep-25"
-            else:
-                prepared_df["period_display"] = "Period"
+            prepared_df["period_display"] = "Period"
 
     if "period_sort" not in prepared_df.columns:
-        if "period" in prepared_df.columns and prepared_df["period"].dtype == "object":
+        if "event_date" in prepared_df.columns:
             try:
                 prepared_df["period_sort"] = pd.to_datetime(
-                    prepared_df["period_display"], format="%b-%y"
-                )
+                    prepared_df["event_date"]
+                ).dt.strftime("%Y%m")
             except:
                 prepared_df["period_sort"] = prepared_df.index
         else:
@@ -506,10 +643,7 @@ def render_trend_chart_section(
     unique_periods = prepared_df[["period_display", "period_sort"]].drop_duplicates()
     unique_periods = unique_periods.sort_values("period_sort")
 
-    # Store the original filtered patient data for KPI calculations
-    original_filtered_patients = working_df.copy()
-
-    # Create period data - FILTER BOTH NUMERATOR AND DENOMINATOR BY KPI-SPECIFIC DATES
+    # Create period data - SIMPLIFIED APPROACH
     period_data = []
 
     for _, row in unique_periods.iterrows():
@@ -520,32 +654,55 @@ def render_trend_chart_section(
         period_df = prepared_df[prepared_df["period_display"] == period_display]
 
         if not period_df.empty:
-            # Get TEI IDs from this period (using KPI-specific dates)
+            # Get TEI IDs from this period (already filtered by KPI-specific dates)
             period_tei_ids = period_df["tei_id"].dropna().unique()
 
-            # Filter original data to get ALL rows for these TEI IDs
-            # BUT only include rows that have the KPI-specific date
-            if (
-                date_column_used
-                and date_column_used in original_filtered_patients.columns
-            ):
-                # Create a copy and filter by the KPI-specific date column
-                period_patient_data = original_filtered_patients.copy()
+            if not period_tei_ids.size:
+                continue
+
+            # CRITICAL: Get the original data for these TEI IDs, but FILTERED by KPI-specific date
+            # Use working_df (which already has facility filter applied)
+            period_patient_data = working_df.copy()
+
+            # Filter by TEI IDs AND KPI-specific date
+            if date_column_used and date_column_used in period_patient_data.columns:
                 period_patient_data[date_column_used] = pd.to_datetime(
                     period_patient_data[date_column_used], errors="coerce"
                 )
-                # Keep only rows that have the KPI-specific date AND are in our TEI list
-                period_patient_data = period_patient_data[
-                    period_patient_data["tei_id"].isin(period_tei_ids)
-                    & period_patient_data[date_column_used].notna()
-                ].copy()
+
+                # Get TEI IDs that have the KPI-specific date
+                tei_ids_with_date = period_patient_data[
+                    period_patient_data[date_column_used].notna()
+                ]["tei_id"].unique()
+
+                # Intersection: TEI IDs that are in our period AND have KPI-specific date
+                valid_tei_ids = set(period_tei_ids) & set(tei_ids_with_date)
+
+                if valid_tei_ids:
+                    period_patient_data = period_patient_data[
+                        period_patient_data["tei_id"].isin(valid_tei_ids)
+                        & period_patient_data[date_column_used].notna()
+                    ].copy()
+                else:
+                    # No valid TEI IDs with KPI-specific date
+                    period_data.append(
+                        {
+                            "period": period_display,
+                            "period_display": period_display,
+                            "period_sort": period_sort,
+                            "value": 0,
+                            "numerator": 0,
+                            "denominator": 0,
+                        }
+                    )
+                    continue
             else:
                 # Fallback: just filter by TEI IDs
-                period_patient_data = original_filtered_patients[
-                    original_filtered_patients["tei_id"].isin(period_tei_ids)
+                period_patient_data = period_patient_data[
+                    period_patient_data["tei_id"].isin(period_tei_ids)
                 ].copy()
 
-            # Now compute KPI using date-filtered data
+            # Compute KPI using date-filtered data
             numerator, denominator, _ = get_numerator_denominator_for_kpi(
                 period_patient_data, kpi_selection, facility_uids
             )
@@ -572,7 +729,7 @@ def render_trend_chart_section(
     group = pd.DataFrame(period_data)
     group = group.sort_values("period_sort")
 
-    # Render the chart WITH TABLE (using KPI-specific dates)
+    # Render the chart WITH TABLE
     try:
         if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
             render_pph_trend_chart(
@@ -691,6 +848,10 @@ def render_comparison_chart(
         st.info("⚠️ No data available for comparison.")
         return
 
+    # OPTIMIZATION: Filter DataFrame for this KPI
+    kpi_df = get_kpi_filtered_dataframe(df_to_use, kpi_selection)
+    df_to_use = kpi_df  # Use the filtered DataFrame
+
     if kpi_selection == "Missing Mode of Delivery":
         st.info("⚠️ Comparison chart not available for Missing Mode of Delivery.")
         return
@@ -715,145 +876,90 @@ def render_comparison_chart(
     # Get the SPECIFIC date column for this KPI
     date_column = get_relevant_date_column_for_kpi(kpi_selection)
 
-    # Prepare data using prepare_data_for_trend_chart with KPI-SPECIFIC program stage dates
-    prepared_df, date_column_used = prepare_data_for_trend_chart(
-        df_to_use, kpi_selection, facility_uids
-    )
-
-    if prepared_df.empty:
-        # Show which date column was needed
-        st.warning(
-            f"⚠️ No data available for {kpi_selection} comparison using its specific program stage date: '{date_column}'"
-        )
-        return
-
-    # Store the ORIGINAL patient data for KPI calculations
-    original_patients = df_to_use.copy()
-
-    # Create comparison data - STANDARDIZED COLUMNS
-    comparison_data = []
-
-    # Get all unique periods with proper formatting (using KPI-specific dates)
-    if "period_display" not in prepared_df.columns:
-        if "event_date" in prepared_df.columns:
-            prepared_df["period_display"] = (
-                prepared_df["event_date"].dt.strftime("%b-%y").str.capitalize()
-            )  # Format as "Sep-25"
-        else:
-            prepared_df["period_display"] = "All"
-
-    # Ensure period_sort exists for sorting
-    if "period_sort" not in prepared_df.columns and "event_date" in prepared_df.columns:
-        prepared_df["period_sort"] = prepared_df["event_date"].dt.strftime("%Y%m")
-
-    all_periods = prepared_df[["period_display", "period_sort"]].drop_duplicates()
-    all_periods = all_periods.sort_values("period_sort")
-    period_list = all_periods["period_display"].tolist()
+    # CRITICAL FIX: Prepare data using prepare_data_for_trend_chart for EACH facility/region
+    # This ensures KPI-specific dates are used throughout
 
     if comparison_mode == "facility":
-        for period in period_list:
-            # Get TEI IDs for this period from prepared_df (using KPI-specific dates)
-            period_df = prepared_df[prepared_df["period_display"] == period]
-            period_tei_ids = period_df["tei_id"].dropna().unique()
+        comparison_data = []
 
-            for facility_uid, facility_name in zip(facility_uids, display_names):
-                # Get ALL data for this facility from original dataset
-                facility_data = original_patients[
-                    original_patients["orgUnit"] == facility_uid
-                ].copy()
+        # For each facility, prepare its own trend data
+        for facility_uid, facility_name in zip(facility_uids, display_names):
+            # Filter data for this specific facility
+            facility_df = df_to_use[df_to_use["orgUnit"] == facility_uid].copy()
 
-                if not facility_data.empty:
-                    # Filter to only patients who have events in this period (KPI-specific)
-                    # AND have the KPI-specific date
-                    if date_column_used and date_column_used in facility_data.columns:
-                        # Filter by KPI-specific date column
-                        facility_data[date_column_used] = pd.to_datetime(
-                            facility_data[date_column_used], errors="coerce"
-                        )
-                        # Get TEI IDs that have the KPI-specific date
-                        facility_tei_ids_with_date = facility_data[
-                            facility_data[date_column_used].notna()
-                        ]["tei_id"].unique()
-
-                        # Intersection with period TEI IDs
-                        facility_period_tei_ids = set(period_tei_ids) & set(
-                            facility_tei_ids_with_date
-                        )
-                    else:
-                        # Fallback: just use period TEI IDs
-                        facility_period_tei_ids = set(period_tei_ids) & set(
-                            facility_data["tei_id"].unique()
-                        )
-
-                    if facility_period_tei_ids:
-                        # Get ALL data for these patients, filtered by KPI-specific date
-                        facility_period_data = facility_data.copy()
-
-                        # Filter by KPI-specific date
-                        if (
-                            date_column_used
-                            and date_column_used in facility_period_data.columns
-                        ):
-                            facility_period_data[date_column_used] = pd.to_datetime(
-                                facility_period_data[date_column_used], errors="coerce"
-                            )
-                            facility_period_data = facility_period_data[
-                                facility_period_data["tei_id"].isin(
-                                    facility_period_tei_ids
-                                )
-                                & facility_period_data[date_column_used].notna()
-                            ].copy()
-                        else:
-                            facility_period_data = facility_period_data[
-                                facility_period_data["tei_id"].isin(
-                                    facility_period_tei_ids
-                                )
-                            ].copy()
-
-                        numerator, denominator, _ = get_numerator_denominator_for_kpi(
-                            facility_period_data, kpi_selection, [facility_uid]
-                        )
-
-                        # Calculate value
-                        value = (
-                            (numerator / denominator * 100) if denominator > 0 else 0
-                        )
-
-                        comparison_data.append(
-                            {
-                                "period_display": period,
-                                "orgUnit": facility_uid,
-                                "orgUnit_name": facility_name,  # Use orgUnit_name instead of Facility
-                                "value": value,
-                                "numerator": int(numerator),
-                                "denominator": int(denominator),
-                                "patient_count": len(facility_period_tei_ids),
-                            }
-                        )
-                    else:
-                        # Add entry with zero value
-                        comparison_data.append(
-                            {
-                                "period_display": period,
-                                "orgUnit": facility_uid,
-                                "orgUnit_name": facility_name,
-                                "value": 0,
-                                "numerator": 0,
-                                "denominator": 0,
-                                "patient_count": 0,
-                            }
-                        )
-                else:
-                    # Add entry with zero value for missing facilities
-                    comparison_data.append(
+            if facility_df.empty:
+                # Add zero entries for all periods
+                comparison_data.extend(
+                    [
                         {
-                            "period_display": period,
+                            "period_display": "All Periods",
                             "orgUnit": facility_uid,
                             "orgUnit_name": facility_name,
                             "value": 0,
                             "numerator": 0,
                             "denominator": 0,
-                            "patient_count": 0,
+                        }
+                    ]
+                )
+                continue
+
+            # Prepare facility-specific data with KPI-specific dates
+            prepared_df, _ = prepare_data_for_trend_chart(
+                facility_df, kpi_selection, [facility_uid]
+            )
+
+            if prepared_df.empty:
+                # Add zero entry
+                comparison_data.append(
+                    {
+                        "period_display": "All Periods",
+                        "orgUnit": facility_uid,
+                        "orgUnit_name": facility_name,
+                        "value": 0,
+                        "numerator": 0,
+                        "denominator": 0,
+                    }
+                )
+                continue
+
+            # Group by period for this facility
+            for period_display, period_group in prepared_df.groupby("period_display"):
+                if not period_group.empty:
+                    # Get TEI IDs from this period (already filtered by KPI-specific dates)
+                    period_tei_ids = period_group["tei_id"].dropna().unique()
+
+                    # Get data for these TEI IDs from the ORIGINAL facility data
+                    # but ONLY if they have the KPI-specific date
+                    if date_column and date_column in facility_df.columns:
+                        period_data = facility_df.copy()
+                        period_data[date_column] = pd.to_datetime(
+                            period_data[date_column], errors="coerce"
+                        )
+                        # Filter by TEI IDs AND KPI-specific date
+                        period_data = period_data[
+                            period_data["tei_id"].isin(period_tei_ids)
+                            & period_data[date_column].notna()
+                        ].copy()
+                    else:
+                        period_data = facility_df[
+                            facility_df["tei_id"].isin(period_tei_ids)
+                        ].copy()
+
+                    # Compute KPI for this period
+                    numerator, denominator, _ = get_numerator_denominator_for_kpi(
+                        period_data, kpi_selection, [facility_uid]
+                    )
+
+                    value = (numerator / denominator * 100) if denominator > 0 else 0
+
+                    comparison_data.append(
+                        {
+                            "period_display": period_display,
+                            "orgUnit": facility_uid,
+                            "orgUnit_name": facility_name,
+                            "value": value,
+                            "numerator": int(numerator),
+                            "denominator": int(denominator),
                         }
                     )
 
@@ -863,40 +969,11 @@ def render_comparison_chart(
 
         comparison_df = pd.DataFrame(comparison_data)
 
-        # FIX: STANDARDIZE COLUMN NAMES FOR CHART FUNCTION
-        # Ensure we have the expected column names for the chart function
-        if (
-            "orgUnit_name" in comparison_df.columns
-            and "Facility" not in comparison_df.columns
-        ):
+        # Ensure proper column names
+        if "orgUnit_name" in comparison_df.columns:
             comparison_df = comparison_df.rename(columns={"orgUnit_name": "Facility"})
 
-        # If still no Facility column, create one from display_names
-        if "Facility" not in comparison_df.columns and display_names:
-            # Create a mapping of orgUnit to facility name
-            facility_name_map = {}
-            for uid, name in zip(facility_uids, display_names):
-                facility_name_map[uid] = name
-
-            # Add Facility column based on mapping
-            comparison_df["Facility"] = comparison_df["orgUnit"].map(facility_name_map)
-
-        # STANDARDIZE: Ensure chart functions get consistent data
-        display_names_from_data = (
-            comparison_df["Facility"].unique().tolist()
-            if "Facility" in comparison_df.columns
-            else []
-        )
-        facility_uids_from_data = comparison_df["orgUnit"].unique().tolist()
-
-        # Check if we have the required columns
-        if "Facility" not in comparison_df.columns:
-            st.error(
-                f"❌ Could not create Facility column. Available columns: {list(comparison_df.columns)}"
-            )
-            return
-
-        # Call the appropriate chart function WITH TABLE
+        # Call the appropriate chart function
         if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
             render_pph_facility_comparison_chart(
                 df=comparison_df,
@@ -905,8 +982,8 @@ def render_comparison_chart(
                 title=chart_title,
                 bg_color=bg_color,
                 text_color=text_color,
-                facility_names=display_names_from_data,
-                facility_uids=facility_uids_from_data,
+                facility_names=display_names,
+                facility_uids=facility_uids,
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
@@ -918,8 +995,8 @@ def render_comparison_chart(
                 title=chart_title,
                 bg_color=bg_color,
                 text_color=text_color,
-                facility_names=display_names_from_data,
-                facility_uids=facility_uids_from_data,
+                facility_names=display_names,
+                facility_uids=facility_uids,
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
@@ -931,8 +1008,8 @@ def render_comparison_chart(
                 title=chart_title,
                 bg_color=bg_color,
                 text_color=text_color,
-                facility_names=display_names_from_data,
-                facility_uids=facility_uids_from_data,
+                facility_names=display_names,
+                facility_uids=facility_uids,
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
@@ -944,8 +1021,8 @@ def render_comparison_chart(
                 title=chart_title,
                 bg_color=bg_color,
                 text_color=text_color,
-                facility_names=display_names_from_data,
-                facility_uids=facility_uids_from_data,
+                facility_names=display_names,
+                facility_uids=facility_uids,
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
@@ -957,8 +1034,8 @@ def render_comparison_chart(
                 title=chart_title,
                 bg_color=bg_color,
                 text_color=text_color,
-                facility_names=display_names_from_data,
-                facility_uids=facility_uids_from_data,
+                facility_names=display_names,
+                facility_uids=facility_uids,
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
@@ -970,8 +1047,8 @@ def render_comparison_chart(
                 title=chart_title,
                 bg_color=bg_color,
                 text_color=text_color,
-                facility_names=display_names_from_data,
-                facility_uids=facility_uids_from_data,
+                facility_names=display_names,
+                facility_uids=facility_uids,
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
@@ -983,19 +1060,14 @@ def render_comparison_chart(
                 title=chart_title,
                 bg_color=bg_color,
                 text_color=text_color,
-                facility_names=display_names_from_data,
-                facility_uids=facility_uids_from_data,
+                facility_names=display_names,
+                facility_uids=facility_uids,
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
 
     elif comparison_mode == "region" and is_national:
-        # Region comparison (only for national view)
-        if not region_names or not facilities_by_region:
-            st.error("❌ Region data not provided for regional comparison.")
-            return
-
-        # Prepare region comparison data
+        # Region comparison - similar fix needed
         region_data = []
 
         # Get facility UIDs for each region
@@ -1005,106 +1077,62 @@ def render_comparison_chart(
                 uid for _, uid in facilities_by_region.get(region_name, [])
             ]
 
-        for period in period_list:
-            # Get TEI IDs for this period from prepared_df (KPI-specific dates)
-            period_df = prepared_df[prepared_df["period_display"] == period]
-            period_tei_ids = period_df["tei_id"].dropna().unique()
+        for region_name in region_names:
+            region_facility_uids = region_facility_mapping.get(region_name, [])
+            if not region_facility_uids:
+                continue
 
-            for region_name in region_names:
-                region_facility_uids = region_facility_mapping.get(region_name, [])
-                if not region_facility_uids:
-                    continue
+            # Get data for this region
+            region_df = df_to_use[
+                df_to_use["orgUnit"].isin(region_facility_uids)
+            ].copy()
 
-                # Get ALL data for this region from original dataset
-                region_data_all = original_patients[
-                    original_patients["orgUnit"].isin(region_facility_uids)
-                ].copy()
+            if region_df.empty:
+                continue
 
-                if not region_data_all.empty:
-                    # Filter to only patients who have events in this period (KPI-specific)
-                    # AND have the KPI-specific date
-                    if date_column_used and date_column_used in region_data_all.columns:
-                        # Filter by KPI-specific date column
-                        region_data_all[date_column_used] = pd.to_datetime(
-                            region_data_all[date_column_used], errors="coerce"
+            # Prepare region-specific data with KPI-specific dates
+            prepared_df, _ = prepare_data_for_trend_chart(
+                region_df, kpi_selection, region_facility_uids
+            )
+
+            if prepared_df.empty:
+                continue
+
+            # Group by period for this region
+            for period_display, period_group in prepared_df.groupby("period_display"):
+                if not period_group.empty:
+                    # Get TEI IDs from this period (already filtered by KPI-specific dates)
+                    period_tei_ids = period_group["tei_id"].dropna().unique()
+
+                    # Get data for these TEI IDs
+                    if date_column and date_column in region_df.columns:
+                        period_data = region_df.copy()
+                        period_data[date_column] = pd.to_datetime(
+                            period_data[date_column], errors="coerce"
                         )
-                        # Get TEI IDs that have the KPI-specific date
-                        region_tei_ids_with_date = region_data_all[
-                            region_data_all[date_column_used].notna()
-                        ]["tei_id"].unique()
-
-                        # Intersection with period TEI IDs
-                        region_period_tei_ids = set(period_tei_ids) & set(
-                            region_tei_ids_with_date
-                        )
+                        period_data = period_data[
+                            period_data["tei_id"].isin(period_tei_ids)
+                            & period_data[date_column].notna()
+                        ].copy()
                     else:
-                        # Fallback: just use period TEI IDs
-                        region_period_tei_ids = set(period_tei_ids) & set(
-                            region_data_all["tei_id"].unique()
-                        )
+                        period_data = region_df[
+                            region_df["tei_id"].isin(period_tei_ids)
+                        ].copy()
 
-                    if region_period_tei_ids:
-                        # Get ALL data for these patients, filtered by KPI-specific date
-                        region_period_data = region_data_all.copy()
+                    # Compute KPI for this period
+                    numerator, denominator, _ = get_numerator_denominator_for_kpi(
+                        period_data, kpi_selection, region_facility_uids
+                    )
 
-                        # Filter by KPI-specific date
-                        if (
-                            date_column_used
-                            and date_column_used in region_period_data.columns
-                        ):
-                            region_period_data[date_column_used] = pd.to_datetime(
-                                region_period_data[date_column_used], errors="coerce"
-                            )
-                            region_period_data = region_period_data[
-                                region_period_data["tei_id"].isin(region_period_tei_ids)
-                                & region_period_data[date_column_used].notna()
-                            ].copy()
-                        else:
-                            region_period_data = region_period_data[
-                                region_period_data["tei_id"].isin(region_period_tei_ids)
-                            ].copy()
+                    value = (numerator / denominator * 100) if denominator > 0 else 0
 
-                        numerator, denominator, _ = get_numerator_denominator_for_kpi(
-                            region_period_data, kpi_selection, region_facility_uids
-                        )
-
-                        # Calculate value
-                        value = (
-                            (numerator / denominator * 100) if denominator > 0 else 0
-                        )
-
-                        region_data.append(
-                            {
-                                "period_display": period,
-                                "Region": region_name,
-                                "value": value,
-                                "numerator": int(numerator),
-                                "denominator": int(denominator),
-                                "patient_count": len(region_period_tei_ids),
-                            }
-                        )
-                    else:
-                        # Add zero entry
-                        region_data.append(
-                            {
-                                "period_display": period,
-                                "Region": region_name,
-                                "value": 0,
-                                "numerator": 0,
-                                "denominator": 0,
-                                "patient_count": 0,
-                            }
-                        )
-                else:
-                    # Add zero entry
                     region_data.append(
                         {
-                            "period_display": period,
+                            "period_display": period_display,
                             "Region": region_name,
-                            "value": 0,
-                            "numerator": 0,
-                            "denominator": 0,
-                            "patient_count": 0,
+                            "value": value,
+                            "numerator": int(numerator),
+                            "denominator": int(denominator),
                         }
                     )
 
@@ -1114,7 +1142,7 @@ def render_comparison_chart(
 
         region_df = pd.DataFrame(region_data)
 
-        # Call the appropriate region comparison function WITH TABLE
+        # Call the appropriate region comparison function
         if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
             render_pph_region_comparison_chart(
                 df=region_df,
@@ -1226,16 +1254,18 @@ def render_additional_analytics(
     kpi_selection, patient_df, facility_uids, bg_color, text_color
 ):
     """Render additional analytics charts"""
+
+    # OPTIMIZATION: Filter DataFrame for this KPI
+    kpi_df = get_kpi_filtered_dataframe(patient_df, kpi_selection)
+
     if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
         render_obstetric_condition_pie_chart(
-            patient_df, facility_uids, bg_color, text_color
+            kpi_df, facility_uids, bg_color, text_color
         )
     elif kpi_selection == "Delivered women who received uterotonic (%)":
-        render_uterotonic_type_pie_chart(
-            patient_df, facility_uids, bg_color, text_color
-        )
+        render_uterotonic_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
     elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-        render_lbw_category_pie_chart(patient_df, facility_uids, bg_color, text_color)
+        render_lbw_category_pie_chart(kpi_df, facility_uids, bg_color, text_color)
 
 
 def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
@@ -1548,6 +1578,16 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
             # Get orgUnit from original data for these TEI IDs
             orgunit_mapping = patient_df[["tei_id", "orgUnit"]].drop_duplicates()
             df = pd.merge(df, orgunit_mapping, on="tei_id", how="left")
+
+    # OPTIMIZATION: Filter for current KPI
+    # Get current KPI selection from session state
+    current_kpi = st.session_state.get(
+        "selected_kpi", "Institutional Maternal Death Rate (%)"
+    )
+
+    # Filter DataFrame to only include columns needed for this KPI
+    if current_kpi in KPI_COLUMN_REQUIREMENTS:
+        df = get_kpi_filtered_dataframe(df, current_kpi)
 
     return df
 
