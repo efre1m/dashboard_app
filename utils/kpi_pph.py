@@ -1,46 +1,67 @@
 import pandas as pd
-import plotly.express as px
 import streamlit as st
-import seaborn as sns
-import matplotlib.pyplot as plt
 import numpy as np
 import datetime as dt
-from matplotlib.colors import LinearSegmentedColormap
+import plotly.express as px
+import hashlib
 
-# Import the same functions used by other KPIs
+# Import only utility functions from kpi_utils
 from utils.kpi_utils import (
-    compute_total_deliveries,
     auto_text_color,
-    get_cache_key,
     format_period_month_year,
+    compute_total_deliveries,  # Use the same total deliveries function
+    get_relevant_date_column_for_kpi,
 )
 
-# ---------------- PPH KPI Constants ----------------
-PPH_CONDITION_COL = "obstetric_condition_at_admission_delivery_summary"
-PPH_CODE = "3"  # Postpartum Hemorrhage (PPH) option code
-DELIVERY_DATE_COL = "event_date_delivery_summary"  # Program stage specific date
-
-# Option Set Values for reference:
-# 0: None
-# 1: Obstructed
-# 2: Eclampsia
-# 3: Postpartum Hemorrhage (PPH) ← use for numerator
-# 4: Antepartum Hemorrhage (APH)
-# 5: PROM / Sepsis
-# 6: Ruptured Uterus
-# 7: Prolonged Labor
-# 8: Repaired Uterus
-# 9: Hysterectomy
-# 10: Other specify
+# ---------------- Caching Setup ----------------
+if "pph_cache" not in st.session_state:
+    st.session_state.pph_cache = {}
 
 
-# ---------------- PPH KPI Computation Functions ----------------
+def get_pph_cache_key(df, facility_uids=None, computation_type=""):
+    """Generate a unique cache key for PPH computations"""
+    key_data = {
+        "computation_type": computation_type,
+        "facility_uids": tuple(sorted(facility_uids)) if facility_uids else None,
+        "data_hash": hashlib.md5(pd.util.hash_pandas_object(df).values).hexdigest(),
+        "data_shape": df.shape,
+    }
+    return str(key_data)
+
+
+def clear_pph_cache():
+    """Clear the PPH cache"""
+    st.session_state.pph_cache = {}
+
+
+# PPH KPI Configuration
+PPH_CONDITION_COL = "obstetric_condition_at_delivery_delivery_summary"
+PPH_CODE = "3"
+
+# Obstetric condition codes mapping
+OBSTETRIC_CONDITION_CODES = {
+    "1": "Severe pre-eclampsia/eclampsia",
+    "2": "Antepartum hemorrhage",
+    "3": "Postpartum hemorrhage",
+    "4": "Sepsis/severe systemic infection",
+    "5": "Obstructed labor",
+    "6": "Ruptured uterus",
+    "7": "Severe anemia",
+    "8": "Malaria with severe anemia",
+    "9": "HIV-related conditions",
+    "10": "Other complications",
+}
+
+
 def compute_pph_count(df, facility_uids=None):
-    """Count PPH occurrences from patient-level data"""
-    cache_key = get_cache_key(df, facility_uids, "pph_count")
+    """
+    Count PPH occurrences - "3" alone or in combinations (e.g., "2,3", "3,5")
+    EXACT SAME METHOD PATTERN AS compute_csection_count in kpi_utils.py
+    """
+    cache_key = get_pph_cache_key(df, facility_uids, "pph_count")
 
-    if cache_key in st.session_state.kpi_cache:
-        return st.session_state.kpi_cache[cache_key]
+    if cache_key in st.session_state.pph_cache:
+        return st.session_state.pph_cache[cache_key]
 
     if df is None or df.empty:
         result = 0
@@ -49,87 +70,131 @@ def compute_pph_count(df, facility_uids=None):
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        actual_events_df = filtered_df.copy()
-
-        if PPH_CONDITION_COL not in actual_events_df.columns:
+        if PPH_CONDITION_COL not in filtered_df.columns:
             result = 0
         else:
-            # Handle different data types
-            pph_series = actual_events_df[PPH_CONDITION_COL].dropna()
+            df_copy = filtered_df.copy()
 
-            if pph_series.dtype in [np.float64, np.int64]:
-                pph_codes = pph_series.astype(int).astype(str)
-            else:
-                pph_codes = pph_series.astype(str)
+            # Convert to string and handle multiple codes (e.g., "2,3", "3,5,10")
+            df_copy["obstetric_condition_clean"] = df_copy[PPH_CONDITION_COL].astype(
+                str
+            )
 
-            # Function to check if PPH code (3) is in the value (handles multi-code values)
-            def contains_pph(value):
-                if pd.isna(value):
-                    return False
-                value_str = str(value)
-                # Split by common separators
-                codes = [
-                    c.strip()
-                    for c in value_str.replace(";", ",").split(",")
-                    if c.strip()
-                ]
-                return "3" in codes
+            # Check for "3" in the string (standalone or in comma-separated list)
+            # Pattern matches: "3" alone, "3," at start, ",3" in middle, ",3," anywhere, or "3" at end
+            pph_mask = df_copy["obstetric_condition_clean"].str.contains(
+                r"(^|[,;\s])3([,;\s]|$)", regex=True, na=False
+            )
 
-            # Apply the check
-            pph_mask = pph_codes.apply(contains_pph)
             result = int(pph_mask.sum())
 
-    st.session_state.kpi_cache[cache_key] = result
+    st.session_state.pph_cache[cache_key] = result
+    return result
+
+
+def compute_obstetric_condition_distribution(df, facility_uids=None):
+    """
+    Compute distribution of obstetric conditions
+    Returns: Dictionary with counts for each obstetric condition
+    Handles comma-separated values like "2,3" - each code counts separately
+    """
+    if df is None or df.empty:
+        return {name: 0 for name in OBSTETRIC_CONDITION_CODES.values()}
+
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    if PPH_CONDITION_COL not in filtered_df.columns:
+        return {name: 0 for name in OBSTETRIC_CONDITION_CODES.values()}
+
+    # Initialize counts
+    counts = {code: 0 for code in OBSTETRIC_CONDITION_CODES.keys()}
+    named_counts = {name: 0 for name in OBSTETRIC_CONDITION_CODES.values()}
+
+    df_copy = filtered_df.copy()
+    df_copy["obstetric_condition_clean"] = df_copy[PPH_CONDITION_COL].astype(str)
+
+    # Process each value
+    for value in df_copy["obstetric_condition_clean"]:
+        if pd.isna(value) or value == "nan":
+            continue
+
+        value_str = str(value).strip()
+
+        # Skip empty values
+        if not value_str or value_str.lower() in ["n/a", "nan", "null"]:
+            continue
+
+        # Split by comma and count each code
+        codes = [code.strip() for code in value_str.split(",")]
+
+        for code in codes:
+            if code in OBSTETRIC_CONDITION_CODES:
+                counts[code] += 1
+                condition_name = OBSTETRIC_CONDITION_CODES[code]
+                named_counts[condition_name] += 1
+
+    # Add total count
+    total = sum(counts.values())
+    named_counts["Total Complications"] = total
+
+    return named_counts
+
+
+def compute_pph_rate(df, facility_uids=None):
+    """
+    Compute PPH Rate - EXACT SAME PATTERN AS compute_csection_rate in kpi_utils.py
+    Returns: (rate, pph_cases, total_deliveries)
+    """
+    cache_key = get_pph_cache_key(df, facility_uids, "pph_rate")
+
+    if cache_key in st.session_state.pph_cache:
+        return st.session_state.pph_cache[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        # Get date column for PPH (same as delivery summary)
+        date_column = get_relevant_date_column_for_kpi(
+            "Postpartum Hemorrhage (PPH) Rate (%)"
+        )
+
+        # Count PPH cases (value "3" in obstetric condition)
+        pph_cases = compute_pph_count(df, facility_uids)
+
+        # Get total deliveries - USING SAME LOGIC AS C-SECTION
+        total_deliveries = compute_total_deliveries(df, facility_uids, date_column)
+
+        # Calculate rate
+        rate = (pph_cases / total_deliveries * 100) if total_deliveries > 0 else 0.0
+        result = (rate, pph_cases, total_deliveries)
+
+    st.session_state.pph_cache[cache_key] = result
     return result
 
 
 def compute_pph_kpi(df, facility_uids=None):
     """
-    Compute PPH KPI for patient-level data
-    Returns: pph_rate, pph_count, total_deliveries
+    Compute PPH KPI data - SAME STRUCTURE AS compute_csection_rate
     """
-    cache_key = get_cache_key(df, facility_uids, "pph_rate")
+    rate, pph_cases, total_deliveries = compute_pph_rate(df, facility_uids)
 
-    if cache_key in st.session_state.kpi_cache:
-        return st.session_state.kpi_cache[cache_key]
+    # Get obstetric condition distribution
+    condition_distribution = compute_obstetric_condition_distribution(df, facility_uids)
 
-    if df is None or df.empty:
-        result = (0.0, 0, 0)
-    else:
-        filtered_df = df.copy()
-        if facility_uids and "orgUnit" in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
-
-        # IMPORTANT: Filter to only include rows with delivery summary date
-        if DELIVERY_DATE_COL in filtered_df.columns:
-            filtered_df[DELIVERY_DATE_COL] = pd.to_datetime(
-                filtered_df[DELIVERY_DATE_COL], errors="coerce"
-            )
-            filtered_df = filtered_df[filtered_df[DELIVERY_DATE_COL].notna()].copy()
-
-        if filtered_df.empty:
-            result = (0.0, 0, 0)
-        else:
-            # Get PPH cases
-            pph_count = compute_pph_count(filtered_df, facility_uids)
-
-            # Get total deliveries - using date-filtered data
-            total_deliveries = compute_total_deliveries(
-                filtered_df, facility_uids, DELIVERY_DATE_COL
-            )
-
-            # Calculate rate
-            rate = (pph_count / total_deliveries * 100) if total_deliveries > 0 else 0.0
-            result = (float(rate), int(pph_count), int(total_deliveries))
-
-    st.session_state.kpi_cache[cache_key] = result
-    return result
+    return {
+        "pph_rate": float(rate),
+        "pph_cases": int(pph_cases),
+        "total_deliveries": int(total_deliveries),
+        "obstetric_conditions": condition_distribution,
+    }
 
 
 def get_numerator_denominator_for_pph(df, facility_uids=None, date_range_filters=None):
     """
-    Get numerator and denominator for PPH Rate with date filtering
-    Returns: (numerator, denominator, value)
+    Get numerator and denominator for PPH KPI - SAME PATTERN AS C-SECTION
+    WITH DATE RANGE FILTERING
     """
     if df is None or df.empty:
         return (0, 0, 0.0)
@@ -138,13 +203,18 @@ def get_numerator_denominator_for_pph(df, facility_uids=None, date_range_filters
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Filter by specific date column if provided
-    if DELIVERY_DATE_COL in filtered_df.columns:
+    # Get the SPECIFIC date column for PPH (same as delivery summary)
+    date_column = get_relevant_date_column_for_kpi(
+        "Postpartum Hemorrhage (PPH) Rate (%)"
+    )
+
+    # IMPORTANT: Filter to only include rows that have this specific date
+    if date_column in filtered_df.columns:
         # Convert to datetime and filter out rows without this date
-        filtered_df[DELIVERY_DATE_COL] = pd.to_datetime(
-            filtered_df[DELIVERY_DATE_COL], errors="coerce"
+        filtered_df[date_column] = pd.to_datetime(
+            filtered_df[date_column], errors="coerce"
         )
-        filtered_df = filtered_df[filtered_df[DELIVERY_DATE_COL].notna()].copy()
+        filtered_df = filtered_df[filtered_df[date_column].notna()].copy()
 
         # Apply date range filtering if provided
         if date_range_filters:
@@ -156,115 +226,254 @@ def get_numerator_denominator_for_pph(df, facility_uids=None, date_range_filters
                 end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
 
                 filtered_df = filtered_df[
-                    (filtered_df[DELIVERY_DATE_COL] >= start_dt)
-                    & (filtered_df[DELIVERY_DATE_COL] < end_dt)
+                    (filtered_df[date_column] >= start_dt)
+                    & (filtered_df[date_column] < end_dt)
                 ].copy()
 
     if filtered_df.empty:
         return (0, 0, 0.0)
 
-    # Compute KPI on date-filtered data
-    rate, pph_count, total_deliveries = compute_pph_kpi(filtered_df, facility_uids)
+    # Compute PPH rate on date-filtered data
+    rate, pph_cases, total_deliveries = compute_pph_rate(filtered_df, facility_uids)
 
-    return (pph_count, total_deliveries, rate)
+    return (pph_cases, total_deliveries, rate)
 
 
-def compute_obstetric_condition_distribution(df, facility_uids=None):
+# ---------------- Pie Chart Function ----------------
+def render_obstetric_condition_pie_chart(
+    df, facility_uids=None, bg_color="#FFFFFF", text_color=None
+):
     """
-    Compute distribution of all obstetric complications from patient-level data
+    Render a pie chart showing distribution of obstetric conditions
     """
-    if df is None or df.empty:
-        return pd.DataFrame()
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
 
-    filtered_df = df.copy()
-    if facility_uids and "orgUnit" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+    # Compute obstetric condition distribution
+    condition_data = compute_obstetric_condition_distribution(df, facility_uids)
 
-    if PPH_CONDITION_COL not in filtered_df.columns:
-        return pd.DataFrame()
+    if condition_data["Total Complications"] == 0:
+        st.info("⚠️ No data available for obstetric condition distribution.")
+        return
 
-    # Get obstetric condition data
-    condition_series = filtered_df[PPH_CONDITION_COL].dropna()
+    # Prepare data for visualization (exclude "Total Complications" from pie chart)
+    pie_data = []
+    for condition_name, count in condition_data.items():
+        if condition_name != "Total Complications" and count > 0:
+            pie_data.append({"Condition": condition_name, "Count": count})
 
-    if condition_series.empty:
-        return pd.DataFrame()
+    if not pie_data:
+        st.info("⚠️ No obstetric condition data available.")
+        return
 
-    # Condition mapping
-    condition_mapping = {
-        "0": "None",
-        "1": "Obstructed",
-        "2": "Eclampsia",
-        "3": "Postpartum Hemorrhage (PPH)",
-        "4": "Antepartum Hemorrhage (APH)",
-        "5": "PROM / Sepsis",
-        "6": "Ruptured Uterus",
-        "7": "Prolonged Labor",
-        "8": "Repaired Uterus",
-        "9": "Hysterectomy",
-        "10": "Other specify",
-    }
+    pie_df = pd.DataFrame(pie_data)
 
-    # Expand multi-code values
-    expanded_data = []
-    valid_codes = set(condition_mapping.keys())
-
-    for value in condition_series:
-        if pd.isna(value):
-            continue
-
-        value_str = str(value).strip()
-
-        # Skip empty values
-        if not value_str or value_str.lower() in ["nan", "null", ""]:
-            continue
-
-        # Split by comma or semicolon
-        codes = [
-            c.strip()
-            for c in value_str.replace(";", ",").split(",")
-            if c.strip() and c.strip() in valid_codes
-        ]
-
-        for code in codes:
-            expanded_data.append(code)
-
-    if not expanded_data:
-        return pd.DataFrame()
-
-    # Count occurrences
-    condition_counts = pd.Series(expanded_data).value_counts().reset_index()
-    condition_counts.columns = ["condition_code", "count"]
-
-    # Map codes to readable names
-    condition_counts["condition"] = condition_counts["condition_code"].map(
-        condition_mapping
-    )
+    # Sort by count (descending)
+    pie_df = pie_df.sort_values("Count", ascending=False)
 
     # Calculate percentages
-    total_count = condition_counts["count"].sum()
-    condition_counts["percentage"] = (
-        (condition_counts["count"] / total_count * 100) if total_count > 0 else 0
+    total = pie_df["Count"].sum()
+    pie_df["Percentage"] = (pie_df["Count"] / total * 100) if total > 0 else 0
+
+    # Add chart type selection
+    chart_type = st.selectbox(
+        "Select Chart Type",
+        options=["Pie Chart", "Donut Chart", "Bar Chart"],
+        index=0,
+        key=f"obstetric_chart_type_{str(facility_uids)}",
     )
 
-    return condition_counts[["condition", "count", "percentage"]]
+    # Add CSS for better layout
+    st.markdown(
+        """
+    <style>
+    .pie-chart-container {
+        margin-top: -30px;
+        margin-bottom: 20px;
+    }
+    .pie-chart-title {
+        font-size: 16px;
+        font-weight: bold;
+        margin-bottom: 10px;
+        text-align: center;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Create chart
+    if chart_type == "Pie Chart":
+        fig = px.pie(
+            pie_df,
+            values="Count",
+            names="Condition",
+            hover_data=["Percentage"],
+            labels={"Count": "Count", "Percentage": "Percentage"},
+            height=500,
+            color="Condition",
+            color_discrete_sequence=px.colors.qualitative.Set3,
+        )
+    elif chart_type == "Donut Chart":
+        fig = px.pie(
+            pie_df,
+            values="Count",
+            names="Condition",
+            hover_data=["Percentage"],
+            labels={"Count": "Count", "Percentage": "Percentage"},
+            height=500,
+            hole=0.4,
+            color="Condition",
+            color_discrete_sequence=px.colors.qualitative.Set3,
+        )
+    else:  # Bar Chart
+        fig = px.bar(
+            pie_df,
+            x="Condition",
+            y="Count",
+            color="Condition",
+            title="Obstetric Condition Distribution",
+            height=500,
+            color_discrete_sequence=px.colors.qualitative.Set3,
+            text="Count",
+        )
+        fig.update_traces(textposition="outside")
+        fig.update_layout(
+            xaxis_title="Obstetric Condition",
+            yaxis_title="Count",
+            xaxis_tickangle=-45,
+            showlegend=False,
+        )
+
+    if chart_type in ["Pie Chart", "Donut Chart"]:
+        # Calculate if we should use inside text for small slices
+        total_count = pie_df["Count"].sum()
+        use_inside_text = any((pie_df["Count"] / total_count) < 0.05)
+
+        if use_inside_text:
+            # For small slices, put text inside with white background
+            fig.update_traces(
+                textinfo="percent+label",
+                textposition="inside",
+                hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
+                textfont=dict(size=10),
+                insidetextfont=dict(color="white", size=9),
+                outsidetextfont=dict(size=9),
+            )
+        else:
+            # For normal slices, use outside text
+            fig.update_traces(
+                textinfo="percent+label",
+                textposition="outside",
+                hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
+                textfont=dict(size=10),
+            )
+
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        height=500,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="middle",
+            y=0.5,
+            xanchor="right",
+            x=1.3,
+            font=dict(size=10),
+            itemwidth=30,
+        ),
+        margin=dict(l=0, r=150, t=20, b=20),
+        uniformtext_minsize=8,
+        uniformtext_mode="hide",
+    )
+
+    # Ensure no "undefined" placeholder
+    if chart_type in ["Pie Chart", "Donut Chart"]:
+        fig.update_layout(title=None)
+        fig.layout.pop("title", None)
+
+    # Use container to control layout
+    with st.container():
+        if chart_type in ["Pie Chart", "Donut Chart"]:
+            st.markdown(
+                '<div class="pie-chart-title">Distribution of Obstetric Conditions</div>',
+                unsafe_allow_html=True,
+            )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Show summary table
+    st.subheader("📋 Obstetric Condition Summary")
+
+    # Create summary dataframe with all conditions
+    summary_data = []
+    for condition_name, count in condition_data.items():
+        if condition_name != "Total Complications":
+            percentage = (
+                (count / condition_data["Total Complications"] * 100)
+                if condition_data["Total Complications"] > 0
+                else 0
+            )
+            summary_data.append(
+                {"Condition": condition_name, "Count": count, "Percentage": percentage}
+            )
+
+    summary_df = pd.DataFrame(summary_data)
+    summary_df = summary_df[summary_df["Count"] > 0].sort_values(
+        "Count", ascending=False
+    )
+
+    if not summary_df.empty:
+        summary_df.insert(0, "No", range(1, len(summary_df) + 1))
+
+        styled_table = (
+            summary_df.style.format({"Count": "{:,.0f}", "Percentage": "{:.2f}%"})
+            .set_table_attributes('class="summary-table"')
+            .hide(axis="index")
+        )
+
+        st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+
+        # Add total row
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                "Total Complications", f"{condition_data['Total Complications']:,.0f}"
+            )
+        with col2:
+            st.metric(
+                "PPH Cases", f"{condition_data.get('Postpartum hemorrhage', 0):,.0f}"
+            )
+
+        # Add download button for CSV
+        csv = summary_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="obstetric_condition_distribution.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("No obstetric condition data available.")
 
 
-# ---------------- PPH Chart Functions ----------------
+# ---------------- Chart Functions WITH TABLES ----------------
 def render_pph_trend_chart(
     df,
-    period_col,
-    value_col,
-    title,
-    bg_color,
-    text_color,
+    period_col="period_display",
+    value_col="value",
+    title="Postpartum Hemorrhage (PPH) Rate Trend",
+    bg_color="#FFFFFF",
+    text_color=None,
     facility_names=None,
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
     facility_uids=None,
 ):
-    """Render trend chart for PPH rate with same styling as other KPIs"""
-    from utils.kpi_utils import auto_text_color
-
+    """Render trend chart for PPH - EXACT SAME AS render_svd_trend_chart but with PPH titles"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -357,16 +566,22 @@ def render_pph_trend_chart(
             height=400,
         )
 
+    is_categorical = (
+        not all(isinstance(x, (dt.date, dt.datetime)) for x in df[period_col])
+        if not df.empty
+        else True
+    )
+
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title="Period",
-        yaxis_title="PPH Rate (%)",
+        xaxis_title=period_col,
+        yaxis_title=value_col,
         xaxis=dict(
-            type="category",
-            tickangle=-45,
+            type="category" if is_categorical else None,
+            tickangle=-45 if is_categorical else 0,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
@@ -380,6 +595,8 @@ def render_pph_trend_chart(
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
+
+    # Display the chart
     st.plotly_chart(fig, use_container_width=True)
 
     # =========== DISPLAY TABLE BELOW GRAPH ===========
@@ -425,7 +642,7 @@ def render_pph_trend_chart(
         total_numerator = df[value_col].sum() if not df.empty else 0
         total_denominator = len(df)
 
-    # Create overall row
+    # Create overall row with consistent date format
     overall_row = {
         x_axis_col: "Overall",
         value_col: f"{overall_value:.2f}%",
@@ -462,7 +679,7 @@ def render_pph_trend_chart(
             trend_symbol = (
                 "▲" if trend_change > 0 else ("▼" if trend_change < 0 else "–")
             )
-            st.metric("📈 Trend from Previous", f"{trend_change:.2f} {trend_symbol}")
+            st.metric("📈 Trend from Previous", f"{trend_change:.2f}% {trend_symbol}")
 
     # Download button
     summary_df = df.copy().reset_index(drop=True)
@@ -472,11 +689,17 @@ def render_pph_trend_chart(
             [x_axis_col, "numerator", "denominator", value_col]
         ].copy()
 
+        # Format period column
+        if x_axis_col in summary_df.columns:
+            summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+                format_period_month_year
+            )
+
         summary_df = summary_df.rename(
             columns={
                 "numerator": numerator_name,
                 "denominator": denominator_name,
-                value_col: title,
+                value_col: "PPH Rate (%)",
             }
         )
 
@@ -492,18 +715,29 @@ def render_pph_trend_chart(
                 x_axis_col: ["Overall"],
                 numerator_name: [total_numerator],
                 denominator_name: [total_denominator],
-                title: [overall_value],
+                "PPH Rate (%)": [overall_value],
             }
         )
 
         summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
     else:
         summary_df = summary_df[[x_axis_col, value_col]].copy()
-        summary_df = summary_df.rename(columns={value_col: title})
+
+        # Format period column
+        if x_axis_col in summary_df.columns:
+            summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+                format_period_month_year
+            )
+
+        summary_df = summary_df.rename(columns={value_col: "PPH Rate (%)"})
         summary_table = summary_df.copy()
 
-        overall_value = summary_table[title].mean() if not summary_table.empty else 0
-        overall_row = pd.DataFrame({x_axis_col: ["Overall"], title: [overall_value]})
+        overall_value = (
+            summary_table["PPH Rate (%)"].mean() if not summary_table.empty else 0
+        )
+        overall_row = pd.DataFrame(
+            {x_axis_col: ["Overall"], "PPH Rate (%)": [overall_value]}
+        )
         summary_table = pd.concat([summary_table, overall_row], ignore_index=True)
 
     summary_table.insert(0, "No", range(1, len(summary_table) + 1))
@@ -512,41 +746,40 @@ def render_pph_trend_chart(
     st.download_button(
         label="📥 Download Chart Data as CSV",
         data=csv,
-        file_name=f"{title.lower().replace(' ', '_')}_chart_data.csv",
+        file_name="pph_rate_trend_data.csv",
         mime="text/csv",
-        help="Download the exact x, y, and value components shown in the chart",
+        help="Download the exact data shown in the chart",
     )
 
 
 def render_pph_facility_comparison_chart(
     df,
-    period_col,
-    value_col,
-    title,
-    bg_color,
-    text_color,
-    facility_names,
-    facility_uids,
+    period_col="period_display",
+    value_col="value",
+    title="Postpartum Hemorrhage (PPH) Rate - Facility Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    facility_names=None,
+    facility_uids=None,
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render facility comparison chart with same logic as other KPIs"""
-    from utils.kpi_utils import auto_text_color, format_period_month_year
-
+    """Render facility comparison chart - EXACT SAME AS render_svd_facility_comparison_chart"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    # STANDARDIZE COLUMN NAMES
+    # STANDARDIZE COLUMN NAMES - UPDATED TO MATCH YOUR DATA STRUCTURE
     if "orgUnit" not in df.columns:
         for col in df.columns:
             col_lower = col.lower()
             if col_lower in ["orgunit", "facility_uid", "facility_id", "uid", "ou"]:
                 df = df.rename(columns={col: "orgUnit"})
 
-    # Check for facility name column
+    # Check for facility name column - LOOK FOR orgUnit_name FIRST
     if "orgUnit_name" in df.columns:
         df = df.rename(columns={"orgUnit_name": "Facility"})
     elif "Facility" not in df.columns:
+        # Try to find other facility name columns
         for col in df.columns:
             col_lower = col.lower()
             if col_lower in ["facility_name", "facility", "name", "display_name"]:
@@ -584,6 +817,7 @@ def render_pph_facility_comparison_chart(
         unique_periods = unique_periods.sort_values("period_sort")
         period_order = unique_periods["period_display"].tolist()
     else:
+        # Try to sort by month-year
         try:
             period_order = sorted(
                 df["period_display"].unique().tolist(),
@@ -649,16 +883,18 @@ def render_pph_facility_comparison_chart(
     except:
         pass
 
-    # Filter out facilities that have no data
+    # Filter out facilities that have no data (all periods with 0 numerator and denominator)
     facilities_with_data = []
     for facility_name in comparison_df["Facility"].unique():
         facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+        # Check if facility has any non-zero data
         if not (
             facility_data["numerator"].sum() == 0
             and facility_data["denominator"].sum() == 0
         ):
             facilities_with_data.append(facility_name)
 
+    # Filter comparison_df to only include facilities with data
     comparison_df = comparison_df[
         comparison_df["Facility"].isin(facilities_with_data)
     ].copy()
@@ -723,6 +959,7 @@ def render_pph_facility_comparison_chart(
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
+
     st.plotly_chart(fig, use_container_width=True)
 
     # =========== DISPLAY TABLE BELOW GRAPH ===========
@@ -772,7 +1009,7 @@ def render_pph_facility_comparison_chart(
         pivot_df = pd.DataFrame(pivot_data)
         st.dataframe(pivot_df, use_container_width=True)
 
-    # Download functionality
+    # Keep download functionality
     csv_data = []
     for facility_name in comparison_df["Facility"].unique():
         facility_data = comparison_df[comparison_df["Facility"] == facility_name]
@@ -822,20 +1059,18 @@ def render_pph_facility_comparison_chart(
 
 def render_pph_region_comparison_chart(
     df,
-    period_col,
-    value_col,
-    title,
-    bg_color,
-    text_color,
-    region_names,
-    region_mapping,
-    facilities_by_region,
+    period_col="period_display",
+    value_col="value",
+    title="Postpartum Hemorrhage (PPH) Rate - Region Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    region_names=None,
+    region_mapping=None,
+    facilities_by_region=None,
     numerator_name="PPH Cases",
     denominator_name="Total Deliveries",
 ):
-    """Render region comparison chart with same logic as other KPIs"""
-    from utils.kpi_utils import auto_text_color, format_period_month_year
-
+    """Render region comparison chart - EXACT SAME AS render_svd_region_comparison_chart"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -931,16 +1166,18 @@ def render_pph_region_comparison_chart(
     except:
         pass
 
-    # Filter out regions that have no data
+    # Filter out regions that have no data (all periods with 0 numerator and denominator)
     regions_with_data = []
     for region_name in comparison_df["Region"].unique():
         region_data = comparison_df[comparison_df["Region"] == region_name]
+        # Check if region has any non-zero data
         if not (
             region_data["numerator"].sum() == 0
             and region_data["denominator"].sum() == 0
         ):
             regions_with_data.append(region_name)
 
+    # Filter comparison_df to only include regions with data
     comparison_df = comparison_df[
         comparison_df["Region"].isin(regions_with_data)
     ].copy()
@@ -1005,6 +1242,7 @@ def render_pph_region_comparison_chart(
     )
 
     fig.update_layout(yaxis_tickformat=".2f")
+
     st.plotly_chart(fig, use_container_width=True)
 
     # =========== DISPLAY TABLE BELOW GRAPH ===========
@@ -1054,7 +1292,7 @@ def render_pph_region_comparison_chart(
         pivot_df = pd.DataFrame(pivot_data)
         st.dataframe(pivot_df, use_container_width=True)
 
-    # Download functionality
+    # Keep download functionality
     csv_data = []
     for region_name in comparison_df["Region"].unique():
         region_data = comparison_df[comparison_df["Region"] == region_name]
@@ -1102,152 +1340,81 @@ def render_pph_region_comparison_chart(
         )
 
 
-def render_obstetric_condition_pie_chart(
-    df, facility_uids=None, bg_color="#FFFFFF", text_color=None
+# ---------------- Additional Helper Functions ----------------
+def prepare_pph_data_for_trend_chart(
+    df, kpi_name, facility_uids=None, date_range_filters=None
 ):
-    """Render a pie chart showing distribution of obstetric conditions"""
-    from utils.kpi_utils import auto_text_color
+    """
+    Prepare patient-level data for PPH trend chart
+    Returns: DataFrame filtered by KPI-specific dates AND date range AND the date column used
+    """
+    if df.empty:
+        return pd.DataFrame(), None
 
-    if text_color is None:
-        text_color = auto_text_color(bg_color)
+    filtered_df = df.copy()
 
-    # Compute condition distribution
-    condition_df = compute_obstetric_condition_distribution(df, facility_uids)
+    # Filter by facility UIDs if provided
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    if condition_df.empty:
-        st.info("⚠️ No data available for obstetric condition distribution.")
-        return
+    # Get the SPECIFIC date column for PPH (same as delivery summary)
+    date_column = get_relevant_date_column_for_kpi(kpi_name)
 
-    # Add CSS for better pie chart layout
-    st.markdown(
-        """
-    <style>
-    .pie-chart-container {
-        margin-top: -30px;
-        margin-bottom: 20px;
-    }
-    .pie-chart-title {
-        font-size: 16px;
-        font-weight: bold;
-        margin-bottom: 10px;
-        text-align: center;
-    }
-    </style>
-    """,
-        unsafe_allow_html=True,
-    )
+    # Check if the SPECIFIC date column exists
+    if date_column not in filtered_df.columns:
+        # Try to use event_date as fallback
+        if "event_date" in filtered_df.columns:
+            date_column = "event_date"
+            st.warning(
+                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'event_date' instead"
+            )
+        else:
+            st.warning(
+                f"⚠️ Required date column '{date_column}' not found for {kpi_name}"
+            )
+            return pd.DataFrame(), date_column
 
-    # Add chart type selection
-    chart_type = st.selectbox(
-        "Select Chart Type",
-        options=["Pie Chart", "Donut Chart"],
-        index=0,
-        key="obstetric_chart_type",
-    )
+    # Create result dataframe
+    result_df = filtered_df.copy()
 
-    # Create chart with reduced size
-    if chart_type == "Pie Chart":
-        fig = px.pie(
-            condition_df,
-            values="count",
-            names="condition",
-            hover_data=["percentage"],
-            labels={"count": "Count", "percentage": "Percentage"},
-            height=500,
-        )
-    else:  # Donut Chart
-        fig = px.pie(
-            condition_df,
-            values="count",
-            names="condition",
-            hover_data=["percentage"],
-            labels={"count": "Count", "percentage": "Percentage"},
-            height=500,
-            hole=0.4,
-        )
+    # Convert to datetime
+    result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
 
-    # Calculate if we should use inside text for small slices
-    total_count = condition_df["count"].sum()
-    use_inside_text = any((condition_df["count"] / total_count) < 0.05)
+    # CRITICAL: Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
 
-    if use_inside_text:
-        # For small slices, put text inside with white background
-        fig.update_traces(
-            textinfo="percent+label",
-            textposition="inside",
-            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
-            textfont=dict(size=10),
-            insidetextfont=dict(color="white", size=9),
-            outsidetextfont=dict(size=9),
-            pull=[
-                0.05 if cond == "Postpartum Hemorrhage (PPH)" else 0
-                for cond in condition_df["condition"]
-            ],
-        )
-    else:
-        # For normal slices, use outside text
-        fig.update_traces(
-            textinfo="percent+label",
-            textposition="outside",
-            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
-            textfont=dict(size=10),
-            pull=[
-                0.05 if cond == "Postpartum Hemorrhage (PPH)" else 0
-                for cond in condition_df["condition"]
-            ],
-        )
+        if start_date and end_date:
+            # Convert to datetime for comparison
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)  # Include end date
 
-    fig.update_layout(
-        paper_bgcolor=bg_color,
-        plot_bgcolor=bg_color,
-        font_color=text_color,
-        title_font_color=text_color,
-        height=500,
-        showlegend=True,
-        legend=dict(
-            orientation="v",
-            yanchor="middle",
-            y=0.5,
-            xanchor="right",
-            x=1.3,
-            font=dict(size=10),
-            itemwidth=30,
-        ),
-        margin=dict(l=0, r=150, t=20, b=20),
-        uniformtext_minsize=8,
-        uniformtext_mode="hide",
-    )
+            # Filter by date range
+            result_df = result_df[
+                (result_df["event_date"] >= start_dt)
+                & (result_df["event_date"] < end_dt)
+            ].copy()
 
-    # Ensure no "undefined" placeholder
-    fig.update_layout(title=None)
-    fig.layout.pop("title", None)
+    # Filter out rows without valid dates
+    result_df = result_df[result_df["event_date"].notna()].copy()
 
-    # Use container to control layout
-    with st.container():
-        st.markdown(
-            '<div class="pie-chart-title">Distribution of Obstetric Conditions at Delivery</div>',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    if result_df.empty:
+        st.info(f"⚠️ No data with valid dates in '{date_column}' for {kpi_name}")
+        return pd.DataFrame(), date_column
 
-    # Show summary table
-    st.subheader("📋 Obstetric Condition Summary")
-    condition_df = condition_df.copy()
-    condition_df.insert(0, "No", range(1, len(condition_df) + 1))
+    # Get period label
+    period_label = st.session_state.get("period_label", "Monthly")
+    if "filters" in st.session_state and "period_label" in st.session_state.filters:
+        period_label = st.session_state.filters["period_label"]
 
-    styled_table = (
-        condition_df.style.format({"count": "{:,.0f}", "percentage": "{:.2f}%"})
-        .set_table_attributes('class="summary-table"')
-        .hide(axis="index")
-    )
+    # Create period columns using time_filter utility
+    from utils.time_filter import assign_period
 
-    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+    result_df = assign_period(result_df, "event_date", period_label)
 
-    # Add download button for CSV
-    csv = condition_df.to_csv(index=False)
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="obstetric_condition_distribution.csv",
-        mime="text/csv",
-    )
+    # Filter by facility if needed
+    if facility_uids and "orgUnit" in result_df.columns:
+        result_df = result_df[result_df["orgUnit"].isin(facility_uids)].copy()
+
+    return result_df, date_column

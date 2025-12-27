@@ -3,150 +3,321 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import numpy as np
+import datetime as dt
+import hashlib
 
-# Import shared utilities
-from utils.kpi_utils import compute_total_deliveries, auto_text_color
+# Import only utility functions from kpi_utils
+from utils.kpi_utils import (
+    auto_text_color,
+    format_period_month_year,
+    compute_total_deliveries,  # Use the same total deliveries function
+    get_relevant_date_column_for_kpi,
+)
+
+# ---------------- Caching Setup ----------------
+if "uterotonic_cache" not in st.session_state:
+    st.session_state.uterotonic_cache = {}
 
 
-# ---------------- Uterotonic KPI Constants ----------------
-UTEROTONIC_UID = "yVRLuRU943e"  # Numerator: Uterotonic given within 1 min
+def get_uterotonic_cache_key(df, facility_uids=None, computation_type=""):
+    """Generate a unique cache key for Uterotonic computations"""
+    key_data = {
+        "computation_type": computation_type,
+        "facility_uids": tuple(sorted(facility_uids)) if facility_uids else None,
+        "data_hash": hashlib.md5(pd.util.hash_pandas_object(df).values).hexdigest(),
+        "data_shape": df.shape,
+    }
+    return str(key_data)
 
-# Uterotonic options
-UTEROTONIC_OPTIONS = {
-    "1": "Ergometrine",
-    "2": "Oxytocin",
-    "3": "Misoprostol",
-    "0": "None",  # Excluded from numerator
+
+def clear_uterotonic_cache():
+    """Clear the Uterotonic cache"""
+    st.session_state.uterotonic_cache = {}
+
+
+# Uterotonic KPI Configuration
+UTEROTONIC_COL = "uterotonics_given_delivery_summary"
+UTEROTONIC_CODES = {
+    "1",  # Ergometrine
+    "2",  # Oxytocin
+    "3",  # Misoprostol
 }
 
+# Date column for uterotonic KPI
+UTEROTONIC_DATE_COL = "event_date_delivery_summary"
 
-# ---------------- Uterotonic KPI Computation Functions ----------------
-def compute_uterotonic_numerator(df, facility_uids=None):
-    """
-    Compute numerator for uterotonic KPI: Count of women who received uterotonic within 1 min
 
-    Formula: Count where Uterotonic given = 1 (Ergometrine), 2 (Oxytocin), or 3 (Misoprostol)
-    Exclude: 0 (None)
+def compute_uterotonic_count(df, facility_uids=None):
     """
+    Count Uterotonic administration occurrences in patient-level data
+    Checks for uterotonic codes 1, 2, or 3 (comma-separated)
+    """
+    cache_key = get_uterotonic_cache_key(df, facility_uids, "uterotonic_count")
+
+    if cache_key in st.session_state.uterotonic_cache:
+        return st.session_state.uterotonic_cache[cache_key]
+
     if df is None or df.empty:
-        return 0
+        result = 0
+    else:
+        filtered_df = df.copy()
 
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+        # Filter by facility if specified
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Filter for uterotonic administration events with valid codes (1, 2, 3)
-    uterotonic_cases = df[
-        (df["dataElement_uid"] == UTEROTONIC_UID)
-        & (df["value"].isin(["1", "2", "3"]))
-        & df["value"].notna()
-    ]
+        if UTEROTONIC_COL not in filtered_df.columns:
+            result = 0
+        else:
+            # Filter out rows without uterotonic date
+            if UTEROTONIC_DATE_COL in filtered_df.columns:
+                filtered_df = filtered_df[
+                    filtered_df[UTEROTONIC_DATE_COL].notna()
+                ].copy()
 
-    return uterotonic_cases["tei_id"].nunique()
+            # Convert to string and handle NaN values
+            filtered_df["uterotonic_clean"] = filtered_df[UTEROTONIC_COL].astype(str)
+
+            # Initialize count
+            count = 0
+
+            # Process each value
+            for value in filtered_df["uterotonic_clean"]:
+                if pd.isna(value) or value == "nan":
+                    continue
+
+                # Handle comma-separated values like "2,3" or "2"
+                value_str = str(value).strip()
+
+                # Skip empty values and "0" (none)
+                if (
+                    not value_str
+                    or value_str == "0"
+                    or value_str.lower() in ["n/a", "nan", "null", "none"]
+                ):
+                    continue
+
+                # Split by comma and check each code
+                codes = [code.strip() for code in value_str.split(",")]
+
+                # Check if any valid uterotonic code is present
+                if any(code in UTEROTONIC_CODES for code in codes):
+                    count += 1
+
+            result = count
+
+    st.session_state.uterotonic_cache[cache_key] = result
+    return result
 
 
 def compute_uterotonic_by_type(df, facility_uids=None):
     """
-    Compute distribution of uterotonic types
-
-    Returns:
-        Dictionary with counts for each uterotonic type
+    Compute distribution of uterotonic types from patient-level data
+    Returns: Dictionary with counts for each uterotonic type
+    Handles comma-separated values like "2,3" - each code counts separately
     """
     if df is None or df.empty:
         return {"Ergometrine": 0, "Oxytocin": 0, "Misoprostol": 0, "total": 0}
 
-    # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+    filtered_df = df.copy()
 
-    # Filter for uterotonic administration events
-    uterotonic_events = df[
-        (df["dataElement_uid"] == UTEROTONIC_UID) & df["value"].notna()
-    ]
+    # Filter by facility if specified
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    if uterotonic_events.empty:
+    if UTEROTONIC_COL not in filtered_df.columns:
         return {"Ergometrine": 0, "Oxytocin": 0, "Misoprostol": 0, "total": 0}
 
-    # Count occurrences of each uterotonic type
-    type_counts = uterotonic_events["value"].value_counts()
+    # Filter out rows without uterotonic date
+    if UTEROTONIC_DATE_COL in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df[UTEROTONIC_DATE_COL].notna()].copy()
 
-    # Map codes to names and ensure all types are represented
-    result = {
-        "Ergometrine": int(type_counts.get("1", 0)),
-        "Oxytocin": int(type_counts.get("2", 0)),
-        "Misoprostol": int(type_counts.get("3", 0)),
-        "total": int(type_counts.sum()),
-    }
+    # Initialize counts
+    counts = {"Ergometrine": 0, "Oxytocin": 0, "Misoprostol": 0, "total": 0}
 
+    # Convert to string
+    filtered_df["uterotonic_clean"] = filtered_df[UTEROTONIC_COL].astype(str)
+
+    # Process each value
+    for value in filtered_df["uterotonic_clean"]:
+        if pd.isna(value) or value == "nan":
+            continue
+
+        value_str = str(value).strip()
+
+        # Skip empty values and "0" (none)
+        if (
+            not value_str
+            or value_str == "0"
+            or value_str.lower() in ["n/a", "nan", "null", "none"]
+        ):
+            continue
+
+        # Split by comma and count each code
+        codes = [code.strip() for code in value_str.split(",")]
+
+        for code in codes:
+            if code == "1":
+                counts["Ergometrine"] += 1
+            elif code == "2":
+                counts["Oxytocin"] += 1
+            elif code == "3":
+                counts["Misoprostol"] += 1
+            # Note: We don't count "0" (None)
+
+    counts["total"] = counts["Ergometrine"] + counts["Oxytocin"] + counts["Misoprostol"]
+    return counts
+
+
+def compute_uterotonic_rate(df, facility_uids=None, date_range_filters=None):
+    """
+    Compute Uterotonic Administration Rate from patient-level data
+    Returns: (rate, uterotonic_cases, total_deliveries)
+    """
+    cache_key = get_uterotonic_cache_key(df, facility_uids, "uterotonic_rate")
+
+    if cache_key in st.session_state.uterotonic_cache:
+        return st.session_state.uterotonic_cache[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        # Filter data by facility if specified
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+        # Apply date range filtering for uterotonic date
+        if date_range_filters and UTEROTONIC_DATE_COL in filtered_df.columns:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+
+            if start_date and end_date:
+                # Convert to datetime
+                filtered_df[UTEROTONIC_DATE_COL] = pd.to_datetime(
+                    filtered_df[UTEROTONIC_DATE_COL], errors="coerce"
+                )
+
+                # Filter by date range
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+                filtered_df = filtered_df[
+                    (filtered_df[UTEROTONIC_DATE_COL] >= start_dt)
+                    & (filtered_df[UTEROTONIC_DATE_COL] < end_dt)
+                ].copy()
+
+        # Count Uterotonic cases from filtered data
+        uterotonic_cases = compute_uterotonic_count(filtered_df, facility_uids)
+
+        # Get total deliveries using the date column specific to uterotonic KPI
+        date_column = get_relevant_date_column_for_kpi(
+            "Delivered women who received uterotonic (%)"
+        )
+        total_deliveries = compute_total_deliveries(
+            filtered_df, facility_uids, date_column
+        )
+
+        # Calculate rate
+        rate = (
+            (uterotonic_cases / total_deliveries * 100) if total_deliveries > 0 else 0.0
+        )
+        result = (rate, uterotonic_cases, total_deliveries)
+
+    st.session_state.uterotonic_cache[cache_key] = result
     return result
 
 
 def compute_uterotonic_kpi(df, facility_uids=None):
     """
-    Compute uterotonic KPI for the given dataframe
-
-    Formula: Uterotonic within 1 min rate (%) =
-             (Count of women who received uterotonic within 1 min) ÷ (Total Deliveries) × 100
-
-    Returns:
-        Dictionary with uterotonic metrics including drug-specific counts
+    Compute Uterotonic KPI data from patient-level data
+    This is the function your dashboard is calling
     """
-    if df is None or df.empty:
-        return {
-            "uterotonic_rate": 0.0,
-            "uterotonic_count": 0,
-            "total_deliveries": 0,
-            "uterotonic_types": {
-                "Ergometrine": 0,
-                "Oxytocin": 0,
-                "Misoprostol": 0,
-                "total": 0,
-            },
+    # Get date range filters from session state if available
+    date_range_filters = {}
+    if "filters" in st.session_state:
+        date_range_filters = {
+            "start_date": st.session_state.filters.get("start_date"),
+            "end_date": st.session_state.filters.get("end_date"),
         }
 
-    # Filter by facilities if specified
-    if facility_uids:
-        # Handle both single facility UID and list of UIDs
-        if isinstance(facility_uids, str):
-            facility_uids = [facility_uids]
-        df = df[df["orgUnit"].isin(facility_uids)]
-
-    # Use the same total deliveries calculation as other KPIs
-    total_deliveries = compute_total_deliveries(df, facility_uids)
-
-    # Count uterotonic administration cases
-    uterotonic_count = compute_uterotonic_numerator(df, facility_uids)
-
-    # Get distribution of uterotonic types
-    uterotonic_types = compute_uterotonic_by_type(df, facility_uids)
-
-    # Calculate uterotonic rate
-    uterotonic_rate = (
-        (uterotonic_count / total_deliveries * 100) if total_deliveries > 0 else 0.0
+    rate, uterotonic_cases, total_deliveries = compute_uterotonic_rate(
+        df, facility_uids, date_range_filters
     )
 
+    # Get type distribution
+    type_counts = compute_uterotonic_by_type(df, facility_uids)
+
     return {
-        "uterotonic_rate": float(uterotonic_rate),
-        "uterotonic_count": int(uterotonic_count),
+        "uterotonic_rate": float(rate),
+        "uterotonic_cases": int(uterotonic_cases),
         "total_deliveries": int(total_deliveries),
-        "uterotonic_types": uterotonic_types,
+        "uterotonic_types": type_counts,
     }
 
 
-# ---------------- Uterotonic Chart Functions ----------------
+def get_numerator_denominator_for_uterotonic(
+    df, facility_uids=None, date_range_filters=None
+):
+    """
+    Get numerator and denominator for Uterotonic KPI from patient-level data
+    WITH DATE RANGE FILTERING
+    Returns: (numerator, denominator, rate)
+    """
+    if df is None or df.empty:
+        return (0, 0, 0.0)
+
+    filtered_df = df.copy()
+
+    # Filter by facility UIDs if provided
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    # Apply date range filtering on the uterotonic-specific date column
+    if date_range_filters and UTEROTONIC_DATE_COL in filtered_df.columns:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+
+        if start_date and end_date:
+            # Convert to datetime
+            filtered_df[UTEROTONIC_DATE_COL] = pd.to_datetime(
+                filtered_df[UTEROTONIC_DATE_COL], errors="coerce"
+            )
+
+            # Filter by date range
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+            filtered_df = filtered_df[
+                (filtered_df[UTEROTONIC_DATE_COL] >= start_dt)
+                & (filtered_df[UTEROTONIC_DATE_COL] < end_dt)
+            ].copy()
+
+    if filtered_df.empty:
+        return (0, 0, 0.0)
+
+    # Compute Uterotonic rate on filtered data
+    rate, uterotonic_cases, total_deliveries = compute_uterotonic_rate(
+        filtered_df, facility_uids, date_range_filters
+    )
+
+    return (uterotonic_cases, total_deliveries, rate)
+
+
+# ---------------- Chart Functions WITH TABLES ----------------
 def render_uterotonic_trend_chart(
     df,
     period_col="period_display",
-    value_col="uterotonic_rate",
-    title="Uterotonic Administration Rate Trend",
+    value_col="value",
+    title="Delivered women who received uterotonic (%)",
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
-    numerator_name="Uterotonic Cases",
+    numerator_name="Women given uterotonic",
     denominator_name="Total Deliveries",
     facility_uids=None,
 ):
-    """Render a trend chart for uterotonic administration rate"""
+    """Render trend chart for Uterotonic - EXACT SAME AS ASSISTED"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -155,144 +326,106 @@ def render_uterotonic_trend_chart(
         st.info("⚠️ No data available for the selected period.")
         return
 
+    x_axis_col = period_col
+
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
-    # Chart options
-    chart_options = ["Line Chart", "Stacked Percentage Bar Chart"]
+    chart_options = ["Line", "Bar", "Area"]
+
     chart_type = st.radio(
         f"📊 Chart type for {title}",
         options=chart_options,
         index=0,
         horizontal=True,
-        key=f"chart_type_{title}_{str(facility_uids)}",
-    )
+        key=f"chart_type_uterotonic_{str(facility_uids)}",
+    ).lower()
 
-    # Create hover data
-    hover_data = {}
-    if numerator_name in df.columns and denominator_name in df.columns:
-        hover_data = {numerator_name: True, denominator_name: True}
+    if "numerator" in df.columns and "denominator" in df.columns:
+        df[numerator_name] = df["numerator"]
+        df[denominator_name] = df["denominator"]
+        hover_columns = [numerator_name, denominator_name]
+        use_hover_data = True
+    else:
+        hover_columns = []
+        use_hover_data = False
 
-    # Create chart based on selected type
-    if chart_type == "Line Chart":
-        fig = px.line(
-            df,
-            x=period_col,
-            y=value_col,
-            markers=True,
-            line_shape="linear",
-            title=title,
-            height=400,
-            hover_data=hover_data,
-        )
-
-        # Update traces for line chart
-        fig.update_traces(
-            line=dict(width=3),
-            marker=dict(size=7),
-            hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.2f}}%<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>",
-        )
-
-    elif chart_type == "Stacked Percentage Bar Chart":
-        # Check if we have the drug-specific rate columns
-        if all(
-            col in df.columns
-            for col in ["ergometrine_rate", "oxytocin_rate", "misoprostol_rate"]
-        ):
-            # Create a new figure
-            fig = go.Figure()
-
-            # Add traces for each uterotonic type as percentages
-            fig.add_trace(
-                go.Bar(
-                    name="Ergometrine",
-                    x=df[period_col],
-                    y=df["ergometrine_rate"],
-                    marker_color="#1f77b4",
-                    hovertemplate="<b>%{x}</b><br>Ergometrine: %{y:.2f}%<br>Count: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<extra></extra>",
-                    customdata=np.column_stack(
-                        (df["ergometrine_count"], df["Total Deliveries"])
-                    ),
-                )
-            )
-
-            fig.add_trace(
-                go.Bar(
-                    name="Oxytocin",
-                    x=df[period_col],
-                    y=df["oxytocin_rate"],
-                    marker_color="#ff7f0e",
-                    hovertemplate="<b>%{x}</b><br>Oxytocin: %{y:.2f}%<br>Count: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<extra></extra>",
-                    customdata=np.column_stack(
-                        (df["oxytocin_count"], df["Total Deliveries"])
-                    ),
-                )
-            )
-
-            fig.add_trace(
-                go.Bar(
-                    name="Misoprostol",
-                    x=df[period_col],
-                    y=df["misoprostol_rate"],
-                    marker_color="#2ca02c",
-                    hovertemplate="<b>%{x}</b><br>Misoprostol: %{y:.2f}%<br>Count: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<extra></extra>",
-                    customdata=np.column_stack(
-                        (df["misoprostol_count"], df["Total Deliveries"])
-                    ),
-                )
-            )
-
-            # Update layout for stacked bar chart
-            fig.update_layout(
-                barmode="stack",
-                title="Uterotonic Administration Rate (%)",
-                height=400,
-                yaxis_title="Uterotonic Administration Rate (%)",
-                xaxis_title="Period",
-            )
-
-            # Set appropriate y-axis range to make small values visible
-            max_rate = max(
-                df["ergometrine_rate"].max(),
-                df["oxytocin_rate"].max(),
-                df["misoprostol_rate"].max(),
-                df[value_col].max(),
-            )
-
-            # Add a buffer to make small values visible
-            y_upper_limit = min(max_rate * 1.2, 100)  # Don't exceed 100%
-            fig.update_layout(yaxis_range=[0, y_upper_limit])
-
-        else:
-            # Fall back to regular line chart if type data is not available
+    try:
+        if chart_type == "line":
             fig = px.line(
                 df,
-                x=period_col,
+                x=x_axis_col,
                 y=value_col,
                 markers=True,
                 line_shape="linear",
                 title=title,
                 height=400,
-                hover_data=hover_data,
+                hover_data=hover_columns if use_hover_data else None,
             )
-
-            # Update traces for line chart
             fig.update_traces(
                 line=dict(width=3),
                 marker=dict(size=7),
-                hovertemplate=f"<b>%{{x}}</b><br>Value: %{{y:.2f}}%<br>{numerator_name}: %{{customdata[0]}}<br>{denominator_name}: %{{customdata[1]}}<extra></extra>",
             )
+        elif chart_type == "bar":
+            fig = px.bar(
+                df,
+                x=x_axis_col,
+                y=value_col,
+                title=title,
+                height=400,
+                hover_data=hover_columns if use_hover_data else None,
+            )
+        elif chart_type == "area":
+            fig = px.area(
+                df,
+                x=x_axis_col,
+                y=value_col,
+                title=title,
+                height=400,
+                hover_data=hover_columns if use_hover_data else None,
+            )
+        else:
+            fig = px.line(
+                df,
+                x=x_axis_col,
+                y=value_col,
+                markers=True,
+                line_shape="linear",
+                title=title,
+                height=400,
+                hover_data=hover_columns if use_hover_data else None,
+            )
+            fig.update_traces(
+                line=dict(width=3),
+                marker=dict(size=7),
+            )
+    except Exception as e:
+        st.error(f"Error creating chart: {str(e)}")
+        fig = px.line(
+            df,
+            x=x_axis_col,
+            y=value_col,
+            markers=True,
+            title=title,
+            height=400,
+        )
+
+    is_categorical = (
+        not all(isinstance(x, (dt.date, dt.datetime)) for x in df[period_col])
+        if not df.empty
+        else True
+    )
 
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title="Period",
-        yaxis_title="Uterotonic Administration Rate (%)",
+        xaxis_title=period_col,
+        yaxis_title=value_col,
         xaxis=dict(
-            type="category",
-            tickangle=-45,
+            type="category" if is_categorical else None,
+            tickangle=-45 if is_categorical else 0,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
@@ -305,348 +438,353 @@ def render_uterotonic_trend_chart(
         ),
     )
 
-    if chart_type == "Line Chart":
-        fig.update_layout(yaxis_tickformat=".2f")
+    fig.update_layout(yaxis_tickformat=".2f")
 
+    # Display the chart
     st.plotly_chart(fig, use_container_width=True)
 
-    # Show trend indicator (only for line chart)
-    if len(df) > 1 and chart_type == "Line Chart":
-        last_value = df[value_col].iloc[-1]
-        prev_value = df[value_col].iloc[-2]
-        trend_symbol = (
-            "▲"
-            if last_value > prev_value
-            else ("▼" if last_value < prev_value else "–")
+    # =========== DISPLAY TABLE BELOW GRAPH ===========
+    st.markdown("---")
+    st.subheader("📋 Data Table")
+
+    # Create a clean display dataframe
+    display_df = df.copy()
+
+    # Select columns to show in table
+    table_columns = [x_axis_col, value_col]
+
+    # Add numerator and denominator if available
+    if "numerator" in display_df.columns and "denominator" in display_df.columns:
+        display_df[numerator_name] = display_df["numerator"]
+        display_df[denominator_name] = display_df["denominator"]
+        table_columns.extend([numerator_name, denominator_name])
+
+    # Format the dataframe for display
+    display_df = display_df[table_columns].copy()
+
+    # Format numbers
+    display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:.2f}%")
+
+    if numerator_name in display_df.columns:
+        display_df[numerator_name] = display_df[numerator_name].apply(
+            lambda x: f"{x:,.0f}"
         )
-        trend_class = (
-            "trend-up"
-            if last_value > prev_value
-            else ("trend-down" if last_value < prev_value else "trend-neutral")
-        )
-        st.markdown(
-            f'<p style="font-size:1.2rem;font-weight:600;">Latest Value: {last_value:.2f}% <span class="{trend_class}">{trend_symbol}</span></p>',
-            unsafe_allow_html=True,
-        )
-
-    # Summary table - include drug-specific rate columns if available
-    st.subheader(f"📋 {title} Summary Table")
-
-    # First Table: Main KPI Overview
-    st.markdown("**Main KPI Overview**")
-    main_summary_df = df.copy().reset_index(drop=True)
-    main_summary_df = main_summary_df[
-        [period_col, numerator_name, denominator_name, value_col]
-    ]
-
-    # Calculate overall value for main table
-    total_numerator = main_summary_df[numerator_name].sum()
-    total_denominator = main_summary_df[denominator_name].sum()
-    overall_value = (
-        (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
-    )
-
-    overall_row = pd.DataFrame(
-        {
-            period_col: [f"Overall {title}"],
-            numerator_name: [total_numerator],
-            denominator_name: [total_denominator],
-            value_col: [overall_value],
-        }
-    )
-
-    main_summary_table = pd.concat([main_summary_df, overall_row], ignore_index=True)
-    main_summary_table.insert(0, "No", range(1, len(main_summary_table) + 1))
-
-    # Format main table
-    styled_main_table = (
-        main_summary_table.style.format(
-            {
-                value_col: "{:.1f}%",
-                numerator_name: "{:,.0f}",
-                denominator_name: "{:,.0f}",
-            }
-        )
-        .set_table_attributes('class="summary-table"')
-        .hide(axis="index")
-    )
-
-    st.markdown(styled_main_table.to_html(), unsafe_allow_html=True)
-
-    # Second Table: Uterotonic Type Breakdown (only if we have the data)
-    if all(
-        col in df.columns
-        for col in ["ergometrine_rate", "oxytocin_rate", "misoprostol_rate"]
-    ):
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("**Uterotonic Type Breakdown**")
-
-        # Create drug breakdown table
-        drug_summary_df = df.copy().reset_index(drop=True)
-        drug_summary_df = drug_summary_df[
-            [
-                period_col,
-                denominator_name,
-                "ergometrine_count",
-                "ergometrine_rate",
-                "oxytocin_count",
-                "oxytocin_rate",
-                "misoprostol_count",
-                "misoprostol_rate",
-            ]
-        ]
-
-        # Calculate overall values for drug table
-        total_ergometrine_count = drug_summary_df["ergometrine_count"].sum()
-        total_oxytocin_count = drug_summary_df["oxytocin_count"].sum()
-        total_misoprostol_count = drug_summary_df["misoprostol_count"].sum()
-        total_deliveries = drug_summary_df[denominator_name].sum()
-
-        overall_ergometrine_rate = (
-            (total_ergometrine_count / total_deliveries * 100)
-            if total_deliveries > 0
-            else 0
-        )
-        overall_oxytocin_rate = (
-            (total_oxytocin_count / total_deliveries * 100)
-            if total_deliveries > 0
-            else 0
-        )
-        overall_misoprostol_rate = (
-            (total_misoprostol_count / total_deliveries * 100)
-            if total_deliveries > 0
-            else 0
-        )
-        overall_total_rate = (
-            overall_ergometrine_rate + overall_oxytocin_rate + overall_misoprostol_rate
+    if denominator_name in display_df.columns:
+        display_df[denominator_name] = display_df[denominator_name].apply(
+            lambda x: f"{x:,.0f}"
         )
 
-        overall_drug_row = pd.DataFrame(
-            {
-                period_col: [f"Overall {title}"],
-                denominator_name: [total_deliveries],
-                "ergometrine_count": [total_ergometrine_count],
-                "ergometrine_rate": [overall_ergometrine_rate],
-                "oxytocin_count": [total_oxytocin_count],
-                "oxytocin_rate": [overall_oxytocin_rate],
-                "misoprostol_count": [total_misoprostol_count],
-                "misoprostol_rate": [overall_misoprostol_rate],
-            }
+    # Add Overall/Total row
+    if "numerator" in df.columns and "denominator" in df.columns:
+        total_numerator = df["numerator"].sum()
+        total_denominator = df["denominator"].sum()
+        overall_value = (
+            (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
         )
+    else:
+        overall_value = df[value_col].mean() if not df.empty else 0
+        total_numerator = df[value_col].sum() if not df.empty else 0
+        total_denominator = len(df)
 
-        drug_summary_table = pd.concat(
-            [drug_summary_df, overall_drug_row], ignore_index=True
-        )
-        drug_summary_table.insert(0, "No", range(1, len(drug_summary_table) + 1))
+    # Create overall row with consistent date format
+    overall_row = {
+        x_axis_col: "Overall",
+        value_col: f"{overall_value:.2f}%",
+    }
 
-        # Format drug table with compact column names
-        drug_summary_table = drug_summary_table.rename(
-            columns={
-                "ergometrine_count": "Ergo<br>Count",
-                "ergometrine_rate": "Ergo<br>Rate",
-                "oxytocin_count": "Oxy<br>Count",
-                "oxytocin_rate": "Oxy<br>Rate",
-                "misoprostol_count": "Miso<br>Count",
-                "misoprostol_rate": "Miso<br>Rate",
-                denominator_name: "Total<br>Deliveries",
-            }
-        )
+    if numerator_name in display_df.columns:
+        overall_row[numerator_name] = f"{total_numerator:,.0f}"
+    if denominator_name in display_df.columns:
+        overall_row[denominator_name] = f"{total_denominator:,.0f}"
 
-        # Format drug table
-        styled_drug_table = (
-            drug_summary_table.style.format(
-                {
-                    "Total<br>Deliveries": "{:,.0f}",
-                    "Ergo<br>Count": "{:,.0f}",
-                    "Ergo<br>Rate": "{:.1f}%",
-                    "Oxy<br>Count": "{:,.0f}",
-                    "Oxy<br>Rate": "{:.1f}%",
-                    "Miso<br>Count": "{:,.0f}",
-                    "Miso<br>Rate": "{:.1f}%",
-                }
+    # Convert to DataFrame and append
+    overall_df = pd.DataFrame([overall_row])
+    display_df = pd.concat([display_df, overall_df], ignore_index=True)
+
+    # Display the table
+    st.dataframe(display_df, use_container_width=True)
+
+    # Add summary statistics
+    if len(df) > 1:
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("📈 Latest Value", f"{df[value_col].iloc[-1]:.2f}%")
+
+        with col2:
+            st.metric("📊 Average", f"{df[value_col].mean():.2f}%")
+
+        with col3:
+            # Calculate trend
+            last_value = df[value_col].iloc[-1]
+            prev_value = df[value_col].iloc[-2]
+            trend_change = last_value - prev_value
+            trend_symbol = (
+                "▲" if trend_change > 0 else ("▼" if trend_change < 0 else "–")
             )
-            .set_table_attributes('class="summary-table"')
-            .hide(axis="index")
+            st.metric("📈 Trend from Previous", f"{trend_change:.2f}% {trend_symbol}")
+
+    # Download button
+    summary_df = df.copy().reset_index(drop=True)
+
+    if "numerator" in summary_df.columns and "denominator" in summary_df.columns:
+        summary_df = summary_df[
+            [x_axis_col, "numerator", "denominator", value_col]
+        ].copy()
+
+        # Format period column
+        if x_axis_col in summary_df.columns:
+            summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+                format_period_month_year
+            )
+
+        summary_df = summary_df.rename(
+            columns={
+                "numerator": numerator_name,
+                "denominator": denominator_name,
+                value_col: "Uterotonic Administration Rate (%)",
+            }
         )
 
-        st.markdown(styled_drug_table.to_html(), unsafe_allow_html=True)
+        total_numerator = summary_df[numerator_name].sum()
+        total_denominator = summary_df[denominator_name].sum()
 
-    # Download button for both tables combined
-    combined_table = (
-        pd.concat([main_summary_table, drug_summary_table], axis=1)
-        if "drug_summary_table" in locals()
-        else main_summary_table
-    )
-    csv = combined_table.to_csv(index=False)
+        overall_value = (
+            (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+        )
+
+        overall_row = pd.DataFrame(
+            {
+                x_axis_col: ["Overall"],
+                numerator_name: [total_numerator],
+                denominator_name: [total_denominator],
+                "Uterotonic Administration Rate (%)": [overall_value],
+            }
+        )
+
+        summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
+    else:
+        summary_df = summary_df[[x_axis_col, value_col]].copy()
+
+        # Format period column
+        if x_axis_col in summary_df.columns:
+            summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+                format_period_month_year
+            )
+
+        summary_df = summary_df.rename(
+            columns={value_col: "Uterotonic Administration Rate (%)"}
+        )
+        summary_table = summary_df.copy()
+
+        overall_value = (
+            summary_table["Uterotonic Administration Rate (%)"].mean()
+            if not summary_table.empty
+            else 0
+        )
+        overall_row = pd.DataFrame(
+            {
+                x_axis_col: ["Overall"],
+                "Uterotonic Administration Rate (%)": [overall_value],
+            }
+        )
+        summary_table = pd.concat([summary_table, overall_row], ignore_index=True)
+
+    summary_table.insert(0, "No", range(1, len(summary_table) + 1))
+
+    csv = summary_table.to_csv(index=False)
     st.download_button(
-        label="Download CSV",
+        label="📥 Download Chart Data as CSV",
         data=csv,
-        file_name=f"{title.lower().replace(' ', '_')}_summary.csv",
+        file_name="uterotonic_rate_trend_data.csv",
         mime="text/csv",
+        help="Download the exact data shown in the chart",
     )
 
 
 def render_uterotonic_facility_comparison_chart(
     df,
     period_col="period_display",
-    value_col="uterotonic_rate",
-    title="Uterotonic Administration Rate - Facility Comparison",
+    value_col="value",
+    title="Delivered women who received uterotonic (%)",
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
     facility_uids=None,
-    numerator_name="Uterotonic Cases",
+    numerator_name="Women given uterotonic",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each facility's uterotonic performance"""
+    """Render facility comparison chart - EXACT SAME AS ASSISTED"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    if (
-        not facility_names
-        or not facility_uids
-        or len(facility_names) != len(facility_uids)
-    ):
-        st.info("⚠️ No facilities selected for comparison.")
+    # STANDARDIZE COLUMN NAMES
+    if "orgUnit" not in df.columns:
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in ["orgunit", "facility_uid", "facility_id", "uid", "ou"]:
+                df = df.rename(columns={col: "orgUnit"})
+
+    # Check for facility name column
+    if "orgUnit_name" in df.columns:
+        df = df.rename(columns={"orgUnit_name": "Facility"})
+    elif "Facility" not in df.columns:
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in ["facility_name", "facility", "name", "display_name"]:
+                df = df.rename(columns={col: "Facility"})
+                break
+
+    if "orgUnit" not in df.columns or "Facility" not in df.columns:
+        st.error(
+            f"❌ Facility identifier columns not found in the data. Cannot perform facility comparison.\n"
+            f"Available columns: {list(df.columns)}"
+        )
         return
 
-    # Create mapping
-    facility_uid_to_name = dict(zip(facility_uids, facility_names))
+    if df.empty:
+        st.info("⚠️ No data available for facility comparison.")
+        return
+
+    # Create a mapping from orgUnit to facility name
+    facility_mapping = {}
+    for _, row in df.iterrows():
+        if pd.notna(row["orgUnit"]) and pd.notna(row["Facility"]):
+            facility_mapping[str(row["orgUnit"])] = str(row["Facility"])
+
+    # If we have facility_names parameter, update the mapping
+    if facility_names and len(facility_names) == len(facility_uids):
+        for uid, name in zip(facility_uids, facility_names):
+            facility_mapping[str(uid)] = name
 
     # Prepare comparison data
     comparison_data = []
 
-    for facility_name, facility_uid in zip(facility_names, facility_uids):
-        facility_df = df[df["orgUnit"] == facility_uid]
-        if not facility_df.empty:
-            uterotonic_data = compute_uterotonic_kpi(facility_df, [facility_uid])
-            comparison_data.append(
-                {
-                    "Facility": facility_name,
-                    "value": uterotonic_data["uterotonic_rate"],
-                    "uterotonic_count": uterotonic_data["uterotonic_count"],
-                    "total_deliveries": uterotonic_data["total_deliveries"],
-                    "ergometrine_count": uterotonic_data["uterotonic_types"][
-                        "Ergometrine"
-                    ],
-                    "oxytocin_count": uterotonic_data["uterotonic_types"]["Oxytocin"],
-                    "misoprostol_count": uterotonic_data["uterotonic_types"][
-                        "Misoprostol"
-                    ],
-                }
+    # Get unique periods in order
+    if "period_sort" in df.columns:
+        unique_periods = df[["period_display", "period_sort"]].drop_duplicates()
+        unique_periods = unique_periods.sort_values("period_sort")
+        period_order = unique_periods["period_display"].tolist()
+    else:
+        try:
+            period_order = sorted(
+                df["period_display"].unique().tolist(),
+                key=lambda x: (
+                    dt.datetime.strptime(format_period_month_year(x), "%b-%y")
+                    if "-" in x
+                    else x
+                ),
             )
+        except:
+            period_order = sorted(df["period_display"].unique().tolist())
+
+    # Format periods to proper month-year format
+    period_order = [format_period_month_year(p) for p in period_order]
+
+    # Prepare data for each facility and period
+    for facility_uid, facility_name in facility_mapping.items():
+        facility_df = df[df["orgUnit"] == facility_uid].copy()
+
+        if facility_df.empty:
+            continue
+
+        # Group by period for this facility
+        for period_display, period_group in facility_df.groupby("period_display"):
+            if not period_group.empty:
+                # Get the first row for this facility/period combination
+                row = period_group.iloc[0]
+                formatted_period = format_period_month_year(period_display)
+
+                # Skip if both numerator and denominator are 0
+                numerator_val = row.get("numerator", 0)
+                denominator_val = row.get("denominator", 1)
+
+                if numerator_val == 0 and denominator_val == 0:
+                    continue  # Skip this period for this facility
+
+                comparison_data.append(
+                    {
+                        "period_display": formatted_period,
+                        "Facility": facility_name,
+                        "value": row.get(value_col, 0) if value_col in row else 0,
+                        "numerator": numerator_val,
+                        "denominator": denominator_val,
+                    }
+                )
 
     if not comparison_data:
-        st.info("⚠️ No data available for facility comparison.")
+        st.info("⚠️ No comparison data available.")
         return
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Chart options
-    chart_options = ["Bar Chart", "Line Chart"]
-    chart_type = st.radio(
-        f"📊 Chart type for {title}",
-        options=chart_options,
-        index=0,
-        horizontal=True,
-        key=f"chart_type_facility_comparison_{str(facility_uids)}",
+    # Sort periods properly for display
+    try:
+        comparison_df["period_sort"] = comparison_df["period_display"].apply(
+            lambda x: dt.datetime.strptime(x, "%b-%y")
+        )
+        comparison_df = comparison_df.sort_values("period_sort")
+        period_order = sorted(
+            comparison_df["period_display"].unique().tolist(),
+            key=lambda x: dt.datetime.strptime(x, "%b-%y"),
+        )
+    except:
+        pass
+
+    # Filter out facilities that have no data
+    facilities_with_data = []
+    for facility_name in comparison_df["Facility"].unique():
+        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+        if not (
+            facility_data["numerator"].sum() == 0
+            and facility_data["denominator"].sum() == 0
+        ):
+            facilities_with_data.append(facility_name)
+
+    comparison_df = comparison_df[
+        comparison_df["Facility"].isin(facilities_with_data)
+    ].copy()
+
+    if comparison_df.empty:
+        st.info("⚠️ No valid comparison data available (all facilities have zero data).")
+        return
+
+    # Create the chart
+    fig = px.line(
+        comparison_df,
+        x="period_display",
+        y="value",
+        color="Facility",
+        markers=True,
+        title=f"{title} - Facility Comparison",
+        height=500,
+        category_orders={"period_display": period_order},
+        hover_data=["numerator", "denominator"],
     )
 
-    # Create chart
-    if chart_type == "Line Chart":
-        # For line chart, we need time series data
-        time_series_data = []
-        all_periods = (
-            df[["period_display", "period_sort"]]
-            .drop_duplicates()
-            .sort_values("period_sort")
-        )
-        period_order = all_periods["period_display"].tolist()
-
-        for period_display in period_order:
-            period_df = df[df["period_display"] == period_display]
-
-            for facility_uid in facility_uids:
-                facility_period_df = period_df[period_df["orgUnit"] == facility_uid]
-                if not facility_period_df.empty:
-                    uterotonic_data = compute_uterotonic_kpi(
-                        facility_period_df, [facility_uid]
-                    )
-                    time_series_data.append(
-                        {
-                            "period_display": period_display,
-                            "Facility": facility_uid_to_name[facility_uid],
-                            "value": uterotonic_data["uterotonic_rate"],
-                            "uterotonic_count": uterotonic_data["uterotonic_count"],
-                            "total_deliveries": uterotonic_data["total_deliveries"],
-                        }
-                    )
-
-        if not time_series_data:
-            st.info("⚠️ No time series data available for line chart.")
-            return
-
-        time_series_df = pd.DataFrame(time_series_data)
-
-        fig = px.line(
-            time_series_df,
-            x="period_display",
-            y="value",
-            color="Facility",
-            markers=True,
-            title=title,
-            height=500,
-            category_orders={"period_display": period_order},
-        )
-
-        fig.update_traces(
-            line=dict(width=3),
-            marker=dict(size=7),
-            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<br>Uterotonic Cases: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (time_series_df["uterotonic_count"], time_series_df["total_deliveries"])
-            ),
-        )
-    else:  # Bar Chart
-        fig = px.bar(
-            comparison_df,
-            x="Facility",
-            y="value",
-            title=title,
-            height=500,
-            color="Facility",
-            hover_data=[
-                "uterotonic_count",
-                "total_deliveries",
-                "ergometrine_count",
-                "oxytocin_count",
-                "misoprostol_count",
-            ],
-        )
-
-        fig.update_traces(
-            hovertemplate="<b>%{x}</b><br>Uterotonic Rate: %{y:.2f}%<br>Uterotonic Cases: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<br>Ergometrine: %{customdata[2]}<br>Oxytocin: %{customdata[3]}<br>Misoprostol: %{customdata[4]}<extra></extra>",
-            customdata=np.column_stack(
-                (
-                    comparison_df["uterotonic_count"],
-                    comparison_df["total_deliveries"],
-                    comparison_df["ergometrine_count"],
-                    comparison_df["oxytocin_count"],
-                    comparison_df["misoprostol_count"],
-                )
-            ),
-        )
+    fig.update_traces(
+        line=dict(width=3),
+        marker=dict(size=7),
+        hovertemplate=(
+            f"<b>%{{x}}</b><br>"
+            f"Facility: %{{fullData.name}}<br>"
+            f"{title}: %{{y:.2f}}<br>"
+            f"{numerator_name}: %{{customdata[0]}}<br>"
+            f"{denominator_name}: %{{customdata[1]}}<extra></extra>"
+        ),
+    )
 
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title="Period" if chart_type == "Line Chart" else "Facility",
-        yaxis_title="Uterotonic Administration Rate (%)",
+        xaxis_title="Period (Month-Year)",
+        yaxis_title=title,
         xaxis=dict(
             type="category",
-            tickangle=-45 if chart_type == "Line Chart" else 0,
+            tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
@@ -670,257 +808,263 @@ def render_uterotonic_facility_comparison_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Facility comparison table
-    st.subheader("📋 Facility Comparison Summary")
-    facility_table_data = []
+    # =========== DISPLAY TABLE BELOW GRAPH ===========
+    st.markdown("---")
+    st.subheader("📋 Facility Comparison Data")
 
-    for facility_name, facility_uid in zip(facility_names, facility_uids):
-        facility_df = df[df["orgUnit"] == facility_uid]
-        if not facility_df.empty:
-            uterotonic_data = compute_uterotonic_kpi(facility_df, [facility_uid])
-            facility_table_data.append(
+    # Create pivot table for better display with Overall row
+    pivot_data = []
+
+    for facility_name in comparison_df["Facility"].unique():
+        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+        if not facility_data.empty:
+            total_numerator = facility_data["numerator"].sum()
+            total_denominator = facility_data["denominator"].sum()
+            overall_value = (
+                (total_numerator / total_denominator * 100)
+                if total_denominator > 0
+                else 0
+            )
+
+            pivot_data.append(
                 {
-                    "Facility Name": facility_name,
-                    "Uterotonic Cases": uterotonic_data["uterotonic_count"],
-                    "Total Deliveries": uterotonic_data["total_deliveries"],
-                    "Uterotonic Rate (%)": uterotonic_data["uterotonic_rate"],
-                    "Ergometrine": uterotonic_data["uterotonic_types"]["Ergometrine"],
-                    "Oxytocin": uterotonic_data["uterotonic_types"]["Oxytocin"],
-                    "Misoprostol": uterotonic_data["uterotonic_types"]["Misoprostol"],
+                    "Facility": facility_name,
+                    numerator_name: f"{total_numerator:,.0f}",
+                    denominator_name: f"{total_denominator:,.0f}",
+                    "Overall Value": f"{overall_value:.2f}%",
                 }
             )
 
-    if not facility_table_data:
-        st.info("⚠️ No data available for facility comparison table.")
-        return
+    # Add Overall row for all facilities
+    if pivot_data:
+        all_numerators = comparison_df["numerator"].sum()
+        all_denominators = comparison_df["denominator"].sum()
+        grand_overall = (
+            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        )
 
-    facility_table_df = pd.DataFrame(facility_table_data)
-
-    # Calculate overall
-    total_numerator = facility_table_df["Uterotonic Cases"].sum()
-    total_denominator = facility_table_df["Total Deliveries"].sum()
-    overall_value = (
-        (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
-    )
-
-    total_ergometrine = facility_table_df["Ergometrine"].sum()
-    total_oxytocin = facility_table_df["Oxytocin"].sum()
-    total_misoprostol = facility_table_df["Misoprostol"].sum()
-
-    overall_row = {
-        "Facility Name": "Overall",
-        "Uterotonic Cases": total_numerator,
-        "Total Deliveries": total_denominator,
-        "Uterotonic Rate (%)": overall_value,
-        "Ergometrine": total_ergometrine,
-        "Oxytocin": total_oxytocin,
-        "Misoprostol": total_misoprostol,
-    }
-
-    facility_table_df = pd.concat(
-        [facility_table_df, pd.DataFrame([overall_row])], ignore_index=True
-    )
-    facility_table_df.insert(0, "No", range(1, len(facility_table_df) + 1))
-
-    # Format table
-    styled_table = (
-        facility_table_df.style.format(
+        pivot_data.append(
             {
-                "Uterotonic Cases": "{:,.0f}",
-                "Total Deliveries": "{:,.0f}",
-                "Uterotonic Rate (%)": "{:.2f}%",
-                "Ergometrine": "{:,.0f}",
-                "Oxytocin": "{:,.0f}",
-                "Misoprostol": "{:,.0f}",
+                "Facility": "Overall",
+                numerator_name: f"{all_numerators:,.0f}",
+                denominator_name: f"{all_denominators:,.0f}",
+                "Overall Value": f"{grand_overall:.2f}%",
             }
         )
-        .set_table_attributes('class="summary-table"')
-        .hide(axis="index")
-    )
 
-    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+        pivot_df = pd.DataFrame(pivot_data)
+        st.dataframe(pivot_df, use_container_width=True)
 
-    # Download button
-    csv = facility_table_df.to_csv(index=False)
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="uterotonic_rate_facility_comparison.csv",
-        mime="text/csv",
-    )
+    # Download functionality
+    csv_data = []
+    for facility_name in comparison_df["Facility"].unique():
+        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+        if not facility_data.empty:
+            total_numerator = facility_data["numerator"].sum()
+            total_denominator = facility_data["denominator"].sum()
+            overall_value = (
+                (total_numerator / total_denominator * 100)
+                if total_denominator > 0
+                else 0
+            )
+            csv_data.append(
+                {
+                    "Facility": facility_name,
+                    numerator_name: total_numerator,
+                    denominator_name: total_denominator,
+                    title: f"{overall_value:.2f}%",
+                }
+            )
+
+    # Add overall row to CSV
+    if csv_data:
+        all_numerators = sum(item[numerator_name] for item in csv_data)
+        all_denominators = sum(item[denominator_name] for item in csv_data)
+        grand_overall = (
+            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        )
+        csv_data.append(
+            {
+                "Facility": "Overall",
+                numerator_name: all_numerators,
+                denominator_name: all_denominators,
+                title: f"{grand_overall:.2f}%",
+            }
+        )
+
+        csv_df = pd.DataFrame(csv_data)
+        csv = csv_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Overall Comparison Data",
+            data=csv,
+            file_name=f"{title.lower().replace(' ', '_')}_facility_summary.csv",
+            mime="text/csv",
+            help="Download overall summary data for facility comparison",
+        )
 
 
 def render_uterotonic_region_comparison_chart(
     df,
     period_col="period_display",
-    value_col="uterotonic_rate",
-    title="Uterotonic Administration Rate - Region Comparison",
+    value_col="value",
+    title="Delivered women who received uterotonic (%)",
     bg_color="#FFFFFF",
     text_color=None,
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
-    numerator_name="Uterotonic Cases",
+    numerator_name="Women given uterotonic",
     denominator_name="Total Deliveries",
 ):
-    """Render a comparison chart showing each region's uterotonic performance"""
+    """Render region comparison chart - EXACT SAME AS ASSISTED"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    if not region_names or not facilities_by_region:
-        st.info("⚠️ No regions selected for comparison.")
+    if "Region" not in df.columns:
+        st.error(
+            f"❌ Region column not found in the data. Cannot perform region comparison.\n"
+            f"Available columns: {list(df.columns)}"
+        )
         return
 
-    # Get all facility UIDs for selected regions
-    all_facility_uids = []
-    for region_name in region_names:
-        facility_uids = [uid for _, uid in facilities_by_region.get(region_name, [])]
-        all_facility_uids.extend(facility_uids)
+    if df.empty:
+        st.info("⚠️ No data available for region comparison.")
+        return
 
     # Prepare comparison data
     comparison_data = []
 
-    for region_name in region_names:
-        region_facility_uids = [
-            uid for _, uid in facilities_by_region.get(region_name, [])
-        ]
-        region_df = df[df["orgUnit"].isin(region_facility_uids)]
-
-        if not region_df.empty:
-            uterotonic_data = compute_uterotonic_kpi(region_df, region_facility_uids)
-            comparison_data.append(
-                {
-                    "Region": region_name,
-                    "value": uterotonic_data["uterotonic_rate"],
-                    "uterotonic_count": uterotonic_data["uterotonic_count"],
-                    "total_deliveries": uterotonic_data["total_deliveries"],
-                    "ergometrine_count": uterotonic_data["uterotonic_types"][
-                        "Ergometrine"
-                    ],
-                    "oxytocin_count": uterotonic_data["uterotonic_types"]["Oxytocin"],
-                    "misoprostol_count": uterotonic_data["uterotonic_types"][
-                        "Misoprostol"
-                    ],
-                }
+    # Get unique periods in order
+    if "period_sort" in df.columns:
+        unique_periods = df[["period_display", "period_sort"]].drop_duplicates()
+        unique_periods = unique_periods.sort_values("period_sort")
+        period_order = unique_periods["period_display"].tolist()
+    else:
+        try:
+            period_order = sorted(
+                df["period_display"].unique().tolist(),
+                key=lambda x: (
+                    dt.datetime.strptime(format_period_month_year(x), "%b-%y")
+                    if "-" in x
+                    else x
+                ),
             )
+        except:
+            period_order = sorted(df["period_display"].unique().tolist())
+
+    # Format periods to proper month-year format
+    period_order = [format_period_month_year(p) for p in period_order]
+
+    # Prepare data for each region and period
+    for region_name in df["Region"].unique():
+        region_df = df[df["Region"] == region_name].copy()
+
+        if region_df.empty:
+            continue
+
+        # Group by period for this region
+        for period_display, period_group in region_df.groupby("period_display"):
+            if not period_group.empty:
+                # Get aggregated values for this region/period
+                avg_value = (
+                    period_group[value_col].mean()
+                    if value_col in period_group.columns
+                    else 0
+                )
+                total_numerator = period_group["numerator"].sum()
+                total_denominator = (
+                    period_group["denominator"].sum()
+                    if period_group["denominator"].sum() > 0
+                    else 1
+                )
+
+                # Skip if both numerator and denominator are 0
+                if total_numerator == 0 and total_denominator == 0:
+                    continue
+
+                formatted_period = format_period_month_year(period_display)
+                comparison_data.append(
+                    {
+                        "period_display": formatted_period,
+                        "Region": region_name,
+                        "value": avg_value,
+                        "numerator": total_numerator,
+                        "denominator": total_denominator,
+                    }
+                )
 
     if not comparison_data:
-        st.info("⚠️ No data available for region comparison.")
+        st.info("⚠️ No comparison data available for regions.")
         return
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Chart options
-    chart_options = ["Bar Chart", "Line Chart"]
-    chart_type = st.radio(
-        f"📊 Chart type for {title}",
-        options=chart_options,
-        index=0,
-        horizontal=True,
-        key=f"chart_type_region_comparison_{str(region_names)}",
+    # Sort periods properly for display
+    try:
+        comparison_df["period_sort"] = comparison_df["period_display"].apply(
+            lambda x: dt.datetime.strptime(x, "%b-%y")
+        )
+        comparison_df = comparison_df.sort_values("period_sort")
+        period_order = sorted(
+            comparison_df["period_display"].unique().tolist(),
+            key=lambda x: dt.datetime.strptime(x, "%b-%y"),
+        )
+    except:
+        pass
+
+    # Filter out regions that have no data
+    regions_with_data = []
+    for region_name in comparison_df["Region"].unique():
+        region_data = comparison_df[comparison_df["Region"] == region_name]
+        if not (
+            region_data["numerator"].sum() == 0
+            and region_data["denominator"].sum() == 0
+        ):
+            regions_with_data.append(region_name)
+
+    comparison_df = comparison_df[
+        comparison_df["Region"].isin(regions_with_data)
+    ].copy()
+
+    if comparison_df.empty:
+        st.info("⚠️ No valid comparison data available (all regions have zero data).")
+        return
+
+    # Create the chart
+    fig = px.line(
+        comparison_df,
+        x="period_display",
+        y="value",
+        color="Region",
+        markers=True,
+        title=f"{title} - Region Comparison",
+        height=500,
+        category_orders={"period_display": period_order},
+        hover_data=["numerator", "denominator"],
     )
 
-    # Create chart
-    if chart_type == "Line Chart":
-        # For line chart, we need time series data
-        time_series_data = []
-        all_periods = (
-            df[["period_display", "period_sort"]]
-            .drop_duplicates()
-            .sort_values("period_sort")
-        )
-        period_order = all_periods["period_display"].tolist()
-
-        for period_display in period_order:
-            period_df = df[df["period_display"] == period_display]
-
-            for region_name in region_names:
-                region_facility_uids = [
-                    uid for _, uid in facilities_by_region.get(region_name, [])
-                ]
-                region_period_df = period_df[
-                    period_df["orgUnit"].isin(region_facility_uids)
-                ]
-
-                if not region_period_df.empty:
-                    uterotonic_data = compute_uterotonic_kpi(
-                        region_period_df, region_facility_uids
-                    )
-                    time_series_data.append(
-                        {
-                            "period_display": period_display,
-                            "Region": region_name,
-                            "value": uterotonic_data["uterotonic_rate"],
-                            "uterotonic_count": uterotonic_data["uterotonic_count"],
-                            "total_deliveries": uterotonic_data["total_deliveries"],
-                        }
-                    )
-
-        if not time_series_data:
-            st.info("⚠️ No time series data available for line chart.")
-            return
-
-        time_series_df = pd.DataFrame(time_series_data)
-
-        fig = px.line(
-            time_series_df,
-            x="period_display",
-            y="value",
-            color="Region",
-            markers=True,
-            title=title,
-            height=500,
-            category_orders={"period_display": period_order},
-        )
-
-        fig.update_traces(
-            line=dict(width=3),
-            marker=dict(size=7),
-            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.2f}%<br>Uterotonic Cases: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<extra></extra>",
-            customdata=np.column_stack(
-                (time_series_df["uterotonic_count"], time_series_df["total_deliveries"])
-            ),
-        )
-    else:  # Bar Chart
-        fig = px.bar(
-            comparison_df,
-            x="Region",
-            y="value",
-            title=title,
-            height=500,
-            color="Region",
-            hover_data=[
-                "uterotonic_count",
-                "total_deliveries",
-                "ergometrine_count",
-                "oxytocin_count",
-                "misoprostol_count",
-            ],
-        )
-
-        fig.update_traces(
-            hovertemplate="<b>%{x}</b><br>Uterotonic Rate: %{y:.2f}%<br>Uterotonic Cases: %{customdata[0]}<br>Total Deliveries: %{customdata[1]}<br>Ergometrine: %{customdata[2]}<br>Oxytocin: %{customdata[3]}<br>Misoprostol: %{customdata[4]}<extra></extra>",
-            customdata=np.column_stack(
-                (
-                    comparison_df["uterotonic_count"],
-                    comparison_df["total_deliveries"],
-                    comparison_df["ergometrine_count"],
-                    comparison_df["oxytocin_count"],
-                    comparison_df["misoprostol_count"],
-                )
-            ),
-        )
+    fig.update_traces(
+        line=dict(width=3),
+        marker=dict(size=7),
+        hovertemplate=(
+            f"<b>%{{x}}</b><br>"
+            f"Region: %{{fullData.name}}<br>"
+            f"{title}: %{{y:.2f}}<br>"
+            f"{numerator_name}: %{{customdata[0]}}<br>"
+            f"{denominator_name}: %{{customdata[1]}}<extra></extra>"
+        ),
+    )
 
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title="Period" if chart_type == "Line Chart" else "Region",
-        yaxis_title="Uterotonic Administration Rate (%)",
+        xaxis_title="Period (Month-Year)",
+        yaxis_title=title,
         xaxis=dict(
             type="category",
-            tickangle=-45 if chart_type == "Line Chart" else 0,
+            tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
@@ -944,94 +1088,105 @@ def render_uterotonic_region_comparison_chart(
     fig.update_layout(yaxis_tickformat=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Region comparison table
-    st.subheader("📋 Region Comparison Summary")
-    region_table_data = []
+    # =========== DISPLAY TABLE BELOW GRAPH ===========
+    st.markdown("---")
+    st.subheader("📋 Region Comparison Data")
 
-    for region_name in region_names:
-        region_facility_uids = [
-            uid for _, uid in facilities_by_region.get(region_name, [])
-        ]
-        region_df = df[df["orgUnit"].isin(region_facility_uids)]
+    # Create pivot table for better display with Overall row
+    pivot_data = []
 
-        if not region_df.empty:
-            uterotonic_data = compute_uterotonic_kpi(region_df, region_facility_uids)
-            region_table_data.append(
+    for region_name in comparison_df["Region"].unique():
+        region_data = comparison_df[comparison_df["Region"] == region_name]
+        if not region_data.empty:
+            total_numerator = region_data["numerator"].sum()
+            total_denominator = region_data["denominator"].sum()
+            overall_value = (
+                (total_numerator / total_denominator * 100)
+                if total_denominator > 0
+                else 0
+            )
+
+            pivot_data.append(
                 {
-                    "Region Name": region_name,
-                    "Uterotonic Cases": uterotonic_data["uterotonic_count"],
-                    "Total Deliveries": uterotonic_data["total_deliveries"],
-                    "Uterotonic Rate (%)": uterotonic_data["uterotonic_rate"],
-                    "Ergometrine": uterotonic_data["uterotonic_types"]["Ergometrine"],
-                    "Oxytocin": uterotonic_data["uterotonic_types"]["Oxytocin"],
-                    "Misoprostol": uterotonic_data["uterotonic_types"]["Misoprostol"],
+                    "Region": region_name,
+                    numerator_name: f"{total_numerator:,.0f}",
+                    denominator_name: f"{total_denominator:,.0f}",
+                    "Overall Value": f"{overall_value:.2f}%",
                 }
             )
 
-    if not region_table_data:
-        st.info("⚠️ No data available for region comparison table.")
-        return
+    # Add Overall row for all regions
+    if pivot_data:
+        all_numerators = comparison_df["numerator"].sum()
+        all_denominators = comparison_df["denominator"].sum()
+        grand_overall = (
+            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        )
 
-    region_table_df = pd.DataFrame(region_table_data)
-
-    # Calculate overall
-    total_numerator = region_table_df["Uterotonic Cases"].sum()
-    total_denominator = region_table_df["Total Deliveries"].sum()
-    overall_value = (
-        (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
-    )
-
-    total_ergometrine = region_table_df["Ergometrine"].sum()
-    total_oxytocin = region_table_df["Oxytocin"].sum()
-    total_misoprostol = region_table_df["Misoprostol"].sum()
-
-    overall_row = {
-        "Region Name": "Overall",
-        "Uterotonic Cases": total_numerator,
-        "Total Deliveries": total_denominator,
-        "Uterotonic Rate (%)": overall_value,
-        "Ergometrine": total_ergometrine,
-        "Oxytocin": total_oxytocin,
-        "Misoprostol": total_misoprostol,
-    }
-
-    region_table_df = pd.concat(
-        [region_table_df, pd.DataFrame([overall_row])], ignore_index=True
-    )
-    region_table_df.insert(0, "No", range(1, len(region_table_df) + 1))
-
-    # Format table
-    styled_table = (
-        region_table_df.style.format(
+        pivot_data.append(
             {
-                "Uterotonic Cases": "{:,.0f}",
-                "Total Deliveries": "{:,.0f}",
-                "Uterotonic Rate (%)": "{:.2f}%",
-                "Ergometrine": "{:,.0f}",
-                "Oxytocin": "{:,.0f}",
-                "Misoprostol": "{:,.0f}",
+                "Region": "Overall",
+                numerator_name: f"{all_numerators:,.0f}",
+                denominator_name: f"{all_denominators:,.0f}",
+                "Overall Value": f"{grand_overall:.2f}%",
             }
         )
-        .set_table_attributes('class="summary-table"')
-        .hide(axis="index")
-    )
 
-    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
+        pivot_df = pd.DataFrame(pivot_data)
+        st.dataframe(pivot_df, use_container_width=True)
 
-    # Download button
-    csv = region_table_df.to_csv(index=False)
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="uterotonic_rate_region_comparison.csv",
-        mime="text/csv",
-    )
+    # Download functionality
+    csv_data = []
+    for region_name in comparison_df["Region"].unique():
+        region_data = comparison_df[comparison_df["Region"] == region_name]
+        if not region_data.empty:
+            total_numerator = region_data["numerator"].sum()
+            total_denominator = region_data["denominator"].sum()
+            overall_value = (
+                (total_numerator / total_denominator * 100)
+                if total_denominator > 0
+                else 0
+            )
+            csv_data.append(
+                {
+                    "Region": region_name,
+                    numerator_name: total_numerator,
+                    denominator_name: total_denominator,
+                    title: f"{overall_value:.2f}%",
+                }
+            )
+
+    # Add overall row to CSV
+    if csv_data:
+        all_numerators = sum(item[numerator_name] for item in csv_data)
+        all_denominators = sum(item[denominator_name] for item in csv_data)
+        grand_overall = (
+            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        )
+        csv_data.append(
+            {
+                "Region": "Overall",
+                numerator_name: all_numerators,
+                denominator_name: all_denominators,
+                title: f"{grand_overall:.2f}%",
+            }
+        )
+
+        csv_df = pd.DataFrame(csv_data)
+        csv = csv_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Overall Comparison Data",
+            data=csv,
+            file_name=f"{title.lower().replace(' ', '_')}_region_summary.csv",
+            mime="text/csv",
+            help="Download overall summary data for region comparison",
+        )
 
 
 def render_uterotonic_type_pie_chart(
     df, facility_uids=None, bg_color="#FFFFFF", text_color=None
 ):
-    """Render a pie chart showing distribution of uterotonic types"""
+    """Render a pie chart showing distribution of uterotonic types from patient-level data"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1058,16 +1213,13 @@ def render_uterotonic_type_pie_chart(
     total = pie_df["Count"].sum()
     pie_df["Percentage"] = (pie_df["Count"] / total * 100) if total > 0 else 0
 
-    # UPDATED: Move chart type selection to the top and make it more visible
-    st.markdown("### 📊 Chart Type Selection")
+    # Add chart type selection
     chart_type = st.selectbox(
-        "Choose how to display the uterotonic type distribution:",
+        "Select Chart Type",
         options=["Pie Chart", "Donut Chart"],
-        index=0,  # Default to Pie Chart
+        index=0,
         key=f"uterotonic_chart_type_{str(facility_uids)}",
     )
-
-    st.markdown("---")  # Add a separator
 
     # Add CSS for better pie chart layout
     st.markdown(
@@ -1088,7 +1240,7 @@ def render_uterotonic_type_pie_chart(
         unsafe_allow_html=True,
     )
 
-    # Create chart with consistent height
+    # Create chart
     if chart_type == "Pie Chart":
         fig = px.pie(
             pie_df,
@@ -1198,3 +1350,84 @@ def render_uterotonic_type_pie_chart(
         file_name="uterotonic_type_distribution.csv",
         mime="text/csv",
     )
+
+
+# ---------------- Additional Helper Functions ----------------
+def prepare_data_for_uterotonic_trend(
+    df, kpi_name, facility_uids=None, date_range_filters=None
+):
+    """
+    Prepare patient-level data for Uterotonic trend chart
+    Returns: DataFrame filtered by KPI-specific dates AND date range AND the date column used
+    SAME AS ASSISTED FUNCTION
+    """
+    if df.empty:
+        return pd.DataFrame(), None
+
+    filtered_df = df.copy()
+
+    # Filter by facility UIDs if provided
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    # Get the SPECIFIC date column for Uterotonic (delivery summary)
+    date_column = get_relevant_date_column_for_kpi(kpi_name)
+
+    # Check if the SPECIFIC date column exists
+    if date_column not in filtered_df.columns:
+        # Try to use event_date as fallback
+        if "event_date" in filtered_df.columns:
+            date_column = "event_date"
+            st.warning(
+                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'event_date' instead"
+            )
+        else:
+            st.warning(
+                f"⚠️ Required date column '{date_column}' not found for {kpi_name}"
+            )
+            return pd.DataFrame(), date_column
+
+    # Create result dataframe
+    result_df = filtered_df.copy()
+
+    # Convert to datetime
+    result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
+
+    # CRITICAL: Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+
+        if start_date and end_date:
+            # Convert to datetime for comparison
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)  # Include end date
+
+            # Filter by date range
+            result_df = result_df[
+                (result_df["event_date"] >= start_dt)
+                & (result_df["event_date"] < end_dt)
+            ].copy()
+
+    # Filter out rows without valid dates
+    result_df = result_df[result_df["event_date"].notna()].copy()
+
+    if result_df.empty:
+        st.info(f"⚠️ No data with valid dates in '{date_column}' for {kpi_name}")
+        return pd.DataFrame(), date_column
+
+    # Get period label
+    period_label = st.session_state.get("period_label", "Monthly")
+    if "filters" in st.session_state and "period_label" in st.session_state.filters:
+        period_label = st.session_state.filters["period_label"]
+
+    # Create period columns using time_filter utility
+    from utils.time_filter import assign_period
+
+    result_df = assign_period(result_df, "event_date", period_label)
+
+    # Filter by facility if needed
+    if facility_uids and "orgUnit" in result_df.columns:
+        result_df = result_df[result_df["orgUnit"].isin(facility_uids)].copy()
+
+    return result_df, date_column

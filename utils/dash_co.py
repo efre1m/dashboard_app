@@ -102,7 +102,7 @@ KPI_MAPPING = {
     "Delivered women who received uterotonic (%)": {
         "title": "Delivered women who received uterotonic (%)",
         "numerator_name": "Women given uterotonic",
-        "denominator_name": "Deliveries",
+        "denominator_name": "Total Deliveries",
     },
     "ARV Prophylaxis Rate (%)": {
         "title": "ARV Prophylaxis Rate (%)",
@@ -172,15 +172,14 @@ KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "obstetric_condition_at_admission_delivery_summary",
+        "obstetric_condition_at_delivery_delivery_summary",
         "event_date_delivery_summary",
     ],
     "Delivered women who received uterotonic (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "uterotonic_given_pp_delivery_summary",
-        "uterotonic_type_pp_delivery_summary",
+        "uterotonics_given_delivery_summary",  # CORRECTED COLUMN NAME
         "event_date_delivery_summary",
     ],
     "ARV Prophylaxis Rate (%)": [

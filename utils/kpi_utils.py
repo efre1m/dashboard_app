@@ -538,6 +538,8 @@ def get_relevant_date_column_for_kpi(kpi_name):
         "Stillbirth Rate (%)": "event_date_delivery_summary",
         "C-Section Rate (%)": "event_date_delivery_summary",
         "Normal Vaginal Delivery (SVD) Rate (%)": "event_date_delivery_summary",
+        "Postpartum Hemorrhage (PPH) Rate (%)": "event_date_delivery_summary",
+        "Uterotonic Administration Rate (%)": "event_date_delivery_summary",
         # Instrumental Delivery KPIs - UPDATED CORRECT COLUMN NAME
         "Assisted Delivery Rate (%)": "event_date_instrumental_delivery_form",
         # Postpartum Care KPIs
@@ -668,6 +670,7 @@ def extract_event_date_for_period(df, event_name):
         "Delivery summary": "event_date_delivery_summary",
         "Postpartum care": "event_date_postpartum_care",
         "Discharge Summary": "event_date_discharge_summary",
+        "Instrumental delivery form": "event_date_instrumental_delivery_form",
     }
 
     result_df = df.copy()
@@ -700,6 +703,18 @@ def get_numerator_denominator_for_kpi(
         from utils.kpi_assisted import get_numerator_denominator_for_assisted
 
         return get_numerator_denominator_for_assisted(
+            df, facility_uids, date_range_filters
+        )
+
+    if kpi_name == "Postpartum Hemorrhage (PPH) Rate (%)":
+        from utils.kpi_pph import get_numerator_denominator_for_pph
+
+        return get_numerator_denominator_for_pph(df, facility_uids, date_range_filters)
+
+    if kpi_name == "Delivered women who received uterotonic (%)":
+        from utils.kpi_uterotonic import get_numerator_denominator_for_uterotonic
+
+        return get_numerator_denominator_for_uterotonic(
             df, facility_uids, date_range_filters
         )
 
