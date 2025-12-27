@@ -64,7 +64,13 @@ from utils.kpi_svd import (
     render_svd_region_comparison_chart,
 )
 
-from utils.kpi_missing_md import render_missing_md_simple_table
+from utils.kpi_missing_md import (
+    compute_missing_md_kpi,
+    render_missing_md_trend_chart,
+    render_missing_md_facility_comparison_chart,
+    render_missing_md_region_comparison_chart,
+    get_numerator_denominator_for_missing_md,
+)
 
 
 # KPI mapping for comparison charts - UPDATED NAMES
@@ -111,7 +117,7 @@ KPI_MAPPING = {
     },
     "Low Birth Weight (LBW) Rate (%)": {
         "title": "Low Birth Weight Rate (%)",
-        "numerator_name": "LBW Cases (<2500g)",
+        "numerator_name": "LBW Cases",
         "denominator_name": "Total Weighed Births",
     },
     "Assisted Delivery Rate (%)": {
@@ -125,8 +131,8 @@ KPI_MAPPING = {
         "denominator_name": "Total Deliveries",
     },
     "Missing Mode of Delivery": {
-        "title": "Missing Mode of Delivery",
-        "numerator_name": "Missing MD Cases",
+        "title": "Missing Mode of Delivery Documentation Rate (%)",
+        "numerator_name": "Deliveries with Missing MD",
         "denominator_name": "Total Deliveries",
     },
 }
@@ -146,6 +152,8 @@ KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "birth_outcome_delivery_summary",
         "event_date_delivery_summary",
+        "number_of_newborns_delivery_summary",
+        "other_number_of_newborns_delivery_summary",
     ],
     "Early Postnatal Care (PNC) Coverage (%)": [
         "orgUnit",
@@ -179,22 +187,29 @@ KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "uterotonics_given_delivery_summary",  # CORRECTED COLUMN NAME
+        "uterotonics_given_delivery_summary",
         "event_date_delivery_summary",
     ],
     "ARV Prophylaxis Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "arv_for_newborn_delivery_summary",
-        "maternal_hiv_status_delivery_summary",
+        "hiv_result_delivery_summary",
+        "arv_rx_for_newborn_by_type_pp_postpartum_care",
+        "birth_outcome_delivery_summary",
+        "number_of_newborns_delivery_summary",
+        "other_number_of_newborns_delivery_summary",
+        "event_date_postpartum_care",
         "event_date_delivery_summary",
     ],
     "Low Birth Weight (LBW) Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "newborn_birth_weight_delivery_summary",
+        "birth_weight_grams_delivery_summary",
+        "birth_outcome_delivery_summary",
+        "number_of_newborns_delivery_summary",
+        "other_number_of_newborns_delivery_summary",
         "event_date_delivery_summary",
     ],
     "Assisted Delivery Rate (%)": [
@@ -216,6 +231,7 @@ KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "mode_of_delivery_maternal_delivery_summary",
+        "instrumental_delivery_form",
         "event_date_delivery_summary",
     ],
 }
@@ -575,17 +591,7 @@ def render_trend_chart_section(
         st.error("❌ 'orgUnit' column not found in data. Cannot filter by UIDs.")
         return
 
-    # SPECIAL HANDLING FOR MISSING MODE OF DELIVERY
-    if kpi_selection == "Missing Mode of Delivery":
-        render_missing_md_simple_table(
-            df=patient_df,
-            facility_uids=facility_uids,
-            display_names=display_names,
-            comparison_mode=comparison_mode,
-            facilities_by_region=facilities_by_region,
-            region_names=region_names,
-        )
-        return
+    # NO SPECIAL HANDLING NEEDED! Missing MD will use the same flow
 
     # OPTIMIZATION: Filter DataFrame for this KPI
     kpi_df = get_kpi_filtered_dataframe(patient_df, kpi_selection)
@@ -710,7 +716,7 @@ def render_trend_chart_section(
                     period_patient_data["tei_id"].isin(period_tei_ids)
                 ].copy()
 
-            # Compute KPI using date-filtered data
+            # Compute KPI using date-filtered data - THIS WILL NOW WORK FOR ALL KPIs INCLUDING MISSING MD!
             numerator, denominator, _ = get_numerator_denominator_for_kpi(
                 period_patient_data, kpi_selection, facility_uids, date_range_filters
             )
@@ -736,7 +742,7 @@ def render_trend_chart_section(
     group = pd.DataFrame(period_data)
     group = group.sort_values("period_sort")
 
-    # Render the chart WITH TABLE
+    # Render the chart WITH TABLE - ADD MISSING MD HERE!
     try:
         if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
             render_pph_trend_chart(
@@ -816,6 +822,20 @@ def render_trend_chart_section(
                 denominator_label,
                 facility_uids,
             )
+        # ADD MISSING MD HERE - IT'S JUST ANOTHER KPI!
+        elif kpi_selection == "Missing Mode of Delivery":
+            render_missing_md_trend_chart(
+                group,
+                "period_display",
+                "value",
+                chart_title,
+                bg_color,
+                text_color,
+                display_names,
+                numerator_label,
+                denominator_label,
+                facility_uids,
+            )
         else:
             # For all other KPIs, use the standard trend chart WITH TABLE
             render_trend_chart(
@@ -866,9 +886,10 @@ def render_comparison_chart(
     kpi_df = get_kpi_filtered_dataframe(df_to_use, kpi_selection)
     df_to_use = kpi_df  # Use the filtered DataFrame
 
-    if kpi_selection == "Missing Mode of Delivery":
-        st.info("⚠️ Comparison chart not available for Missing Mode of Delivery.")
-        return
+    # REMOVE THIS - Missing MD should have comparison charts too!
+    # if kpi_selection == "Missing Mode of Delivery":
+    #     st.info("⚠️ Comparison chart not available for Missing Mode of Delivery.")
+    #     return
 
     kpi_config = get_kpi_config(kpi_selection)
     numerator_label = kpi_config.get("numerator_name", "Numerator")
@@ -987,7 +1008,7 @@ def render_comparison_chart(
         if "orgUnit_name" in comparison_df.columns:
             comparison_df = comparison_df.rename(columns={"orgUnit_name": "Facility"})
 
-        # Call the appropriate chart function
+        # Call the appropriate chart function - ADD MISSING MD HERE!
         if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
             render_pph_facility_comparison_chart(
                 df=comparison_df,
@@ -1055,6 +1076,20 @@ def render_comparison_chart(
             )
         elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
             render_svd_facility_comparison_chart(
+                df=comparison_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
+        # ADD MISSING MD HERE!
+        elif kpi_selection == "Missing Mode of Delivery":
+            render_missing_md_facility_comparison_chart(
                 df=comparison_df,
                 period_col="period_display",
                 value_col="value",
@@ -1159,7 +1194,7 @@ def render_comparison_chart(
 
         region_df = pd.DataFrame(region_data)
 
-        # Call the appropriate region comparison function
+        # Call the appropriate region comparison function - ADD MISSING MD HERE!
         if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
             render_pph_region_comparison_chart(
                 df=region_df,
@@ -1232,6 +1267,21 @@ def render_comparison_chart(
             )
         elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
             render_svd_region_comparison_chart(
+                df=region_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=region_names,
+                region_mapping=facilities_by_region,
+                facilities_by_region=facilities_by_region,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
+        # ADD MISSING MD HERE!
+        elif kpi_selection == "Missing Mode of Delivery":
+            render_missing_md_region_comparison_chart(
                 df=region_df,
                 period_col="period_display",
                 value_col="value",
@@ -1692,122 +1742,27 @@ def get_period_data_for_kpi(kpi_selection, patient_df, facility_uids):
 
 
 def compute_kpi_for_period(kpi_selection, period_df, facility_uids):
-    """Compute KPI for a specific period using patient data"""
+    """Compute KPI for a specific period using patient data - ULTRA SIMPLE VERSION"""
     if period_df.empty:
         return _get_default_kpi_data(kpi_selection)
 
+    # For ALL KPIs, use get_numerator_denominator_for_kpi
     numerator, denominator, value = get_numerator_denominator_for_kpi(
         period_df, kpi_selection, facility_uids
     )
 
-    # Create appropriate KPI data structure
-    if kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
-        return {
-            "ippcar": value,
-            "fp_acceptance": numerator,
-            "total_deliveries": denominator,
-        }
-    elif kpi_selection == "Stillbirth Rate (%)":
-        return {
-            "stillbirth_rate": value,
-            "stillbirths": numerator,
-            "total_deliveries_sb": denominator,
-        }
-    elif kpi_selection == "Early Postnatal Care (PNC) Coverage (%)":
-        return {
-            "pnc_coverage": value,
-            "early_pnc": numerator,
-            "total_deliveries": denominator,
-        }
-    elif kpi_selection == "Institutional Maternal Death Rate (%)":
-        return {
-            "maternal_death_rate": value,
-            "maternal_deaths": numerator,
-            "total_deliveries_md": denominator,
-        }
-    elif kpi_selection == "C-Section Rate (%)":
-        return {
-            "csection_rate": value,
-            "csection_deliveries": numerator,
-            "total_deliveries": denominator,
-        }
-    elif kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-        return compute_pph_kpi(period_df, facility_uids)
-    elif kpi_selection == "Delivered women who received uterotonic (%)":
-        return compute_uterotonic_kpi(period_df, facility_uids)
-    elif kpi_selection == "ARV Prophylaxis Rate (%)":
-        return compute_arv_kpi(period_df, facility_uids)
-    elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-        return compute_lbw_kpi(period_df, facility_uids)
-    elif kpi_selection == "Assisted Delivery Rate (%)":
-        return compute_assisted_kpi(period_df, facility_uids)
-    elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
-        return compute_svd_kpi(period_df, facility_uids)
-    else:
-        return _get_default_kpi_data(kpi_selection)
+    # Return SIMPLE, consistent structure
+    return {
+        "value": float(value),
+        "numerator": int(numerator),
+        "denominator": int(denominator),
+        "kpi_name": kpi_selection,
+    }
 
 
 def _get_default_kpi_data(kpi_selection):
-    """Get default empty data for different KPI types"""
-    defaults = {
-        "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {
-            "ippcar": 0,
-            "fp_acceptance": 0,
-            "total_deliveries": 0,
-        },
-        "Stillbirth Rate (%)": {
-            "stillbirth_rate": 0,
-            "stillbirths": 0,
-            "total_deliveries_sb": 0,
-        },
-        "Early Postnatal Care (PNC) Coverage (%)": {
-            "pnc_coverage": 0,
-            "early_pnc": 0,
-            "total_deliveries": 0,
-        },
-        "Institutional Maternal Death Rate (%)": {
-            "maternal_death_rate": 0,
-            "maternal_deaths": 0,
-            "total_deliveries_md": 0,
-        },
-        "C-Section Rate (%)": {
-            "csection_rate": 0,
-            "csection_deliveries": 0,
-            "total_deliveries": 0,
-        },
-        "Postpartum Hemorrhage (PPH) Rate (%)": {
-            "pph_rate": 0.0,
-            "pph_count": 0,
-            "total_deliveries": 0,
-        },
-        "Delivered women who received uterotonic (%)": {
-            "uterotonic_rate": 0.0,
-            "uterotonic_count": 0,
-            "total_deliveries": 0,
-            "uterotonic_types": {
-                "Ergometrine": 0,
-                "Oxytocin": 0,
-                "Misoprostol": 0,
-                "total": 0,
-            },
-        },
-        "Assisted Delivery Rate (%)": {
-            "assisted_delivery_rate": 0.0,
-            "assisted_deliveries": 0,
-            "total_deliveries": 0,
-        },
-        "Normal Vaginal Delivery (SVD) Rate (%)": {
-            "svd_rate": 0.0,
-            "svd_deliveries": 0,
-            "total_deliveries": 0,
-        },
-        "Missing Mode of Delivery": {
-            "missing_md_rate": 0.0,
-            "missing_md_count": 0,
-            "total_deliveries": 0,
-        },
-    }
-    return defaults.get(kpi_selection, {})
+    """Get default empty data"""
+    return {"value": 0.0, "numerator": 0, "denominator": 0}
 
 
 def get_date_column_from_patient_df(df, kpi_selection):

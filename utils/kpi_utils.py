@@ -540,6 +540,8 @@ def get_relevant_date_column_for_kpi(kpi_name):
         "Normal Vaginal Delivery (SVD) Rate (%)": "event_date_delivery_summary",
         "Postpartum Hemorrhage (PPH) Rate (%)": "event_date_delivery_summary",
         "Uterotonic Administration Rate (%)": "event_date_delivery_summary",
+        "Missing Mode of Delivery Documentation Rate (%)": "event_date_delivery_summary",
+        "ARV Prophylaxis Rate (%)": "event_date_postpartum_care",
         # Instrumental Delivery KPIs - UPDATED CORRECT COLUMN NAME
         "Assisted Delivery Rate (%)": "event_date_instrumental_delivery_form",
         # Postpartum Care KPIs
@@ -552,6 +554,7 @@ def get_relevant_date_column_for_kpi(kpi_name):
         # Discharge Summary KPIs
         "Institutional Maternal Death Rate (%)": "event_date_discharge_summary",
         "Maternal Death Rate": "event_date_discharge_summary",
+        "Low Birth Weight (LBW) Rate (%)": "event_date_delivery_summary",
     }
 
     # Try exact match first
@@ -699,24 +702,40 @@ def get_numerator_denominator_for_kpi(
         return get_numerator_denominator_for_svd(df, facility_uids, date_range_filters)
 
     # SPECIAL HANDLING FOR ASSISTED DELIVERY
-    if kpi_name == "Assisted Delivery Rate (%)":
+    elif kpi_name == "Assisted Delivery Rate (%)":
         from utils.kpi_assisted import get_numerator_denominator_for_assisted
 
         return get_numerator_denominator_for_assisted(
             df, facility_uids, date_range_filters
         )
 
-    if kpi_name == "Postpartum Hemorrhage (PPH) Rate (%)":
+    elif kpi_name == "Postpartum Hemorrhage (PPH) Rate (%)":
         from utils.kpi_pph import get_numerator_denominator_for_pph
 
         return get_numerator_denominator_for_pph(df, facility_uids, date_range_filters)
 
-    if kpi_name == "Delivered women who received uterotonic (%)":
+    elif kpi_name == "Delivered women who received uterotonic (%)":
         from utils.kpi_uterotonic import get_numerator_denominator_for_uterotonic
 
         return get_numerator_denominator_for_uterotonic(
             df, facility_uids, date_range_filters
         )
+
+    elif kpi_name == "Missing Mode of Delivery":
+        from utils.kpi_missing_md import get_numerator_denominator_for_missing_md
+
+        return get_numerator_denominator_for_missing_md(
+            df, facility_uids, date_range_filters
+        )
+    elif kpi_name == "ARV Prophylaxis Rate (%)":
+        from utils.kpi_arv import get_numerator_denominator_for_arv
+
+        return get_numerator_denominator_for_arv(df, facility_uids, date_range_filters)
+
+    elif kpi_name == "Low Birth Weight (LBW) Rate (%)":
+        from utils.kpi_lbw import get_numerator_denominator_for_lbw
+
+        return get_numerator_denominator_for_lbw(df, facility_uids, date_range_filters)
 
     """
     Get numerator and denominator for a specific KPI with UID filtering
