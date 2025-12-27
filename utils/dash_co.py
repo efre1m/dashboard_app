@@ -51,7 +51,7 @@ from utils.kpi_lbw import (
 )
 
 from utils.kpi_assisted import (
-    compute_assisted_delivery_kpi,
+    compute_assisted_kpi,
     render_assisted_trend_chart,
     render_assisted_facility_comparison_chart,
     render_assisted_region_comparison_chart,
@@ -202,8 +202,8 @@ KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "mode_of_delivery_maternal_delivery_summary",
-        "event_date_delivery_summary",
+        "instrumental_delivery_form",
+        "event_date_instrumental_delivery_form",
     ],
     "Normal Vaginal Delivery (SVD) Rate (%)": [
         "orgUnit",
@@ -1741,7 +1741,7 @@ def compute_kpi_for_period(kpi_selection, period_df, facility_uids):
     elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
         return compute_lbw_kpi(period_df, facility_uids)
     elif kpi_selection == "Assisted Delivery Rate (%)":
-        return compute_assisted_delivery_kpi(period_df, facility_uids)
+        return compute_assisted_kpi(period_df, facility_uids)
     elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
         return compute_svd_kpi(period_df, facility_uids)
     else:

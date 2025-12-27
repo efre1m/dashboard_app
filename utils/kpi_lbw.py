@@ -9,7 +9,10 @@ from utils.kpi_utils import auto_text_color
 
 
 # ---------------- LBW KPI Constants ----------------
-BIRTH_WEIGHT_UID = "QUlJEvzGcQK"  # Data Element: Birth Weight (grams)
+# Updated column names for patient-level data
+BIRTH_WEIGHT_COL = (
+    "newborn_birth_weight_delivery_summary"  # Updated to match transformed dataset
+)
 
 # LBW categories and their weight ranges (ONLY LBW CATEGORIES - exclude normal weight)
 LBW_CATEGORIES = {
@@ -25,62 +28,66 @@ LBW_THRESHOLD = 2500  # grams
 
 # ---------------- LBW KPI Computation Functions ----------------
 def compute_lbw_numerator(df, facility_uids=None):
-    """Compute numerator for LBW KPI: Count of live births <2,500 g"""
+    """Compute numerator for LBW KPI: Count of live births <2,500 g - UPDATED FOR PATIENT-LEVEL DATA"""
     if df is None or df.empty:
         return 0
 
     # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)]
 
-    # Filter for birth weight events with valid numeric values
-    birth_weight_events = df[
-        (df["dataElement_uid"] == BIRTH_WEIGHT_UID) & df["value"].notna()
-    ].copy()
-
-    if birth_weight_events.empty:
+    if BIRTH_WEIGHT_COL not in filtered_df.columns:
         return 0
 
-    # Convert values to numeric, coercing errors to NaN
-    birth_weight_events["weight_numeric"] = pd.to_numeric(
-        birth_weight_events["value"], errors="coerce"
+    # Filter rows with birth weight data
+    birth_weight_data = filtered_df[filtered_df[BIRTH_WEIGHT_COL].notna()].copy()
+
+    if birth_weight_data.empty:
+        return 0
+
+    # Convert birth weight to numeric
+    birth_weight_data["weight_numeric"] = pd.to_numeric(
+        birth_weight_data[BIRTH_WEIGHT_COL], errors="coerce"
     )
 
     # Filter out NaN values and count births < 2500g
-    lbw_cases = birth_weight_events[
-        (birth_weight_events["weight_numeric"] < LBW_THRESHOLD)
-        & (birth_weight_events["weight_numeric"] > 0)  # Exclude negative/zero weights
+    lbw_cases = birth_weight_data[
+        (birth_weight_data["weight_numeric"] < LBW_THRESHOLD)
+        & (birth_weight_data["weight_numeric"] > 0)  # Exclude negative/zero weights
     ]
 
-    return lbw_cases["tei_id"].nunique()
+    return len(lbw_cases)
 
 
 def compute_lbw_by_category(df, facility_uids=None):
-    """Compute distribution of birth weights by LBW categories"""
+    """Compute distribution of birth weights by LBW categories - UPDATED FOR PATIENT-LEVEL DATA"""
     if df is None or df.empty:
         return {category: 0 for category in LBW_CATEGORIES.keys()}
 
     # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)]
 
-    # Filter for birth weight events with valid numeric values
-    birth_weight_events = df[
-        (df["dataElement_uid"] == BIRTH_WEIGHT_UID) & df["value"].notna()
-    ].copy()
-
-    if birth_weight_events.empty:
+    if BIRTH_WEIGHT_COL not in filtered_df.columns:
         return {category: 0 for category in LBW_CATEGORIES.keys()}
 
-    # Convert values to numeric
-    birth_weight_events["weight_numeric"] = pd.to_numeric(
-        birth_weight_events["value"], errors="coerce"
+    # Filter rows with birth weight data
+    birth_weight_data = filtered_df[filtered_df[BIRTH_WEIGHT_COL].notna()].copy()
+
+    if birth_weight_data.empty:
+        return {category: 0 for category in LBW_CATEGORIES.keys()}
+
+    # Convert birth weight to numeric
+    birth_weight_data["weight_numeric"] = pd.to_numeric(
+        birth_weight_data[BIRTH_WEIGHT_COL], errors="coerce"
     )
 
     # Filter out NaN and invalid weights
-    valid_weights = birth_weight_events[
-        (birth_weight_events["weight_numeric"].notna())
-        & (birth_weight_events["weight_numeric"] > 0)
+    valid_weights = birth_weight_data[
+        (birth_weight_data["weight_numeric"].notna())
+        & (birth_weight_data["weight_numeric"] > 0)
     ]
 
     if valid_weights.empty:
@@ -89,47 +96,51 @@ def compute_lbw_by_category(df, facility_uids=None):
     # Count occurrences in each category
     result = {}
     for category_key, category_info in LBW_CATEGORIES.items():
-        count = valid_weights[
-            (valid_weights["weight_numeric"] >= category_info["min"])
-            & (valid_weights["weight_numeric"] <= category_info["max"])
-        ]["tei_id"].nunique()
+        count = len(
+            valid_weights[
+                (valid_weights["weight_numeric"] >= category_info["min"])
+                & (valid_weights["weight_numeric"] <= category_info["max"])
+            ]
+        )
         result[category_key] = int(count)
 
     return result
 
 
 def compute_lbw_denominator(df, facility_uids=None):
-    """Compute denominator for LBW KPI: Count of all live births that were weighed"""
+    """Compute denominator for LBW KPI: Count of all live births that were weighed - UPDATED FOR PATIENT-LEVEL DATA"""
     if df is None or df.empty:
         return 0
 
     # Filter by facilities if specified
-    if facility_uids:
-        df = df[df["orgUnit"].isin(facility_uids)]
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)]
 
-    # Filter for birth weight events with valid numeric values
-    birth_weight_events = df[
-        (df["dataElement_uid"] == BIRTH_WEIGHT_UID) & df["value"].notna()
-    ].copy()
-
-    if birth_weight_events.empty:
+    if BIRTH_WEIGHT_COL not in filtered_df.columns:
         return 0
 
-    # Convert values to numeric and filter valid weights
-    birth_weight_events["weight_numeric"] = pd.to_numeric(
-        birth_weight_events["value"], errors="coerce"
+    # Filter rows with birth weight data
+    birth_weight_data = filtered_df[filtered_df[BIRTH_WEIGHT_COL].notna()].copy()
+
+    if birth_weight_data.empty:
+        return 0
+
+    # Convert birth weight to numeric and filter valid weights
+    birth_weight_data["weight_numeric"] = pd.to_numeric(
+        birth_weight_data[BIRTH_WEIGHT_COL], errors="coerce"
     )
 
-    valid_weights = birth_weight_events[
-        (birth_weight_events["weight_numeric"].notna())
-        & (birth_weight_events["weight_numeric"] > 0)
+    valid_weights = birth_weight_data[
+        (birth_weight_data["weight_numeric"].notna())
+        & (birth_weight_data["weight_numeric"] > 0)
     ]
 
-    return valid_weights["tei_id"].nunique()
+    return len(valid_weights)
 
 
 def compute_lbw_kpi(df, facility_uids=None):
-    """Compute LBW KPI for the given dataframe"""
+    """Compute LBW KPI for the given dataframe - UPDATED FOR PATIENT-LEVEL DATA"""
     if df is None or df.empty:
         return {
             "lbw_rate": 0.0,
@@ -140,19 +151,21 @@ def compute_lbw_kpi(df, facility_uids=None):
         }
 
     # Filter by facilities if specified
+    filtered_df = df.copy()
     if facility_uids:
         if isinstance(facility_uids, str):
             facility_uids = [facility_uids]
-        df = df[df["orgUnit"].isin(facility_uids)]
+        if "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)]
 
     # Count LBW cases (numerator)
-    lbw_count = compute_lbw_numerator(df, facility_uids)
+    lbw_count = compute_lbw_numerator(filtered_df, facility_uids)
 
     # Count total weighed births (denominator)
-    total_weighed = compute_lbw_denominator(df, facility_uids)
+    total_weighed = compute_lbw_denominator(filtered_df, facility_uids)
 
     # Get distribution of LBW categories
-    lbw_categories = compute_lbw_by_category(df, facility_uids)
+    lbw_categories = compute_lbw_by_category(filtered_df, facility_uids)
 
     # Calculate LBW rate
     lbw_rate = (lbw_count / total_weighed * 100) if total_weighed > 0 else 0.0
@@ -173,6 +186,55 @@ def compute_lbw_kpi(df, facility_uids=None):
     }
 
 
+# ---------------- Helper Functions for Trend Analysis ----------------
+def get_numerator_denominator_for_lbw(df, facility_uids=None, date_range_filters=None):
+    """Get numerator and denominator for LBW KPI with date filtering - UPDATED FOR PATIENT-LEVEL DATA"""
+    if df is None or df.empty:
+        return (0, 0, 0.0)
+
+    filtered_df = df.copy()
+
+    # Apply facility filter
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    # Apply date filtering if provided
+    if date_range_filters:
+        # Get the delivery date column for LBW KPI
+        from utils.kpi_utils import get_relevant_date_column_for_kpi
+
+        date_column = get_relevant_date_column_for_kpi(
+            "Low Birth Weight (LBW) Rate (%)"
+        )
+
+        if date_column and date_column in filtered_df.columns:
+            # Convert to datetime
+            filtered_df[date_column] = pd.to_datetime(
+                filtered_df[date_column], errors="coerce"
+            )
+
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+                filtered_df = filtered_df[
+                    (filtered_df[date_column] >= start_dt)
+                    & (filtered_df[date_column] < end_dt)
+                ].copy()
+
+    # Compute KPI
+    kpi_data = compute_lbw_kpi(filtered_df, facility_uids)
+
+    return (
+        kpi_data.get("lbw_count", 0),
+        kpi_data.get("total_weighed", 1),
+        kpi_data.get("lbw_rate", 0.0),
+    )
+
+
 # ---------------- LBW Chart Functions ----------------
 def render_lbw_trend_chart(
     df,
@@ -186,7 +248,7 @@ def render_lbw_trend_chart(
     denominator_name="Total Weighed Births",
     facility_uids=None,
 ):
-    """Render a trend chart for low birth weight rate"""
+    """Render a trend chart for low birth weight rate - UPDATED FOR PATIENT-LEVEL DATA"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -583,7 +645,7 @@ def render_lbw_facility_comparison_chart(
     numerator_name="LBW Cases",
     denominator_name="Total Weighed Births",
 ):
-    """SIMPLIFIED VERSION: Render facility comparison without numerator/denominator in hover"""
+    """SIMPLIFIED VERSION: Render facility comparison without numerator/denominator in hover - UPDATED FOR PATIENT-LEVEL DATA"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -831,7 +893,7 @@ def render_lbw_region_comparison_chart(
     numerator_name="LBW Cases",
     denominator_name="Total Weighed Births",
 ):
-    """SIMPLIFIED VERSION: Render region comparison without numerator/denominator in hover"""
+    """SIMPLIFIED VERSION: Render region comparison without numerator/denominator in hover - UPDATED FOR PATIENT-LEVEL DATA"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1083,7 +1145,7 @@ def render_lbw_region_comparison_chart(
 def render_lbw_category_pie_chart(
     df, facility_uids=None, bg_color="#FFFFFF", text_color=None
 ):
-    """Render a pie chart showing distribution of LBW categories"""
+    """Render a pie chart showing distribution of LBW categories - UPDATED FOR PATIENT-LEVEL DATA"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 

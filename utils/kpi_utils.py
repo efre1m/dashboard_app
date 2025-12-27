@@ -537,6 +537,9 @@ def get_relevant_date_column_for_kpi(kpi_name):
         # Delivery Summary KPIs
         "Stillbirth Rate (%)": "event_date_delivery_summary",
         "C-Section Rate (%)": "event_date_delivery_summary",
+        "Normal Vaginal Delivery (SVD) Rate (%)": "event_date_delivery_summary",
+        # Instrumental Delivery KPIs - UPDATED CORRECT COLUMN NAME
+        "Assisted Delivery Rate (%)": "event_date_instrumental_delivery_form",
         # Postpartum Care KPIs
         "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": "event_date_postpartum_care",
         "FP Acceptance": "event_date_postpartum_care",
@@ -555,9 +558,11 @@ def get_relevant_date_column_for_kpi(kpi_name):
             return program_stage_date_mapping[key]
 
     # Fallback based on keywords
-    if any(
+    if any(word in kpi_name for word in ["Assisted", "Instrumental"]):
+        return "event_date_instrumental_delivery_form"
+    elif any(
         word in kpi_name
-        for word in ["Delivery", "Birth", "Section", "PPH", "Uterotonic"]
+        for word in ["Delivery", "Birth", "Section", "PPH", "Uterotonic", "SVD"]
     ):
         return "event_date_delivery_summary"
     elif any(
@@ -684,6 +689,20 @@ def extract_event_date_for_period(df, event_name):
 def get_numerator_denominator_for_kpi(
     df, kpi_name, facility_uids=None, date_range_filters=None
 ):
+    # SPECIAL HANDLING FOR SVD - MUST BE FIRST!
+    if kpi_name == "Normal Vaginal Delivery (SVD) Rate (%)":
+        from utils.kpi_svd import get_numerator_denominator_for_svd
+
+        return get_numerator_denominator_for_svd(df, facility_uids, date_range_filters)
+
+    # SPECIAL HANDLING FOR ASSISTED DELIVERY
+    if kpi_name == "Assisted Delivery Rate (%)":
+        from utils.kpi_assisted import get_numerator_denominator_for_assisted
+
+        return get_numerator_denominator_for_assisted(
+            df, facility_uids, date_range_filters
+        )
+
     """
     Get numerator and denominator for a specific KPI with UID filtering
     AND filtered by KPI-specific program stage dates AND date range
