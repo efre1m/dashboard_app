@@ -1,9 +1,4 @@
-"""
-KPI: Total Admitted Mothers
-Measures: Count of unique mothers admitted (based on enrollment date)
-Formula: Count of unique TEI IDs with enrollment dates
-"""
-
+import logging
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -204,6 +199,34 @@ def render_admitted_mothers_trend_chart(
     df = df.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
+    # =========== FIX: Sort periods chronologically ===========
+    # Check if we have a period_sort column
+    if "period_sort" in df.columns:
+        # Sort by period_sort
+        df = df.sort_values("period_sort")
+        logging.info(f"📅 Sorted by period_sort: {df[period_col].tolist()}")
+    else:
+        # Try to sort by month-year format
+        try:
+            # Convert period_display to datetime for sorting
+            df["sort_key"] = df[period_col].apply(
+                lambda x: (
+                    dt.datetime.strptime(format_period_month_year(x), "%b-%y")
+                    if isinstance(x, str) and "-" in x
+                    else x
+                )
+            )
+            df = df.sort_values("sort_key")
+            df = df.drop(columns=["sort_key"])
+            logging.info(f"📅 Sorted by datetime: {df[period_col].tolist()}")
+        except Exception as e:
+            # Fallback: sort alphabetically
+            df = df.sort_values(period_col)
+            logging.warning(
+                f"⚠️ Could not sort chronologically: {e}. Sorted alphabetically: {df[period_col].tolist()}"
+            )
+    # =========== END FIX ===========
+
     # For Admitted Mothers, we use bar chart by default (counts)
     chart_type = "Bar"  # Force bar chart for counts
 
@@ -217,6 +240,8 @@ def render_admitted_mothers_trend_chart(
             height=400,
             hover_data=[value_col],
             text=value_col,  # Add value labels on bars
+            # =========== FIX: Ensure category order ===========
+            category_orders={x_axis_col: df[x_axis_col].tolist()},
         )
 
         # Format text on bars
@@ -235,6 +260,8 @@ def render_admitted_mothers_trend_chart(
             y=value_col,
             title=title,
             height=400,
+            # =========== FIX: Ensure category order ===========
+            category_orders={x_axis_col: df[x_axis_col].tolist()},
         )
 
     is_categorical = (
@@ -248,14 +275,16 @@ def render_admitted_mothers_trend_chart(
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title=period_col,
+        xaxis_title="Period (Month-Year)",
         yaxis_title=value_name,
         xaxis=dict(
-            type="category" if is_categorical else None,
-            tickangle=-45 if is_categorical else 0,
+            type="category",
+            tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
-            categoryorder="category ascending",  # Ensure chronological order
+            # =========== FIX: Force category order ===========
+            categoryorder="array",
+            categoryarray=df[x_axis_col].tolist(),
         ),
         yaxis=dict(
             rangemode="tozero",
