@@ -76,6 +76,13 @@ from utils.kpi_missing_md import (
     render_missing_md_region_comparison_chart,
     get_numerator_denominator_for_missing_md,
 )
+from utils.kpi_admitted_mothers import (
+    compute_admitted_mothers_kpi,
+    render_admitted_mothers_trend_chart,
+    render_admitted_mothers_facility_comparison_chart,
+    render_admitted_mothers_region_comparison_chart,
+    get_numerator_denominator_for_admitted_mothers,
+)
 
 
 # KPI mapping for comparison charts - UPDATED NAMES
@@ -144,6 +151,10 @@ KPI_MAPPING = {
         "title": "Missing Condition of Discharge Documentation Rate (%)",
         "numerator_name": "COMPLETED Discharges with Missing CoD",
         "denominator_name": "Total COMPLETED Discharges",
+    },
+    "Admitted Mothers": {
+        "title": "Total Admitted Mothers",
+        "value_name": "Admitted Mothers",
     },
 }
 
@@ -249,6 +260,11 @@ KPI_COLUMN_REQUIREMENTS = {
         "condition_of_discharge_discharge_summary",
         "event_date_discharge_summary",
     ],
+    "Admitted Mothers": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+    ],
 }
 
 
@@ -323,6 +339,7 @@ KPI_OPTIONS = [
     "Missing Mode of Delivery",
     "Missing Birth Outcome",
     "Missing Condition of Discharge",
+    "Admitted Mothers",
 ]
 
 
@@ -385,6 +402,10 @@ def render_kpi_tab_navigation():
             "Missing Birth Outcome",
             "Missing Condition of Discharge",
         ],
+        # In KPI_GROUPS dictionary, add:
+        "📊 enrollment": [
+            "Admitted Mothers",
+        ],
     }
 
     # Initialize session state for KPI selection
@@ -392,8 +413,14 @@ def render_kpi_tab_navigation():
         st.session_state.selected_kpi = "Institutional Maternal Death Rate (%)"
 
     # Create main KPI group tabs
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📉 **Mortality**", "🚨 **Complications**", "🏥 **Care**", "❓ **Missing**"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        [
+            "📉 **Mortality**",
+            "🚨 **Complications**",
+            "🏥 **Care**",
+            "❓ **Missing**",
+            "📊 **Enrollment**",
+        ]
     )
 
     selected_kpi = st.session_state.selected_kpi
@@ -570,6 +597,14 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Missing Condition of Discharge"
+    with tab5:
+        if st.button(
+            "📊 Admitted Mothers",
+            key="admitted_mothers_btn",
+            use_container_width=True,
+            type=("primary" if selected_kpi == "Admitted Mothers" else "secondary"),
+        ):
+            selected_kpi = "Admitted Mothers"
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_kpi:
@@ -884,6 +919,120 @@ def render_trend_chart_section(
                 denominator_label,
                 facility_uids,
             )
+        # In render_trend_chart_section function, replace the Admitted Mothers section:
+        elif kpi_selection == "Admitted Mothers":
+            # For Admitted Mothers, we need to handle it differently since it's not a percentage
+            # Get date range filters
+            date_range_filters = {}
+            if "filters" in st.session_state:
+                date_range_filters = {
+                    "start_date": st.session_state.filters.get("start_date"),
+                    "end_date": st.session_state.filters.get("end_date"),
+                }
+
+            # Create period data for Admitted Mothers
+            period_data = []
+
+            for _, row in unique_periods.iterrows():
+                period_display = row["period_display"]
+                period_sort = row["period_sort"]
+
+                # Get data for this period from prepared_df
+                period_df = prepared_df[prepared_df["period_display"] == period_display]
+
+                if not period_df.empty:
+                    # Get TEI IDs from this period
+                    period_tei_ids = period_df["tei_id"].dropna().unique()
+
+                    if not period_tei_ids.size:
+                        continue
+
+                    # Get data for these TEI IDs
+                    period_patient_data = working_df.copy()
+
+                    # Filter by TEI IDs AND enrollment date
+                    if (
+                        date_column_used
+                        and date_column_used in period_patient_data.columns
+                    ):
+                        period_patient_data[date_column_used] = pd.to_datetime(
+                            period_patient_data[date_column_used], errors="coerce"
+                        )
+
+                        tei_ids_with_date = period_patient_data[
+                            period_patient_data[date_column_used].notna()
+                        ]["tei_id"].unique()
+
+                        valid_tei_ids = set(period_tei_ids) & set(tei_ids_with_date)
+
+                        if valid_tei_ids:
+                            period_patient_data = period_patient_data[
+                                period_patient_data["tei_id"].isin(valid_tei_ids)
+                                & period_patient_data[date_column_used].notna()
+                            ].copy()
+                        else:
+                            period_data.append(
+                                {
+                                    "period": period_display,
+                                    "period_display": period_display,
+                                    "period_sort": period_sort,
+                                    "value": 0,
+                                    "numerator": 0,
+                                    "denominator": 0,
+                                }
+                            )
+                            continue
+                    else:
+                        period_patient_data = period_patient_data[
+                            period_patient_data["tei_id"].isin(period_tei_ids)
+                        ].copy()
+
+                    # For Admitted Mothers, use the new function
+                    from utils.kpi_admitted_mothers import (
+                        get_numerator_denominator_for_admitted_mothers,
+                    )
+
+                    numerator, denominator, _ = (
+                        get_numerator_denominator_for_admitted_mothers(
+                            period_patient_data, facility_uids, date_range_filters
+                        )
+                    )
+
+                    # For Admitted Mothers, the value is the count (numerator)
+                    # NOT a percentage calculation
+                    value = float(numerator)  # Just use the count as value
+
+                    period_data.append(
+                        {
+                            "period": period_display,
+                            "period_display": period_display,
+                            "period_sort": period_sort,
+                            "value": value,
+                            "numerator": int(numerator),
+                            "denominator": int(denominator),
+                        }
+                    )
+
+            if not period_data:
+                st.info("⚠️ No period data available for Admitted Mothers chart.")
+                return
+
+            # Create DataFrame
+            group = pd.DataFrame(period_data)
+            group = group.sort_values("period_sort")
+
+            # Render the chart
+            render_admitted_mothers_trend_chart(
+                group,
+                "period_display",
+                "value",
+                "Total Admitted Mothers Trend",
+                bg_color,
+                text_color,
+                display_names,
+                "Admitted Mothers",
+                facility_uids,
+            )
         else:
             # For all other KPIs, use the standard trend chart WITH TABLE
             render_trend_chart(
@@ -972,17 +1121,15 @@ def render_comparison_chart(
 
             if facility_df.empty:
                 # Add zero entries for all periods
-                comparison_data.extend(
-                    [
-                        {
-                            "period_display": "All Periods",
-                            "orgUnit": facility_uid,
-                            "orgUnit_name": facility_name,
-                            "value": 0,
-                            "numerator": 0,
-                            "denominator": 0,
-                        }
-                    ]
+                comparison_data.append(
+                    {
+                        "period_display": "All Periods",
+                        "orgUnit": facility_uid,
+                        "orgUnit_name": facility_name,
+                        "value": 0,
+                        "numerator": 0,
+                        "denominator": 0,
+                    }
                 )
                 continue
 
@@ -1028,12 +1175,33 @@ def render_comparison_chart(
                             facility_df["tei_id"].isin(period_tei_ids)
                         ].copy()
 
-                    # Compute KPI for this period
-                    numerator, denominator, _ = get_numerator_denominator_for_kpi(
-                        period_data, kpi_selection, [facility_uid], date_range_filters
-                    )
+                    # Compute KPI for this period - SPECIAL HANDLING FOR ADMITTED MOTHERS
+                    if kpi_selection == "Admitted Mothers":
+                        # Use Admitted Mothers specific function
+                        from utils.kpi_admitted_mothers import (
+                            get_numerator_denominator_for_admitted_mothers,
+                        )
 
-                    value = (numerator / denominator * 100) if denominator > 0 else 0
+                        numerator, denominator, _ = (
+                            get_numerator_denominator_for_admitted_mothers(
+                                period_data, [facility_uid], date_range_filters
+                            )
+                        )
+
+                        # For Admitted Mothers, value is the count (numerator)
+                        value = float(numerator)
+                    else:
+                        # For all other KPIs, use the standard function
+                        numerator, denominator, _ = get_numerator_denominator_for_kpi(
+                            period_data,
+                            kpi_selection,
+                            [facility_uid],
+                            date_range_filters,
+                        )
+
+                        value = (
+                            (numerator / denominator * 100) if denominator > 0 else 0
+                        )
 
                     comparison_data.append(
                         {
@@ -1162,6 +1330,18 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
+        elif kpi_selection == "Admitted Mothers":
+            render_admitted_mothers_facility_comparison_chart(
+                df=comparison_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                value_name="Admitted Mothers",
+            )
         else:
             render_facility_comparison_chart(
                 df=comparison_df,
@@ -1229,15 +1409,33 @@ def render_comparison_chart(
                             region_df["tei_id"].isin(period_tei_ids)
                         ].copy()
 
-                    # Compute KPI for this period
-                    numerator, denominator, _ = get_numerator_denominator_for_kpi(
-                        period_data,
-                        kpi_selection,
-                        region_facility_uids,
-                        date_range_filters,
-                    )
+                    # Compute KPI for this period - SPECIAL HANDLING FOR ADMITTED MOTHERS
+                    if kpi_selection == "Admitted Mothers":
+                        # Use Admitted Mothers specific function
+                        from utils.kpi_admitted_mothers import (
+                            get_numerator_denominator_for_admitted_mothers,
+                        )
 
-                    value = (numerator / denominator * 100) if denominator > 0 else 0
+                        numerator, denominator, _ = (
+                            get_numerator_denominator_for_admitted_mothers(
+                                period_data, region_facility_uids, date_range_filters
+                            )
+                        )
+
+                        # For Admitted Mothers, value is the count (numerator)
+                        value = float(numerator)
+                    else:
+                        # For all other KPIs, use the standard function
+                        numerator, denominator, _ = get_numerator_denominator_for_kpi(
+                            period_data,
+                            kpi_selection,
+                            region_facility_uids,
+                            date_range_filters,
+                        )
+
+                        value = (
+                            (numerator / denominator * 100) if denominator > 0 else 0
+                        )
 
                     region_data.append(
                         {
@@ -1368,6 +1566,19 @@ def render_comparison_chart(
                 facilities_by_region=facilities_by_region,
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
+            )
+        elif kpi_selection == "Admitted Mothers":
+            render_admitted_mothers_region_comparison_chart(
+                df=region_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=region_names,
+                region_mapping=facilities_by_region,
+                facilities_by_region=facilities_by_region,
+                value_name="Admitted Mothers",
             )
         else:
             render_region_comparison_chart(

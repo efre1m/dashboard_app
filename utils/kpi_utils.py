@@ -555,6 +555,8 @@ def get_relevant_date_column_for_kpi(kpi_name):
         "Maternal Death Rate": "event_date_discharge_summary",
         "Missing Birth Outcome Documentation Rate (%)": "event_date_delivery_summary",
         "Missing Condition of Discharge Documentation Rate (%)": "event_date_discharge_summary",
+        "Total Admitted Mothers": "enrollment_date",
+        "Admitted Mothers": "enrollment_date",
     }
 
     # Try exact match first
@@ -741,6 +743,14 @@ def get_numerator_denominator_for_kpi(
         from utils.kpi_missing_cod import get_numerator_denominator_for_missing_cod
 
         return get_numerator_denominator_for_missing_cod(
+            df, facility_uids, date_range_filters
+        )
+    elif kpi_name == "Admitted Mothers":
+        from utils.kpi_admitted_mothers import (
+            get_numerator_denominator_for_admitted_mothers,
+        )
+
+        return get_numerator_denominator_for_admitted_mothers(
             df, facility_uids, date_range_filters
         )
 
