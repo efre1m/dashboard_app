@@ -1212,10 +1212,7 @@ def render_maternal_dashboard_shared(
         selected_kpi = render_kpi_tab_navigation()
 
         if view_mode == "Facility Comparison" and len(selected_facilities) > 1:
-            st.markdown(
-                f'<div class="section-header" style="margin: 0.3rem 0;">📈 {selected_kpi} - Facility Comparison - Maternal Inpatient Data</div>',
-                unsafe_allow_html=True,
-            )
+
             render_comparison_chart(
                 kpi_selection=selected_kpi,
                 patient_df=filtered_for_all,
@@ -1230,10 +1227,6 @@ def render_maternal_dashboard_shared(
                 filtered_patients=filtered_for_all,
             )
         else:
-            st.markdown(
-                f'<div class="section-header" style="margin: 0.3rem 0;">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',
-                unsafe_allow_html=True,
-            )
             render_trend_chart_section(
                 selected_kpi,
                 filtered_for_all,

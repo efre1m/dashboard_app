@@ -878,10 +878,6 @@ def render_maternal_dashboard_facility(
             )
             view_mode = "Normal Trend"
 
-        st.markdown(
-            f'<div class="section-header" style="margin: 0.3rem 0;">📈 {selected_kpi} Trend - Maternal Inpatient Data</div>',
-            unsafe_allow_html=True,
-        )
         render_trend_chart_section(
             selected_kpi,
             filtered_for_all,

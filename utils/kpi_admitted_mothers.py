@@ -686,8 +686,6 @@ def render_admitted_mothers_region_comparison_chart(
             st.write(f"⚠️ No data for region: {region_name}")
             continue
 
-        st.write(f"🔍 Processing region: {region_name}, Data shape: {region_df.shape}")
-
         # Group by period for this region
         for period_display, period_group in region_df.groupby("period_display"):
             if not period_group.empty:
