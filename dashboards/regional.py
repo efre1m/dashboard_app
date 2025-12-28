@@ -1,10 +1,10 @@
+# dashboards/regional.py
 import streamlit as st
 import pandas as pd
 import logging
 import concurrent.futures
 import time
 from datetime import datetime
-from components.kpi_card import render_kpi_cards
 from newborns_dashboard.reginal_newborn import render_newborn_dashboard
 from utils.data_service import fetch_program_data_for_user
 from utils.queries import (
@@ -368,161 +368,6 @@ def get_earliest_date(df, date_column):
         return "N/A"
 
 
-def calculate_maternal_indicators_from_patients(patient_df, facility_uids):
-    """Calculate maternal indicators from patient-level data"""
-    if patient_df.empty:
-        return {
-            "total_deliveries": 0,
-            "maternal_deaths": 0,
-            "maternal_death_rate": 0.0,
-            "live_births": 0,
-            "stillbirths": 0,
-            "total_births": 0,
-            "stillbirth_rate": 0.0,
-            "low_birth_weight_rate": 0.0,
-            "low_birth_weight_count": 0,
-        }
-
-    # Filter by facilities if specified
-    if facility_uids and "orgUnit" in patient_df.columns:
-        filtered_df = patient_df[patient_df["orgUnit"].isin(facility_uids)]
-    else:
-        filtered_df = patient_df
-
-    # Count total patients (each patient is a delivery)
-    total_deliveries = filtered_df["tei_id"].nunique()
-
-    # Initialize counts
-    maternal_deaths = 0
-    live_births = 0
-    stillbirths = 0
-    low_birth_weight_count = 0
-    total_weighed = 0
-
-    # Check for maternal death indicators in patient data
-    if "delivery_summary_maternal_death" in filtered_df.columns:
-        maternal_deaths = filtered_df["delivery_summary_maternal_death"].sum()
-
-    # Count live births and stillbirths
-    if "delivery_summary_live_birth" in filtered_df.columns:
-        live_births = filtered_df["delivery_summary_live_birth"].sum()
-    if "delivery_summary_stillbirth" in filtered_df.columns:
-        stillbirths = filtered_df["delivery_summary_stillbirth"].sum()
-
-    total_births = live_births + stillbirths
-
-    # Calculate low birth weight
-    if "delivery_summary_birth_weight" in filtered_df.columns:
-        # Filter out null weights
-        weight_df = filtered_df[filtered_df["delivery_summary_birth_weight"].notna()]
-        total_weighed = len(weight_df)
-        if total_weighed > 0:
-            # Convert to numeric
-            weight_df["delivery_summary_birth_weight"] = pd.to_numeric(
-                weight_df["delivery_summary_birth_weight"], errors="coerce"
-            )
-            low_birth_weight_count = weight_df[
-                weight_df["delivery_summary_birth_weight"] < 2500
-            ].shape[0]
-            low_birth_weight_rate = (
-                (low_birth_weight_count / total_weighed * 100)
-                if total_weighed > 0
-                else 0
-            )
-        else:
-            low_birth_weight_rate = 0
-    else:
-        low_birth_weight_rate = 0
-
-    # Calculate rates
-    maternal_death_rate = (
-        (maternal_deaths / total_deliveries * 100000) if total_deliveries > 0 else 0
-    )
-    stillbirth_rate = (stillbirths / total_births * 1000) if total_births > 0 else 0
-
-    return {
-        "total_deliveries": total_deliveries,
-        "maternal_deaths": int(maternal_deaths),
-        "maternal_death_rate": round(maternal_death_rate, 2),
-        "live_births": int(live_births),
-        "stillbirths": int(stillbirths),
-        "total_births": int(total_births),
-        "stillbirth_rate": round(stillbirth_rate, 2),
-        "low_birth_weight_rate": round(low_birth_weight_rate, 2),
-        "low_birth_weight_count": int(low_birth_weight_count),
-    }
-
-
-def calculate_newborn_indicators_from_patients(patient_df, facility_uids):
-    """Calculate newborn indicators from patient-level data"""
-    if patient_df.empty:
-        return {
-            "total_admitted": 0,
-            "nmr": 0.0,
-            "nmr_dead_count": 0,
-            "nmr_total_admitted": 0,
-            "kmc_coverage_rate": 0.0,
-            "kmc_cases": 0,
-            "total_lbw": 0,
-        }
-
-    # Filter by facilities if specified
-    if facility_uids and "orgUnit" in patient_df.columns:
-        filtered_df = patient_df[patient_df["orgUnit"].isin(facility_uids)]
-    else:
-        filtered_df = patient_df
-
-    # Count total admitted newborns
-    total_admitted = filtered_df["tei_id"].nunique()
-
-    # Calculate NMR from discharge status
-    nmr_dead_count = 0
-    if (
-        "discharge_and_final_diagnosis_newborn_status_at_discharge"
-        in filtered_df.columns
-    ):
-        dead_cases = filtered_df[
-            filtered_df["discharge_and_final_diagnosis_newborn_status_at_discharge"]
-            == "dead"
-        ]
-        nmr_dead_count = len(dead_cases)
-
-    nmr_rate = (nmr_dead_count / total_admitted * 1000) if total_admitted > 0 else 0
-
-    # Calculate KMC coverage
-    kmc_cases = 0
-    if "interventions_kmc_administered" in filtered_df.columns:
-        kmc_cases = filtered_df[
-            filtered_df["interventions_kmc_administered"] == 1
-        ].shape[0]
-    kmc_coverage_rate = (kmc_cases / total_admitted * 100) if total_admitted > 0 else 0
-
-    # Count low birth weight newborns
-    total_lbw = 0
-    if "admission_information_weight_on_admission" in filtered_df.columns:
-        weight_df = filtered_df[
-            filtered_df["admission_information_weight_on_admission"].notna()
-        ]
-        if not weight_df.empty:
-            weight_df["admission_information_weight_on_admission"] = pd.to_numeric(
-                weight_df["admission_information_weight_on_admission"], errors="coerce"
-            )
-            total_lbw = weight_df[
-                weight_df["admission_information_weight_on_admission"] < 2500
-            ].shape[0]
-
-    return {
-        "total_admitted": total_admitted,
-        "nmr": round(nmr_rate, 2),
-        "nmr_raw": nmr_rate,
-        "nmr_dead_count": nmr_dead_count,
-        "nmr_total_admitted": total_admitted,
-        "kmc_coverage_rate": round(kmc_coverage_rate, 2),
-        "kmc_cases": kmc_cases,
-        "total_lbw": total_lbw,
-    }
-
-
 def get_location_display_name(selected_facilities, region_name):
     """Optimized location display name generation"""
     if selected_facilities == ["All Facilities"]:
@@ -575,10 +420,54 @@ def shorten_facility_name(facility_name):
     return short_name
 
 
+# NEW: Maintenance message functions for regional dashboard
+def render_newborn_maintenance_message():
+    """Display maintenance message for newborn dashboard"""
+    st.markdown(
+        """
+    <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #fff8e1, #ffecb3);
+         border-radius: 12px; border: 2px solid #ffb300; margin: 2rem 0;">
+        <div style="font-size: 4rem; margin-bottom: 1rem;">🔧</div>
+        <h2 style="color: #e65100; margin-bottom: 1rem;">Newborn Dashboard Under Maintenance</h2>
+        <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+            The newborn dashboard is currently undergoing maintenance and will be available soon.
+            <br>In the meantime, you can view maternal health indicators in the other tabs.
+        </p>
+        <div style="display: inline-block; padding: 10px 20px; background: #ff9800; color: white;
+             border-radius: 25px; font-weight: bold;">
+            Maintenance in Progress
+        </div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_data_quality_maintenance_message():
+    """Display maintenance message for data quality dashboard"""
+    st.markdown(
+        """
+    <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #fff8e1, #ffecb3);
+         border-radius: 12px; border: 2px solid #ffb300; margin: 2rem 0;">
+        <div style="font-size: 4rem; margin-bottom: 1rem;">🔧</div>
+        <h2 style="color: #e65100; margin-bottom: 1rem;">Data Quality Dashboard Under Maintenance</h2>
+        <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+            The data quality dashboard is currently undergoing maintenance and will be available soon.
+        </p>
+        <div style="display: inline-block; padding: 10px 20px; background: #ff9800; color: white;
+             border-radius: 25px; font-weight: bold;">
+            Maintenance in Progress
+        </div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_summary_dashboard_shared(
     user, region_name, facility_mapping, selected_facilities, shared_data
 ):
-    """Optimized Summary Dashboard using patient-level data"""
+    """Optimized Summary Dashboard - SIMPLIFIED with only 3 key indicators"""
 
     # Only run if this is the active tab
     if st.session_state.active_tab != "summary":
@@ -593,7 +482,7 @@ def render_summary_dashboard_shared(
             <div style="font-size: 4rem; margin-bottom: 1rem;">📊</div>
             <h2 style="color: #495057; margin-bottom: 1rem;">Summary Dashboard</h2>
             <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
-                Get comprehensive overview of maternal and newborn health indicators across selected facilities
+                Get overview of key maternal health indicators across selected facilities
             </p>
         </div>
         """,
@@ -635,7 +524,7 @@ def render_summary_dashboard_shared(
         st.session_state.tab_loading["summary"] = False
         st.rerun()
 
-    logging.info("Regional summary dashboard rendering - USING PATIENT-LEVEL DATA")
+    logging.info("Regional summary dashboard rendering - SIMPLIFIED VERSION")
 
     # Get location display name
     location_name, location_type = get_location_display_name(
@@ -650,26 +539,22 @@ def render_summary_dashboard_shared(
             facility_mapping[f] for f in selected_facilities if f in facility_mapping
         ]
 
-    # Use patient-level data
+    # Use only maternal data (newborn data is under maintenance)
     maternal_data = shared_data["maternal"]
-    newborn_data = shared_data["newborn"]
 
-    if not maternal_data and not newborn_data:
-        st.error("No data available for summary dashboard")
+    if not maternal_data:
+        st.error("No maternal data available for summary dashboard")
         return
 
-    # Get patient dataframes
+    # Get patient dataframes - ONLY MATERNAL DATA
     maternal_patients = (
         maternal_data.get("patients", pd.DataFrame())
         if maternal_data
         else pd.DataFrame()
     )
-    newborn_patients = (
-        newborn_data.get("patients", pd.DataFrame()) if newborn_data else pd.DataFrame()
-    )
 
     # Create cache key for summary data
-    cache_key = f"summary_{location_name}_{len(facility_uids)}_{len(maternal_patients)}_{len(newborn_patients)}"
+    cache_key = f"summary_{location_name}_{len(facility_uids)}_{len(maternal_patients)}"
 
     # Check if we have cached summary data
     if (
@@ -681,78 +566,92 @@ def render_summary_dashboard_shared(
     else:
         # Compute summary data using patient-level data
         with st.spinner("Computing summary statistics from patient-level data..."):
-            # Get TEI counts from patient data
+            # Get TEI counts from patient data - THIS IS "Total Admitted"
             maternal_patient_count = count_unique_patients(
                 maternal_patients, facility_uids
-            )
-            newborn_patient_count = count_unique_patients(
-                newborn_patients, facility_uids
             )
 
             # Get enrollment dates
             maternal_start_date = "N/A"
-            newborn_start_date = "N/A"
-
             if "enrollment_date" in maternal_patients.columns:
                 maternal_start_date = get_earliest_date(
                     maternal_patients, "enrollment_date"
                 )
-            if "enrollment_date" in newborn_patients.columns:
-                newborn_start_date = get_earliest_date(
-                    newborn_patients, "enrollment_date"
-                )
 
-            # Calculate maternal indicators from patient data
-            maternal_indicators = calculate_maternal_indicators_from_patients(
-                maternal_patients, facility_uids
+            # Compute maternal indicators using kpi_utils - ONLY NEED 2 RATES
+            from utils.kpi_utils import compute_kpis
+
+            if not maternal_patients.empty and "orgUnit" in maternal_patients.columns:
+                filtered_maternal = maternal_patients[
+                    maternal_patients["orgUnit"].isin(facility_uids)
+                ].copy()
+            else:
+                filtered_maternal = maternal_patients.copy()
+
+            # Compute maternal KPIs
+            maternal_kpis = compute_kpis(filtered_maternal, facility_uids)
+
+            # Get date range filters from session state if available
+            date_range_filters = {}
+            if "filters" in st.session_state:
+                date_range_filters = {
+                    "start_date": st.session_state.filters.get("start_date"),
+                    "end_date": st.session_state.filters.get("end_date"),
+                }
+
+            # IMPORTANT: Compute facility data using Admitted Mothers KPI for each facility
+            from utils.kpi_admitted_mothers import (
+                get_numerator_denominator_for_admitted_mothers,
             )
 
-            # Calculate newborn indicators from patient data
-            newborn_indicators = calculate_newborn_indicators_from_patients(
-                newborn_patients, facility_uids
-            )
-
-            # Facility comparison using patient data
             facility_comparison_data = {}
             for facility_name, facility_uid in facility_mapping.items():
-                # Count maternal patients
                 if (
-                    not maternal_patients.empty
-                    and "orgUnit" in maternal_patients.columns
+                    selected_facilities == ["All Facilities"]
+                    or facility_name in selected_facilities
                 ):
-                    facility_maternal_patients = maternal_patients[
-                        maternal_patients["orgUnit"] == facility_uid
-                    ]
-                    maternal_count = facility_maternal_patients["tei_id"].nunique()
-                else:
-                    maternal_count = 0
+                    if (
+                        not maternal_patients.empty
+                        and "orgUnit" in maternal_patients.columns
+                    ):
+                        # Filter data for this facility
+                        facility_maternal_data = maternal_patients[
+                            maternal_patients["orgUnit"] == facility_uid
+                        ].copy()
 
-                # Count newborn patients
-                if not newborn_patients.empty and "orgUnit" in newborn_patients.columns:
-                    facility_newborn_patients = newborn_patients[
-                        newborn_patients["orgUnit"] == facility_uid
-                    ]
-                    newborn_count = facility_newborn_patients["tei_id"].nunique()
-                else:
-                    newborn_count = 0
+                        # Use the Admitted Mothers KPI function to get the count
+                        numerator, denominator, _ = (
+                            get_numerator_denominator_for_admitted_mothers(
+                                facility_maternal_data,
+                                [facility_uid],
+                                date_range_filters,
+                            )
+                        )
 
-                # Only include facilities with data
-                if maternal_count > 0 or newborn_count > 0:
-                    short_name = shorten_facility_name(facility_name)
-                    facility_comparison_data[short_name] = {
-                        "mothers": maternal_count,
-                        "newborns": newborn_count,
-                        "full_name": facility_name,
-                    }
+                        maternal_count = numerator  # This is the admitted mothers count for this facility
+                    else:
+                        maternal_count = 0
 
+                    # Only include facilities with data
+                    if maternal_count > 0:
+                        facility_comparison_data[facility_name] = {
+                            "mothers": maternal_count,
+                            "newborns": "N/A",  # Newborn data is under maintenance
+                        }
+
+            # Store only the 3 required indicators
             summary_data = {
-                "maternal_indicators": maternal_indicators,
-                "newborn_indicators": newborn_indicators,
-                "maternal_tei_count": maternal_patient_count,
-                "newborn_tei_count": newborn_patient_count,
-                "newborn_start_date": newborn_start_date,
+                "maternal_tei_count": maternal_patient_count,  # Total Admitted
+                "maternal_death_rate": maternal_kpis.get(
+                    "maternal_death_rate", 0.0
+                ),  # Maternal Death Rate
+                "stillbirth_rate": maternal_kpis.get(
+                    "stillbirth_rate", 0.0
+                ),  # Stillbirth Rate
                 "maternal_start_date": maternal_start_date,
                 "facility_comparison_data": facility_comparison_data,
+                "location_name": location_name,
+                "location_type": location_type,
             }
 
             # Cache the computed data
@@ -762,73 +661,54 @@ def render_summary_dashboard_shared(
             }
 
     # Extract data for rendering
-    maternal_indicators = summary_data["maternal_indicators"]
-    newborn_indicators = summary_data["newborn_indicators"]
     maternal_tei_count = summary_data["maternal_tei_count"]
-    newborn_tei_count = summary_data["newborn_tei_count"]
-    newborn_start_date = summary_data["newborn_start_date"]
+    maternal_death_rate = summary_data["maternal_death_rate"]
+    stillbirth_rate = summary_data["stillbirth_rate"]
     maternal_start_date = summary_data["maternal_start_date"]
     facility_comparison_data = summary_data["facility_comparison_data"]
+    location_name = summary_data["location_name"]
+    location_type = summary_data["location_type"]
 
-    # Apply optimized table styling
-    st.markdown(
-        """
-    <style>
-    .summary-table-container { border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 0.5rem 0; border: 1px solid #e0e0e0; }
-    .summary-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .summary-table thead tr { background: linear-gradient(135deg, #1f77b4, #1668a1); }
-    .summary-table th { color: white; padding: 10px 12px; text-align: left; font-weight: 600; font-size: 13px; border: none; }
-    .summary-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; background-color: white; }
-    .summary-table tbody tr:last-child td { border-bottom: none; }
-    .summary-table tbody tr:hover td { background-color: #f8f9fa; }
-    .newborn-table thead tr { background: linear-gradient(135deg, #1f77b4, #1668a1) !important; }
-    .maternal-table thead tr { background: linear-gradient(135deg, #2ca02c, #228b22) !important; }
-    .summary-table td:first-child { font-weight: 600; color: #666; text-align: center; }
-    .summary-table th:first-child { text-align: center; }
-    </style>
-    """,
-        unsafe_allow_html=True,
-    )
+    # SHOW ONLY THE 3 REQUIRED INDICATORS
+    st.markdown("### 📊 Key Maternal Health Indicators")
 
-    # DIRECTLY SHOW TABLES WITHOUT SUMMARY BUTTON
-    # Show quick statistics at the top
-    st.markdown("### 📈 Quick Statistics")
+    # Add location info above the metrics
+    st.markdown(f"**📍 {location_type}: {location_name}**")
+    if maternal_start_date != "N/A":
+        st.markdown(f"**📅 Start Date: {maternal_start_date}**")
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     metrics = [
         (
             col1,
-            "Total Mothers",
-            maternal_tei_count,
+            "Total Admitted Mothers",
+            f"{maternal_tei_count:,}",
             "Unique mothers admitted",
+            "#1f77b4",
         ),
         (
             col2,
-            "Total Newborns",
-            newborn_tei_count,
-            "Unique newborns admitted",
+            "Maternal Death Rate",
+            f"{maternal_death_rate:.2f}%",
+            "Maternal mortality rate",
+            "#d62728",
         ),
         (
             col3,
-            "Maternal Deaths",
-            maternal_indicators["maternal_deaths"],
-            "Maternal mortality cases",
-        ),
-        (
-            col4,
-            "Coverage Start",
-            maternal_start_date,
-            "Earliest data record",
+            "Stillbirth Rate",
+            f"{stillbirth_rate:.2f}%",
+            "Stillbirth rate",
+            "#ff7f0e",
         ),
     ]
 
-    for col, label, value, help_text in metrics:
+    for col, label, value, help_text, color in metrics:
         with col:
             st.markdown(
                 f"""
-            <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; border-left: 4px solid #1f77b4; margin-bottom: 10px;">
+            <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; border-left: 4px solid {color}; margin-bottom: 10px;">
                 <div style="font-size: 0.8rem; color: #666; margin-bottom: 5px;">{label}</div>
-                <div style="font-size: 1.5rem; font-weight: bold; color: #1f77b4; margin: 10px 0;">{value if isinstance(value, int) else value}</div>
+                <div style="font-size: 1.5rem; font-weight: bold; color: {color}; margin: 10px 0;">{value}</div>
                 <div style="font-size: 0.65rem; color: #888;">{help_text}</div>
             </div>
             """,
@@ -837,209 +717,73 @@ def render_summary_dashboard_shared(
 
     st.markdown("---")
 
-    # Newborn Overview Table
-    st.markdown("### 👶 Newborn Care Overview")
-
-    # Create newborn table data with actual NMR value
-    newborn_table_data = {
-        "No": list(range(1, 10)),
-        "Indicator": [
-            "Start Date",
-            location_type,
-            "Total Admitted Newborns",
-            "NMR (per 1000)",
-            "Stillbirth Rate (per 1000)",
-            "Live Births",
-            "Stillbirths",
-            "Total Births",
-            "Low Birth Weight Rate (<2500g)",
-        ],
-        "Value": [
-            newborn_start_date,
-            location_name,
-            f"{newborn_tei_count:,}",
-            f"{newborn_indicators['nmr']:.2f}",
-            f"{maternal_indicators['stillbirth_rate']:.2f}",
-            f"{maternal_indicators['live_births']:,}",
-            f"{maternal_indicators['stillbirths']:,}",
-            f"{maternal_indicators['total_births']:,}",
-            f"{maternal_indicators['low_birth_weight_rate']:.2f}%",
-        ],
-    }
-
-    newborn_table_df = pd.DataFrame(newborn_table_data)
-    st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
-    st.markdown(
-        newborn_table_df.style.set_table_attributes(
-            'class="summary-table newborn-table"'
-        )
-        .hide(axis="index")
-        .set_properties(**{"text-align": "left"})
-        .to_html(),
-        unsafe_allow_html=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Download button for newborn data with NMR
-    col_info, col_download = st.columns([3, 1])
-    with col_download:
-        newborn_data_download = {
-            "Start Date": [newborn_start_date],
-            f"{location_type}": [location_name],
-            "Total Admitted Newborns": [newborn_tei_count],
-            "NMR (per 1000)": [f"{newborn_indicators['nmr']:.2f}"],
-            "Stillbirth Rate (per 1000)": [
-                f"{maternal_indicators['stillbirth_rate']:.2f}"
-            ],
-            "Live Births": [maternal_indicators["live_births"]],
-            "Stillbirths": [maternal_indicators["stillbirths"]],
-            "Total Births": [maternal_indicators["total_births"]],
-            "Low Birth Weight Rate": [
-                f"{maternal_indicators['low_birth_weight_rate']:.2f}%"
-            ],
-        }
-        newborn_df = pd.DataFrame(newborn_data_download)
-        st.download_button(
-            "Download Newborn Data",
-            data=newborn_df.to_csv(index=False),
-            file_name=f"newborn_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    # Maternal Overview Table
-    st.markdown("---")
-    st.markdown("### 🤰 Maternal Care Overview")
-
-    # Create maternal table data
-    maternal_table_data = {
-        "No": list(range(1, 6)),
-        "Indicator": [
-            "Start Date",
-            location_type,
-            "Total Admitted Mothers",
-            "Total Deliveries",
-            "Maternal Death Rate (per 100,000)",
-        ],
-        "Value": [
-            maternal_start_date,
-            location_name,
-            f"{maternal_tei_count:,}",
-            f"{maternal_indicators['total_deliveries']:,}",
-            f"{maternal_indicators['maternal_death_rate']:.2f}",
-        ],
-    }
-
-    maternal_table_df = pd.DataFrame(maternal_table_data)
-    st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
-    st.markdown(
-        maternal_table_df.style.set_table_attributes(
-            'class="summary-table maternal-table"'
-        )
-        .hide(axis="index")
-        .set_properties(**{"text-align": "left"})
-        .to_html(),
-        unsafe_allow_html=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Download button for maternal data
-    col_info2, col_download2 = st.columns([3, 1])
-    with col_download2:
-        maternal_data_download = {
-            "Start Date": [maternal_start_date],
-            f"{location_type}": [location_name],
-            "Total Admitted Mothers": [maternal_tei_count],
-            "Total Deliveries": [maternal_indicators["total_deliveries"]],
-            "Maternal Death Rate (per 100,000)": [
-                f"{maternal_indicators['maternal_death_rate']:.2f}"
-            ],
-        }
-        maternal_df = pd.DataFrame(maternal_data_download)
-        st.download_button(
-            "Download Maternal Data",
-            data=maternal_df.to_csv(index=False),
-            file_name=f"maternal_overview_{location_name.replace(' ', '_').replace(',', '_')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    # Facility comparison table
-    st.markdown("---")
-    st.markdown("### 📊 Mothers & Newborns by facility")
+    # Facility comparison table with 4 columns
+    st.markdown("### 📊 Facility Summary")
 
     if facility_comparison_data:
         facilities = list(facility_comparison_data.keys())
         total_mothers = sum(
             data["mothers"] for data in facility_comparison_data.values()
         )
-        total_newborns = sum(
-            data["newborns"] for data in facility_comparison_data.values()
-        )
+        total_newborns = "N/A"  # Newborn data is under maintenance
 
-        # Create transposed table structure
-        transposed_data = []
+        # Sort facilities alphabetically for better organization
+        facilities = sorted(facilities)
+
+        # Create table structure with 4 columns - FIX: Use consistent data types
+        table_data = []
         for i, facility in enumerate(facilities, 1):
-            transposed_data.append(
+            mother_count = facility_comparison_data[facility]["mothers"]
+            newborn_count = facility_comparison_data[facility]["newborns"]
+
+            table_data.append(
                 {
-                    "No": i,
-                    "Facility Name": facility,
-                    "Admitted Mothers": f"{facility_comparison_data[facility]['mothers']:,}",
-                    "Admitted Newborns": f"{facility_comparison_data[facility]['newborns']:,}",
+                    "No": str(i),  # Keep as string for consistency
+                    "Facility Name": facility,  # Full facility name
+                    "Total Admitted Mothers": (
+                        f"{mother_count:,}"
+                        if isinstance(mother_count, int)
+                        else str(mother_count)
+                    ),
+                    "Total Admitted Newborns": str(newborn_count),
                 }
             )
 
-        # Add TOTAL row
-        transposed_data.append(
+        # Add TOTAL row - use string for "No" column to be consistent
+        table_data.append(
             {
-                "No": "",
+                "No": "-",  # Use dash string instead of empty string
                 "Facility Name": "TOTAL",
-                "Admitted Mothers": f"{total_mothers:,}",
-                "Admitted Newborns": f"{total_newborns:,}",
+                "Total Admitted Mothers": f"{total_mothers:,}",
+                "Total Admitted Newborns": str(total_newborns),
             }
         )
 
-        transposed_df = pd.DataFrame(transposed_data)
-        st.markdown('<div class="summary-table-container">', unsafe_allow_html=True)
-        st.markdown(
-            transposed_df.style.set_table_attributes(
-                'class="summary-table newborn-table"'
-            )
-            .hide(axis="index")
-            .set_properties(**{"text-align": "left"})
-            .to_html(),
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+        # Create DataFrame and ensure all columns are strings
+        table_df = pd.DataFrame(table_data)
 
-        # Add download button
-        st.markdown("---")
-        col_info3, col_download3 = st.columns([3, 1])
-        with col_download3:
-            download_data = []
-            for facility, data in facility_comparison_data.items():
-                download_data.append(
-                    {
-                        "Facility": data.get("full_name", facility),
-                        "Admitted Mothers": data["mothers"],
-                        "Admitted Newborns": data["newborns"],
-                    }
-                )
-            download_data.append(
-                {
-                    "Facility": "TOTAL",
-                    "Admitted Mothers": total_mothers,
-                    "Admitted Newborns": total_newborns,
-                }
-            )
-            download_df = pd.DataFrame(download_data)
-            st.download_button(
-                "Download Facility Data",
-                data=download_df.to_csv(index=False),
-                file_name=f"facility_comparison_{region_name.replace(' ', '_')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
+        # Alternative 1: Use st.dataframe with explicit dtype conversion
+        # Convert all columns to string to avoid Arrow serialization issues
+        display_df = table_df.astype(str)
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        # Alternative 2: Or use HTML table for better control
+        # st.markdown(
+        #     table_df.to_html(index=False,
+        #                     classes='summary-table',
+        #                     border=0,
+        #                     justify='left'),
+        #     unsafe_allow_html=True
+        # )
+
+        # Add download button for facility data
+        st.download_button(
+            "📥 Download Facility Data",
+            data=table_df.to_csv(index=False),
+            file_name=f"facility_summary_{region_name.replace(' ', '_')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
     else:
         st.info("No facility data available for comparison.")
 
@@ -1085,32 +829,48 @@ def render_maternal_dashboard_shared(
     if facility_uids and "orgUnit" in working_df.columns:
         working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Ensure ALL patients have a date for filtering
-    if "event_date" not in working_df.columns:
-        # Try to find event date columns
-        event_date_cols = [
-            col for col in working_df.columns if "event_date" in col.lower()
-        ]
-        if event_date_cols:
-            # Use the first event date column
-            working_df["event_date"] = pd.to_datetime(
-                working_df[event_date_cols[0]], errors="coerce"
-            )
-        else:
-            working_df["event_date"] = pd.NaT
+    # =========== CRITICAL: USE normalize_patient_dates ===========
+    # Use the same function as national.py to ensure consistency
+    from utils.dash_co import normalize_patient_dates
 
-    # Ensure enrollment_date exists and is datetime
-    if "enrollment_date" in working_df.columns:
-        working_df["enrollment_date"] = pd.to_datetime(
-            working_df["enrollment_date"], errors="coerce"
+    # This will create proper event_date column
+    working_df = normalize_patient_dates(working_df)
+
+    # Log date statistics
+    valid_dates = working_df["event_date"].notna().sum()
+    total_patients = len(working_df)
+    logging.info(
+        f"📅 REGIONAL: event_date - {valid_dates}/{total_patients} valid dates"
+    )
+
+    # Log sample dates to verify they're correct
+    if valid_dates > 0:
+        sample_dates = working_df["event_date"].dropna().head(3).tolist()
+        logging.info(f"📅 REGIONAL: Sample dates: {sample_dates}")
+    # =========== END OF CRITICAL ADDITION ===========
+
+    # Get current KPI selection to know which date column we need
+    current_kpi = st.session_state.get(
+        "selected_kpi", "Institutional Maternal Death Rate (%)"
+    )
+    from utils.kpi_utils import get_relevant_date_column_for_kpi
+
+    kpi_date_column = get_relevant_date_column_for_kpi(current_kpi)
+
+    # Log which date column will be used
+    if kpi_date_column and kpi_date_column in working_df.columns:
+        valid_dates = working_df[kpi_date_column].notna().sum()
+        total_patients = len(working_df)
+        logging.info(
+            f"📅 REGIONAL: KPI '{current_kpi}' will use date column: {kpi_date_column}"
+        )
+        logging.info(
+            f"📅 REGIONAL: Date stats for {kpi_date_column}: {valid_dates}/{total_patients} valid dates"
         )
     else:
-        working_df["enrollment_date"] = working_df["event_date"]
-
-    # Create a combined date that always has a value
-    working_df["combined_date"] = working_df["event_date"].combine_first(
-        working_df["enrollment_date"]
-    )
+        logging.warning(
+            f"⚠️ REGIONAL: KPI date column '{kpi_date_column}' not found in data"
+        )
 
     # Store the original df for KPI calculations
     st.session_state.maternal_patients_df = working_df.copy()
@@ -1181,25 +941,26 @@ def render_maternal_dashboard_shared(
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Apply date filters FIRST to get the correct time period
+    logging.info(
+        f"🔍 REGIONAL: Calling apply_patient_filters with {len(working_df)} patients"
+    )
+    logging.info(f"   - Quick range: {filters.get('quick_range', 'N/A')}")
+    if "start_date" in filters and "end_date" in filters:
+        logging.info(
+            f"   - Date range: {filters['start_date']} to {filters['end_date']}"
+        )
+    logging.info(f"   - Period label: {filters.get('period_label', 'Monthly')}")
+    logging.info(f"   - Facility UIDs: {len(facility_uids)}")
+
     filtered_for_all = apply_patient_filters(working_df, filters, facility_uids)
+
+    logging.info(
+        f"🔍 REGIONAL: After apply_patient_filters: {len(filtered_for_all)} patients"
+    )
 
     # Store BOTH versions
     st.session_state["filtered_patients"] = filtered_for_all.copy()
     st.session_state["all_patients_for_kpi"] = filtered_for_all.copy()
-
-    # KPI Cards with FILTERED data
-    with kpi_container:
-        location_name, location_type = get_location_display_name(
-            selected_facilities, region_name
-        )
-
-        user_id = str(user.get("id", user.get("username", "default_user")))
-        kpi_data = render_kpi_cards(filtered_for_all, location_name, user_id=user_id)
-
-        # Save for summary dashboard to reuse
-        st.session_state.last_computed_kpis = kpi_data
-        st.session_state.last_computed_facilities = facility_uids
-        st.session_state.last_computed_timestamp = time.time()
 
     # CLEAR THE PROGRESS INDICATOR ONCE KPI CARDS ARE DONE
     progress_container.empty()
@@ -1517,21 +1278,8 @@ def render():
             st.session_state.active_tab = "newborn"
             logging.info("Switched to Newborn tab")
 
-        newborn_data = shared_data["newborn"]
-        if newborn_data:
-            render_newborn_dashboard(
-                user=user,
-                program_uid=program_uid_map.get("Newborn Care Form"),
-                region_name=region_name,
-                selected_facilities=selected_facilities,
-                facility_uids=facility_uids,
-                view_mode=view_mode,
-                facility_mapping=facility_mapping,
-                facility_names=facility_names,
-                shared_newborn_data=newborn_data,
-            )
-        else:
-            st.error("Newborn data not available")
+        # Show maintenance message instead of actual newborn dashboard
+        render_newborn_maintenance_message()
 
     with tab3:
         if st.session_state.active_tab != "summary":
@@ -1607,7 +1355,8 @@ def render():
             st.session_state.active_tab = "data_quality"
             logging.info("Switched to Data Quality tab")
 
-        render_data_quality_tracking(user)
+        # Show maintenance message for data quality dashboard
+        render_data_quality_maintenance_message()
 
     # Log current active tab state
     logging.info(f"Current active tab: {st.session_state.active_tab}")

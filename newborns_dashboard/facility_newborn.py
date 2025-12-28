@@ -4,7 +4,6 @@ import pandas as pd
 import logging
 import concurrent.futures
 import requests
-from components.kpi_card import render_kpi_cards
 from newborns_dashboard.kmc_coverage import compute_kmc_kpi
 from utils.data_service import fetch_program_data_for_user
 

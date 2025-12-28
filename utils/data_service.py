@@ -691,9 +691,37 @@ def fetch_odk_data_for_user(
     user: dict, form_id: str = None
 ) -> Dict[str, Union[pd.DataFrame, Dict[str, pd.DataFrame]]]:
     """
-    Load ODK data from pre-fetched CSV files.
+    Load ODK data for a user using the ODK API.
     """
-    return {"odk_forms": {}}
+    try:
+        # Import here to avoid circular imports
+        from utils.odk_api import fetch_all_forms_as_dataframes
+
+        logging.info(f"📡 Fetching ODK data for user: {user.get('username')}")
+
+        # Get facility names for filtering if needed
+        facility_names = None
+        if user.get("role") == "facility":
+            from utils.queries import get_facilities_for_user
+
+            facilities = get_facilities_for_user(user)
+            if facilities:
+                # Extract facility names
+                facility_names = []
+                for facility in facilities:
+                    if isinstance(facility, (list, tuple)) and len(facility) > 0:
+                        facility_names.append(facility[0])
+
+        # Fetch all forms
+        odk_forms = fetch_all_forms_as_dataframes(user, facility_names)
+
+        logging.info(f"✅ Loaded {len(odk_forms)} ODK forms for {user.get('username')}")
+
+        return {"odk_forms": odk_forms}
+
+    except Exception as e:
+        logging.error(f"❌ Error fetching ODK data: {e}")
+        return {"odk_forms": {}}
 
 
 def fetch_combined_data_for_user(
