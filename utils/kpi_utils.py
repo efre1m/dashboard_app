@@ -551,10 +551,10 @@ def get_relevant_date_column_for_kpi(kpi_name):
         "Early Postnatal Care (PNC) Coverage (%)": "event_date_postpartum_care",
         "PNC Coverage": "event_date_postpartum_care",
         "Postnatal Care": "event_date_postpartum_care",
-        # Discharge Summary KPIs
         "Institutional Maternal Death Rate (%)": "event_date_discharge_summary",
         "Maternal Death Rate": "event_date_discharge_summary",
-        "Low Birth Weight (LBW) Rate (%)": "event_date_delivery_summary",
+        "Missing Birth Outcome Documentation Rate (%)": "event_date_delivery_summary",
+        "Missing Condition of Discharge Documentation Rate (%)": "event_date_discharge_summary",
     }
 
     # Try exact match first
@@ -731,11 +731,18 @@ def get_numerator_denominator_for_kpi(
         from utils.kpi_arv import get_numerator_denominator_for_arv
 
         return get_numerator_denominator_for_arv(df, facility_uids, date_range_filters)
+    elif kpi_name == "Missing Birth Outcome":
+        from utils.kpi_missing_bo import get_numerator_denominator_for_missing_bo
 
-    elif kpi_name == "Low Birth Weight (LBW) Rate (%)":
-        from utils.kpi_lbw import get_numerator_denominator_for_lbw
+        return get_numerator_denominator_for_missing_bo(
+            df, facility_uids, date_range_filters
+        )
+    elif kpi_name == "Missing Condition of Discharge":
+        from utils.kpi_missing_cod import get_numerator_denominator_for_missing_cod
 
-        return get_numerator_denominator_for_lbw(df, facility_uids, date_range_filters)
+        return get_numerator_denominator_for_missing_cod(
+            df, facility_uids, date_range_filters
+        )
 
     """
     Get numerator and denominator for a specific KPI with UID filtering

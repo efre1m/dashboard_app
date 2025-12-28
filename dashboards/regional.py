@@ -23,7 +23,6 @@ from utils.dash_co import (
     render_kpi_tab_navigation,
 )
 from utils.kpi_utils import clear_cache, compute_kpis
-from utils.kpi_lbw import compute_lbw_kpi
 from utils.odk_dashboard import display_odk_dashboard
 from dashboards.data_quality_tracking import render_data_quality_tracking
 from newborns_dashboard.kpi_nmr import compute_nmr_kpi

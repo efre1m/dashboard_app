@@ -18,7 +18,13 @@ from utils.kpi_utils import (
     render_facility_comparison_chart,
     render_region_comparison_chart,
 )
-
+from utils.kpi_missing_cod import (
+    compute_missing_cod_kpi,
+    render_missing_cod_trend_chart,
+    render_missing_cod_facility_comparison_chart,
+    render_missing_cod_region_comparison_chart,
+    get_numerator_denominator_for_missing_cod,
+)
 from utils.kpi_pph import (
     compute_pph_kpi,
     render_pph_trend_chart,
@@ -41,13 +47,12 @@ from utils.kpi_arv import (
     render_arv_facility_comparison_chart,
     render_arv_region_comparison_chart,
 )
-
-from utils.kpi_lbw import (
-    compute_lbw_kpi,
-    render_lbw_trend_chart,
-    render_lbw_facility_comparison_chart,
-    render_lbw_region_comparison_chart,
-    render_lbw_category_pie_chart,
+from utils.kpi_missing_bo import (
+    compute_missing_bo_kpi,
+    render_missing_bo_trend_chart,
+    render_missing_bo_facility_comparison_chart,
+    render_missing_bo_region_comparison_chart,
+    get_numerator_denominator_for_missing_bo,
 )
 
 from utils.kpi_assisted import (
@@ -115,11 +120,6 @@ KPI_MAPPING = {
         "numerator_name": "ARV Cases",
         "denominator_name": "HIV-Exposed Infants",
     },
-    "Low Birth Weight (LBW) Rate (%)": {
-        "title": "Low Birth Weight Rate (%)",
-        "numerator_name": "LBW Cases",
-        "denominator_name": "Total Weighed Births",
-    },
     "Assisted Delivery Rate (%)": {
         "title": "Assisted Delivery Rate (%)",
         "numerator_name": "Assisted Deliveries",
@@ -134,6 +134,16 @@ KPI_MAPPING = {
         "title": "Missing Mode of Delivery Documentation Rate (%)",
         "numerator_name": "Deliveries with Missing MD",
         "denominator_name": "Total Deliveries",
+    },
+    "Missing Birth Outcome": {
+        "title": "Missing Birth Outcome Documentation Rate (%)",
+        "numerator_name": "Deliveries with Missing BO",
+        "denominator_name": "Total Deliveries",
+    },
+    "Missing Condition of Discharge": {
+        "title": "Missing Condition of Discharge Documentation Rate (%)",
+        "numerator_name": "COMPLETED Discharges with Missing CoD",
+        "denominator_name": "Total COMPLETED Discharges",
     },
 }
 
@@ -202,16 +212,6 @@ KPI_COLUMN_REQUIREMENTS = {
         "event_date_postpartum_care",
         "event_date_delivery_summary",
     ],
-    "Low Birth Weight (LBW) Rate (%)": [
-        "orgUnit",
-        "tei_id",
-        "enrollment_date",
-        "birth_weight_grams_delivery_summary",
-        "birth_outcome_delivery_summary",
-        "number_of_newborns_delivery_summary",
-        "other_number_of_newborns_delivery_summary",
-        "event_date_delivery_summary",
-    ],
     "Assisted Delivery Rate (%)": [
         "orgUnit",
         "tei_id",
@@ -233,6 +233,21 @@ KPI_COLUMN_REQUIREMENTS = {
         "mode_of_delivery_maternal_delivery_summary",
         "instrumental_delivery_form",
         "event_date_delivery_summary",
+    ],
+    "Missing Birth Outcome": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "birth_outcome_delivery_summary",
+        "event_date_delivery_summary",
+    ],
+    "Missing Condition of Discharge": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "enrollment_status",
+        "condition_of_discharge_discharge_summary",
+        "event_date_discharge_summary",
     ],
 }
 
@@ -303,10 +318,11 @@ KPI_OPTIONS = [
     "Postpartum Hemorrhage (PPH) Rate (%)",
     "Delivered women who received uterotonic (%)",
     "ARV Prophylaxis Rate (%)",
-    "Low Birth Weight (LBW) Rate (%)",
     "Assisted Delivery Rate (%)",
     "Normal Vaginal Delivery (SVD) Rate (%)",
     "Missing Mode of Delivery",
+    "Missing Birth Outcome",
+    "Missing Condition of Discharge",
 ]
 
 
@@ -354,7 +370,6 @@ def render_kpi_tab_navigation():
         ],
         "🚨 Complications": [
             "Postpartum Hemorrhage (PPH) Rate (%)",
-            "Low Birth Weight (LBW) Rate (%)",
         ],
         "🏥 Care": [
             "C-Section Rate (%)",
@@ -367,6 +382,8 @@ def render_kpi_tab_navigation():
         ],
         "❓ Missing": [
             "Missing Mode of Delivery",
+            "Missing Birth Outcome",
+            "Missing Condition of Discharge",
         ],
     }
 
@@ -423,19 +440,6 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Postpartum Hemorrhage (PPH) Rate (%)"
-
-        with col2:
-            if st.button(
-                "📊 Low Birth Weight",
-                key="lbw_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Low Birth Weight (LBW) Rate (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Low Birth Weight (LBW) Rate (%)"
 
     with tab3:
         col1, col2 = st.columns(2)
@@ -527,15 +531,45 @@ def render_kpi_tab_navigation():
 
     with tab4:
         st.markdown("### Missing Data Analysis")
-        if st.button(
-            "📊 Missing Mode of Delivery",
-            key="missing_md_btn",
-            use_container_width=True,
-            type=(
-                "primary" if selected_kpi == "Missing Mode of Delivery" else "secondary"
-            ),
-        ):
-            selected_kpi = "Missing Mode of Delivery"
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button(
+                "📊 Missing Mode of Delivery",
+                key="missing_md_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Missing Mode of Delivery"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Missing Mode of Delivery"
+
+        with col2:
+            if st.button(
+                "📊 Missing Birth Outcome",
+                key="missing_bo_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Missing Birth Outcome"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Missing Birth Outcome"
+        with col3:
+            if st.button(
+                "📊 Missing Condition of Discharge",
+                key="missing_cod_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Missing Condition of Discharge"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Missing Condition of Discharge"
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_kpi:
@@ -783,19 +817,6 @@ def render_trend_chart_section(
                 denominator_label,
                 facility_uids,
             )
-        elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-            render_lbw_trend_chart(
-                group,
-                "period_display",
-                "value",
-                chart_title,
-                bg_color,
-                text_color,
-                display_names,
-                numerator_label,
-                denominator_label,
-                facility_uids,
-            )
         elif kpi_selection == "Assisted Delivery Rate (%)":
             render_assisted_trend_chart(
                 group,
@@ -825,6 +846,33 @@ def render_trend_chart_section(
         # ADD MISSING MD HERE - IT'S JUST ANOTHER KPI!
         elif kpi_selection == "Missing Mode of Delivery":
             render_missing_md_trend_chart(
+                group,
+                "period_display",
+                "value",
+                chart_title,
+                bg_color,
+                text_color,
+                display_names,
+                numerator_label,
+                denominator_label,
+                facility_uids,
+            )
+        elif kpi_selection == "Missing Birth Outcome":
+            render_missing_bo_trend_chart(
+                group,
+                "period_display",
+                "value",
+                chart_title,
+                bg_color,
+                text_color,
+                display_names,
+                numerator_label,
+                denominator_label,
+                facility_uids,
+            )
+
+        elif kpi_selection == "Missing Condition of Discharge":
+            render_missing_cod_trend_chart(
                 group,
                 "period_display",
                 "value",
@@ -1048,19 +1096,6 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
-        elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-            render_lbw_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
         elif kpi_selection == "Assisted Delivery Rate (%)":
             render_assisted_facility_comparison_chart(
                 df=comparison_df,
@@ -1090,6 +1125,32 @@ def render_comparison_chart(
         # ADD MISSING MD HERE!
         elif kpi_selection == "Missing Mode of Delivery":
             render_missing_md_facility_comparison_chart(
+                df=comparison_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
+        elif kpi_selection == "Missing Birth Outcome":
+            render_missing_bo_facility_comparison_chart(
+                df=comparison_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
+        elif kpi_selection == "Missing Condition of Discharge":
+            render_missing_cod_facility_comparison_chart(
                 df=comparison_df,
                 period_col="period_display",
                 value_col="value",
@@ -1237,20 +1298,6 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
-        elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-            render_lbw_region_comparison_chart(
-                df=region_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                region_names=region_names,
-                region_mapping=facilities_by_region,
-                facilities_by_region=facilities_by_region,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
         elif kpi_selection == "Assisted Delivery Rate (%)":
             render_assisted_region_comparison_chart(
                 df=region_df,
@@ -1279,9 +1326,37 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
-        # ADD MISSING MD HERE!
+
         elif kpi_selection == "Missing Mode of Delivery":
             render_missing_md_region_comparison_chart(
+                df=region_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=region_names,
+                region_mapping=facilities_by_region,
+                facilities_by_region=facilities_by_region,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
+        elif kpi_selection == "Missing Birth Outcome":
+            render_missing_bo_region_comparison_chart(
+                df=region_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=region_names,
+                region_mapping=facilities_by_region,
+                facilities_by_region=facilities_by_region,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
+        elif kpi_selection == "Missing Condition of Discharge":
+            render_missing_cod_region_comparison_chart(
                 df=region_df,
                 period_col="period_display",
                 value_col="value",
@@ -1331,8 +1406,6 @@ def render_additional_analytics(
         )
     elif kpi_selection == "Delivered women who received uterotonic (%)":
         render_uterotonic_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
-    elif kpi_selection == "Low Birth Weight (LBW) Rate (%)":
-        render_lbw_category_pie_chart(kpi_df, facility_uids, bg_color, text_color)
 
 
 def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
