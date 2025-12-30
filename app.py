@@ -1,4 +1,24 @@
 import streamlit as st
+
+# Initialize ALL session state caches to fix the error
+caches_to_init = [
+    "assisted_cache",
+    "uterotonic_cache",
+    "pph_cache",
+    "missing_md_cache",
+    "missing_bo_cache",
+    "missing_cod_cache",
+    "arv_cache",
+    "svd_cache",
+    "admitted_mothers_cache",
+    "kpi_cache",
+    "kpi_cache_newborn",
+]
+
+# Initialize each cache if it doesn't exist
+for cache_name in caches_to_init:
+    if cache_name not in st.session_state:
+        st.session_state[cache_name] = {}
 from components.login import login_component
 from dashboards import facility, regional, national, admin
 from utils.auth import logout
