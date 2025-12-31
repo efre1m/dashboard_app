@@ -12,6 +12,7 @@ caches_to_init = [
     "svd_cache",
     "admitted_mothers_cache",
     "kpi_cache",
+    "kpi_cache_newborn",
 ]
 
 # Initialize each cache if it doesn't exist
