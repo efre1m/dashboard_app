@@ -1203,6 +1203,7 @@ def render_trend_chart(
         file_name=f"{title.lower().replace(' ', '_')}_chart_data.csv",
         mime="text/csv",
         help="Download the exact x, y, and value components shown in the chart",
+        key=f"download_{title.replace(' ', '_').lower()}_trend",
     )
 
 
@@ -1509,6 +1510,7 @@ def render_facility_comparison_chart(
             file_name=f"{title.lower().replace(' ', '_')}_facility_summary.csv",
             mime="text/csv",
             help="Download overall summary data for facility comparison",
+            key=f"download_{title.replace(' ', '_').lower()}_facility",
         )
 
 
@@ -1793,6 +1795,7 @@ def render_region_comparison_chart(
             file_name=f"{title.lower().replace(' ', '_')}_region_summary.csv",
             mime="text/csv",
             help="Download overall summary data for region comparison",
+            key=f"download_{title.replace(' ', '_').lower()}_region",
         )
 
 
