@@ -924,6 +924,13 @@ def render_trend_chart(
     denominator_name="Denominator",
     facility_uids=None,
 ):
+    # Create unique key
+    if facility_uids:
+        facility_str = "_".join(str(uid) for uid in sorted(facility_uids))
+        unique_key = f"download_{title.replace(' ', '_').lower()}_trend_{facility_str}"
+    else:
+        unique_key = f"download_{title.replace(' ', '_').lower()}_trend_overall"
+
     """Render a trend chart for a single facility/region with numerator/denominator data AND TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
@@ -1203,7 +1210,7 @@ def render_trend_chart(
         file_name=f"{title.lower().replace(' ', '_')}_chart_data.csv",
         mime="text/csv",
         help="Download the exact x, y, and value components shown in the chart",
-        key=f"download_{title.replace(' ', '_').lower()}_trend",
+        key=unique_key,
     )
 
 
@@ -1219,6 +1226,9 @@ def render_facility_comparison_chart(
     numerator_name,
     denominator_name,
 ):
+    # Create unique key
+    facility_str = "_".join(str(uid) for uid in sorted(facility_uids))
+    unique_key = f"download_{title.replace(' ', '_').lower()}_facility_{facility_str}"
     """Render a comparison chart showing each facility's performance over time WITH TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
@@ -1510,7 +1520,7 @@ def render_facility_comparison_chart(
             file_name=f"{title.lower().replace(' ', '_')}_facility_summary.csv",
             mime="text/csv",
             help="Download overall summary data for facility comparison",
-            key=f"download_{title.replace(' ', '_').lower()}_facility",
+            key=unique_key,
         )
 
 
@@ -1527,6 +1537,13 @@ def render_region_comparison_chart(
     numerator_name,
     denominator_name,
 ):
+    # Create unique key
+    if region_mapping:
+        region_str = "_".join(str(key) for key in region_mapping.keys())
+        unique_key = f"download_{title.replace(' ', '_').lower()}_region_{region_str}"
+    else:
+        unique_key = f"download_{title.replace(' ', '_').lower()}_region_all"
+
     """Render a comparison chart showing each region's performance over time WITH TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
@@ -1795,7 +1812,7 @@ def render_region_comparison_chart(
             file_name=f"{title.lower().replace(' ', '_')}_region_summary.csv",
             mime="text/csv",
             help="Download overall summary data for region comparison",
-            key=f"download_{title.replace(' ', '_').lower()}_region",
+            key=unique_key,
         )
 
 

@@ -1,3 +1,5 @@
+# kpi_newborn.py - UPDATED VERSION
+
 import pandas as pd
 import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
@@ -19,7 +21,16 @@ from newborns_dashboard.kpi_utils_newborn import (
     render_admitted_newborns_region_comparison_chart,
 )
 
-# KPI mapping for newborn comparison charts - UPDATED WITH ADMITTED NEWBORNS
+# Import V2 functions for culture KPIs
+from newborns_dashboard.kpi_utils_newborn_v2 import (
+    get_numerator_denominator_for_newborn_kpi_v2,
+    render_culture_done_trend_chart_v2,
+    render_culture_done_facility_comparison_chart_v2,
+    render_culture_result_recorded_trend_chart_v2,
+    render_culture_done_sepsis_trend_chart_v2,
+)
+
+# KPI mapping for newborn comparison charts - UPDATED WITH CULTURE KPIs
 NEWBORN_KPI_MAPPING = {
     "Inborn Rate (%)": {
         "title": "Inborn Babies (%)",
@@ -46,7 +57,6 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Dead Cases",
         "denominator_name": "Total Admitted Newborns",
     },
-    # ADD THESE TWO NEW KPIs
     "Inborn Hypothermia Rate (%)": {
         "title": "Hypothermia in Inborn Babies (%)",
         "numerator_name": "Inborn Hypothermia Cases",
@@ -57,57 +67,80 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Outborn Hypothermia Cases",
         "denominator_name": "Total Outborn Babies",
     },
-    # ADD ADMITTED NEWBORNS KPI
     "Admitted Newborns": {
         "title": "Total Admitted Newborns",
         "value_name": "Admitted Newborns",
     },
+    # ANTIBIOTICS KPI
+    "Antibiotics for Clinical Sepsis (%)": {
+        "title": "Antibiotics for Clinical Sepsis (%)",
+        "numerator_name": "Newborns with Sepsis Receiving Antibiotics",
+        "denominator_name": "Newborns with Probable Sepsis",
+    },
+    # NEW CULTURE KPIs
+    "Culture Done for Babies on Antibiotics (%)": {
+        "title": "Culture Done for Babies on Antibiotics (%)",
+        "numerator_name": "Culture Done Cases",
+        "denominator_name": "Total babies on Antibiotics",
+    },
+    "Blood Culture Result Recorded (%)": {
+        "title": "Blood Culture Result Recorded (%)",
+        "numerator_name": "Result Recorded (Negative/Positive)",
+        "denominator_name": "Total Culture Done (All Results)",
+    },
+    "Culture Done for Babies with Clinical Sepsis (%)": {
+        "title": "Culture Done for Babies with Clinical Sepsis (%)",
+        "numerator_name": "Culture Done Cases",
+        "denominator_name": "Probable Sepsis Cases",
+    },
 }
 
-# KPI options for newborn dashboard
+# KPI options for newborn dashboard - UPDATED WITH CULTURE KPIs
 NEWBORN_KPI_OPTIONS = [
     "Inborn Rate (%)",
     "Outborn Rate (%)",
     "Hypothermia on Admission Rate (%)",
     "Hypothermia After Admission Rate (%)",
     "Neonatal Mortality Rate (%)",
-    # ADD THESE TWO
     "Inborn Hypothermia Rate (%)",
     "Outborn Hypothermia Rate (%)",
-    # ADD ADMITTED NEWBORNS
     "Admitted Newborns",
+    "Antibiotics for Clinical Sepsis (%)",
+    # NEW CULTURE KPIs
+    "Culture Done for Babies on Antibiotics (%)",
+    "Blood Culture Result Recorded (%)",
+    "Culture Done for Babies with Clinical Sepsis (%)",
 ]
 
-# KPI Groups for Tab Navigation - UPDATED WITH ADMITTED NEWBORNS
+# KPI Groups for Tab Navigation - SIMPLIFIED
 NEWBORN_KPI_GROUPS = {
-    "👶 Birth Location": [
+    "👶 Birth & Hypothermia": [
         "Inborn Rate (%)",
         "Outborn Rate (%)",
-    ],
-    "🌡️ Hypothermia": [
         "Hypothermia on Admission Rate (%)",
         "Hypothermia After Admission Rate (%)",
-        # ADD THESE TWO INSTEAD OF COMPARISON
         "Inborn Hypothermia Rate (%)",
         "Outborn Hypothermia Rate (%)",
     ],
-    "📊 Outcomes": [
-        "Neonatal Mortality Rate (%)",
+    "💊 Sepsis Management": [
+        "Antibiotics for Clinical Sepsis (%)",
+        "Culture Done for Babies with Clinical Sepsis (%)",
+        "Culture Done for Babies on Antibiotics (%)",
+        "Blood Culture Result Recorded (%)",
     ],
-    # ADD NEW ENROLLMENT TAB
-    "📈 Enrollment": [
+    "📊 Outcomes & Enrollment": [
+        "Neonatal Mortality Rate (%)",
         "Admitted Newborns",
     ],
 }
 
-# KPI Column Requirements - What each newborn KPI actually needs
+# KPI Column Requirements - UPDATED WITH CULTURE KPIs
 NEWBORN_KPI_COLUMN_REQUIREMENTS = {
     "Inborn Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "birth_location_admission_information",
-        "temperature_on_admission_degc_observations_and_nursing_care_1",
         "event_date_admission_information",
     ],
     "Outborn Rate (%)": [
@@ -115,7 +148,6 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "birth_location_admission_information",
-        "temperature_on_admission_degc_observations_and_nursing_care_1",
         "event_date_admission_information",
     ],
     "Hypothermia on Admission Rate (%)": [
@@ -139,7 +171,6 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "newborn_status_at_discharge_discharge_and_final_diagnosis",
         "event_date_discharge_and_final_diagnosis",
     ],
-    # ADD THESE TWO NEW KPIs
     "Inborn Hypothermia Rate (%)": [
         "orgUnit",
         "tei_id",
@@ -156,12 +187,50 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "temperature_on_admission_degc_observations_and_nursing_care_1",
         "event_date_admission_information",
     ],
-    # ADD ADMITTED NEWBORNS COLUMNS
     "Admitted Newborns": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
     ],
+    "Antibiotics for Clinical Sepsis (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "sub_categories_of_infection_discharge_and_final_diagnosis",
+        "were_antibiotics_administered?_interventions",
+        "event_date_discharge_and_final_diagnosis",
+    ],
+    # NEW CULTURE KPIs - FIXED DATE COLUMNS
+    "Culture Done for Babies on Antibiotics (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "blood_culture_for_suspected_sepsis_microbiology_and_labs",
+        "were_antibiotics_administered?_interventions",
+        "event_date_microbiology_and_labs",  # FIXED: Microbiology date, not discharge
+    ],
+    "Blood Culture Result Recorded (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "blood_culture_for_suspected_sepsis_microbiology_and_labs",
+        "event_date_microbiology_and_labs",  # FIXED: Microbiology date, not admission
+    ],
+    "Culture Done for Babies with Clinical Sepsis (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "blood_culture_for_suspected_sepsis_microbiology_and_labs",
+        "sub_categories_of_infection_discharge_and_final_diagnosis",
+        "event_date_microbiology_and_labs",  # FIXED: Microbiology date, not discharge
+    ],
+}
+
+# CULTURE KPI DATE COLUMN MAPPING - ADD THIS
+CULTURE_KPI_DATE_COLUMNS = {
+    "Culture Done for Babies on Antibiotics (%)": "event_date_microbiology_and_labs",
+    "Blood Culture Result Recorded (%)": "event_date_microbiology_and_labs",
+    "Culture Done for Babies with Clinical Sepsis (%)": "event_date_microbiology_and_labs",
 }
 
 
@@ -173,40 +242,24 @@ def get_newborn_kpi_filtered_dataframe(df, kpi_name):
         return df
 
     if kpi_name not in NEWBORN_KPI_COLUMN_REQUIREMENTS:
-        # If KPI not in mapping, return all columns
         return df.copy()
 
-    # Get required columns for this KPI
     required_columns = NEWBORN_KPI_COLUMN_REQUIREMENTS[kpi_name]
-
-    # Find which columns actually exist in the DataFrame
     available_columns = []
+
     for col in required_columns:
         if col in df.columns:
             available_columns.append(col)
 
-    # Always include these essential columns if they exist
     essential_cols = ["orgUnit", "tei_id", "enrollment_date"]
     for col in essential_cols:
         if col in df.columns and col not in available_columns:
             available_columns.append(col)
 
-    # If we have no columns after filtering, return original DataFrame
     if not available_columns:
         return df.copy()
 
-    # Create filtered DataFrame
     filtered_df = df[available_columns].copy()
-
-    # Log the optimization
-    original_size = len(df.columns)
-    filtered_size = len(filtered_df.columns)
-    logging.info(f"✅ Newborn KPI Filter: {kpi_name}")
-    logging.info(f"   Before: {original_size} columns")
-    logging.info(f"   After: {filtered_size} columns")
-    logging.info(
-        f"   Reduction: {((original_size - filtered_size) / original_size * 100):.1f}%"
-    )
 
     return filtered_df
 
@@ -221,8 +274,46 @@ def get_newborn_kpi_config(kpi_selection):
     return NEWBORN_KPI_MAPPING.get(kpi_selection, {})
 
 
+def is_culture_kpi(kpi_name):
+    """Check if a KPI is a culture-related KPI"""
+    culture_keywords = ["Culture", "Blood Culture"]
+    return any(keyword in kpi_name for keyword in culture_keywords)
+
+
+def get_relevant_date_column_for_newborn_kpi_with_culture(kpi_name):
+    """
+    Get the relevant event date column for a specific newborn KPI
+    Includes culture KPIs with correct date columns
+    """
+    # First check if it's a culture KPI
+    if kpi_name in CULTURE_KPI_DATE_COLUMNS:
+        return CULTURE_KPI_DATE_COLUMNS[kpi_name]
+
+    # Use original function for non-culture KPIs
+    return get_relevant_date_column_for_newborn_kpi(kpi_name)
+
+
+def get_numerator_denominator_for_newborn_kpi_with_culture(
+    df, kpi_name, facility_uids=None, date_range_filters=None
+):
+    """
+    Get numerator and denominator for a specific newborn KPI with date range filtering
+    Supports both V1 and V2 (culture) KPIs
+    """
+    # Use V2 function for culture KPIs
+    if is_culture_kpi(kpi_name):
+        return get_numerator_denominator_for_newborn_kpi_v2(
+            df, kpi_name, facility_uids, date_range_filters
+        )
+    else:
+        # Use existing V1 function for non-culture KPIs
+        return get_numerator_denominator_for_newborn_kpi(
+            df, kpi_name, facility_uids, date_range_filters
+        )
+
+
 def render_newborn_kpi_tab_navigation():
-    """Render professional tab navigation for Neonatal KPI selection - UPDATED WITH ADMITTED NEWBORNS"""
+    """Render professional tab navigation for Neonatal KPI selection - SIMPLIFIED"""
 
     st.markdown(
         """
@@ -257,37 +348,16 @@ def render_newborn_kpi_tab_navigation():
         unsafe_allow_html=True,
     )
 
-    # KPI Grouping for Tab Navigation - UPDATED WITH ADMITTED NEWBORNS
-    NEWBORN_KPI_GROUPS = {
-        "👶 Birth Location": [
-            "Inborn Rate (%)",
-            "Outborn Rate (%)",
-        ],
-        "🌡️ Hypothermia": [
-            "Hypothermia on Admission Rate (%)",
-            "Hypothermia After Admission Rate (%)",
-            "Inborn Hypothermia Rate (%)",
-            "Outborn Hypothermia Rate (%)",
-        ],
-        "📊 Outcomes": [
-            "Neonatal Mortality Rate (%)",
-        ],
-        "📈 Enrollment": [
-            "Admitted Newborns",
-        ],
-    }
-
     # Initialize session state for newborn KPI selection
     if "selected_newborn_kpi" not in st.session_state:
         st.session_state.selected_newborn_kpi = "Inborn Rate (%)"
 
-    # Create main KPI group tabs - UPDATED WITH 4TH TAB
-    tab1, tab2, tab3, tab4 = st.tabs(
+    # Create main KPI group tabs - SIMPLIFIED TO 3 TABS
+    tab1, tab2, tab3 = st.tabs(
         [
-            "👶 **Birth Location**",
-            "🌡️ **Hypothermia**",
-            "📊 **Outcomes**",
-            "📈 **Enrollment**",
+            "👶 **Birth & Hypothermia**",
+            "💊 **Sepsis Management**",
+            "📊 **Outcomes & Enrollment**",
         ]
     )
 
@@ -295,6 +365,8 @@ def render_newborn_kpi_tab_navigation():
 
     with tab1:
         col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
+        col5, col6 = st.columns(2)
 
         with col1:
             if st.button(
@@ -314,12 +386,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "Outborn Rate (%)"
 
-    with tab2:
-        # NOW WE HAVE 4 BUTTONS IN HYPOTHERMIA TAB
-        col1, col2 = st.columns(2)
-        col3, col4 = st.columns(2)
-
-        with col1:
+        with col3:
             if st.button(
                 "🌡️ Hypothermia on Admission",
                 key="hypo_admission_btn",
@@ -332,7 +399,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "Hypothermia on Admission Rate (%)"
 
-        with col2:
+        with col4:
             if st.button(
                 "🌡️ Hypothermia After Admission",
                 key="hypo_after_btn",
@@ -345,9 +412,9 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "Hypothermia After Admission Rate (%)"
 
-        with col3:
+        with col5:
             if st.button(
-                "🌡️ Inborn Hypothermia",
+                "👶 Inborn Hypothermia",
                 key="inborn_hypo_btn",
                 use_container_width=True,
                 type=(
@@ -358,9 +425,9 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "Inborn Hypothermia Rate (%)"
 
-        with col4:
+        with col6:
             if st.button(
-                "🌡️ Outborn Hypothermia",
+                "👶 Outborn Hypothermia",
                 key="outborn_hypo_btn",
                 use_container_width=True,
                 type=(
@@ -371,8 +438,65 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "Outborn Hypothermia Rate (%)"
 
+    with tab2:
+        col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
+
+        with col1:
+            if st.button(
+                "💊 Antibiotics for Sepsis",
+                key="antibiotics_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Antibiotics for Clinical Sepsis (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Antibiotics for Clinical Sepsis (%)"
+
+        with col2:
+            if st.button(
+                "🧫 Culture for Sepsis",
+                key="culture_sepsis_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi
+                    == "Culture Done for Babies with Clinical Sepsis (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Culture Done for Babies with Clinical Sepsis (%)"
+
+        with col3:
+            if st.button(
+                "🧫 Culture Done for Antibiotics",
+                key="culture_done_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Culture Done for Babies on Antibiotics (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Culture Done for Babies on Antibiotics (%)"
+
+        with col4:
+            if st.button(
+                "📋 Culture Results",
+                key="culture_result_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Blood Culture Result Recorded (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Blood Culture Result Recorded (%)"
+
     with tab3:
-        col1 = st.columns(1)[0]
+        col1, col2 = st.columns(2)
 
         with col1:
             if st.button(
@@ -387,10 +511,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "Neonatal Mortality Rate (%)"
 
-    with tab4:
-        col1 = st.columns(1)[0]
-
-        with col1:
+        with col2:
             if st.button(
                 "📈 Admitted Newborns",
                 key="admitted_newborns_btn",
@@ -415,7 +536,6 @@ def get_period_columns(df):
     period_display_col = None
     period_sort_col = None
 
-    # Look for period columns in the patient data
     for col in df.columns:
         if "period_display" in col:
             period_display_col = col
@@ -424,7 +544,6 @@ def get_period_columns(df):
         elif col == "period":
             period_col = col
 
-    # Fallback to first column if needed
     if not period_col:
         period_col = "period" if "period" in df.columns else df.columns[0]
 
@@ -474,9 +593,6 @@ def render_newborn_trend_chart_section(
     if facility_uids and "orgUnit" in working_df.columns:
         working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Get the SPECIFIC date column for this KPI
-    date_column = get_relevant_date_column_for_newborn_kpi(kpi_selection)
-
     # Get date range filters from session state
     date_range_filters = {}
     if "filters" in st.session_state:
@@ -485,122 +601,90 @@ def render_newborn_trend_chart_section(
             "end_date": st.session_state.filters.get("end_date"),
         }
 
-    # CRITICAL FIX: Use prepare_data_for_newborn_trend_chart to get data filtered by KPI-specific dates AND date range
-    prepared_df, date_column_used = prepare_data_for_newborn_trend_chart(
-        working_df, kpi_selection, facility_uids, date_range_filters
-    )
+    # FIXED: Use correct date column function for culture KPIs
+    date_column = get_relevant_date_column_for_newborn_kpi_with_culture(kpi_selection)
 
-    if prepared_df.empty:
+    # Prepare data using the correct date column
+    if date_column not in working_df.columns:
+        # Try to find the date column
+        if kpi_selection in CULTURE_KPI_DATE_COLUMNS:
+            date_column = CULTURE_KPI_DATE_COLUMNS[kpi_selection]
+        else:
+            # Fallback to original function
+            date_column = get_relevant_date_column_for_newborn_kpi(kpi_selection)
+
+    # Filter by date column
+    if date_column in working_df.columns:
+        # Convert to datetime
+        working_df["event_date"] = pd.to_datetime(
+            working_df[date_column], errors="coerce"
+        )
+
+        # Apply date range filtering
+        if date_range_filters:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+                working_df = working_df[
+                    (working_df["event_date"] >= start_dt)
+                    & (working_df["event_date"] < end_dt)
+                ].copy()
+
+        # Filter out rows without valid dates
+        working_df = working_df[working_df["event_date"].notna()].copy()
+    else:
         st.warning(
-            f"⚠️ No data available for {kpi_selection} using its specific program stage date: '{date_column_used}'"
+            f"⚠️ Required date column '{date_column}' not found for {kpi_selection}"
         )
         return
 
-    # Ensure period columns exist with proper formatting
-    if "period_display" not in prepared_df.columns:
-        if "event_date" in prepared_df.columns:
-            prepared_df["period_display"] = (
-                prepared_df["event_date"].dt.strftime("%b-%y").str.capitalize()
-            )  # Format as "Sep-25"
-        else:
-            prepared_df["period_display"] = "Period"
+    if working_df.empty:
+        st.warning(
+            f"⚠️ No data available for {kpi_selection} using date column: '{date_column}'"
+        )
+        return
 
-    if "period_sort" not in prepared_df.columns:
-        if "event_date" in prepared_df.columns:
-            try:
-                prepared_df["period_sort"] = pd.to_datetime(
-                    prepared_df["event_date"]
-                ).dt.strftime("%Y%m")
-            except:
-                prepared_df["period_sort"] = prepared_df.index
-        else:
-            prepared_df["period_sort"] = prepared_df.index
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        working_df = assign_period(working_df, "event_date", period_label)
+    except Exception as e:
+        st.error(f"Error assigning periods: {str(e)}")
+        return
 
     # Get unique periods in order
-    unique_periods = prepared_df[["period_display", "period_sort"]].drop_duplicates()
+    unique_periods = working_df[["period_display", "period_sort"]].drop_duplicates()
     unique_periods = unique_periods.sort_values("period_sort")
 
-    # Create period data - SIMPLIFIED APPROACH
+    # Create period data
     period_data = []
 
     for _, row in unique_periods.iterrows():
         period_display = row["period_display"]
         period_sort = row["period_sort"]
 
-        # Get data for this period from prepared_df (already filtered by KPI-specific dates)
-        period_df = prepared_df[prepared_df["period_display"] == period_display]
+        # Get data for this period
+        period_df = working_df[working_df["period_display"] == period_display]
 
         if not period_df.empty:
-            # Get TEI IDs from this period (already filtered by KPI-specific dates)
-            period_tei_ids = period_df["tei_id"].dropna().unique()
-
-            if not period_tei_ids.size:
-                continue
-
-            # CRITICAL: Get the original data for these TEI IDs, but FILTERED by KPI-specific date
-            # Use working_df (which already has facility filter applied)
-            period_patient_data = working_df.copy()
-
-            # Filter by TEI IDs AND KPI-specific date
-            if date_column_used and date_column_used in period_patient_data.columns:
-                period_patient_data[date_column_used] = pd.to_datetime(
-                    period_patient_data[date_column_used], errors="coerce"
+            # Compute KPI using date-filtered data WITH CULTURE SUPPORT
+            numerator, denominator, _ = (
+                get_numerator_denominator_for_newborn_kpi_with_culture(
+                    period_df,
+                    kpi_selection,
+                    facility_uids,
+                    date_range_filters,
                 )
+            )
 
-                # Get TEI IDs that have the KPI-specific date
-                tei_ids_with_date = period_patient_data[
-                    period_patient_data[date_column_used].notna()
-                ]["tei_id"].unique()
-
-                # Intersection: TEI IDs that are in our period AND have KPI-specific date
-                valid_tei_ids = set(period_tei_ids) & set(tei_ids_with_date)
-
-                if valid_tei_ids:
-                    period_patient_data = period_patient_data[
-                        period_patient_data["tei_id"].isin(valid_tei_ids)
-                        & period_patient_data[date_column_used].notna()
-                    ].copy()
-                else:
-                    # No valid TEI IDs with KPI-specific date
-                    period_data.append(
-                        {
-                            "period": period_display,
-                            "period_display": period_display,
-                            "period_sort": period_sort,
-                            "value": 0,
-                            "numerator": 0,
-                            "denominator": 0,
-                        }
-                    )
-                    continue
-            else:
-                # Fallback: just filter by TEI IDs
-                period_patient_data = period_patient_data[
-                    period_patient_data["tei_id"].isin(period_tei_ids)
-                ].copy()
-
-            # SPECIAL HANDLING FOR ADMITTED NEWBORNS
+            # For Admitted Newborns, the value is the count (numerator)
             if kpi_selection == "Admitted Newborns":
-                # For Admitted Newborns, use the new function
-                numerator, denominator, _ = get_numerator_denominator_for_newborn_kpi(
-                    period_patient_data,
-                    kpi_selection,
-                    facility_uids,
-                    date_range_filters,
-                )
-
-                # For Admitted Newborns, the value is the count (numerator)
-                # NOT a percentage calculation
-                value = float(numerator)  # Just use the count as value
+                value = float(numerator)
             else:
-                # Compute KPI using date-filtered data
-                numerator, denominator, _ = get_numerator_denominator_for_newborn_kpi(
-                    period_patient_data,
-                    kpi_selection,
-                    facility_uids,
-                    date_range_filters,
-                )
-                # Calculate value as percentage
                 value = (numerator / denominator * 100) if denominator > 0 else 0
 
             period_data.append(
@@ -637,6 +721,61 @@ def render_newborn_trend_chart_section(
                 value_name,
                 facility_uids,
             )
+        # SPECIAL HANDLING FOR CULTURE KPIs
+        elif is_culture_kpi(kpi_selection):
+            if kpi_selection == "Culture Done for Babies on Antibiotics (%)":
+                render_culture_done_trend_chart_v2(
+                    group,
+                    "period_display",
+                    "value",
+                    chart_title,
+                    bg_color,
+                    text_color,
+                    display_names,
+                    numerator_label,
+                    denominator_label,
+                    facility_uids,
+                )
+            elif kpi_selection == "Blood Culture Result Recorded (%)":
+                render_culture_result_recorded_trend_chart_v2(
+                    group,
+                    "period_display",
+                    "value",
+                    chart_title,
+                    bg_color,
+                    text_color,
+                    display_names,
+                    numerator_label,
+                    denominator_label,
+                    facility_uids,
+                )
+            elif kpi_selection == "Culture Done for Babies with Clinical Sepsis (%)":
+                render_culture_done_sepsis_trend_chart_v2(
+                    group,
+                    "period_display",
+                    "value",
+                    chart_title,
+                    bg_color,
+                    text_color,
+                    display_names,
+                    numerator_label,
+                    denominator_label,
+                    facility_uids,
+                )
+            else:
+                # Fallback for other culture KPIs
+                render_newborn_trend_chart(
+                    group,
+                    "period_display",
+                    "value",
+                    chart_title,
+                    bg_color,
+                    text_color,
+                    display_names,
+                    numerator_label,
+                    denominator_label,
+                    facility_uids,
+                )
         else:
             # Standard trend chart for all other KPIs
             render_newborn_trend_chart(
@@ -668,15 +807,7 @@ def render_newborn_comparison_chart(
     is_national=False,
     filtered_patients=None,
 ):
-    # Get date range filters
-    date_range_filters = {}
-    if "filters" in st.session_state:
-        date_range_filters = {
-            "start_date": st.session_state.filters.get("start_date"),
-            "end_date": st.session_state.filters.get("end_date"),
-        }
-
-    """Render comparison charts for both national and regional views WITH TABLES using KPI-specific dates"""
+    """Render comparison charts for both national and regional views WITH TABLES"""
 
     df_to_use = filtered_patients if filtered_patients is not None else patient_df
 
@@ -686,7 +817,7 @@ def render_newborn_comparison_chart(
 
     # OPTIMIZATION: Filter DataFrame for this KPI
     kpi_df = get_newborn_kpi_filtered_dataframe(df_to_use, kpi_selection)
-    df_to_use = kpi_df  # Use the filtered DataFrame
+    df_to_use = kpi_df
 
     kpi_config = get_newborn_kpi_config(kpi_selection)
     numerator_label = kpi_config.get("numerator_name", "Numerator")
@@ -694,9 +825,8 @@ def render_newborn_comparison_chart(
     chart_title = kpi_config.get("title", kpi_selection)
     value_name = kpi_config.get("value_name", "Value")
 
-    # STANDARDIZE COLUMN NAMES - Ensure we have orgUnit
+    # STANDARDIZE COLUMN NAMES
     if "orgUnit" not in df_to_use.columns:
-        # Try to find the facility ID column
         for col in df_to_use.columns:
             if col.lower() in ["orgunit", "facility_uid", "facility_id", "ou", "uid"]:
                 df_to_use = df_to_use.rename(columns={col: "orgUnit"})
@@ -706,20 +836,22 @@ def render_newborn_comparison_chart(
         st.error("❌ Facility identifier column not found. Cannot perform comparison.")
         return
 
-    # Get the SPECIFIC date column for this KPI
-    date_column = get_relevant_date_column_for_newborn_kpi(kpi_selection)
+    # Get date range filters
+    date_range_filters = {}
+    if "filters" in st.session_state:
+        date_range_filters = {
+            "start_date": st.session_state.filters.get("start_date"),
+            "end_date": st.session_state.filters.get("end_date"),
+        }
 
-    # CRITICAL FIX: Prepare data using prepare_data_for_newborn_trend_chart for EACH facility/region
     if comparison_mode == "facility":
         comparison_data = []
 
-        # For each facility, prepare its own trend data
         for facility_uid, facility_name in zip(facility_uids, display_names):
             # Filter data for this specific facility
             facility_df = df_to_use[df_to_use["orgUnit"] == facility_uid].copy()
 
             if facility_df.empty:
-                # Add zero entries for all periods
                 comparison_data.append(
                     {
                         "period_display": "All Periods",
@@ -732,73 +864,64 @@ def render_newborn_comparison_chart(
                 )
                 continue
 
-            # Prepare facility-specific data with KPI-specific dates AND date range filters
-            prepared_df, _ = prepare_data_for_newborn_trend_chart(
-                facility_df, kpi_selection, [facility_uid], date_range_filters
+            # Get correct date column for this KPI
+            date_column = get_relevant_date_column_for_newborn_kpi_with_culture(
+                kpi_selection
             )
 
-            if prepared_df.empty:
-                # Add zero entry
-                comparison_data.append(
-                    {
-                        "period_display": "All Periods",
-                        "orgUnit": facility_uid,
-                        "orgUnit_name": facility_name,
-                        "value": 0,
-                        "numerator": 0,
-                        "denominator": 0,
-                    }
+            # Prepare data for this facility
+            if date_column in facility_df.columns:
+                facility_df["event_date"] = pd.to_datetime(
+                    facility_df[date_column], errors="coerce"
                 )
+
+                # Apply date filtering
+                if date_range_filters:
+                    start_date = date_range_filters.get("start_date")
+                    end_date = date_range_filters.get("end_date")
+
+                    if start_date and end_date:
+                        start_dt = pd.Timestamp(start_date)
+                        end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+                        facility_df = facility_df[
+                            (facility_df["event_date"] >= start_dt)
+                            & (facility_df["event_date"] < end_dt)
+                        ].copy()
+
+                # Filter valid dates
+                facility_df = facility_df[facility_df["event_date"].notna()].copy()
+            else:
+                # Skip if date column not found
+                continue
+
+            if facility_df.empty:
+                continue
+
+            # Assign periods
+            period_label = st.session_state.get("period_label", "Monthly")
+            try:
+                facility_df = assign_period(facility_df, "event_date", period_label)
+            except:
                 continue
 
             # Group by period for this facility
-            for period_display, period_group in prepared_df.groupby("period_display"):
+            for period_display, period_group in facility_df.groupby("period_display"):
                 if not period_group.empty:
-                    # Get TEI IDs from this period (already filtered by KPI-specific dates)
-                    period_tei_ids = period_group["tei_id"].dropna().unique()
-
-                    # Get data for these TEI IDs from the ORIGINAL facility data
-                    # but ONLY if they have the KPI-specific date
-                    if date_column and date_column in facility_df.columns:
-                        period_data = facility_df.copy()
-                        period_data[date_column] = pd.to_datetime(
-                            period_data[date_column], errors="coerce"
+                    # Compute KPI WITH CULTURE SUPPORT
+                    numerator, denominator, _ = (
+                        get_numerator_denominator_for_newborn_kpi_with_culture(
+                            period_group,
+                            kpi_selection,
+                            [facility_uid],
+                            date_range_filters,
                         )
-                        # Filter by TEI IDs AND KPI-specific date
-                        period_data = period_data[
-                            period_data["tei_id"].isin(period_tei_ids)
-                            & period_data[date_column].notna()
-                        ].copy()
-                    else:
-                        period_data = facility_df[
-                            facility_df["tei_id"].isin(period_tei_ids)
-                        ].copy()
+                    )
 
-                    # SPECIAL HANDLING FOR ADMITTED NEWBORNS
+                    # For Admitted Newborns, value is the count (numerator)
                     if kpi_selection == "Admitted Newborns":
-                        # For Admitted Newborns, we need to handle it differently
-                        numerator, denominator, _ = (
-                            get_numerator_denominator_for_newborn_kpi(
-                                period_data,
-                                kpi_selection,
-                                [facility_uid],
-                                date_range_filters,
-                            )
-                        )
-
-                        # For Admitted Newborns, value is the count (numerator)
                         value = float(numerator)
                     else:
-                        # For all other KPIs, use the standard function
-                        numerator, denominator, _ = (
-                            get_numerator_denominator_for_newborn_kpi(
-                                period_data,
-                                kpi_selection,
-                                [facility_uid],
-                                date_range_filters,
-                            )
-                        )
-
                         value = (
                             (numerator / denominator * 100) if denominator > 0 else 0
                         )
@@ -820,7 +943,6 @@ def render_newborn_comparison_chart(
 
         comparison_df = pd.DataFrame(comparison_data)
 
-        # Ensure proper column names
         if "orgUnit_name" in comparison_df.columns:
             comparison_df = comparison_df.rename(columns={"orgUnit_name": "Facility"})
 
@@ -837,8 +959,36 @@ def render_newborn_comparison_chart(
                 facility_uids=facility_uids,
                 value_name=value_name,
             )
+        # SPECIAL HANDLING FOR CULTURE KPIs
+        elif is_culture_kpi(kpi_selection):
+            if kpi_selection == "Culture Done for Babies on Antibiotics (%)":
+                render_culture_done_facility_comparison_chart_v2(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=f"{chart_title} - Facility Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
+            else:
+                # Use generic comparison for other culture KPIs
+                render_newborn_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=f"{chart_title} - Facility Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
         else:
-            # Standard facility comparison chart for all other KPIs
             render_newborn_facility_comparison_chart(
                 df=comparison_df,
                 period_col="period_display",
@@ -853,10 +1003,8 @@ def render_newborn_comparison_chart(
             )
 
     elif comparison_mode == "region" and is_national:
-        # Region comparison - similar fix needed
         region_data = []
 
-        # Get facility UIDs for each region
         region_facility_mapping = {}
         for region_name in region_names:
             region_facility_mapping[region_name] = [
@@ -868,7 +1016,6 @@ def render_newborn_comparison_chart(
             if not region_facility_uids:
                 continue
 
-            # Get data for this region
             region_df = df_to_use[
                 df_to_use["orgUnit"].isin(region_facility_uids)
             ].copy()
@@ -876,60 +1023,60 @@ def render_newborn_comparison_chart(
             if region_df.empty:
                 continue
 
-            # Prepare region-specific data with KPI-specific dates AND date range filters
-            prepared_df, _ = prepare_data_for_newborn_trend_chart(
-                region_df, kpi_selection, region_facility_uids, date_range_filters
+            # Get correct date column
+            date_column = get_relevant_date_column_for_newborn_kpi_with_culture(
+                kpi_selection
             )
 
-            if prepared_df.empty:
+            if date_column in region_df.columns:
+                region_df["event_date"] = pd.to_datetime(
+                    region_df[date_column], errors="coerce"
+                )
+
+                # Apply date filtering
+                if date_range_filters:
+                    start_date = date_range_filters.get("start_date")
+                    end_date = date_range_filters.get("end_date")
+
+                    if start_date and end_date:
+                        start_dt = pd.Timestamp(start_date)
+                        end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+                        region_df = region_df[
+                            (region_df["event_date"] >= start_dt)
+                            & (region_df["event_date"] < end_dt)
+                        ].copy()
+
+                # Filter valid dates
+                region_df = region_df[region_df["event_date"].notna()].copy()
+            else:
                 continue
 
-            # Group by period for this region
-            for period_display, period_group in prepared_df.groupby("period_display"):
+            if region_df.empty:
+                continue
+
+            # Assign periods
+            period_label = st.session_state.get("period_label", "Monthly")
+            try:
+                region_df = assign_period(region_df, "event_date", period_label)
+            except:
+                continue
+
+            for period_display, period_group in region_df.groupby("period_display"):
                 if not period_group.empty:
-                    # Get TEI IDs from this period (already filtered by KPI-specific dates)
-                    period_tei_ids = period_group["tei_id"].dropna().unique()
-
-                    # Get data for these TEI IDs
-                    if date_column and date_column in region_df.columns:
-                        period_data = region_df.copy()
-                        period_data[date_column] = pd.to_datetime(
-                            period_data[date_column], errors="coerce"
+                    # Compute KPI WITH CULTURE SUPPORT
+                    numerator, denominator, _ = (
+                        get_numerator_denominator_for_newborn_kpi_with_culture(
+                            period_group,
+                            kpi_selection,
+                            region_facility_uids,
+                            date_range_filters,
                         )
-                        period_data = period_data[
-                            period_data["tei_id"].isin(period_tei_ids)
-                            & period_data[date_column].notna()
-                        ].copy()
-                    else:
-                        period_data = region_df[
-                            region_df["tei_id"].isin(period_tei_ids)
-                        ].copy()
+                    )
 
-                    # SPECIAL HANDLING FOR ADMITTED NEWBORNS
                     if kpi_selection == "Admitted Newborns":
-                        # For Admitted Newborns, we need to handle it differently
-                        numerator, denominator, _ = (
-                            get_numerator_denominator_for_newborn_kpi(
-                                period_data,
-                                kpi_selection,
-                                region_facility_uids,
-                                date_range_filters,
-                            )
-                        )
-
-                        # For Admitted Newborns, value is the count (numerator)
                         value = float(numerator)
                     else:
-                        # For all other KPIs, use the standard function
-                        numerator, denominator, _ = (
-                            get_numerator_denominator_for_newborn_kpi(
-                                period_data,
-                                kpi_selection,
-                                region_facility_uids,
-                                date_range_filters,
-                            )
-                        )
-
                         value = (
                             (numerator / denominator * 100) if denominator > 0 else 0
                         )
@@ -965,7 +1112,6 @@ def render_newborn_comparison_chart(
                 value_name=value_name,
             )
         else:
-            # Standard region comparison chart for all other KPIs
             render_newborn_region_comparison_chart(
                 df=region_df,
                 period_col="period_display",
@@ -988,12 +1134,14 @@ def render_newborn_comparison_chart(
             st.info("⚠️ Invalid comparison mode selected.")
 
 
+# ... (keep all other functions exactly the same as before, starting from render_newborn_additional_analytics)
+
+
 def render_newborn_additional_analytics(
     kpi_selection, patient_df, facility_uids, bg_color, text_color
 ):
     """Render additional analytics charts for newborn KPIs"""
     # For now, no additional analytics
-    # Could add things like birth weight distribution charts, etc.
     pass
 
 
@@ -1008,17 +1156,13 @@ def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     current_kpi = st.session_state.get("selected_newborn_kpi", "Inborn Rate (%)")
 
     # Get the SPECIFIC date column for this KPI
-    kpi_date_column = get_relevant_date_column_for_newborn_kpi(current_kpi)
+    kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_culture(current_kpi)
 
     # Try KPI-specific date column first
     if kpi_date_column and kpi_date_column in df.columns:
         df["event_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
-        logging.info(
-            f"✅ normalize_newborn_patient_dates: Using KPI-specific '{kpi_date_column}'"
-        )
     elif "combined_date" in df.columns:
         df["event_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
-        logging.info("✅ normalize_newborn_patient_dates: Using combined_date")
     else:
         # Look for program stage event dates
         program_stage_date_columns = [
@@ -1031,9 +1175,6 @@ def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
             try:
                 df["event_date"] = pd.to_datetime(df[col], errors="coerce")
                 if not df["event_date"].isna().all():
-                    logging.info(
-                        f"✅ normalize_newborn_patient_dates: Using {col} for event_date"
-                    )
                     break
             except:
                 continue
@@ -1043,16 +1184,10 @@ def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
         "event_date" not in df.columns or df["event_date"].isna().all()
     ) and "enrollment_date" in df.columns:
         df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
-        logging.info(
-            "✅ normalize_newborn_patient_dates: Using enrollment_date for event_date"
-        )
 
     # If still no date found, use current date
     if "event_date" not in df.columns or df["event_date"].isna().all():
         df["event_date"] = pd.Timestamp.now().normalize()
-        logging.warning(
-            "⚠️ normalize_newborn_patient_dates: No valid date column found, using current date"
-        )
 
     return df
 
@@ -1146,9 +1281,6 @@ def render_newborn_patient_filter_controls(
         start_date, end_date = get_date_range(patient_df, filters["quick_range"])
         filters["start_date"] = start_date
         filters["end_date"] = end_date
-        logging.info(
-            f"📅 Filter dates set: {start_date} to {end_date} for '{filters['quick_range']}'"
-        )
 
     # Aggregation Level
     available_aggregations = get_available_aggregations(
@@ -1201,15 +1333,10 @@ def render_newborn_patient_filter_controls(
 def _get_newborn_patient_date_range(patient_df):
     """Get REAL min/max dates from newborn patient dataframe - HARDCODED ALL TIME"""
     import datetime
-    import logging
 
     # ALWAYS return the full 2000-2035 range
     all_time_start = datetime.date(2000, 1, 1)
     all_time_end = datetime.date(2035, 12, 31)
-
-    logging.info(
-        f"📅 _get_newborn_patient_date_range: Using ALL TIME range: {all_time_start} to {all_time_end}"
-    )
 
     return all_time_start, all_time_end
 
@@ -1224,12 +1351,8 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
     # Get current KPI selection from session state
     current_kpi = st.session_state.get("selected_newborn_kpi", "Inborn Rate (%)")
 
-    # Get the SPECIFIC date column for this KPI
-    kpi_date_column = get_relevant_date_column_for_newborn_kpi(current_kpi)
-
-    logging.info(f"🔍 apply_newborn_patient_filters for KPI: {current_kpi}")
-    logging.info(f"   - Using date column: {kpi_date_column}")
-    logging.info(f"   - Quick range: {filters.get('quick_range', 'N/A')}")
+    # Get the SPECIFIC date column for this KPI WITH CULTURE SUPPORT
+    kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_culture(current_kpi)
 
     # STANDARDIZE COLUMN NAMES - Ensure we have orgUnit
     if "orgUnit" not in df.columns:
@@ -1254,11 +1377,6 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
         if not is_all_facilities:
             facility_mask = df["orgUnit"].isin(facility_uids)
             df = df[facility_mask].copy()
-            logging.info(f"   - After facility filter: {len(df)} patients")
-        else:
-            logging.info("   - Skipping facility filter (All Facilities selected)")
-    else:
-        logging.info("   - No facility filter applied")
 
     # STEP 1: Use KPI-specific date column OR enrollment_date as fallback
     date_column_to_use = None
@@ -1266,102 +1384,52 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
     # Try KPI-specific date column first
     if kpi_date_column and kpi_date_column in df.columns:
         date_column_to_use = kpi_date_column
-        logging.info(f"   ✅ Using KPI-specific date column: {date_column_to_use}")
     elif "enrollment_date" in df.columns:
         date_column_to_use = "enrollment_date"
-        logging.info(f"   ⚠️ KPI-specific date not found, using enrollment_date")
     elif "event_date" in df.columns:
         date_column_to_use = "event_date"
-        logging.info(f"   ⚠️ Using generic event_date")
     else:
         # Find any date column
         date_cols = [col for col in df.columns if "date" in col.lower()]
         if date_cols:
             date_column_to_use = date_cols[0]
-            logging.info(f"   ⚠️ Using found date column: {date_column_to_use}")
         else:
-            logging.warning("   ❌ No date column found for filtering")
             date_column_to_use = None
 
     # STEP 2: Apply date filtering if we have a date column
     should_filter_by_date = (
         date_column_to_use is not None
-        and filters.get("quick_range") != "All Time"  # Not "All Time"
-        and filters.get("start_date")  # Has start date
-        and filters.get("end_date")  # Has end date
+        and filters.get("quick_range") != "All Time"
+        and filters.get("start_date")
+        and filters.get("end_date")
     )
 
     if should_filter_by_date:
         try:
             # Get the start and end dates from filters
             start_date = pd.Timestamp(filters["start_date"])
-            end_date = pd.Timestamp(filters["end_date"]) + pd.Timedelta(
-                days=1
-            )  # Include end date
-
-            logging.info(
-                f"🔍 DATE FILTER: Filtering '{date_column_to_use}' from {start_date.date()} to {end_date.date()}"
-            )
+            end_date = pd.Timestamp(filters["end_date"]) + pd.Timedelta(days=1)
 
             # Convert date column to datetime
             df[date_column_to_use] = pd.to_datetime(
                 df[date_column_to_use], errors="coerce"
             )
 
-            # Count valid dates before filtering
-            valid_dates_before = df[date_column_to_use].notna().sum()
-            logging.info(
-                f"📅 Valid dates before filtering: {valid_dates_before}/{len(df)}"
-            )
-
-            if valid_dates_before > 0:
+            if df[date_column_to_use].notna().sum() > 0:
                 # Apply date filter
                 date_mask = (df[date_column_to_use] >= start_date) & (
                     df[date_column_to_use] < end_date
                 )
-
-                df_filtered = df[date_mask].copy()
-
-                # Log filtering results
-                patients_before = len(df)
-                patients_after = len(df_filtered)
-                patients_lost = patients_before - patients_after
-
-                logging.info(
-                    f"✅ DATE FILTER COMPLETE: {patients_after} patients remain (lost {patients_lost})"
-                )
-
-                # Sample filtered dates
-                if patients_after > 0:
-                    sample_dates = (
-                        df_filtered[date_column_to_use]
-                        .head(3)
-                        .dt.strftime("%Y-%m-%d")
-                        .tolist()
-                    )
-                    logging.info(f"📅 Sample filtered dates: {sample_dates}")
-
-                df = df_filtered
-            else:
-                logging.warning(
-                    "⚠️ No valid dates found for filtering. Keeping all patients."
-                )
-                df = df
+                df = df[date_mask].copy()
 
         except Exception as error:
-            logging.error(f"❌ ERROR in date filtering: {error}")
-            # If there's an error, keep all patients (don't filter)
-            df = df
-    else:
-        logging.info("⏰ Skipping date filtering (All Time selected or no dates)")
-        df = df
+            # If there's an error, keep all patients
+            pass
 
     # STEP 3: Ensure we have event_date column for period assignment
     if "event_date" not in df.columns and date_column_to_use:
-        # Use the filtered date column for period assignment
         df["event_date"] = pd.to_datetime(df[date_column_to_use], errors="coerce")
     elif "event_date" not in df.columns:
-        # Try to find any date column
         df = normalize_newborn_patient_dates(df)
 
     # STEP 4: Assign periods for trend analysis
@@ -1372,19 +1440,14 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
         valid_date_rows = df["event_date"].notna().sum()
         if valid_date_rows > 0:
             df = assign_period(df, "event_date", filters["period_label"])
-            logging.info(
-                f"   📊 Assigned {filters['period_label']} periods: {valid_date_rows} valid dates"
-            )
         else:
             # Create empty period columns
             df["period_display"] = ""
             df["period_sort"] = 0
-            logging.warning("   ⚠️ No valid dates for period assignment")
     except Exception as e:
         # Create empty period columns as fallback
         df["period_display"] = ""
         df["period_sort"] = 0
-        logging.error(f"   ❌ Error assigning periods: {e}")
 
     # Save to session state
     st.session_state.period_label = filters["period_label"]
@@ -1395,18 +1458,16 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
     # OPTIMIZATION: Filter for current KPI
     if current_kpi in NEWBORN_KPI_COLUMN_REQUIREMENTS:
         df = get_newborn_kpi_filtered_dataframe(df, current_kpi)
-        logging.info(f"   🔍 KPI filter applied for '{current_kpi}'")
 
-    logging.info(f"🔄 apply_newborn_patient_filters: Final result - {len(df)} patients")
     return df
 
 
 def get_newborn_period_data_for_kpi(kpi_selection, patient_df, facility_uids):
     """Get period-based data for a specific newborn KPI from patient data"""
-    date_column = get_relevant_date_column_for_newborn_kpi(kpi_selection)
+    date_column = get_relevant_date_column_for_newborn_kpi_with_culture(kpi_selection)
 
-    # Extract period columns using program stage specific date - CHANGED: using extract_period_columns_newborn
-    df_with_periods = extract_period_columns_newborn(patient_df, date_column)  # CHANGED
+    # Extract period columns using program stage specific date
+    df_with_periods = extract_period_columns_newborn(patient_df, date_column)
 
     if df_with_periods.empty:
         return pd.DataFrame()
@@ -1425,16 +1486,17 @@ def get_newborn_period_data_for_kpi(kpi_selection, patient_df, facility_uids):
 
 
 def compute_newborn_kpi_for_period(kpi_selection, period_df, facility_uids):
-    """Compute newborn KPI for a specific period using patient data - ULTRA SIMPLE VERSION"""
+    """Compute newborn KPI for a specific period using patient data"""
     if period_df.empty:
         return _get_newborn_default_kpi_data(kpi_selection)
 
-    # For ALL KPIs, use get_numerator_denominator_for_newborn_kpi
-    numerator, denominator, value = get_numerator_denominator_for_newborn_kpi(
-        period_df, kpi_selection, facility_uids
+    # For ALL KPIs, use get_numerator_denominator_for_newborn_kpi WITH CULTURE SUPPORT
+    numerator, denominator, value = (
+        get_numerator_denominator_for_newborn_kpi_with_culture(
+            period_df, kpi_selection, facility_uids
+        )
     )
 
-    # Return SIMPLE, consistent structure
     return {
         "value": float(value),
         "numerator": int(numerator),
@@ -1449,14 +1511,44 @@ def _get_newborn_default_kpi_data(kpi_selection):
 
 
 def get_date_column_from_newborn_df(df, kpi_selection):
-    """Get the appropriate date column from newborn patient-level data based on KPI - USE SPECIFIC PROGRAM STAGE"""
-    # Use the same mapping as in kpi_utils_newborn
-    date_column = get_relevant_date_column_for_newborn_kpi(kpi_selection)
+    """Get the appropriate date column from newborn patient-level data based on KPI"""
+    date_column = get_relevant_date_column_for_newborn_kpi_with_culture(kpi_selection)
 
-    # Check if this specific column exists
     if date_column in df.columns:
         return date_column
 
-    # If not, warn and don't use wrong dates
     st.warning(f"⚠️ Required date column '{date_column}' not found for {kpi_selection}")
     return None
+
+
+# ---------------- Export all functions ----------------
+__all__ = [
+    # KPI configurations
+    "NEWBORN_KPI_MAPPING",
+    "NEWBORN_KPI_OPTIONS",
+    "NEWBORN_KPI_GROUPS",
+    "NEWBORN_KPI_COLUMN_REQUIREMENTS",
+    "CULTURE_KPI_DATE_COLUMNS",
+    # Main functions
+    "get_newborn_kpi_filtered_dataframe",
+    "get_text_color",
+    "get_newborn_kpi_config",
+    "is_culture_kpi",
+    "get_relevant_date_column_for_newborn_kpi_with_culture",
+    "get_numerator_denominator_for_newborn_kpi_with_culture",
+    "render_newborn_kpi_tab_navigation",
+    "get_period_columns",
+    "render_newborn_trend_chart_section",
+    "render_newborn_comparison_chart",
+    "render_newborn_additional_analytics",
+    # Date handling functions
+    "normalize_newborn_patient_dates",
+    "render_newborn_patient_filter_controls",
+    "_get_newborn_patient_date_range",
+    "apply_newborn_patient_filters",
+    # Data processing functions
+    "get_newborn_period_data_for_kpi",
+    "compute_newborn_kpi_for_period",
+    "_get_newborn_default_kpi_data",
+    "get_date_column_from_newborn_df",
+]
