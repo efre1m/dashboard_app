@@ -1,4 +1,4 @@
-# kpi_newborn.py - UPDATED VERSION
+# kpi_newborn.py - UPDATED TO REMOVE PROPHYLACTIC CPAP (COMPLETELY)
 
 import pandas as pd
 import streamlit as st
@@ -30,7 +30,35 @@ from newborns_dashboard.kpi_utils_newborn_v2 import (
     render_culture_done_sepsis_trend_chart_v2,
 )
 
-# KPI mapping for newborn comparison charts - UPDATED WITH CULTURE KPIs
+# Import SIMPLIFIED newborn functions (Birth Weight, KMC, CPAP)
+from newborns_dashboard.kpi_utils_newborn_simplified import (
+    # Birth Weight functions
+    compute_birth_weight_kpi,
+    render_birth_weight_trend_chart,
+    render_birth_weight_facility_comparison,
+    render_birth_weight_region_comparison,
+    # KMC functions
+    compute_kmc_coverage_kpi,
+    render_kmc_coverage_trend_chart,
+    render_kmc_facility_comparison,
+    render_kmc_region_comparison,
+    # CPAP functions - NO PROPHYLACTIC CPAP
+    compute_cpap_for_rds_kpi,
+    compute_cpap_general_kpi,
+    compute_cpap_coverage_by_weight_kpi,
+    # Individual CPAP chart functions - NO PROPHYLACTIC
+    render_cpap_general_trend_chart,
+    render_cpap_rds_trend_chart,
+    render_cpap_by_weight_trend_chart,
+    # Legacy function for backward compatibility
+    render_cpap_trend_chart,
+    render_cpap_facility_comparison,
+    render_cpap_region_comparison,
+    # Constants
+    BIRTH_WEIGHT_CATEGORIES,
+)
+
+# KPI mapping for newborn comparison charts - NO PROPHYLACTIC CPAP
 NEWBORN_KPI_MAPPING = {
     "Inborn Rate (%)": {
         "title": "Inborn Babies (%)",
@@ -93,9 +121,45 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Culture Done Cases",
         "denominator_name": "Probable Sepsis Cases",
     },
+    # NEW SIMPLIFIED KPIs - NO PROPHYLACTIC CPAP
+    "Birth Weight Distribution": {
+        "title": "Birth Weight Distribution",
+        "value_name": "Number of Newborns",
+        "type": "simplified",
+        "category": "birth_weight",
+    },
+    "KMC Coverage by Birth Weight": {
+        "title": "KMC Coverage by Birth Weight Category",
+        "numerator_name": "KMC Cases",
+        "denominator_name": "Total Eligible",
+        "type": "simplified",
+        "category": "kmc",
+    },
+    # CPAP KPIs (ONLY 3 NOW, NO PROPHYLACTIC)
+    "General CPAP Coverage": {
+        "title": "General CPAP Coverage",
+        "numerator_name": "CPAP Cases",
+        "denominator_name": "Total Admitted Newborns",
+        "type": "simplified",
+        "category": "cpap_general",
+    },
+    "CPAP for RDS": {
+        "title": "CPAP for Respiratory Distress Syndrome (RDS)",
+        "numerator_name": "CPAP Cases",
+        "denominator_name": "Total RDS Cases",
+        "type": "simplified",
+        "category": "cpap_rds",
+    },
+    "CPAP Coverage by Birth Weight": {
+        "title": "CPAP Coverage by Birth Weight Category",
+        "numerator_name": "CPAP Cases",
+        "denominator_name": "Total Eligible",
+        "type": "simplified",
+        "category": "cpap_by_weight",
+    },
 }
 
-# KPI options for newborn dashboard - UPDATED WITH CULTURE KPIs
+# KPI options for newborn dashboard - NO PROPHYLACTIC CPAP
 NEWBORN_KPI_OPTIONS = [
     "Inborn Rate (%)",
     "Outborn Rate (%)",
@@ -110,9 +174,16 @@ NEWBORN_KPI_OPTIONS = [
     "Culture Done for Babies on Antibiotics (%)",
     "Blood Culture Result Recorded (%)",
     "Culture Done for Babies with Clinical Sepsis (%)",
+    # NEW SIMPLIFIED KPIs - NO PROPHYLACTIC CPAP
+    "Birth Weight Distribution",
+    "KMC Coverage by Birth Weight",
+    # CPAP KPIs (ONLY 3)
+    "General CPAP Coverage",
+    "CPAP for RDS",
+    "CPAP Coverage by Birth Weight",
 ]
 
-# KPI Groups for Tab Navigation - SIMPLIFIED
+# KPI Groups for Tab Navigation - UPDATED TO 3 CPAP KPIS
 NEWBORN_KPI_GROUPS = {
     "👶 Birth & Hypothermia": [
         "Inborn Rate (%)",
@@ -121,6 +192,7 @@ NEWBORN_KPI_GROUPS = {
         "Hypothermia After Admission Rate (%)",
         "Inborn Hypothermia Rate (%)",
         "Outborn Hypothermia Rate (%)",
+        "Birth Weight Distribution",
     ],
     "💊 Sepsis Management": [
         "Antibiotics for Clinical Sepsis (%)",
@@ -128,13 +200,20 @@ NEWBORN_KPI_GROUPS = {
         "Culture Done for Babies on Antibiotics (%)",
         "Blood Culture Result Recorded (%)",
     ],
+    "🏥 Interventions": [
+        "KMC Coverage by Birth Weight",
+        # CPAP KPIs (ONLY 3)
+        "General CPAP Coverage",
+        "CPAP for RDS",
+        "CPAP Coverage by Birth Weight",
+    ],
     "📊 Outcomes & Enrollment": [
         "Neonatal Mortality Rate (%)",
         "Admitted Newborns",
     ],
 }
 
-# KPI Column Requirements - UPDATED WITH CULTURE KPIs
+# KPI Column Requirements - NO PROPHYLACTIC CPAP REQUIREMENTS
 NEWBORN_KPI_COLUMN_REQUIREMENTS = {
     "Inborn Rate (%)": [
         "orgUnit",
@@ -200,21 +279,21 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "were_antibiotics_administered?_interventions",
         "event_date_discharge_and_final_diagnosis",
     ],
-    # NEW CULTURE KPIs - FIXED DATE COLUMNS
+    # NEW CULTURE KPIs
     "Culture Done for Babies on Antibiotics (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "blood_culture_for_suspected_sepsis_microbiology_and_labs",
         "were_antibiotics_administered?_interventions",
-        "event_date_microbiology_and_labs",  # FIXED: Microbiology date, not discharge
+        "event_date_microbiology_and_labs",
     ],
     "Blood Culture Result Recorded (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "blood_culture_for_suspected_sepsis_microbiology_and_labs",
-        "event_date_microbiology_and_labs",  # FIXED: Microbiology date, not admission
+        "event_date_microbiology_and_labs",
     ],
     "Culture Done for Babies with Clinical Sepsis (%)": [
         "orgUnit",
@@ -222,15 +301,67 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "blood_culture_for_suspected_sepsis_microbiology_and_labs",
         "sub_categories_of_infection_discharge_and_final_diagnosis",
-        "event_date_microbiology_and_labs",  # FIXED: Microbiology date, not discharge
+        "event_date_microbiology_and_labs",
+    ],
+    # NEW SIMPLIFIED KPIs - NO PROPHYLACTIC CPAP REQUIREMENTS
+    "Birth Weight Distribution": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "birth_weight_grams_maternal_birth_and_infant_details",
+        "event_date_maternal_birth_and_infant_details",
+    ],
+    "KMC Coverage by Birth Weight": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "birth_weight_grams_maternal_birth_and_infant_details",
+        "kmc_administered_interventions",
+        "event_date_interventions",
+    ],
+    # CPAP REQUIREMENTS (ONLY 3, NO PROPHYLACTIC)
+    "General CPAP Coverage": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "cpap_administered_interventions",
+        "event_date_interventions",
+    ],
+    "CPAP for RDS": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "cpap_administered_interventions",
+        "first_reason_for_admission_admission_information",
+        "second_reason_for_admission_admission_information",
+        "third_reason_for_admission_admission_information",
+        "event_date_interventions",
+    ],
+    "CPAP Coverage by Birth Weight": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "cpap_administered_interventions",
+        "birth_weight_grams_maternal_birth_and_infant_details",
+        "event_date_interventions",
     ],
 }
 
-# CULTURE KPI DATE COLUMN MAPPING - ADD THIS
+# CULTURE KPI DATE COLUMN MAPPING
 CULTURE_KPI_DATE_COLUMNS = {
     "Culture Done for Babies on Antibiotics (%)": "event_date_microbiology_and_labs",
     "Blood Culture Result Recorded (%)": "event_date_microbiology_and_labs",
     "Culture Done for Babies with Clinical Sepsis (%)": "event_date_microbiology_and_labs",
+}
+
+# SIMPLIFIED KPI DATE COLUMN MAPPING - NO PROPHYLACTIC CPAP
+SIMPLIFIED_KPI_DATE_COLUMNS = {
+    "Birth Weight Distribution": "event_date_maternal_birth_and_infant_details",
+    "KMC Coverage by Birth Weight": "event_date_interventions",
+    # CPAP DATE COLUMNS (ONLY 3)
+    "General CPAP Coverage": "event_date_interventions",
+    "CPAP for RDS": "event_date_interventions",
+    "CPAP Coverage by Birth Weight": "event_date_interventions",
 }
 
 
@@ -280,31 +411,44 @@ def is_culture_kpi(kpi_name):
     return any(keyword in kpi_name for keyword in culture_keywords)
 
 
-def get_relevant_date_column_for_newborn_kpi_with_culture(kpi_name):
+def is_simplified_kpi(kpi_name):
+    """Check if a KPI is a simplified KPI (Birth Weight, KMC, CPAP)"""
+    kpi_config = get_newborn_kpi_config(kpi_name)
+    return kpi_config.get("type") == "simplified"
+
+
+def get_relevant_date_column_for_newborn_kpi_with_all(kpi_name):
     """
     Get the relevant event date column for a specific newborn KPI
-    Includes culture KPIs with correct date columns
+    Includes culture KPIs and simplified KPIs with correct date columns
     """
     # First check if it's a culture KPI
     if kpi_name in CULTURE_KPI_DATE_COLUMNS:
         return CULTURE_KPI_DATE_COLUMNS[kpi_name]
 
+    # Check if it's a simplified KPI
+    if kpi_name in SIMPLIFIED_KPI_DATE_COLUMNS:
+        return SIMPLIFIED_KPI_DATE_COLUMNS[kpi_name]
+
     # Use original function for non-culture KPIs
     return get_relevant_date_column_for_newborn_kpi(kpi_name)
 
 
-def get_numerator_denominator_for_newborn_kpi_with_culture(
+def get_numerator_denominator_for_newborn_kpi_with_all(
     df, kpi_name, facility_uids=None, date_range_filters=None
 ):
     """
     Get numerator and denominator for a specific newborn KPI with date range filtering
-    Supports both V1 and V2 (culture) KPIs
+    Supports V1, V2 (culture), and simplified KPIs
     """
     # Use V2 function for culture KPIs
     if is_culture_kpi(kpi_name):
         return get_numerator_denominator_for_newborn_kpi_v2(
             df, kpi_name, facility_uids, date_range_filters
         )
+    # For simplified KPIs, return 0,0,0 as they have special rendering
+    elif is_simplified_kpi(kpi_name):
+        return (0, 0, 0.0)
     else:
         # Use existing V1 function for non-culture KPIs
         return get_numerator_denominator_for_newborn_kpi(
@@ -313,7 +457,7 @@ def get_numerator_denominator_for_newborn_kpi_with_culture(
 
 
 def render_newborn_kpi_tab_navigation():
-    """Render professional tab navigation for Neonatal KPI selection - SIMPLIFIED"""
+    """Render professional tab navigation for Neonatal KPI selection - UPDATED WITH 3 CPAP KPIs"""
 
     st.markdown(
         """
@@ -352,11 +496,12 @@ def render_newborn_kpi_tab_navigation():
     if "selected_newborn_kpi" not in st.session_state:
         st.session_state.selected_newborn_kpi = "Inborn Rate (%)"
 
-    # Create main KPI group tabs - SIMPLIFIED TO 3 TABS
-    tab1, tab2, tab3 = st.tabs(
+    # Create main KPI group tabs - UPDATED TO 4 TABS
+    tab1, tab2, tab3, tab4 = st.tabs(
         [
             "👶 **Birth & Hypothermia**",
             "💊 **Sepsis Management**",
+            "🏥 **Interventions**",
             "📊 **Outcomes & Enrollment**",
         ]
     )
@@ -367,6 +512,7 @@ def render_newborn_kpi_tab_navigation():
         col1, col2 = st.columns(2)
         col3, col4 = st.columns(2)
         col5, col6 = st.columns(2)
+        col7, _ = st.columns(2)
 
         with col1:
             if st.button(
@@ -438,6 +584,19 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "Outborn Hypothermia Rate (%)"
 
+        with col7:
+            if st.button(
+                "⚖️ Birth Weight Distribution",
+                key="birth_weight_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Birth Weight Distribution"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Birth Weight Distribution"
+
     with tab2:
         col1, col2 = st.columns(2)
         col3, col4 = st.columns(2)
@@ -496,6 +655,59 @@ def render_newborn_kpi_tab_navigation():
                 selected_kpi = "Blood Culture Result Recorded (%)"
 
     with tab3:
+        col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
+        col5, _ = st.columns(2)
+
+        with col1:
+            if st.button(
+                "🤱 KMC Coverage",
+                key="kmc_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "KMC Coverage by Birth Weight"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "KMC Coverage by Birth Weight"
+
+        with col2:
+            if st.button(
+                "🌀 General CPAP",
+                key="cpap_general_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "General CPAP Coverage"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "General CPAP Coverage"
+
+        with col3:
+            if st.button(
+                "🌀 CPAP for RDS",
+                key="cpap_rds_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "CPAP for RDS" else "secondary"),
+            ):
+                selected_kpi = "CPAP for RDS"
+
+        with col4:
+            if st.button(
+                "🌀 CPAP by Birth Weight",
+                key="cpap_by_weight_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "CPAP Coverage by Birth Weight"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "CPAP Coverage by Birth Weight"
+
+    with tab4:
         col1, col2 = st.columns(2)
 
         with col1:
@@ -601,8 +813,21 @@ def render_newborn_trend_chart_section(
             "end_date": st.session_state.filters.get("end_date"),
         }
 
+    # SPECIAL HANDLING FOR SIMPLIFIED KPIs
+    if is_simplified_kpi(kpi_selection):
+        _render_simplified_kpi_trend_chart(
+            kpi_selection,
+            working_df,
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters,
+        )
+        return
+
     # FIXED: Use correct date column function for culture KPIs
-    date_column = get_relevant_date_column_for_newborn_kpi_with_culture(kpi_selection)
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
 
     # Prepare data using the correct date column
     if date_column not in working_df.columns:
@@ -671,9 +896,9 @@ def render_newborn_trend_chart_section(
         period_df = working_df[working_df["period_display"] == period_display]
 
         if not period_df.empty:
-            # Compute KPI using date-filtered data WITH CULTURE SUPPORT
+            # Compute KPI using date-filtered data WITH ALL SUPPORT
             numerator, denominator, _ = (
-                get_numerator_denominator_for_newborn_kpi_with_culture(
+                get_numerator_denominator_for_newborn_kpi_with_all(
                     period_df,
                     kpi_selection,
                     facility_uids,
@@ -794,6 +1019,112 @@ def render_newborn_trend_chart_section(
         st.error(f"Error rendering chart for {kpi_selection}: {str(e)}")
 
 
+def _render_simplified_kpi_trend_chart(
+    kpi_selection,
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render trend chart for simplified KPIs (Birth Weight, KMC, CPAP) - UPDATED FOR 3 CPAP KPIs"""
+
+    # Get KPI configuration
+    kpi_config = get_newborn_kpi_config(kpi_selection)
+    category = kpi_config.get("category", "")
+
+    # Get date column for this simplified KPI
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
+
+    if date_column not in working_df.columns:
+        st.warning(
+            f"⚠️ Required date column '{date_column}' not found for {kpi_selection}"
+        )
+        return
+
+    # Convert to datetime and filter by date range
+    working_df["event_date"] = pd.to_datetime(working_df[date_column], errors="coerce")
+
+    # Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+            working_df = working_df[
+                (working_df["event_date"] >= start_dt)
+                & (working_df["event_date"] < end_dt)
+            ].copy()
+
+    # Filter out rows without valid dates
+    working_df = working_df[working_df["event_date"].notna()].copy()
+
+    if working_df.empty:
+        st.warning(f"⚠️ No data available for {kpi_selection}")
+        return
+
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        working_df = assign_period(working_df, "event_date", period_label)
+    except:
+        st.error("Error assigning periods")
+        return
+
+    # Render based on category - UPDATED FOR 3 CPAP KPIs
+    if category == "birth_weight":
+        render_birth_weight_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    elif category == "kmc":
+        render_kmc_coverage_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    elif category == "cpap_general":
+        render_cpap_general_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    elif category == "cpap_rds":
+        render_cpap_rds_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    elif category == "cpap_by_weight":
+        render_cpap_by_weight_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    else:
+        st.warning(f"⚠️ Unsupported simplified KPI category: {category}")
+
+
 def render_newborn_comparison_chart(
     kpi_selection,
     patient_df=None,
@@ -813,6 +1144,22 @@ def render_newborn_comparison_chart(
 
     if df_to_use is None or df_to_use.empty:
         st.info("⚠️ No data available for comparison.")
+        return
+
+    # SPECIAL HANDLING FOR SIMPLIFIED KPIs
+    if is_simplified_kpi(kpi_selection):
+        _render_simplified_kpi_comparison_chart(
+            kpi_selection,
+            df_to_use,
+            comparison_mode,
+            display_names,
+            facility_uids,
+            facilities_by_region,
+            region_names,
+            bg_color,
+            text_color,
+            is_national,
+        )
         return
 
     # OPTIMIZATION: Filter DataFrame for this KPI
@@ -865,7 +1212,7 @@ def render_newborn_comparison_chart(
                 continue
 
             # Get correct date column for this KPI
-            date_column = get_relevant_date_column_for_newborn_kpi_with_culture(
+            date_column = get_relevant_date_column_for_newborn_kpi_with_all(
                 kpi_selection
             )
 
@@ -908,9 +1255,9 @@ def render_newborn_comparison_chart(
             # Group by period for this facility
             for period_display, period_group in facility_df.groupby("period_display"):
                 if not period_group.empty:
-                    # Compute KPI WITH CULTURE SUPPORT
+                    # Compute KPI WITH ALL SUPPORT
                     numerator, denominator, _ = (
-                        get_numerator_denominator_for_newborn_kpi_with_culture(
+                        get_numerator_denominator_for_newborn_kpi_with_all(
                             period_group,
                             kpi_selection,
                             [facility_uid],
@@ -1024,7 +1371,7 @@ def render_newborn_comparison_chart(
                 continue
 
             # Get correct date column
-            date_column = get_relevant_date_column_for_newborn_kpi_with_culture(
+            date_column = get_relevant_date_column_for_newborn_kpi_with_all(
                 kpi_selection
             )
 
@@ -1064,9 +1411,9 @@ def render_newborn_comparison_chart(
 
             for period_display, period_group in region_df.groupby("period_display"):
                 if not period_group.empty:
-                    # Compute KPI WITH CULTURE SUPPORT
+                    # Compute KPI WITH ALL SUPPORT
                     numerator, denominator, _ = (
-                        get_numerator_denominator_for_newborn_kpi_with_culture(
+                        get_numerator_denominator_for_newborn_kpi_with_all(
                             period_group,
                             kpi_selection,
                             region_facility_uids,
@@ -1134,7 +1481,137 @@ def render_newborn_comparison_chart(
             st.info("⚠️ Invalid comparison mode selected.")
 
 
-# ... (keep all other functions exactly the same as before, starting from render_newborn_additional_analytics)
+def _render_simplified_kpi_comparison_chart(
+    kpi_selection,
+    df_to_use,
+    comparison_mode,
+    display_names,
+    facility_uids,
+    facilities_by_region,
+    region_names,
+    bg_color,
+    text_color,
+    is_national,
+):
+    """Render comparison chart for simplified KPIs - UPDATED FOR 3 CPAP KPIs"""
+
+    kpi_config = get_newborn_kpi_config(kpi_selection)
+    chart_title = kpi_config.get("title", kpi_selection)
+    category = kpi_config.get("category", "")
+
+    # Get date column
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
+
+    if date_column not in df_to_use.columns:
+        st.warning(
+            f"⚠️ Required date column '{date_column}' not found for {kpi_selection}"
+        )
+        return
+
+    # Convert to datetime
+    df_to_use["event_date"] = pd.to_datetime(df_to_use[date_column], errors="coerce")
+    df_to_use = df_to_use[df_to_use["event_date"].notna()].copy()
+
+    # Get date range filters
+    date_range_filters = {}
+    if "filters" in st.session_state:
+        date_range_filters = {
+            "start_date": st.session_state.filters.get("start_date"),
+            "end_date": st.session_state.filters.get("end_date"),
+        }
+
+    # Apply date filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+            df_to_use = df_to_use[
+                (df_to_use["event_date"] >= start_dt)
+                & (df_to_use["event_date"] < end_dt)
+            ].copy()
+
+    if df_to_use.empty:
+        st.info("⚠️ No data available for comparison.")
+        return
+
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        df_to_use = assign_period(df_to_use, "event_date", period_label)
+    except:
+        st.error("Error assigning periods")
+        return
+
+    if comparison_mode == "facility":
+        if category == "birth_weight":
+            render_birth_weight_facility_comparison(
+                df_to_use,
+                "period_display",
+                f"{chart_title} - Facility Comparison",
+                bg_color,
+                text_color,
+                display_names,
+                facility_uids,
+            )
+        elif category == "kmc":
+            render_kmc_facility_comparison(
+                df_to_use,
+                "period_display",
+                f"{chart_title} - Facility Comparison",
+                bg_color,
+                text_color,
+                display_names,
+                facility_uids,
+            )
+        elif category in ["cpap_general", "cpap_rds", "cpap_by_weight"]:
+            render_cpap_facility_comparison(
+                df_to_use,
+                "period_display",
+                f"{chart_title} - Facility Comparison",
+                bg_color,
+                text_color,
+                display_names,
+                facility_uids,
+            )
+
+    elif comparison_mode == "region" and is_national:
+        if category == "birth_weight":
+            render_birth_weight_region_comparison(
+                df_to_use,
+                "period_display",
+                f"{chart_title} - Region Comparison",
+                bg_color,
+                text_color,
+                region_names,
+                facilities_by_region,
+                facilities_by_region,
+            )
+        elif category == "kmc":
+            render_kmc_region_comparison(
+                df_to_use,
+                "period_display",
+                f"{chart_title} - Region Comparison",
+                bg_color,
+                text_color,
+                region_names,
+                facilities_by_region,
+                facilities_by_region,
+            )
+        elif category in ["cpap_general", "cpap_rds", "cpap_by_weight"]:
+            render_cpap_region_comparison(
+                df_to_use,
+                "period_display",
+                f"{chart_title} - Region Comparison",
+                bg_color,
+                text_color,
+                region_names,
+                facilities_by_region,
+                facilities_by_region,
+            )
 
 
 def render_newborn_additional_analytics(
@@ -1156,7 +1633,7 @@ def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     current_kpi = st.session_state.get("selected_newborn_kpi", "Inborn Rate (%)")
 
     # Get the SPECIFIC date column for this KPI
-    kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_culture(current_kpi)
+    kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_all(current_kpi)
 
     # Try KPI-specific date column first
     if kpi_date_column and kpi_date_column in df.columns:
@@ -1351,8 +1828,8 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
     # Get current KPI selection from session state
     current_kpi = st.session_state.get("selected_newborn_kpi", "Inborn Rate (%)")
 
-    # Get the SPECIFIC date column for this KPI WITH CULTURE SUPPORT
-    kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_culture(current_kpi)
+    # Get the SPECIFIC date column for this KPI WITH ALL SUPPORT
+    kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_all(current_kpi)
 
     # STANDARDIZE COLUMN NAMES - Ensure we have orgUnit
     if "orgUnit" not in df.columns:
@@ -1464,7 +1941,7 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
 
 def get_newborn_period_data_for_kpi(kpi_selection, patient_df, facility_uids):
     """Get period-based data for a specific newborn KPI from patient data"""
-    date_column = get_relevant_date_column_for_newborn_kpi_with_culture(kpi_selection)
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
 
     # Extract period columns using program stage specific date
     df_with_periods = extract_period_columns_newborn(patient_df, date_column)
@@ -1490,11 +1967,9 @@ def compute_newborn_kpi_for_period(kpi_selection, period_df, facility_uids):
     if period_df.empty:
         return _get_newborn_default_kpi_data(kpi_selection)
 
-    # For ALL KPIs, use get_numerator_denominator_for_newborn_kpi WITH CULTURE SUPPORT
-    numerator, denominator, value = (
-        get_numerator_denominator_for_newborn_kpi_with_culture(
-            period_df, kpi_selection, facility_uids
-        )
+    # For ALL KPIs, use get_numerator_denominator_for_newborn_kpi WITH ALL SUPPORT
+    numerator, denominator, value = get_numerator_denominator_for_newborn_kpi_with_all(
+        period_df, kpi_selection, facility_uids
     )
 
     return {
@@ -1512,7 +1987,7 @@ def _get_newborn_default_kpi_data(kpi_selection):
 
 def get_date_column_from_newborn_df(df, kpi_selection):
     """Get the appropriate date column from newborn patient-level data based on KPI"""
-    date_column = get_relevant_date_column_for_newborn_kpi_with_culture(kpi_selection)
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
 
     if date_column in df.columns:
         return date_column
@@ -1529,18 +2004,23 @@ __all__ = [
     "NEWBORN_KPI_GROUPS",
     "NEWBORN_KPI_COLUMN_REQUIREMENTS",
     "CULTURE_KPI_DATE_COLUMNS",
+    "SIMPLIFIED_KPI_DATE_COLUMNS",
     # Main functions
     "get_newborn_kpi_filtered_dataframe",
     "get_text_color",
     "get_newborn_kpi_config",
     "is_culture_kpi",
-    "get_relevant_date_column_for_newborn_kpi_with_culture",
-    "get_numerator_denominator_for_newborn_kpi_with_culture",
+    "is_simplified_kpi",
+    "get_relevant_date_column_for_newborn_kpi_with_all",
+    "get_numerator_denominator_for_newborn_kpi_with_all",
     "render_newborn_kpi_tab_navigation",
     "get_period_columns",
     "render_newborn_trend_chart_section",
     "render_newborn_comparison_chart",
     "render_newborn_additional_analytics",
+    # Simplified KPI helper functions
+    "_render_simplified_kpi_trend_chart",
+    "_render_simplified_kpi_comparison_chart",
     # Date handling functions
     "normalize_newborn_patient_dates",
     "render_newborn_patient_filter_controls",
@@ -1551,4 +2031,8 @@ __all__ = [
     "compute_newborn_kpi_for_period",
     "_get_newborn_default_kpi_data",
     "get_date_column_from_newborn_df",
+    # CPAP KPI names (ONLY 3)
+    "General CPAP Coverage",
+    "CPAP for RDS",
+    "CPAP Coverage by Birth Weight",
 ]

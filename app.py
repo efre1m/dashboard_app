@@ -1,7 +1,13 @@
+# app.py - FIXED WITH ALL SESSION STATE INITIALIZATIONS
+
 import streamlit as st
 
-# Initialize ALL session state caches to fix the error
-caches_to_init = [
+# ====================== INITIALIZE ALL SESSION STATES ======================
+# This MUST be at the VERY TOP before any imports
+
+# Define ALL cache names used across the application
+ALL_CACHES = [
+    # Maternal caches
     "assisted_cache",
     "uterotonic_cache",
     "pph_cache",
@@ -12,18 +18,40 @@ caches_to_init = [
     "svd_cache",
     "admitted_mothers_cache",
     "kpi_cache",
+    # Newborn caches
     "kpi_cache_newborn",
+    "kpi_cache_newborn_simplified",  # Added for kpi_utils_newborn_simplified.py
+    "kpi_cache_newborn_v2",  # Added for kpi_utils_newborn_v2.py
 ]
 
-# Initialize each cache if it doesn't exist
-for cache_name in caches_to_init:
+# Initialize ALL caches
+for cache_name in ALL_CACHES:
     if cache_name not in st.session_state:
         st.session_state[cache_name] = {}
+
+# Initialize other essential session state variables
+ESSENTIAL_STATES = {
+    "filters": {},
+    "period_label": "Monthly",
+    "user": {},
+    "authenticated": False,
+    "data_loaded": False,
+    "raw_data": None,
+    "processed_data": None,
+}
+
+for key, default_value in ESSENTIAL_STATES.items():
+    if key not in st.session_state:
+        st.session_state[key] = default_value
+
+# ====================== NOW IMPORT OTHER MODULES ======================
+# Now it's safe to import modules that might use session state
+
 from components.login import login_component
 from dashboards import facility, regional, national, admin
 from utils.auth import logout
 
-# ---------------- Streamlit Page Config ----------------
+# ====================== STREAMLIT PAGE CONFIG ======================
 st.set_page_config(
     page_title="IMNID Dashboard",
     page_icon="📊",
@@ -31,7 +59,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ---------------- Sidebar ----------------
+# ====================== SIDEBAR ======================
 with st.sidebar:
     st.title("📊 IMNID Dashboard")
 
@@ -44,7 +72,7 @@ with st.sidebar:
     else:
         st.info("🔑 Please log in")
 
-# ---------------- Routing Based on Role ----------------
+# ====================== ROUTING BASED ON ROLE ======================
 if not st.session_state.get("authenticated", False):
     login_component()  # Render login page if not authenticated
 else:
