@@ -174,6 +174,9 @@ def get_numerator_denominator_for_admitted_mothers(
 
 
 # ---------------- Chart Functions WITH TABLES ----------------
+# In kpi_admitted_mothers.py - FIXED VERSION WITH UNIQUE KEYS
+
+
 def render_admitted_mothers_trend_chart(
     df,
     period_col="period_display",
@@ -355,7 +358,7 @@ def render_admitted_mothers_trend_chart(
             )
             st.metric("📈 Trend from Previous", f"{trend_change:,.0f} {trend_symbol}")
 
-    # Download button
+    # Download button - FIXED WITH UNIQUE KEY
     summary_df = df.copy().reset_index(drop=True)
 
     summary_df = summary_df[[x_axis_col, value_col]].copy()
@@ -375,12 +378,19 @@ def render_admitted_mothers_trend_chart(
     summary_table.insert(0, "No", range(1, len(summary_table) + 1))
 
     csv = summary_table.to_csv(index=False)
+
+    # FIX: Generate unique key for maternal download button
+    import time
+
+    unique_key = f"maternal_admitted_trend_{int(time.time())}_{hash(str(df))}"
+
     st.download_button(
         label="📥 Download Chart Data as CSV",
         data=csv,
         file_name="admitted_mothers_trend_data.csv",
         mime="text/csv",
         help="Download the exact data shown in the chart",
+        key=unique_key,  # UNIQUE KEY for maternal
     )
 
 
@@ -625,14 +635,21 @@ def render_admitted_mothers_facility_comparison_chart(
         pivot_df = pd.DataFrame(pivot_data)
         st.dataframe(pivot_df, use_container_width=True)
 
-    # Download button
+    # Download button - FIXED WITH UNIQUE KEY
     csv = comparison_df.to_csv(index=False)
+
+    # FIX: Generate unique key for maternal download button
+    import time
+
+    unique_key = f"maternal_admitted_facility_{int(time.time())}_{hash(str(df))}"
+
     st.download_button(
         label="📥 Download Facility Comparison Data",
         data=csv,
         file_name="admitted_mothers_facility_comparison.csv",
         mime="text/csv",
         help="Download the facility comparison data",
+        key=unique_key,  # UNIQUE KEY for maternal
     )
 
 
@@ -878,14 +895,21 @@ def render_admitted_mothers_region_comparison_chart(
         pivot_df = pd.DataFrame(pivot_data)
         st.dataframe(pivot_df, use_container_width=True)
 
-    # Download button
+    # Download button - FIXED WITH UNIQUE KEY
     csv = comparison_df.to_csv(index=False)
+
+    # FIX: Generate unique key for maternal download button
+    import time
+
+    unique_key = f"maternal_admitted_region_{int(time.time())}_{hash(str(df))}"
+
     st.download_button(
         label="📥 Download Region Comparison Data",
         data=csv,
         file_name="admitted_mothers_region_comparison.csv",
         mime="text/csv",
         help="Download the region comparison data",
+        key=unique_key,  # UNIQUE KEY for maternal
     )
 
 

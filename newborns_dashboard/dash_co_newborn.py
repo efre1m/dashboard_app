@@ -38,12 +38,6 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     render_cpap_general_trend_chart,
     render_cpap_rds_trend_chart,
     render_cpap_by_weight_trend_chart,
-    # Comparison functions with single tables
-    render_kmc_facility_comparison,
-    render_kmc_region_comparison,
-    render_cpap_facility_comparison,
-    render_cpap_region_comparison,
-    # NEW CPAP COMPARISON FUNCTIONS FOR FACILITY AND REGION
     render_cpap_general_facility_comparison,
     render_cpap_rds_facility_comparison,
     render_cpap_general_region_comparison,

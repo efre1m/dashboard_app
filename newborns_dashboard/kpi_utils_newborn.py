@@ -1076,19 +1076,166 @@ def render_admitted_newborns_trend_chart(
     value_name="Admitted Newborns",
     facility_uids=None,
 ):
-    """Render trend chart for Admitted Newborns"""
-    from utils.kpi_admitted_mothers import render_admitted_mothers_trend_chart
+    """Render trend chart for Admitted Newborns - FIXED WITH UNIQUE KEYS"""
 
-    return render_admitted_mothers_trend_chart(
+    import time
+
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if df is None or df.empty or period_col not in df.columns:
+        st.subheader(title)
+        st.info("⚠️ No data available for the selected period.")
+        return
+
+    x_axis_col = period_col
+
+    df = df.copy()
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
+
+    # Sort periods chronologically
+    if "period_sort" in df.columns:
+        df = df.sort_values("period_sort")
+    else:
+        try:
+            df["sort_key"] = df[period_col].apply(
+                lambda x: (
+                    dt.datetime.strptime(format_period_month_year(x), "%b-%y")
+                    if isinstance(x, str) and "-" in x
+                    else x
+                )
+            )
+            df = df.sort_values("sort_key")
+            df = df.drop(columns=["sort_key"])
+        except Exception as e:
+            df = df.sort_values(period_col)
+
+    # Create chart
+    fig = px.bar(
         df,
-        period_col,
-        value_col,
-        title,
-        bg_color,
-        text_color,
-        facility_names,
-        value_name,
-        facility_uids,
+        x=x_axis_col,
+        y=value_col,
+        title=title,
+        height=400,
+        hover_data=[value_col],
+        text=value_col,
+        category_orders={x_axis_col: df[x_axis_col].tolist()},
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:.0f}",
+        textposition="outside",
+        hovertemplate=(
+            f"<b>%{{x}}</b><br>" f"{value_name}: %{{y:,.0f}}<br>" f"<extra></extra>"
+        ),
+    )
+
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis_title="Period (Month-Year)",
+        yaxis_title=value_name,
+        xaxis=dict(
+            type="category",
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            categoryorder="array",
+            categoryarray=df[x_axis_col].tolist(),
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+    )
+
+    # Format y-axis as integers with commas
+    fig.update_layout(yaxis_tickformat=",")
+
+    # Display the chart
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Display table below graph
+    st.markdown("---")
+    st.subheader("📋 Data Table")
+
+    # Create a clean display dataframe
+    display_df = df.copy()
+    table_columns = [x_axis_col, value_col]
+    display_df = display_df[table_columns].copy()
+
+    # Format numbers with commas
+    display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:,.0f}")
+
+    # Add Overall/Total row
+    total_value = df[value_col].sum() if not df.empty else 0
+    overall_row = {
+        x_axis_col: "Overall",
+        value_col: f"{total_value:,.0f}",
+    }
+
+    # Convert to DataFrame and append
+    overall_df = pd.DataFrame([overall_row])
+    display_df = pd.concat([display_df, overall_df], ignore_index=True)
+
+    # Display the table
+    st.dataframe(display_df, use_container_width=True)
+
+    # Add summary statistics
+    if len(df) > 1:
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("📈 Latest Count", f"{df[value_col].iloc[-1]:,.0f}")
+
+        with col2:
+            avg_value = df[value_col].mean()
+            st.metric("📊 Average per Period", f"{avg_value:,.1f}")
+
+        with col3:
+            last_value = df[value_col].iloc[-1]
+            prev_value = df[value_col].iloc[-2] if len(df) > 1 else 0
+            trend_change = last_value - prev_value
+            trend_symbol = (
+                "▲" if trend_change > 0 else ("▼" if trend_change < 0 else "–")
+            )
+            st.metric("📈 Trend from Previous", f"{trend_change:,.0f} {trend_symbol}")
+
+    # Download button with UNIQUE KEY
+    summary_df = df.copy().reset_index(drop=True)
+    summary_df = summary_df[[x_axis_col, value_col]].copy()
+
+    # Format period column
+    if x_axis_col in summary_df.columns:
+        summary_df[x_axis_col] = summary_df[x_axis_col].apply(format_period_month_year)
+
+    summary_df = summary_df.rename(columns={value_col: f"{value_name} Count"})
+    summary_table = summary_df.copy()
+
+    overall_row = pd.DataFrame(
+        {x_axis_col: ["Overall"], f"{value_name} Count": [total_value]}
+    )
+    summary_table = pd.concat([summary_table, overall_row], ignore_index=True)
+    summary_table.insert(0, "No", range(1, len(summary_table) + 1))
+
+    csv = summary_table.to_csv(index=False)
+
+    # Generate UNIQUE key for newborn download button
+    unique_key = f"newborn_admitted_trend_{int(time.time())}_{hash(str(df))}"
+
+    st.download_button(
+        label="📥 Download Chart Data as CSV",
+        data=csv,
+        file_name="admitted_newborns_trend_data.csv",
+        mime="text/csv",
+        help="Download the exact data shown in the chart",
+        key=unique_key,  # UNIQUE KEY for newborn
     )
 
 
@@ -1103,21 +1250,251 @@ def render_admitted_newborns_facility_comparison_chart(
     facility_uids=None,
     value_name="Admitted Newborns",
 ):
-    """Render facility comparison chart for Admitted Newborns"""
-    from utils.kpi_admitted_mothers import (
-        render_admitted_mothers_facility_comparison_chart,
+    """Render facility comparison chart for Admitted Newborns - FIXED WITH UNIQUE KEYS"""
+
+    import time
+
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if df is None or df.empty:
+        st.info("⚠️ No data available for facility comparison.")
+        return
+
+    # Ensure we have required columns
+    if "orgUnit" not in df.columns:
+        st.error(f"❌ 'orgUnit' column not found in comparison data")
+        st.write("Available columns:", list(df.columns))
+        return
+
+    # Create facility mapping
+    facility_mapping = {}
+    if facility_names and facility_uids and len(facility_names) == len(facility_uids):
+        for uid, name in zip(facility_uids, facility_names):
+            facility_mapping[str(uid)] = name
+    elif "Facility" in df.columns:
+        # Extract mapping from data
+        for _, row in df.iterrows():
+            if "orgUnit" in row and pd.notna(row["orgUnit"]):
+                facility_mapping[str(row["orgUnit"])] = row.get(
+                    "Facility", str(row["orgUnit"])
+                )
+    else:
+        # Create simple mapping from UIDs
+        unique_orgunits = df["orgUnit"].dropna().unique()
+        for uid in unique_orgunits:
+            facility_mapping[str(uid)] = f"Facility {str(uid)[:8]}"
+
+    if not facility_mapping:
+        st.info("⚠️ No facility mapping available for comparison.")
+        return
+
+    # Prepare comparison data
+    comparison_data = []
+
+    # Get unique periods in order
+    if "period_sort" in df.columns:
+        unique_periods = df[["period_display", "period_sort"]].drop_duplicates()
+        unique_periods = unique_periods.sort_values("period_sort")
+        period_order = unique_periods["period_display"].tolist()
+    else:
+        # Try to sort by month-year
+        try:
+            period_order = sorted(
+                df["period_display"].unique().tolist(),
+                key=lambda x: (
+                    dt.datetime.strptime(format_period_month_year(x), "%b-%y")
+                    if isinstance(x, str) and "-" in x
+                    else x
+                ),
+            )
+        except:
+            period_order = sorted(df["period_display"].unique().tolist())
+
+    # Format periods to proper month-year format
+    period_order = [format_period_month_year(p) for p in period_order if p is not None]
+
+    # Prepare data for each facility and period
+    for facility_uid, facility_name in facility_mapping.items():
+        facility_df = df[df["orgUnit"] == facility_uid].copy()
+
+        if facility_df.empty:
+            # Skip facilities with no data
+            continue
+
+        # Group by period for this facility
+        for period_display, period_group in facility_df.groupby("period_display"):
+            if not period_group.empty:
+                # Sum values for this facility/period
+                total_value = (
+                    period_group[value_col].sum()
+                    if value_col in period_group.columns
+                    else 0
+                )
+
+                # Skip if there's no data at all for this period
+                if len(period_group) == 0:
+                    continue
+
+                formatted_period = format_period_month_year(period_display)
+
+                comparison_data.append(
+                    {
+                        "period_display": formatted_period,
+                        "Facility": facility_name,
+                        "value": total_value,
+                    }
+                )
+
+    if not comparison_data:
+        st.info("⚠️ No comparison data available (all facilities have zero data).")
+        return
+
+    comparison_df = pd.DataFrame(comparison_data)
+
+    # Sort periods properly for display
+    try:
+        comparison_df["period_sort"] = comparison_df["period_display"].apply(
+            lambda x: (
+                dt.datetime.strptime(x, "%b-%y")
+                if isinstance(x, str) and "-" in x
+                else x
+            )
+        )
+        comparison_df = comparison_df.sort_values("period_sort")
+        period_order = sorted(
+            comparison_df["period_display"].unique().tolist(),
+            key=lambda x: (
+                dt.datetime.strptime(x, "%b-%y")
+                if isinstance(x, str) and "-" in x
+                else x
+            ),
+        )
+    except:
+        # Sort alphabetically as fallback
+        comparison_df = comparison_df.sort_values(["Facility", "period_display"])
+        period_order = sorted(comparison_df["period_display"].unique().tolist())
+
+    # Filter out facilities that have no data
+    facilities_with_data = []
+    for facility_name in comparison_df["Facility"].unique():
+        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+        if not facility_data.empty:
+            facilities_with_data.append(facility_name)
+
+    # Filter comparison_df to only include facilities with data
+    comparison_df = comparison_df[
+        comparison_df["Facility"].isin(facilities_with_data)
+    ].copy()
+
+    if comparison_df.empty:
+        st.info("⚠️ No valid comparison data available (all facilities have zero data).")
+        return
+
+    # Create the chart
+    fig = px.bar(
+        comparison_df,
+        x="period_display",
+        y="value",
+        color="Facility",
+        title=f"{title} - Facility Comparison",
+        height=500,
+        category_orders={"period_display": period_order},
+        barmode="group",
+        text="value",
     )
 
-    return render_admitted_mothers_facility_comparison_chart(
-        df,
-        period_col,
-        value_col,
-        title,
-        bg_color,
-        text_color,
-        facility_names,
-        facility_uids,
-        value_name,
+    fig.update_traces(
+        texttemplate="%{text:,.0f}",
+        textposition="outside",
+        hovertemplate=(
+            f"<b>%{{x}}</b><br>"
+            f"Facility: %{{fullData.name}}<br>"
+            f"{value_name}: %{{y:,.0f}}<extra></extra>"
+        ),
+    )
+
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis_title="Period (Month-Year)",
+        yaxis_title=value_name,
+        xaxis=dict(
+            type="category",
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        legend=dict(
+            title="Facilities",
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+    )
+
+    # Format y-axis as integers with commas
+    fig.update_layout(yaxis_tickformat=",")
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Display table below graph
+    st.markdown("---")
+    st.subheader("📋 Facility Comparison Data")
+
+    # Create pivot table for better display with Overall row
+    pivot_data = []
+
+    for facility_name in comparison_df["Facility"].unique():
+        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+        if not facility_data.empty:
+            total_count = facility_data["value"].sum()
+
+            pivot_data.append(
+                {
+                    "Facility": facility_name,
+                    value_name: f"{total_count:,.0f}",
+                }
+            )
+
+    # Add Overall row for all facilities
+    if pivot_data:
+        all_counts = comparison_df["value"].sum()
+
+        pivot_data.append(
+            {
+                "Facility": "Overall",
+                value_name: f"{all_counts:,.0f}",
+            }
+        )
+
+        pivot_df = pd.DataFrame(pivot_data)
+        st.dataframe(pivot_df, use_container_width=True)
+
+    # Download button with UNIQUE KEY
+    csv = comparison_df.to_csv(index=False)
+
+    # Generate UNIQUE key for newborn download button
+    unique_key = f"newborn_admitted_facility_{int(time.time())}_{hash(str(df))}"
+
+    st.download_button(
+        label="📥 Download Facility Comparison Data",
+        data=csv,
+        file_name="admitted_newborns_facility_comparison.csv",
+        mime="text/csv",
+        help="Download the facility comparison data",
+        key=unique_key,  # UNIQUE KEY for newborn
     )
 
 
@@ -1133,69 +1510,112 @@ def render_admitted_newborns_region_comparison_chart(
     facilities_by_region=None,
     value_name="Admitted Newborns",
 ):
-    """Render region comparison chart for Admitted Newborns"""
-    from utils.kpi_admitted_mothers import (
-        render_admitted_mothers_region_comparison_chart,
-    )
+    """Render region comparison chart for Admitted Newborns - FIXED DOWNLOAD BUTTONS"""
 
-    return render_admitted_mothers_region_comparison_chart(
-        df,
-        period_col,
-        value_col,
-        title,
-        bg_color,
-        text_color,
-        region_names,
-        region_mapping,
-        facilities_by_region,
-        value_name,
-    )
+    import io  # Add this import at the top of the function
 
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
 
-# ---------------- Period Aggregation Function ----------------
-def aggregate_by_period_with_sorting_newborn(
-    df, period_col, period_sort_col, facility_uids, kpi_function, kpi_name=None
-):
-    """
-    Aggregate data by period while preserving chronological sorting
-    """
-    if df.empty:
-        return pd.DataFrame()
+    st.subheader(title)
 
-    grouped = df.groupby([period_col, period_sort_col])
-    result_data = []
+    if df is None or df.empty:
+        st.info("⚠️ No data available for region comparison.")
+        return
 
-    for (period_display, period_sort), group_df in grouped:
-        if kpi_name:
-            numerator, denominator, value = get_numerator_denominator_for_newborn_kpi(
-                group_df, kpi_name, facility_uids
-            )
-        else:
-            kpi_data = kpi_function(group_df, facility_uids)
-            if isinstance(kpi_data, dict):
-                value = kpi_data.get("value", 0)
-                numerator = kpi_data.get("numerator", 0)
-                denominator = kpi_data.get("denominator", 1)
-            else:
-                value = kpi_data
-                numerator = 0
-                denominator = 1
+    # Check for required columns
+    if "Region" not in df.columns or value_col not in df.columns:
+        st.error("❌ Missing required columns for region comparison.")
+        return
 
-        result_data.append(
+    # Calculate region totals
+    region_totals = {}
+    for region_name in region_names:
+        region_data = df[df["Region"] == region_name]
+
+        if not region_data.empty:
+            total_value = region_data[value_col].sum()
+            region_totals[region_name] = total_value
+
+    # Create comparison table data
+    comparison_data = []
+    for region_name, total_value in region_totals.items():
+        comparison_data.append(
             {
-                period_col: period_display,
-                period_sort_col: period_sort,
-                "value": value,
-                "numerator": numerator,
-                "denominator": denominator,
+                "Region": region_name,
+                f"{value_name}": total_value,
             }
         )
 
-    result_df = pd.DataFrame(result_data)
-    if not result_df.empty and period_sort_col in result_df.columns:
-        result_df = result_df.sort_values(period_sort_col)
+    # Add overall total
+    overall_total = sum(region_totals.values())
+    comparison_data.append(
+        {
+            "Region": "Overall",
+            f"{value_name}": overall_total,
+        }
+    )
 
-    return result_df
+    comparison_df = pd.DataFrame(comparison_data)
+
+    # *** 1. DISPLAY CHART FIRST ***
+    chart_data = comparison_df[comparison_df["Region"] != "Overall"].copy()
+
+    if not chart_data.empty:
+        fig = px.bar(
+            chart_data,
+            x="Region",
+            y=value_name,
+            title=f"{title} - Regional Comparison",
+            color="Region",
+            text_auto=True,
+        )
+
+        fig.update_layout(
+            plot_bgcolor=bg_color,
+            paper_bgcolor=bg_color,
+            font_color=text_color,
+            showlegend=False,
+            yaxis_title=value_name,
+            height=400,
+        )
+
+        # Display chart first
+        st.plotly_chart(fig, use_container_width=True)
+
+    # *** 2. DISPLAY TABLE SECOND ***
+    st.markdown("### Regional Summary")
+    st.dataframe(
+        comparison_df,
+        use_container_width=True,
+        height=300,
+    )
+
+    # *** 3. FIXED DOWNLOAD BUTTONS WITH UNIQUE KEYS ***
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Create CSV data - FIXED WITH UNIQUE KEY
+        csv_data = comparison_df.to_csv(index=False)
+
+        # Generate a UNIQUE key using title and timestamp
+        import time
+
+        unique_key = (
+            f"admitted_newborns_csv_{int(time.time())}_{hash(str(comparison_df))}"
+        )
+
+        st.download_button(
+            label="📥 Download CSV",
+            data=csv_data,
+            file_name=f"admitted_newborns_region_comparison_{title.replace(' ', '_')}.csv",
+            mime="text/csv",
+            key=unique_key,  # UNIQUE KEY for Admitted Newborns
+            use_container_width=True,
+        )
+
+    return comparison_df
 
 
 # ---------------- Additional Helper Functions ----------------
