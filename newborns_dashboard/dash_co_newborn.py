@@ -1,4 +1,4 @@
-# kpi_newborn.py - UPDATED TO REMOVE PROPHYLACTIC CPAP (COMPLETELY)
+# kpi_newborn.py - UPDATED TO USE SINGLE TABLE CHART FUNCTIONS
 
 import pandas as pd
 import streamlit as st
@@ -7,9 +7,7 @@ import datetime
 import logging
 
 from newborns_dashboard.kpi_utils_newborn import (
-    compute_newborn_kpis,
     auto_text_color,
-    prepare_data_for_newborn_trend_chart,
     extract_period_columns_newborn,
     get_relevant_date_column_for_newborn_kpi,
     get_numerator_denominator_for_newborn_kpi,
@@ -21,7 +19,7 @@ from newborns_dashboard.kpi_utils_newborn import (
     render_admitted_newborns_region_comparison_chart,
 )
 
-# Import V2 functions for culture KPIs
+# Import V2 functions for culture KPIs with FIXED region comparison
 from newborns_dashboard.kpi_utils_newborn_v2 import (
     get_numerator_denominator_for_newborn_kpi_v2,
     render_culture_done_trend_chart_v2,
@@ -30,35 +28,35 @@ from newborns_dashboard.kpi_utils_newborn_v2 import (
     render_culture_done_sepsis_trend_chart_v2,
 )
 
-# Import SIMPLIFIED newborn functions (Birth Weight, KMC, CPAP)
+# Import simplified functions with SINGLE TABLE DISPLAY
+# Import simplified functions with SINGLE TABLE DISPLAY
 from newborns_dashboard.kpi_utils_newborn_simplified import (
-    # Birth Weight functions
-    compute_birth_weight_kpi,
     render_birth_weight_trend_chart,
     render_birth_weight_facility_comparison,
     render_birth_weight_region_comparison,
-    # KMC functions
-    compute_kmc_coverage_kpi,
     render_kmc_coverage_trend_chart,
-    render_kmc_facility_comparison,
-    render_kmc_region_comparison,
-    # CPAP functions - NO PROPHYLACTIC CPAP
-    compute_cpap_for_rds_kpi,
-    compute_cpap_general_kpi,
-    compute_cpap_coverage_by_weight_kpi,
-    # Individual CPAP chart functions - NO PROPHYLACTIC
+    # Individual CPAP chart functions with single tables
     render_cpap_general_trend_chart,
     render_cpap_rds_trend_chart,
     render_cpap_by_weight_trend_chart,
-    # Legacy function for backward compatibility
-    render_cpap_trend_chart,
+    # Comparison functions with single tables
+    render_kmc_facility_comparison,
+    render_kmc_region_comparison,
     render_cpap_facility_comparison,
     render_cpap_region_comparison,
-    # Constants
-    BIRTH_WEIGHT_CATEGORIES,
+    # NEW CPAP COMPARISON FUNCTIONS FOR FACILITY AND REGION
+    render_cpap_general_facility_comparison,
+    render_cpap_rds_facility_comparison,
+    render_cpap_general_region_comparison,
+    render_cpap_rds_region_comparison,
+    # Rate comparison aliases (call the above functions)
+    render_kmc_rate_facility_comparison,
+    render_kmc_rate_region_comparison,
+    render_cpap_rate_facility_comparison,
+    render_cpap_rate_region_comparison,
 )
 
-# KPI mapping for newborn comparison charts - NO PROPHYLACTIC CPAP
+# KPI mapping for newborn comparison charts
 NEWBORN_KPI_MAPPING = {
     "Inborn Rate (%)": {
         "title": "Inborn Babies (%)",
@@ -121,12 +119,13 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Culture Done Cases",
         "denominator_name": "Probable Sepsis Cases",
     },
-    # NEW SIMPLIFIED KPIs - NO PROPHYLACTIC CPAP
+    # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution": {
         "title": "Birth Weight Distribution",
         "value_name": "Number of Newborns",
         "type": "simplified",
         "category": "birth_weight",
+        "comparison_type": "stacked_cases",  # Shows case counts in stacked bars
     },
     "KMC Coverage by Birth Weight": {
         "title": "KMC Coverage by Birth Weight Category",
@@ -134,14 +133,16 @@ NEWBORN_KPI_MAPPING = {
         "denominator_name": "Total Eligible",
         "type": "simplified",
         "category": "kmc",
+        "comparison_type": "rates",  # Shows rates in comparison charts
     },
-    # CPAP KPIs (ONLY 3 NOW, NO PROPHYLACTIC)
+    # CPAP KPIs WITH SINGLE TABLE DISPLAY
     "General CPAP Coverage": {
         "title": "General CPAP Coverage",
         "numerator_name": "CPAP Cases",
         "denominator_name": "Total Admitted Newborns",
         "type": "simplified",
         "category": "cpap_general",
+        "comparison_type": "rates",  # Shows rates in comparison charts
     },
     "CPAP for RDS": {
         "title": "CPAP for Respiratory Distress Syndrome (RDS)",
@@ -149,6 +150,7 @@ NEWBORN_KPI_MAPPING = {
         "denominator_name": "Total RDS Cases",
         "type": "simplified",
         "category": "cpap_rds",
+        "comparison_type": "rates",  # Shows rates in comparison charts
     },
     "CPAP Coverage by Birth Weight": {
         "title": "CPAP Coverage by Birth Weight Category",
@@ -156,10 +158,11 @@ NEWBORN_KPI_MAPPING = {
         "denominator_name": "Total Eligible",
         "type": "simplified",
         "category": "cpap_by_weight",
+        "comparison_type": "rates",  # Shows rates in comparison charts
     },
 }
 
-# KPI options for newborn dashboard - NO PROPHYLACTIC CPAP
+# KPI options for newborn dashboard
 NEWBORN_KPI_OPTIONS = [
     "Inborn Rate (%)",
     "Outborn Rate (%)",
@@ -174,16 +177,16 @@ NEWBORN_KPI_OPTIONS = [
     "Culture Done for Babies on Antibiotics (%)",
     "Blood Culture Result Recorded (%)",
     "Culture Done for Babies with Clinical Sepsis (%)",
-    # NEW SIMPLIFIED KPIs - NO PROPHYLACTIC CPAP
+    # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution",
     "KMC Coverage by Birth Weight",
-    # CPAP KPIs (ONLY 3)
+    # CPAP KPIs WITH SINGLE TABLE DISPLAY
     "General CPAP Coverage",
     "CPAP for RDS",
     "CPAP Coverage by Birth Weight",
 ]
 
-# KPI Groups for Tab Navigation - UPDATED TO 3 CPAP KPIS
+# KPI Groups for Tab Navigation
 NEWBORN_KPI_GROUPS = {
     "👶 Birth & Hypothermia": [
         "Inborn Rate (%)",
@@ -202,7 +205,6 @@ NEWBORN_KPI_GROUPS = {
     ],
     "🏥 Interventions": [
         "KMC Coverage by Birth Weight",
-        # CPAP KPIs (ONLY 3)
         "General CPAP Coverage",
         "CPAP for RDS",
         "CPAP Coverage by Birth Weight",
@@ -213,7 +215,7 @@ NEWBORN_KPI_GROUPS = {
     ],
 }
 
-# KPI Column Requirements - NO PROPHYLACTIC CPAP REQUIREMENTS
+# KPI Column Requirements
 NEWBORN_KPI_COLUMN_REQUIREMENTS = {
     "Inborn Rate (%)": [
         "orgUnit",
@@ -303,7 +305,7 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "sub_categories_of_infection_discharge_and_final_diagnosis",
         "event_date_microbiology_and_labs",
     ],
-    # NEW SIMPLIFIED KPIs - NO PROPHYLACTIC CPAP REQUIREMENTS
+    # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution": [
         "orgUnit",
         "tei_id",
@@ -319,7 +321,7 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "kmc_administered_interventions",
         "event_date_interventions",
     ],
-    # CPAP REQUIREMENTS (ONLY 3, NO PROPHYLACTIC)
+    # CPAP REQUIREMENTS
     "General CPAP Coverage": [
         "orgUnit",
         "tei_id",
@@ -354,11 +356,11 @@ CULTURE_KPI_DATE_COLUMNS = {
     "Culture Done for Babies with Clinical Sepsis (%)": "event_date_microbiology_and_labs",
 }
 
-# SIMPLIFIED KPI DATE COLUMN MAPPING - NO PROPHYLACTIC CPAP
+# SIMPLIFIED KPI DATE COLUMN MAPPING
 SIMPLIFIED_KPI_DATE_COLUMNS = {
     "Birth Weight Distribution": "event_date_maternal_birth_and_infant_details",
     "KMC Coverage by Birth Weight": "event_date_interventions",
-    # CPAP DATE COLUMNS (ONLY 3)
+    # CPAP DATE COLUMNS
     "General CPAP Coverage": "event_date_interventions",
     "CPAP for RDS": "event_date_interventions",
     "CPAP Coverage by Birth Weight": "event_date_interventions",
@@ -457,7 +459,7 @@ def get_numerator_denominator_for_newborn_kpi_with_all(
 
 
 def render_newborn_kpi_tab_navigation():
-    """Render professional tab navigation for Neonatal KPI selection - UPDATED WITH 3 CPAP KPIs"""
+    """Render professional tab navigation for Neonatal KPI selection"""
 
     st.markdown(
         """
@@ -496,7 +498,7 @@ def render_newborn_kpi_tab_navigation():
     if "selected_newborn_kpi" not in st.session_state:
         st.session_state.selected_newborn_kpi = "Inborn Rate (%)"
 
-    # Create main KPI group tabs - UPDATED TO 4 TABS
+    # Create main KPI group tabs
     tab1, tab2, tab3, tab4 = st.tabs(
         [
             "👶 **Birth & Hypothermia**",
@@ -657,7 +659,6 @@ def render_newborn_kpi_tab_navigation():
     with tab3:
         col1, col2 = st.columns(2)
         col3, col4 = st.columns(2)
-        col5, _ = st.columns(2)
 
         with col1:
             if st.button(
@@ -813,7 +814,7 @@ def render_newborn_trend_chart_section(
             "end_date": st.session_state.filters.get("end_date"),
         }
 
-    # SPECIAL HANDLING FOR SIMPLIFIED KPIs
+    # SPECIAL HANDLING FOR SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     if is_simplified_kpi(kpi_selection):
         _render_simplified_kpi_trend_chart(
             kpi_selection,
@@ -1028,7 +1029,7 @@ def _render_simplified_kpi_trend_chart(
     facility_uids,
     date_range_filters,
 ):
-    """Render trend chart for simplified KPIs (Birth Weight, KMC, CPAP) - UPDATED FOR 3 CPAP KPIs"""
+    """Render trend chart for simplified KPIs (Birth Weight, KMC, CPAP) WITH SINGLE TABLE DISPLAY"""
 
     # Get KPI configuration
     kpi_config = get_newborn_kpi_config(kpi_selection)
@@ -1075,7 +1076,7 @@ def _render_simplified_kpi_trend_chart(
         st.error("Error assigning periods")
         return
 
-    # Render based on category - UPDATED FOR 3 CPAP KPIs
+    # Render based on category USING UPDATED FUNCTIONS WITH SINGLE TABLES
     if category == "birth_weight":
         render_birth_weight_trend_chart(
             working_df,
@@ -1138,7 +1139,7 @@ def render_newborn_comparison_chart(
     is_national=False,
     filtered_patients=None,
 ):
-    """Render comparison charts for both national and regional views WITH TABLES"""
+    """Render comparison charts for both national and regional views WITH SINGLE TABLES"""
 
     df_to_use = filtered_patients if filtered_patients is not None else patient_df
 
@@ -1146,7 +1147,7 @@ def render_newborn_comparison_chart(
         st.info("⚠️ No data available for comparison.")
         return
 
-    # SPECIAL HANDLING FOR SIMPLIFIED KPIs
+    # SPECIAL HANDLING FOR SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     if is_simplified_kpi(kpi_selection):
         _render_simplified_kpi_comparison_chart(
             kpi_selection,
@@ -1493,11 +1494,12 @@ def _render_simplified_kpi_comparison_chart(
     text_color,
     is_national,
 ):
-    """Render comparison chart for simplified KPIs - UPDATED FOR 3 CPAP KPIs"""
+    """Render comparison chart for simplified KPIs WITH SINGLE TABLE DISPLAY"""
 
     kpi_config = get_newborn_kpi_config(kpi_selection)
     chart_title = kpi_config.get("title", kpi_selection)
     category = kpi_config.get("category", "")
+    comparison_type = kpi_config.get("comparison_type", "rates")
 
     # Get date column
     date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
@@ -1546,8 +1548,10 @@ def _render_simplified_kpi_comparison_chart(
         st.error("Error assigning periods")
         return
 
-    if comparison_mode == "facility":
-        if category == "birth_weight":
+    # Determine whether to use case counts or rates based on comparison_type
+    if comparison_type == "stacked_cases":
+        # Use case counts for birth weight distribution (with single tables)
+        if comparison_mode == "facility" and category == "birth_weight":
             render_birth_weight_facility_comparison(
                 df_to_use,
                 "period_display",
@@ -1557,29 +1561,7 @@ def _render_simplified_kpi_comparison_chart(
                 display_names,
                 facility_uids,
             )
-        elif category == "kmc":
-            render_kmc_facility_comparison(
-                df_to_use,
-                "period_display",
-                f"{chart_title} - Facility Comparison",
-                bg_color,
-                text_color,
-                display_names,
-                facility_uids,
-            )
-        elif category in ["cpap_general", "cpap_rds", "cpap_by_weight"]:
-            render_cpap_facility_comparison(
-                df_to_use,
-                "period_display",
-                f"{chart_title} - Facility Comparison",
-                bg_color,
-                text_color,
-                display_names,
-                facility_uids,
-            )
-
-    elif comparison_mode == "region" and is_national:
-        if category == "birth_weight":
+        elif comparison_mode == "region" and is_national and category == "birth_weight":
             render_birth_weight_region_comparison(
                 df_to_use,
                 "period_display",
@@ -1590,28 +1572,100 @@ def _render_simplified_kpi_comparison_chart(
                 facilities_by_region,
                 facilities_by_region,
             )
-        elif category == "kmc":
-            render_kmc_region_comparison(
-                df_to_use,
-                "period_display",
-                f"{chart_title} - Region Comparison",
-                bg_color,
-                text_color,
-                region_names,
-                facilities_by_region,
-                facilities_by_region,
-            )
-        elif category in ["cpap_general", "cpap_rds", "cpap_by_weight"]:
-            render_cpap_region_comparison(
-                df_to_use,
-                "period_display",
-                f"{chart_title} - Region Comparison",
-                bg_color,
-                text_color,
-                region_names,
-                facilities_by_region,
-                facilities_by_region,
-            )
+    elif comparison_type == "rates":
+        # Use rate comparison functions for KMC and CPAP (with single tables)
+        if comparison_mode == "facility":
+            if category == "kmc":
+                render_kmc_rate_facility_comparison(
+                    df_to_use,
+                    "period_display",
+                    f"{chart_title} - Facility Comparison",
+                    bg_color,
+                    text_color,
+                    display_names,
+                    facility_uids,
+                )
+            elif category == "cpap_general":
+                # Use the NEW specific function for General CPAP facility comparison
+                render_cpap_general_facility_comparison(
+                    df_to_use,
+                    "period_display",
+                    f"{chart_title} - Facility Comparison",
+                    bg_color,
+                    text_color,
+                    display_names,
+                    facility_uids,
+                )
+            elif category == "cpap_rds":
+                # Use the NEW specific function for CPAP for RDS facility comparison
+                render_cpap_rds_facility_comparison(
+                    df_to_use,
+                    "period_display",
+                    f"{chart_title} - Facility Comparison",
+                    bg_color,
+                    text_color,
+                    display_names,
+                    facility_uids,
+                )
+            elif category == "cpap_by_weight":
+                render_cpap_rate_facility_comparison(
+                    df_to_use,
+                    "period_display",
+                    f"{chart_title} - Facility Comparison",
+                    bg_color,
+                    text_color,
+                    display_names,
+                    facility_uids,
+                )
+        elif comparison_mode == "region" and is_national:
+            if category == "kmc":
+                render_kmc_rate_region_comparison(
+                    df_to_use,
+                    "period_display",
+                    f"{chart_title} - Region Comparison",
+                    bg_color,
+                    text_color,
+                    region_names,
+                    facilities_by_region,
+                    facilities_by_region,
+                )
+            elif category == "cpap_general":
+                # Use the NEW specific function for General CPAP region comparison
+                render_cpap_general_region_comparison(
+                    df_to_use,
+                    "period_display",
+                    f"{chart_title} - Region Comparison",
+                    bg_color,
+                    text_color,
+                    region_names,
+                    facilities_by_region,
+                    facilities_by_region,
+                )
+            elif category == "cpap_rds":
+                # Use the NEW specific function for CPAP for RDS region comparison
+                render_cpap_rds_region_comparison(
+                    df_to_use,
+                    "period_display",
+                    f"{chart_title} - Region Comparison",
+                    bg_color,
+                    text_color,
+                    region_names,
+                    facilities_by_region,
+                    facilities_by_region,
+                )
+            elif category == "cpap_by_weight":
+                render_cpap_rate_region_comparison(
+                    df_to_use,
+                    "period_display",
+                    f"{chart_title} - Region Comparison",
+                    bg_color,
+                    text_color,
+                    region_names,
+                    facilities_by_region,
+                    facilities_by_region,
+                )
+    else:
+        st.warning(f"⚠️ Unsupported comparison type: {comparison_type}")
 
 
 def render_newborn_additional_analytics(
@@ -1888,7 +1942,7 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
             end_date = pd.Timestamp(filters["end_date"]) + pd.Timedelta(days=1)
 
             # Convert date column to datetime
-            df[date_column_to_use] = pd.to_datetime(
+            df[date_column_to_use] = pd.to_numeric(
                 df[date_column_to_use], errors="coerce"
             )
 
@@ -2018,7 +2072,7 @@ __all__ = [
     "render_newborn_trend_chart_section",
     "render_newborn_comparison_chart",
     "render_newborn_additional_analytics",
-    # Simplified KPI helper functions
+    # Simplified KPI helper functions (WITH SINGLE TABLE DISPLAY)
     "_render_simplified_kpi_trend_chart",
     "_render_simplified_kpi_comparison_chart",
     # Date handling functions
@@ -2031,8 +2085,13 @@ __all__ = [
     "compute_newborn_kpi_for_period",
     "_get_newborn_default_kpi_data",
     "get_date_column_from_newborn_df",
-    # CPAP KPI names (ONLY 3)
+    # CPAP KPI names
     "General CPAP Coverage",
     "CPAP for RDS",
     "CPAP Coverage by Birth Weight",
+    # NEW CPAP comparison functions for import
+    "render_cpap_general_facility_comparison",
+    "render_cpap_rds_facility_comparison",
+    "render_cpap_general_region_comparison",
+    "render_cpap_rds_region_comparison",
 ]

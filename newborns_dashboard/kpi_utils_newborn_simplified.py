@@ -1,4 +1,4 @@
-# kpi_utils_newborn_simplified.py - FIXED WITH ALL ISSUES RESOLVED
+# kpi_utils_newborn_simplified.py - FIXED CPAP COMPARISON FUNCTIONS
 
 import pandas as pd
 import plotly.express as px
@@ -7,7 +7,7 @@ import streamlit as st
 import numpy as np
 import hashlib
 import logging
-import io
+from datetime import datetime
 
 # Import shared utilities
 from utils.kpi_utils import auto_text_color
@@ -69,15 +69,66 @@ SECOND_REASON_ADMISSION_COL = "second_reason_for_admission_admission_information
 THIRD_REASON_ADMISSION_COL = "third_reason_for_admission_admission_information"
 RDS_CODE = "5"  # RDS diagnosis code
 
-# ---------------- Birth Weight Categories ----------------
+# ---------------- Birth Weight Categories with Gradient Colors ----------------
 BIRTH_WEIGHT_CATEGORIES = {
-    "lt_1000": {"name": "<1000 g", "min": 0, "max": 999},
-    "1000_1499": {"name": "1000-1499 g", "min": 1000, "max": 1499},
-    "1500_1999": {"name": "1500-1999 g", "min": 1500, "max": 1999},
-    "2000_2499": {"name": "2000-2499 g", "min": 2000, "max": 2499},
-    "2500_4000": {"name": "2500-4000 g", "min": 2500, "max": 4000},
-    "gt_4000": {"name": "4001+ g", "min": 4001, "max": 8000},
+    "lt_1000": {
+        "name": "<1000 g",
+        "min": 0,
+        "max": 999,
+        "sort_order": 1,
+        "color": "#e74c3c",  # Red for lowest weight
+        "short_name": "<1000g",
+    },
+    "1000_1499": {
+        "name": "1000-1499 g",
+        "min": 1000,
+        "max": 1499,
+        "sort_order": 2,
+        "color": "#e67e22",  # Orange
+        "short_name": "1000-1499g",
+    },
+    "1500_1999": {
+        "name": "1500-1999 g",
+        "min": 1500,
+        "max": 1999,
+        "sort_order": 3,
+        "color": "#f1c40f",  # Yellow
+        "short_name": "1500-1999g",
+    },
+    "2000_2499": {
+        "name": "2000-2499 g",
+        "min": 2000,
+        "max": 2499,
+        "sort_order": 4,
+        "color": "#2ecc71",  # Light Green
+        "short_name": "2000-2499g",
+    },
+    "2500_4000": {
+        "name": "2500-4000 g",
+        "min": 2500,
+        "max": 4000,
+        "sort_order": 5,
+        "color": "#27ae60",  # Green
+        "short_name": "2500-4000g",
+    },
+    "gt_4000": {
+        "name": "4001+ g",
+        "min": 4001,
+        "max": 8000,
+        "sort_order": 6,
+        "color": "#1e8449",  # Dark Green
+        "short_name": "4001+g",
+    },
 }
+
+# Get category names in correct order for sorting
+BIRTH_WEIGHT_CATEGORY_NAMES = [
+    BIRTH_WEIGHT_CATEGORIES[key]["name"]
+    for key in sorted(
+        BIRTH_WEIGHT_CATEGORIES.keys(),
+        key=lambda x: BIRTH_WEIGHT_CATEGORIES[x]["sort_order"],
+    )
+]
 
 
 # ---------------- HELPER FUNCTIONS ----------------
@@ -86,9 +137,7 @@ def safe_convert_numeric(value, default=0):
     try:
         if pd.isna(value):
             return default
-        # Handle string values like "1.0", "2", etc.
         if isinstance(value, str):
-            # Extract numeric part (handle cases like "1.0", "2", "3.0", etc.)
             value = value.strip()
             if "." in value:
                 return float(value.split(".")[0])
@@ -114,9 +163,76 @@ def clean_category_name(category_name):
     return category_name.replace("–", "-").replace("+", "plus")
 
 
+def deduplicate_by_tei(df):
+    """Deduplicate dataframe by TEI ID"""
+    if df is None or df.empty:
+        return df
+
+    if "tei_id" in df.columns:
+        # Keep first record per TEI ID
+        return df.drop_duplicates(subset=["tei_id"], keep="first").copy()
+    return df.copy()
+
+
+# ---------------- DATE SORTING HELPER FUNCTIONS ----------------
+def parse_period_to_datetime(period_str):
+    """Parse period string like 'Apr-18', 'Jan-26' to datetime"""
+    try:
+        # Handle "Overall" separately
+        if period_str == "Overall":
+            return datetime(2099, 12, 31)  # Far future date to put at end
+
+        # Parse month-year format (e.g., "Apr-18", "Jan-26")
+        month_str, year_str = period_str.split("-")
+
+        # Convert month abbreviation to number
+        month_dict = {
+            "Jan": 1,
+            "Feb": 2,
+            "Mar": 3,
+            "Apr": 4,
+            "May": 5,
+            "Jun": 6,
+            "Jul": 7,
+            "Aug": 8,
+            "Sep": 9,
+            "Oct": 10,
+            "Nov": 11,
+            "Dec": 12,
+        }
+
+        month = month_dict.get(month_str, 1)
+
+        # Handle 2-digit years (assume 2000s for years < 50, 1900s for years >= 50)
+        year = int(year_str)
+        if year < 50:
+            year += 2000
+        elif year < 100:
+            year += 1900
+
+        return datetime(year, month, 1)
+    except Exception as e:
+        logger.warning(f"Could not parse period '{period_str}': {e}")
+        return datetime(1900, 1, 1)  # Default for invalid dates
+
+
+def sort_periods_chronologically(periods):
+    """Sort period strings chronologically"""
+    # Create list of tuples (datetime, period_string)
+    period_tuples = [(parse_period_to_datetime(p), p) for p in periods]
+
+    # Sort by datetime
+    sorted_tuples = sorted(period_tuples, key=lambda x: x[0])
+
+    # Extract sorted period strings
+    sorted_periods = [p[1] for p in sorted_tuples]
+
+    return sorted_periods
+
+
 # ---------------- BIRTH WEIGHT KPI Functions ----------------
 def compute_birth_weight_by_category(df, facility_uids=None):
-    """Compute distribution of birth weights by all categories - FIXED"""
+    """Compute distribution of birth weights by all categories - FIXED with deduplication"""
     cache_key = get_cache_key_simplified(df, facility_uids, "birth_weight_by_category")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -128,6 +244,9 @@ def compute_birth_weight_by_category(df, facility_uids=None):
         return result
 
     filtered_df = filter_by_facility(df, facility_uids)
+
+    # CRITICAL: Deduplicate by TEI ID to prevent overcounting
+    filtered_df = deduplicate_by_tei(filtered_df)
 
     if BIRTH_WEIGHT_COL not in filtered_df.columns:
         result = {category: 0 for category in BIRTH_WEIGHT_CATEGORIES.keys()}
@@ -174,7 +293,7 @@ def compute_birth_weight_by_category(df, facility_uids=None):
 
 
 def compute_total_with_birth_weight(df, facility_uids=None):
-    """Compute total newborns with valid birth weight - FIXED"""
+    """Compute total newborns with valid birth weight - FIXED with deduplication"""
     cache_key = get_cache_key_simplified(df, facility_uids, "total_with_birth_weight")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -184,6 +303,9 @@ def compute_total_with_birth_weight(df, facility_uids=None):
         result = 0
     else:
         filtered_df = filter_by_facility(df, facility_uids)
+
+        # CRITICAL: Deduplicate by TEI ID
+        filtered_df = deduplicate_by_tei(filtered_df)
 
         if BIRTH_WEIGHT_COL not in filtered_df.columns:
             result = 0
@@ -254,7 +376,7 @@ def compute_birth_weight_kpi(df, facility_uids=None):
 
 # ---------------- KMC COVERAGE KPI Functions ----------------
 def compute_kmc_by_weight_category(df, facility_uids=None):
-    """Compute KMC administered by birth weight category - FIXED"""
+    """Compute KMC administered by birth weight category - FIXED with deduplication"""
     cache_key = get_cache_key_simplified(df, facility_uids, "kmc_by_weight_category")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -266,6 +388,9 @@ def compute_kmc_by_weight_category(df, facility_uids=None):
         return result
 
     filtered_df = filter_by_facility(df, facility_uids)
+
+    # CRITICAL: Deduplicate by TEI ID
+    filtered_df = deduplicate_by_tei(filtered_df)
 
     if (
         BIRTH_WEIGHT_COL not in filtered_df.columns
@@ -364,13 +489,16 @@ def compute_kmc_coverage_kpi(df, facility_uids=None):
     return result
 
 
-# ---------------- CPAP COVERAGE KPI Functions (UPDATED) ----------------
+# ---------------- CPAP COVERAGE KPI Functions ----------------
 def get_rds_newborns(df, facility_uids=None):
-    """Identify newborns with RDS diagnosis - FIXED"""
+    """Identify newborns with RDS diagnosis - FIXED with deduplication"""
     if df is None or df.empty:
         return set()
 
     filtered_df = filter_by_facility(df, facility_uids)
+
+    # Deduplicate before identifying RDS
+    filtered_df = deduplicate_by_tei(filtered_df)
 
     required_cols = [
         FIRST_REASON_ADMISSION_COL,
@@ -424,7 +552,7 @@ def get_rds_newborns(df, facility_uids=None):
 
 
 def compute_cpap_general_kpi(df, facility_uids=None):
-    """Compute general CPAP coverage rate - FIXED"""
+    """Compute general CPAP coverage rate - FIXED with deduplication"""
     cache_key = get_cache_key_simplified(df, facility_uids, "cpap_general_kpi")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -438,6 +566,9 @@ def compute_cpap_general_kpi(df, facility_uids=None):
         }
     else:
         filtered_df = filter_by_facility(df, facility_uids)
+
+        # CRITICAL: Deduplicate by TEI ID
+        filtered_df = deduplicate_by_tei(filtered_df)
 
         if CPAP_ADMINISTERED_COL not in filtered_df.columns:
             result = {
@@ -493,7 +624,7 @@ def compute_cpap_general_kpi(df, facility_uids=None):
 
 
 def compute_cpap_for_rds_kpi(df, facility_uids=None):
-    """Compute CPAP coverage for RDS newborns - FIXED"""
+    """Compute CPAP coverage for RDS newborns - FIXED with deduplication"""
     cache_key = get_cache_key_simplified(df, facility_uids, "cpap_for_rds_kpi")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -503,6 +634,9 @@ def compute_cpap_for_rds_kpi(df, facility_uids=None):
         result = {"cpap_rate": 0.0, "cpap_count": 0, "total_rds": 0}
     else:
         filtered_df = filter_by_facility(df, facility_uids)
+
+        # Deduplicate before identifying RDS
+        filtered_df = deduplicate_by_tei(filtered_df)
 
         rds_newborns = get_rds_newborns(filtered_df, facility_uids)
 
@@ -552,7 +686,7 @@ def compute_cpap_for_rds_kpi(df, facility_uids=None):
 
 # ---------------- CPAP BY BIRTH WEIGHT CATEGORY FUNCTION ----------------
 def compute_cpap_by_weight_category(df, facility_uids=None):
-    """Compute CPAP administered by birth weight category"""
+    """Compute CPAP administered by birth weight category - FIXED with deduplication"""
     cache_key = get_cache_key_simplified(df, facility_uids, "cpap_by_weight_category")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -564,6 +698,9 @@ def compute_cpap_by_weight_category(df, facility_uids=None):
         return result
 
     filtered_df = filter_by_facility(df, facility_uids)
+
+    # CRITICAL: Deduplicate by TEI ID
+    filtered_df = deduplicate_by_tei(filtered_df)
 
     if (
         BIRTH_WEIGHT_COL not in filtered_df.columns
@@ -617,7 +754,7 @@ def compute_cpap_by_weight_category(df, facility_uids=None):
 
 
 def compute_cpap_coverage_by_weight_kpi(df, facility_uids=None):
-    """Compute CPAP coverage rate by birth weight category"""
+    """Compute CPAP coverage rate by birth weight category - FIXED"""
     cache_key = get_cache_key_simplified(
         df, facility_uids, "cpap_coverage_by_weight_kpi"
     )
@@ -664,7 +801,7 @@ def compute_cpap_coverage_by_weight_kpi(df, facility_uids=None):
     return result
 
 
-# ---------------- CHART FUNCTIONS (FIXED) ----------------
+# ---------------- CHART FUNCTIONS (UPDATED WITH SINGLE TABLE) ----------------
 def render_birth_weight_trend_chart(
     df,
     period_col="period_display",
@@ -673,7 +810,7 @@ def render_birth_weight_trend_chart(
     text_color=None,
     facility_uids=None,
 ):
-    """Render trend chart for Birth Weight KPI - FIXED"""
+    """Render trend chart for Birth Weight KPI - WITH SINGLE TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -682,9 +819,14 @@ def render_birth_weight_trend_chart(
         st.warning("⚠️ No data available for the selected period.")
         return
 
+    # Get unique periods
+    periods = df[period_col].unique()
+
+    # FIX: Sort periods chronologically using helper function
+    periods = sort_periods_chronologically(periods)
+
     # Compute BW distribution for each period
     trend_data = []
-    periods = sorted(df[period_col].unique())
 
     for period in periods:
         period_df = df[df[period_col] == period]
@@ -710,35 +852,267 @@ def render_birth_weight_trend_chart(
 
     trend_df = pd.DataFrame(trend_data)
 
-    # Create line chart with multiple lines (all categories)
+    # Create stacked bar chart for birth weight distribution
     fig = go.Figure()
 
-    # Colors for each line
-    colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#3498db", "#9b59b6"]
-
-    # Add lines for each BW category
-    for i, (category_key, category_info) in enumerate(BIRTH_WEIGHT_CATEGORIES.items()):
+    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(),
+        key=lambda x: x[1]["sort_order"],
+        reverse=True,  # Reverse for stacking order
+    ):
         count_col = f"{category_key}_count"
 
         if count_col in trend_df.columns:
             fig.add_trace(
-                go.Scatter(
+                go.Bar(
                     x=trend_df[period_col],
                     y=trend_df[count_col],
-                    mode="lines+markers",
-                    name=f"{category_info['name']}",
-                    line=dict(width=2, color=colors[i]),
-                    marker=dict(size=5),
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
                     hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.0f}} newborns<extra></extra>",
                 )
             )
 
+    # Calculate Y-axis range
+    all_values = []
+    for category_key in BIRTH_WEIGHT_CATEGORIES.keys():
+        count_col = f"{category_key}_count"
+        if count_col in trend_df.columns:
+            all_values.extend(trend_df[count_col].tolist())
+
+    if all_values:
+        max_value = max(all_values)
+        y_max = max_value * 1.1  # Add 10% padding
+    else:
+        y_max = None
+
     fig.update_layout(
         title=title,
-        height=400,
+        height=500,
         xaxis_title="Period",
         yaxis_title="Number of Newborns",
+        barmode="stack",
         showlegend=True,
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis=dict(
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,  # Ensure chronological order
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            range=[0, y_max] if y_max else None,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        legend=dict(
+            traceorder="reversed",  # Reverse legend to match stacking order
+            title="Birth Weight Categories",
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # SINGLE COMPARISON TABLE
+    st.subheader("📊 Birth Weight Distribution Table")
+
+    # Create a table with all categories for each period
+    table_data = []
+
+    for period in periods:
+        period_data = trend_df[trend_df[period_col] == period].iloc[0]
+        row = {"Period": period}
+
+        # Add counts for each category IN ORDER
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            count_col = f"{category_key}_count"
+            if count_col in period_data:
+                row[category_info["short_name"]] = int(period_data[count_col])
+
+        # Add total
+        row["Total"] = int(period_data["total_with_birth_weight"])
+        table_data.append(row)
+
+    # Add overall row
+    overall_row = {"Period": "Overall"}
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        count_col = f"{category_key}_count"
+        overall_row[category_info["short_name"]] = int(trend_df[count_col].sum())
+
+    overall_row["Total"] = int(trend_df["total_with_birth_weight"].sum())
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table without expander
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    # Create a simplified version for download
+    download_df = trend_df.copy()
+
+    # Select only the period and count columns IN ORDER
+    download_cols = [period_col, "total_with_birth_weight"]
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        download_cols.append(f"{category_key}_count")
+
+    download_df = download_df[download_cols]
+
+    # Calculate totals for "Overall" row
+    overall_row = {period_col: "Overall"}
+    overall_row["total_with_birth_weight"] = download_df[
+        "total_with_birth_weight"
+    ].sum()
+
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        col_name = f"{category_key}_count"
+        if col_name in download_df.columns:
+            overall_row[col_name] = download_df[col_name].sum()
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Rename columns for better readability with clean names IN ORDER
+    column_names = {
+        period_col: "Period",
+        "total_with_birth_weight": "Total Newborns with Birth Weight",
+    }
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        clean_name = clean_category_name(category_info["name"])
+        column_names[f"{category_key}_count"] = f"{clean_name} Newborns"
+
+    download_df = download_df.rename(columns=column_names)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"birth_weight_distribution_{timestamp}.csv",
+        "📥 Download CSV",
+        "Download the birth weight distribution data as CSV",
+    )
+
+
+def render_birth_weight_facility_comparison(
+    df,
+    period_col="period_display",
+    title="Birth Weight Distribution - Facility Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    facility_names=None,
+    facility_uids=None,
+):
+    """Render facility comparison for birth weight - WITH SINGLE TABLE"""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if (
+        not facility_names
+        or not facility_uids
+        or len(facility_names) != len(facility_uids)
+    ):
+        st.warning("⚠️ No facilities selected for comparison.")
+        return
+
+    # Get periods (for information only, not for selection)
+    periods = df[period_col].unique() if not df.empty else []
+
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
+        st.warning("⚠️ No data available for comparison.")
+        return
+
+    # Compute AGGREGATED data for each facility (sum across all periods)
+    facility_data = []
+    for facility_name, facility_uid in zip(facility_names, facility_uids):
+        facility_df = df[df["orgUnit"] == facility_uid]
+        if not facility_df.empty:
+            # Aggregate data across ALL periods
+            bw_data = compute_birth_weight_kpi(facility_df, [facility_uid])
+
+            row_data = {
+                "Facility": facility_name,
+                "Total with Birth Weight": bw_data["total_with_birth_weight"],
+            }
+
+            # Add each category count IN ORDER
+            for category_key, category_info in sorted(
+                BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+            ):
+                row_data[category_info["short_name"]] = bw_data[
+                    "bw_category_counts"
+                ].get(category_key, 0)
+
+            facility_data.append(row_data)
+
+    if not facility_data:
+        st.warning("⚠️ No data available for facility comparison.")
+        return
+
+    facility_df = pd.DataFrame(facility_data)
+
+    # Create stacked bar chart WITH SORTED CATEGORIES
+    fig = go.Figure()
+
+    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(),
+        key=lambda x: x[1]["sort_order"],
+        reverse=True,  # Reverse for stacking order
+    ):
+        short_name = category_info["short_name"]
+        if short_name in facility_df.columns:
+            fig.add_trace(
+                go.Bar(
+                    x=facility_df["Facility"],
+                    y=facility_df[short_name],
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
+                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.0f}<extra></extra>",
+                )
+            )
+
+    # Calculate Y-axis range
+    all_values = []
+    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+        short_name = category_info["short_name"]
+        if short_name in facility_df.columns:
+            all_values.extend(facility_df[short_name].tolist())
+
+    if all_values:
+        max_value = max(all_values)
+        y_max = max_value * 1.1  # Add 10% padding
+    else:
+        y_max = None
+
+    fig.update_layout(
+        title=title,
+        height=500,
+        xaxis_title="Facility",
+        yaxis_title="Number of Newborns",
+        barmode="stack",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
@@ -751,50 +1125,257 @@ def render_birth_weight_trend_chart(
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max] if y_max else None,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
+        legend=dict(
+            traceorder="reversed",  # Reverse legend to match stacking order
+            title="Birth Weight Categories",
+        ),
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON FOR DATA
-    with st.expander(f"📥 Download Birth Weight Data", expanded=False):
-        # Create a simplified version for download
-        download_df = trend_df.copy()
+    # SINGLE COMPARISON TABLE
+    st.subheader("📊 Facility Comparison Table")
 
-        # Select only the period and count columns
-        download_cols = [period_col, "total_with_birth_weight"]
-        for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-            download_cols.append(f"{category_key}_count")
+    # Display the table with all categories
+    display_df = facility_df.copy()
 
-        download_df = download_df[download_cols]
+    # Add overall row
+    overall_row = {"Facility": "Overall"}
+    for col in display_df.columns:
+        if col != "Facility":
+            overall_row[col] = display_df[col].sum()
 
-        # Rename columns for better readability with clean names
-        column_names = {
-            period_col: "Period",
-            "total_with_birth_weight": "Total Newborns with Birth Weight",
-        }
-        for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-            clean_name = clean_category_name(category_info["name"])
-            column_names[f"{category_key}_count"] = f"{clean_name} Newborns"
+    overall_df = pd.DataFrame([overall_row])
+    display_df = pd.concat([display_df, overall_df], ignore_index=True)
 
-        download_df = download_df.rename(columns=column_names)
+    # Format the table with all categories
+    st.dataframe(display_df, use_container_width=True, height=300)
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"birth_weight_distribution_{timestamp}.csv",
-            "📥 Download CSV",
-            "Download the birth weight distribution data as CSV",
-        )
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
 
-        # Show a preview of all data
-        st.write("Data Preview (All Columns):")
-        st.dataframe(download_df.head(10), use_container_width=True)
+    download_df = facility_df.copy()
+
+    # Clean column names for download IN ORDER
+    column_names = {
+        "Facility": "Facility",
+        "Total with Birth Weight": "Total Newborns with Birth Weight",
+    }
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        clean_name = clean_category_name(category_info["name"])
+        column_names[category_info["short_name"]] = f"{clean_name} Newborns"
+
+    download_df = download_df.rename(columns=column_names)
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Facility": "Overall"}
+    for col in download_df.columns:
+        if col != "Facility":
+            overall_row[col] = download_df[col].sum()
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"birth_weight_facility_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        "Download birth weight facility comparison data as CSV",
+    )
+
+
+def render_birth_weight_region_comparison(
+    df,
+    period_col="period_display",
+    title="Birth Weight Distribution - Region Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    region_names=None,
+    region_mapping=None,
+    facilities_by_region=None,
+):
+    """Render region comparison for birth weight - WITH SINGLE TABLE"""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if not region_names or not region_mapping or not facilities_by_region:
+        st.warning("⚠️ No regions available for comparison.")
+        return
+
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
+
+    if periods is None or len(periods) == 0:
+        st.warning("⚠️ No data available for comparison.")
+        return
+
+    # Compute AGGREGATED data for each region (sum across all periods)
+    region_data = []
+    for region_name in region_names:
+        facility_uids = []
+        for facility_name, facility_uid in facilities_by_region.get(region_name, []):
+            facility_uids.append(facility_uid)
+
+        if facility_uids:
+            # Filter for this region's facilities
+            region_df = df[df["orgUnit"].isin(facility_uids)]
+
+            # CRITICAL: Deduplicate by TEI ID for the entire region
+            region_df = deduplicate_by_tei(region_df)
+
+            if not region_df.empty:
+                # Aggregate data across ALL periods
+                bw_data = compute_birth_weight_kpi(region_df, facility_uids)
+
+                row_data = {
+                    "Region": region_name,
+                    "Total with Birth Weight": bw_data["total_with_birth_weight"],
+                }
+
+                # Add each category count IN ORDER
+                for category_key, category_info in sorted(
+                    BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+                ):
+                    row_data[category_info["short_name"]] = bw_data[
+                        "bw_category_counts"
+                    ].get(category_key, 0)
+
+                region_data.append(row_data)
+
+    if not region_data:
+        st.warning("⚠️ No data available for region comparison.")
+        return
+
+    region_df = pd.DataFrame(region_data)
+
+    # Create stacked bar chart
+    fig = go.Figure()
+
+    # Add bars for each BW category IN CORRECT ORDER (from smallest to largest)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        short_name = category_info["short_name"]
+        if short_name in region_df.columns:
+            fig.add_trace(
+                go.Bar(
+                    x=region_df["Region"],
+                    y=region_df[short_name],
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
+                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.0f}<extra></extra>",
+                )
+            )
+
+    # Calculate Y-axis range
+    all_values = []
+    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+        short_name = category_info["short_name"]
+        if short_name in region_df.columns:
+            all_values.extend(region_df[short_name].tolist())
+
+    if all_values:
+        max_value = max(all_values)
+        y_max = max_value * 1.1  # Add 10% padding
+    else:
+        y_max = None
+
+    fig.update_layout(
+        title=title,
+        height=500,
+        xaxis_title="Region",
+        yaxis_title="Number of Newborns",
+        barmode="stack",
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis=dict(
+            type="category",
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            range=[0, y_max] if y_max else None,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        legend=dict(
+            title="Birth Weight Categories",
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # SINGLE COMPARISON TABLE
+    st.subheader("📊 Region Comparison Table")
+
+    # Display the table with all categories
+    display_df = region_df.copy()
+
+    # Add overall row
+    overall_row = {"Region": "Overall"}
+    for col in display_df.columns:
+        if col != "Region":
+            overall_row[col] = display_df[col].sum()
+
+    overall_df = pd.DataFrame([overall_row])
+    display_df = pd.concat([display_df, overall_df], ignore_index=True)
+
+    # Format the table with all categories
+    st.dataframe(display_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = region_df.copy()
+
+    # Clean column names for download IN ORDER
+    column_names = {
+        "Region": "Region",
+        "Total with Birth Weight": "Total Newborns with Birth Weight",
+    }
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        clean_name = clean_category_name(category_info["name"])
+        column_names[category_info["short_name"]] = f"{clean_name} Newborns"
+
+    download_df = download_df.rename(columns=column_names)
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Region": "Overall"}
+    for col in download_df.columns:
+        if col != "Region":
+            overall_row[col] = download_df[col].sum()
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"birth_weight_region_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        "Download birth weight region comparison data as CSV",
+    )
 
 
 def render_kmc_coverage_trend_chart(
@@ -805,7 +1386,7 @@ def render_kmc_coverage_trend_chart(
     text_color=None,
     facility_uids=None,
 ):
-    """Render KMC coverage trend - SIMPLIFIED WITH CATEGORY SELECTION"""
+    """Render KMC coverage trend - WITH SINGLE TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -814,22 +1395,14 @@ def render_kmc_coverage_trend_chart(
         st.warning("⚠️ No data available for the selected period.")
         return
 
-    # Let user select which birth weight category to view
-    category_options = [info["name"] for info in BIRTH_WEIGHT_CATEGORIES.values()]
+    # Get unique periods
+    periods = df[period_col].unique()
 
-    # Add "All Categories" option
-    category_options_with_all = ["All Categories"] + category_options
-
-    selected_category = st.selectbox(
-        "Select Birth Weight Category to View:",
-        options=category_options_with_all,
-        index=0,  # Default to "All Categories"
-        key=f"kmc_category_select_{hash(str(facility_uids))}",
-    )
+    # FIX: Sort periods chronologically using helper function
+    periods = sort_periods_chronologically(periods)
 
     # Compute KMC coverage for each period
     trend_data = []
-    periods = sorted(df[period_col].unique())
 
     for period in periods:
         period_df = df[df[period_col] == period]
@@ -837,8 +1410,10 @@ def render_kmc_coverage_trend_chart(
 
         period_row = {period_col: period}
 
-        # Add KMC rate for each category
-        for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
+        # Add KMC rate for each category IN ORDER
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
             period_row[f"{category_key}_rate"] = kmc_data["kmc_rates_by_category"].get(
                 category_key, 0
             )
@@ -857,71 +1432,315 @@ def render_kmc_coverage_trend_chart(
 
     trend_df = pd.DataFrame(trend_data)
 
-    # Create line chart
+    # Create stacked bar chart for KMC rates by weight category
     fig = go.Figure()
 
-    if selected_category == "All Categories":
-        # Show all categories
-        colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#3498db", "#9b59b6"]
+    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(),
+        key=lambda x: x[1]["sort_order"],
+        reverse=True,  # Reverse for stacking order
+    ):
+        rate_col = f"{category_key}_rate"
+        count_col = f"{category_key}_count"
+        total_col = f"{category_key}_total"
 
-        # Add lines for each BW category
-        for i, (category_key, category_info) in enumerate(
-            BIRTH_WEIGHT_CATEGORIES.items()
-        ):
-            rate_col = f"{category_key}_rate"
-            count_col = f"{category_key}_count"
-            total_col = f"{category_key}_total"
-
-            if rate_col in trend_df.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=trend_df[period_col],
-                        y=trend_df[rate_col],
-                        mode="lines+markers",
-                        name=f"{category_info['name']}",
-                        line=dict(width=2, color=colors[i]),
-                        marker=dict(size=5),
-                        hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}%<br>KMC Cases: %{{customdata[0]}}<br>Total Newborns: %{{customdata[1]}}<extra></extra>",
-                        customdata=np.column_stack(
-                            (trend_df[count_col], trend_df[total_col])
-                        ),
-                    )
-                )
-    else:
-        # Show only selected category
-        # Find the category key for the selected category
-        selected_category_key = None
-        for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-            if category_info["name"] == selected_category:
-                selected_category_key = category_key
-                break
-
-        if selected_category_key:
-            rate_col = f"{selected_category_key}_rate"
-            count_col = f"{selected_category_key}_count"
-            total_col = f"{selected_category_key}_total"
-
+        if rate_col in trend_df.columns:
             fig.add_trace(
-                go.Scatter(
+                go.Bar(
                     x=trend_df[period_col],
                     y=trend_df[rate_col],
-                    mode="lines+markers",
-                    name=selected_category,
-                    line=dict(width=3, color="#3498db"),
-                    marker=dict(size=7),
-                    hovertemplate=f"<b>%{{x}}</b><br>{selected_category}: %{{y:.1f}}%<br>KMC Cases: %{{customdata[0]}}<br>Total Newborns: %{{customdata[1]}}<extra></extra>",
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
+                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}%<br>KMC Cases: %{{customdata[0]}}<br>Total Newborns: %{{customdata[1]}}<extra></extra>",
                     customdata=np.column_stack(
                         (trend_df[count_col], trend_df[total_col])
                     ),
                 )
             )
 
+    # Calculate Y-axis range for percentage charts
+    all_rates = []
+    for category_key in BIRTH_WEIGHT_CATEGORIES.keys():
+        rate_col = f"{category_key}_rate"
+        if rate_col in trend_df.columns:
+            all_rates.extend(trend_df[rate_col].tolist())
+
+    if all_rates:
+        max_rate = max(all_rates)
+        y_max = min(100, max_rate * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
+
     fig.update_layout(
-        title=f"{title} - {selected_category}",
-        height=400,
+        title=title,
+        height=500,
         xaxis_title="Period",
-        yaxis_title="KMC Coverage (%)",
+        yaxis_title="KMC Coverage Rate (%)",
+        barmode="stack",
         showlegend=True,
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis=dict(
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,  # Ensure chronological order
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            range=[0, y_max],
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        legend=dict(
+            traceorder="reversed",  # Reverse legend to match stacking order
+            title="Birth Weight Categories",
+        ),
+    )
+
+    fig.update_layout(yaxis_tickformat=".1f")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # SINGLE TABLE
+    st.subheader("📊 KMC Coverage Table")
+
+    # Create a detailed table with rates, counts, and totals for each category
+    table_data = []
+
+    for period in periods:
+        period_data = trend_df[trend_df[period_col] == period].iloc[0]
+        row = {"Period": period}
+
+        # Add data for each category
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            rate_col = f"{category_key}_rate"
+            count_col = f"{category_key}_count"
+            total_col = f"{category_key}_total"
+
+            if rate_col in period_data:
+                rate = period_data[rate_col]
+                count = period_data[count_col]
+                total = period_data[total_col]
+
+                # Format as "Rate% (Count/Total)"
+                row[category_info["short_name"]] = (
+                    f"{rate:.1f}% ({int(count)}/{int(total)})"
+                )
+
+        table_data.append(row)
+
+    # Add overall row
+    overall_row = {"Period": "Overall"}
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        count_col = f"{category_key}_count"
+        total_col = f"{category_key}_total"
+
+        total_count = trend_df[count_col].sum()
+        total_denom = trend_df[total_col].sum()
+        overall_rate = (total_count / total_denom * 100) if total_denom > 0 else 0
+
+        overall_row[category_info["short_name"]] = (
+            f"{overall_rate:.1f}% ({int(total_count)}/{int(total_denom)})"
+        )
+
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # Add description
+    st.info(
+        "**KMC Coverage by Birth Weight Category**: Shows the percentage of newborns receiving Kangaroo Mother Care (KMC), stacked by birth weight categories. Color gradient from red (lowest weight) to green (highest weight) indicates birth weight categories."
+    )
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    # Create a simplified version for download
+    download_df = trend_df.copy()
+
+    # Select only the period and category columns IN ORDER
+    download_cols = [period_col]
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        download_cols.extend(
+            [
+                f"{category_key}_rate",
+                f"{category_key}_count",
+                f"{category_key}_total",
+            ]
+        )
+
+    download_df = download_df[download_cols]
+
+    # Calculate totals for "Overall" row
+    overall_row = {period_col: "Overall"}
+    for col in download_df.columns:
+        if col != period_col:
+            if "_rate" in col:
+                # For rates, calculate weighted average
+                rate_col = col
+                count_col = col.replace("_rate", "_count")
+                total_col = col.replace("_rate", "_total")
+
+                if (
+                    count_col in download_df.columns
+                    and total_col in download_df.columns
+                ):
+                    total_cases = download_df[count_col].sum()
+                    total_newborns = download_df[total_col].sum()
+                    overall_row[rate_col] = (
+                        (total_cases / total_newborns * 100)
+                        if total_newborns > 0
+                        else 0
+                    )
+            elif "_count" in col or "_total" in col:
+                # For counts and totals, sum them
+                overall_row[col] = download_df[col].sum()
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Rename columns for better readability with clean names IN ORDER
+    column_names = {period_col: "Period"}
+
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        clean_name = clean_category_name(category_info["name"])
+        column_names[f"{category_key}_rate"] = f"{clean_name} KMC Rate (%)"
+        column_names[f"{category_key}_count"] = f"{clean_name} KMC Cases"
+        column_names[f"{category_key}_total"] = f"{clean_name} Total Newborns"
+
+    download_df = download_df.rename(columns=column_names)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"kmc_coverage_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download KMC coverage data as CSV",
+    )
+
+
+def render_kmc_facility_comparison(
+    df,
+    period_col="period_display",
+    title="KMC Coverage - Facility Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    facility_names=None,
+    facility_uids=None,
+):
+    """Render facility comparison for KMC coverage - WITH SINGLE TABLE"""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if (
+        not facility_names
+        or not facility_uids
+        or len(facility_names) != len(facility_uids)
+    ):
+        st.warning("⚠️ No facilities selected for comparison.")
+        return
+
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
+
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
+        st.warning("⚠️ No data available for comparison.")
+        return
+
+    # Compute AGGREGATED KMC data for each facility (sum across all periods)
+    facility_data = []
+    for facility_name, facility_uid in zip(facility_names, facility_uids):
+        facility_df = df[df["orgUnit"] == facility_uid]
+        if not facility_df.empty:
+            # Aggregate KMC data across ALL periods
+            kmc_data = compute_kmc_coverage_kpi(facility_df, [facility_uid])
+
+            row_data = {"Facility": facility_name}
+
+            # Store both rates and counts for each category
+            for category_key, category_info in sorted(
+                BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+            ):
+                rate = kmc_data["kmc_rates_by_category"].get(category_key, 0)
+                count = kmc_data["kmc_counts_by_category"].get(category_key, 0)
+                total = kmc_data["kmc_total_by_category"].get(category_key, 0)
+
+                # Store rate for chart
+                row_data[category_info["short_name"]] = rate
+                # Store count and total for table
+                row_data[f"{category_info['short_name']}_count"] = count
+                row_data[f"{category_info['short_name']}_total"] = total
+
+            facility_data.append(row_data)
+
+    if not facility_data:
+        st.warning("⚠️ No KMC data available for facility comparison.")
+        return
+
+    facility_df = pd.DataFrame(facility_data)
+
+    # Create stacked bar chart for KMC rates
+    fig = go.Figure()
+
+    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(),
+        key=lambda x: x[1]["sort_order"],
+        reverse=True,  # Reverse for stacking order
+    ):
+        short_name = category_info["short_name"]
+        if short_name in facility_df.columns:
+            fig.add_trace(
+                go.Bar(
+                    x=facility_df["Facility"],
+                    y=facility_df[short_name],
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
+                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
+                )
+            )
+
+    # Calculate Y-axis range for percentage charts
+    all_values = []
+    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+        short_name = category_info["short_name"]
+        if short_name in facility_df.columns:
+            all_values.extend(facility_df[short_name].tolist())
+
+    if all_values:
+        max_value = max(all_values)
+        y_max = min(100, max_value * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
+
+    fig.update_layout(
+        title=f"{title}",
+        height=500,
+        xaxis_title="Facility",
+        yaxis_title="KMC Coverage Rate (%)",
+        barmode="stack",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
@@ -934,111 +1753,359 @@ def render_kmc_coverage_trend_chart(
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        legend=dict(
+            traceorder="reversed",  # Reverse legend to match stacking order
+            title="Birth Weight Categories",
         ),
     )
 
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON INSTEAD OF EXPANDER WITH LARGE TABLE
-    with st.expander(f"📥 Download KMC Coverage Data", expanded=False):
-        # Create a simplified version for download
-        download_df = trend_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 KMC Facility Comparison Table")
 
-        # Select only the period and selected category columns
-        if selected_category == "All Categories":
-            # Include all categories for download
-            download_cols = [period_col]
-            for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-                download_cols.extend(
-                    [
-                        f"{category_key}_rate",
-                        f"{category_key}_count",
-                        f"{category_key}_total",
-                    ]
+    # Create a detailed table with rates, counts, and totals for each category
+    table_data = []
+
+    for _, row in facility_df.iterrows():
+        table_row = {"Facility": row["Facility"]}
+
+        # Add data for each category
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            short_name = category_info["short_name"]
+            count_col = f"{short_name}_count"
+            total_col = f"{short_name}_total"
+
+            if short_name in row:
+                rate = row[short_name]
+                count = row[count_col] if count_col in row else 0
+                total = row[total_col] if total_col in row else 0
+
+                # Format as "Rate% (Count/Total)"
+                table_row[short_name] = f"{rate:.1f}% ({int(count)}/{int(total)})"
+
+        table_data.append(table_row)
+
+    # Add overall row
+    overall_row = {"Facility": "Overall"}
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        short_name = category_info["short_name"]
+        count_col = f"{short_name}_count"
+        total_col = f"{short_name}_total"
+
+        total_count = (
+            facility_df[count_col].sum() if count_col in facility_df.columns else 0
+        )
+        total_denom = (
+            facility_df[total_col].sum() if total_col in facility_df.columns else 0
+        )
+        overall_rate = (total_count / total_denom * 100) if total_denom > 0 else 0
+
+        overall_row[short_name] = (
+            f"{overall_rate:.1f}% ({int(total_count)}/{int(total_denom)})"
+        )
+
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = facility_df.copy()
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Facility": "Overall"}
+    for col in download_df.columns:
+        if col != "Facility":
+            if "_count" in col or "_total" in col:
+                # For counts and totals, sum them
+                overall_row[col] = (
+                    download_df[col].sum() if col in download_df.columns else 0
                 )
-        else:
-            # Only include selected category
-            download_cols = [period_col]
-            if selected_category_key:
-                download_cols.extend(
-                    [
-                        f"{selected_category_key}_rate",
-                        f"{selected_category_key}_count",
-                        f"{selected_category_key}_total",
-                    ]
+            else:
+                # For rates, calculate weighted average (not simple sum)
+                # Find corresponding count and total columns
+                base_name = col
+                count_col = f"{col}_count"
+                total_col = f"{col}_total"
+
+                if (
+                    count_col in download_df.columns
+                    and total_col in download_df.columns
+                ):
+                    total_count = download_df[count_col].sum()
+                    total_denom = download_df[total_col].sum()
+                    overall_row[col] = (
+                        (total_count / total_denom * 100) if total_denom > 0 else 0
+                    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"kmc_rates_facility_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download KMC rates facility comparison data as CSV",
+    )
+
+
+def render_kmc_region_comparison(
+    df,
+    period_col="period_display",
+    title="KMC Coverage - Region Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    region_names=None,
+    region_mapping=None,
+    facilities_by_region=None,
+):
+    """Render region comparison for KMC coverage - WITH SINGLE TABLE"""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if not region_names or not region_mapping or not facilities_by_region:
+        st.warning("⚠️ No regions available for comparison.")
+        return
+
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
+
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
+        st.warning("⚠️ No data available for comparison.")
+        return
+
+    # Compute AGGREGATED KMC data for each region (sum across all periods)
+    region_data = []
+    for region_name in region_names:
+        facility_uids = []
+        for facility_name, facility_uid in facilities_by_region.get(region_name, []):
+            facility_uids.append(facility_uid)
+
+        if facility_uids:
+            # Filter for this region's facilities
+            region_df = df[df["orgUnit"].isin(facility_uids)]
+
+            # CRITICAL: Deduplicate by TEI ID for the entire region
+            region_df = deduplicate_by_tei(region_df)
+
+            if not region_df.empty:
+                # Aggregate KMC data across ALL periods
+                kmc_data = compute_kmc_coverage_kpi(region_df, facility_uids)
+
+                row_data = {"Region": region_name}
+
+                # Store both rates and counts for each category
+                for category_key, category_info in sorted(
+                    BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+                ):
+                    rate = kmc_data["kmc_rates_by_category"].get(category_key, 0)
+                    count = kmc_data["kmc_counts_by_category"].get(category_key, 0)
+                    total = kmc_data["kmc_total_by_category"].get(category_key, 0)
+
+                    # Store rate for chart
+                    row_data[category_info["short_name"]] = rate
+                    # Store count and total for table
+                    row_data[f"{category_info['short_name']}_count"] = count
+                    row_data[f"{category_info['short_name']}_total"] = total
+
+                region_data.append(row_data)
+
+    if not region_data:
+        st.warning("⚠️ No KMC data available for region comparison.")
+        return
+
+    region_df = pd.DataFrame(region_data)
+
+    # Create stacked bar chart for KMC rates
+    fig = go.Figure()
+
+    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(),
+        key=lambda x: x[1]["sort_order"],
+        reverse=True,  # Reverse for stacking order
+    ):
+        short_name = category_info["short_name"]
+        if short_name in region_df.columns:
+            fig.add_trace(
+                go.Bar(
+                    x=region_df["Region"],
+                    y=region_df[short_name],
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
+                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
                 )
-
-        download_df = download_df[download_cols]
-
-        # Rename columns for better readability with clean names
-        column_names = {period_col: "Period"}
-
-        if selected_category == "All Categories":
-            for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-                clean_name = clean_category_name(category_info["name"])
-                column_names[f"{category_key}_rate"] = f"{clean_name} KMC Rate (%)"
-                column_names[f"{category_key}_count"] = f"{clean_name} KMC Cases"
-                column_names[f"{category_key}_total"] = f"{clean_name} Total Newborns"
-        elif selected_category_key:
-            category_info = BIRTH_WEIGHT_CATEGORIES[selected_category_key]
-            clean_name = clean_category_name(selected_category)
-            column_names[f"{selected_category_key}_rate"] = f"{clean_name} KMC Rate (%)"
-            column_names[f"{selected_category_key}_count"] = f"{clean_name} KMC Cases"
-            column_names[f"{selected_category_key}_total"] = (
-                f"{clean_name} Total Newborns"
             )
 
-        download_df = download_df.rename(columns=column_names)
+    # Calculate Y-axis range for percentage charts
+    all_values = []
+    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+        short_name = category_info["short_name"]
+        if short_name in region_df.columns:
+            all_values.extend(region_df[short_name].tolist())
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        clean_filename = (
-            selected_category.replace(" ", "_")
-            .replace("–", "-")
-            .replace("+", "plus")
-            .lower()
+    if all_values:
+        max_value = max(all_values)
+        y_max = min(100, max_value * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
+
+    fig.update_layout(
+        title=f"{title}",
+        height=500,
+        xaxis_title="Region",
+        yaxis_title="KMC Coverage Rate (%)",
+        barmode="stack",
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis=dict(
+            type="category",
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            range=[0, y_max],
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        legend=dict(
+            traceorder="reversed",  # Reverse legend to match stacking order
+            title="Birth Weight Categories",
+        ),
+    )
+
+    fig.update_layout(yaxis_tickformat=".1f")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # SINGLE TABLE
+    st.subheader("📊 KMC Region Comparison Table")
+
+    # Create a detailed table with rates, counts, and totals for each category
+    table_data = []
+
+    for _, row in region_df.iterrows():
+        table_row = {"Region": row["Region"]}
+
+        # Add data for each category
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            short_name = category_info["short_name"]
+            count_col = f"{short_name}_count"
+            total_col = f"{short_name}_total"
+
+            if short_name in row:
+                rate = row[short_name]
+                count = row[count_col] if count_col in row else 0
+                total = row[total_col] if total_col in row else 0
+
+                # Format as "Rate% (Count/Total)"
+                table_row[short_name] = f"{rate:.1f}% ({int(count)}/{int(total)})"
+
+        table_data.append(table_row)
+
+    # Add overall row
+    overall_row = {"Region": "Overall"}
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        short_name = category_info["short_name"]
+        count_col = f"{short_name}_count"
+        total_col = f"{short_name}_total"
+
+        total_count = (
+            region_df[count_col].sum() if count_col in region_df.columns else 0
         )
-        download_csv_button(
-            download_df,
-            f"kmc_coverage_{clean_filename}_{timestamp}.csv",
-            "📥 Download CSV",
-            f"Download KMC coverage data for {selected_category} as CSV",
+        total_denom = (
+            region_df[total_col].sum() if total_col in region_df.columns else 0
+        )
+        overall_rate = (total_count / total_denom * 100) if total_denom > 0 else 0
+
+        overall_row[short_name] = (
+            f"{overall_rate:.1f}% ({int(total_count)}/{int(total_denom)})"
         )
 
-        # Show a preview of the data
-        st.write(f"Data Preview for {selected_category} (All Columns):")
-        if selected_category == "All Categories":
-            # Show subset for All Categories preview
-            preview_cols = ["Period"]
-            for i, (category_key, category_info) in enumerate(
-                BIRTH_WEIGHT_CATEGORIES.items()
-            ):
-                if i < 3:  # Show only first 3 categories in preview
-                    clean_name = clean_category_name(category_info["name"])
-                    preview_cols.extend(
-                        [
-                            f"{clean_name} KMC Rate (%)",
-                            f"{clean_name} KMC Cases",
-                            f"{clean_name} Total Newborns",
-                        ]
-                    )
-            preview_df = download_df[preview_cols].head(10)
-            st.dataframe(preview_df, use_container_width=True)
-            if len(BIRTH_WEIGHT_CATEGORIES) > 3:
-                st.info(
-                    f"Note: Showing first 3 of {len(BIRTH_WEIGHT_CATEGORIES)} categories in preview. All {len(BIRTH_WEIGHT_CATEGORIES)} categories are included in the download."
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = region_df.copy()
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Region": "Overall"}
+    for col in download_df.columns:
+        if col != "Region":
+            if "_count" in col or "_total" in col:
+                # For counts and totals, sum them
+                overall_row[col] = (
+                    download_df[col].sum() if col in download_df.columns else 0
                 )
-        else:
-            # Show all columns for single category
-            st.dataframe(download_df.head(10), use_container_width=True)
+            else:
+                # For rates, calculate weighted average (not simple sum)
+                # Find corresponding count and total columns
+                base_name = col
+                count_col = f"{col}_count"
+                total_col = f"{col}_total"
+
+                if (
+                    count_col in download_df.columns
+                    and total_col in download_df.columns
+                ):
+                    total_count = download_df[count_col].sum()
+                    total_denom = download_df[total_col].sum()
+                    overall_row[col] = (
+                        (total_count / total_denom * 100) if total_denom > 0 else 0
+                    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"kmc_rates_region_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download KMC rates region comparison data as CSV",
+    )
 
 
-# ---------------- SEPARATE CPAP CHART FUNCTIONS ----------------
+# ---------------- SEPARATE CPAP CHART FUNCTIONS (UPDATED WITH SINGLE TABLE) ----------------
 def render_cpap_general_trend_chart(
     df,
     period_col="period_display",
@@ -1047,7 +2114,7 @@ def render_cpap_general_trend_chart(
     text_color=None,
     facility_uids=None,
 ):
-    """Render general CPAP coverage trend chart - SINGLE PLOT"""
+    """Render general CPAP coverage trend chart - WITH SINGLE TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1056,9 +2123,14 @@ def render_cpap_general_trend_chart(
         st.warning("⚠️ No data available for the selected period.")
         return
 
+    # Get unique periods
+    periods = df[period_col].unique()
+
+    # FIX: Sort periods chronologically using helper function
+    periods = sort_periods_chronologically(periods)
+
     # Compute CPAP data for each period
     trend_data = []
-    periods = sorted(df[period_col].unique())
 
     for period in periods:
         period_df = df[df[period_col] == period]
@@ -1079,42 +2151,50 @@ def render_cpap_general_trend_chart(
 
     trend_df = pd.DataFrame(trend_data)
 
-    # Create line chart for general CPAP
+    # Create bar chart for general CPAP
     fig = go.Figure()
 
     fig.add_trace(
-        go.Scatter(
+        go.Bar(
             x=trend_df[period_col],
             y=trend_df["cpap_general_rate"],
-            mode="lines+markers",
             name="General CPAP",
-            line=dict(width=2, color="#3498db"),
-            marker=dict(size=5),
-            hovertemplate="<b>%{x}</b><br>General CPAP: %{y:.1f}%<br>Cases: %{customdata[0]}<br>Total Admitted: %{customdata[1]}<extra></extra>",
+            marker_color="#3498db",  # Blue for General CPAP
+            hovertemplate="<b>%{{x}}</b><br>General CPAP: %{{y:.1f}}%<br>Cases: %{{customdata[0]}}<br>Total Admitted: %{{customdata[1]}}<extra></extra>",
             customdata=np.column_stack(
                 (trend_df["cpap_general_count"], trend_df["cpap_general_total"])
             ),
         )
     )
 
+    # Calculate Y-axis range for percentage charts
+    all_rates = trend_df["cpap_general_rate"].tolist()
+    if all_rates:
+        max_rate = max(all_rates)
+        y_max = min(100, max_rate * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
+
     fig.update_layout(
         title=title,
         height=400,
         xaxis_title="Period",
         yaxis_title="CPAP Coverage (%)",
-        showlegend=True,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
         xaxis=dict(
             type="category",
+            categoryorder="array",
+            categoryarray=periods,  # Ensure chronological order
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -1125,42 +2205,91 @@ def render_cpap_general_trend_chart(
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON
-    with st.expander(f"📥 Download General CPAP Data", expanded=False):
-        # Create a simplified version for download
-        download_df = trend_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 General CPAP Coverage Table")
 
-        # Select and rename columns
-        download_df = download_df[
-            [
-                period_col,
-                "cpap_general_rate",
-                "cpap_general_count",
-                "cpap_general_total",
-            ]
-        ]
+    # Create a detailed table
+    table_data = []
 
-        column_names = {
-            period_col: "Period",
-            "cpap_general_rate": "General CPAP Rate (%)",
-            "cpap_general_count": "General CPAP Cases",
-            "cpap_general_total": "Total Admitted Newborns",
+    for _, row in trend_df.iterrows():
+        table_row = {
+            "Period": row[period_col],
+            "Rate (%)": f"{row['cpap_general_rate']:.1f}%",
+            "CPAP Cases": int(row["cpap_general_count"]),
+            "Total Admitted": int(row["cpap_general_total"]),
         }
+        table_data.append(table_row)
 
-        download_df = download_df.rename(columns=column_names)
+    # Add overall row
+    total_cases = trend_df["cpap_general_count"].sum()
+    total_admitted = trend_df["cpap_general_total"].sum()
+    overall_rate = (total_cases / total_admitted * 100) if total_admitted > 0 else 0
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"general_cpap_coverage_{timestamp}.csv",
-            "📥 Download CSV",
-            "Download general CPAP coverage data as CSV",
-        )
+    overall_row = {
+        "Period": "Overall",
+        "Rate (%)": f"{overall_rate:.1f}%",
+        "CPAP Cases": int(total_cases),
+        "Total Admitted": int(total_admitted),
+    }
+    table_data.append(overall_row)
 
-        # Show a preview of the data
-        st.write("Data Preview (All Columns):")
-        st.dataframe(download_df.head(10), use_container_width=True)
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # Add description
+    st.info(
+        "**General CPAP Coverage**: Shows the percentage of all admitted newborns who received CPAP (Continuous Positive Airway Pressure) therapy."
+    )
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    # Create a simplified version for download
+    download_df = trend_df.copy()
+
+    # Select and rename columns
+    download_df = download_df[
+        [
+            period_col,
+            "cpap_general_rate",
+            "cpap_general_count",
+            "cpap_general_total",
+        ]
+    ]
+
+    # Calculate totals for "Overall" row
+    overall_row = {period_col: "Overall"}
+    overall_row["cpap_general_count"] = download_df["cpap_general_count"].sum()
+    overall_row["cpap_general_total"] = download_df["cpap_general_total"].sum()
+    overall_row["cpap_general_rate"] = (
+        overall_row["cpap_general_count"] / overall_row["cpap_general_total"] * 100
+        if overall_row["cpap_general_total"] > 0
+        else 0
+    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    column_names = {
+        period_col: "Period",
+        "cpap_general_rate": "General CPAP Rate (%)",
+        "cpap_general_count": "General CPAP Cases",
+        "cpap_general_total": "Total Admitted Newborns",
+    }
+
+    download_df = download_df.rename(columns=column_names)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"general_cpap_coverage_{timestamp}.csv",
+        "📥 Download CSV",
+        "Download general CPAP coverage data as CSV",
+    )
 
 
 def render_cpap_rds_trend_chart(
@@ -1171,7 +2300,7 @@ def render_cpap_rds_trend_chart(
     text_color=None,
     facility_uids=None,
 ):
-    """Render CPAP for RDS trend chart - SINGLE PLOT"""
+    """Render CPAP for RDS trend chart - WITH SINGLE TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1180,9 +2309,14 @@ def render_cpap_rds_trend_chart(
         st.warning("⚠️ No data available for the selected period.")
         return
 
+    # Get unique periods
+    periods = df[period_col].unique()
+
+    # FIX: Sort periods chronologically using helper function
+    periods = sort_periods_chronologically(periods)
+
     # Compute CPAP data for each period
     trend_data = []
-    periods = sorted(df[period_col].unique())
 
     for period in periods:
         period_df = df[df[period_col] == period]
@@ -1203,42 +2337,50 @@ def render_cpap_rds_trend_chart(
 
     trend_df = pd.DataFrame(trend_data)
 
-    # Create line chart for CPAP for RDS
+    # Create bar chart for CPAP for RDS
     fig = go.Figure()
 
     fig.add_trace(
-        go.Scatter(
+        go.Bar(
             x=trend_df[period_col],
             y=trend_df["cpap_rds_rate"],
-            mode="lines+markers",
             name="CPAP for RDS",
-            line=dict(width=2, color="#e74c3c"),
-            marker=dict(size=5),
-            hovertemplate="<b>%{x}</b><br>CPAP for RDS: %{y:.1f}%<br>Cases: %{customdata[0]}<br>Total RDS: %{customdata[1]}<extra></extra>",
+            marker_color="#3498db",  # BLUE for CPAP for RDS (same as general CPAP)
+            hovertemplate="<b>%{{x}}</b><br>CPAP for RDS: %{{y:.1f}}%<br>Cases: %{{customdata[0]}}<br>Total RDS: %{{customdata[1]}}<extra></extra>",
             customdata=np.column_stack(
                 (trend_df["cpap_rds_count"], trend_df["cpap_rds_total"])
             ),
         )
     )
 
+    # Calculate Y-axis range for percentage charts
+    all_rates = trend_df["cpap_rds_rate"].tolist()
+    if all_rates:
+        max_rate = max(all_rates)
+        y_max = min(100, max_rate * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
+
     fig.update_layout(
         title=title,
         height=400,
         xaxis_title="Period",
         yaxis_title="CPAP Coverage (%)",
-        showlegend=True,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
         xaxis=dict(
             type="category",
+            categoryorder="array",
+            categoryarray=periods,  # Ensure chronological order
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -1249,42 +2391,91 @@ def render_cpap_rds_trend_chart(
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON
-    with st.expander(f"📥 Download CPAP for RDS Data", expanded=False):
-        # Create a simplified version for download
-        download_df = trend_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 CPAP for RDS Table")
 
-        # Select and rename columns
-        download_df = download_df[
-            [
-                period_col,
-                "cpap_rds_rate",
-                "cpap_rds_count",
-                "cpap_rds_total",
-            ]
-        ]
+    # Create a detailed table
+    table_data = []
 
-        column_names = {
-            period_col: "Period",
-            "cpap_rds_rate": "CPAP for RDS Rate (%)",
-            "cpap_rds_count": "CPAP for RDS Cases",
-            "cpap_rds_total": "Total RDS Newborns",
+    for _, row in trend_df.iterrows():
+        table_row = {
+            "Period": row[period_col],
+            "Rate (%)": f"{row['cpap_rds_rate']:.1f}%",
+            "CPAP Cases": int(row["cpap_rds_count"]),
+            "Total RDS": int(row["cpap_rds_total"]),
         }
+        table_data.append(table_row)
 
-        download_df = download_df.rename(columns=column_names)
+    # Add overall row
+    total_cases = trend_df["cpap_rds_count"].sum()
+    total_rds = trend_df["cpap_rds_total"].sum()
+    overall_rate = (total_cases / total_rds * 100) if total_rds > 0 else 0
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"cpap_for_rds_{timestamp}.csv",
-            "📥 Download CSV",
-            "Download CPAP for RDS data as CSV",
-        )
+    overall_row = {
+        "Period": "Overall",
+        "Rate (%)": f"{overall_rate:.1f}%",
+        "CPAP Cases": int(total_cases),
+        "Total RDS": int(total_rds),
+    }
+    table_data.append(overall_row)
 
-        # Show a preview of the data
-        st.write("Data Preview (All Columns):")
-        st.dataframe(download_df.head(10), use_container_width=True)
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # Add description
+    st.info(
+        "**CPAP for Respiratory Distress Syndrome (RDS)**: Shows the percentage of newborns diagnosed with RDS who received CPAP therapy."
+    )
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    # Create a simplified version for download
+    download_df = trend_df.copy()
+
+    # Select and rename columns
+    download_df = download_df[
+        [
+            period_col,
+            "cpap_rds_rate",
+            "cpap_rds_count",
+            "cpap_rds_total",
+        ]
+    ]
+
+    # Calculate totals for "Overall" row
+    overall_row = {period_col: "Overall"}
+    overall_row["cpap_rds_count"] = download_df["cpap_rds_count"].sum()
+    overall_row["cpap_rds_total"] = download_df["cpap_rds_total"].sum()
+    overall_row["cpap_rds_rate"] = (
+        overall_row["cpap_rds_count"] / overall_row["cpap_rds_total"] * 100
+        if overall_row["cpap_rds_total"] > 0
+        else 0
+    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    column_names = {
+        period_col: "Period",
+        "cpap_rds_rate": "CPAP for RDS Rate (%)",
+        "cpap_rds_count": "CPAP for RDS Cases",
+        "cpap_rds_total": "Total RDS Newborns",
+    }
+
+    download_df = download_df.rename(columns=column_names)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"cpap_for_rds_{timestamp}.csv",
+        "📥 Download CSV",
+        "Download CPAP for RDS data as CSV",
+    )
 
 
 def render_cpap_by_weight_trend_chart(
@@ -1295,7 +2486,7 @@ def render_cpap_by_weight_trend_chart(
     text_color=None,
     facility_uids=None,
 ):
-    """Render CPAP coverage trend by birth weight category - SIMPLIFIED WITH CATEGORY SELECTION"""
+    """Render CPAP coverage trend by birth weight category - WITH SINGLE TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1304,22 +2495,14 @@ def render_cpap_by_weight_trend_chart(
         st.warning("⚠️ No data available for the selected period.")
         return
 
-    # Let user select which birth weight category to view
-    category_options = [info["name"] for info in BIRTH_WEIGHT_CATEGORIES.values()]
+    # Get unique periods
+    periods = df[period_col].unique()
 
-    # Add "All Categories" option
-    category_options_with_all = ["All Categories"] + category_options
-
-    selected_category = st.selectbox(
-        "Select Birth Weight Category to View:",
-        options=category_options_with_all,
-        index=0,  # Default to "All Categories"
-        key=f"cpap_category_select_{hash(str(facility_uids))}",
-    )
+    # FIX: Sort periods chronologically using helper function
+    periods = sort_periods_chronologically(periods)
 
     # Compute CPAP coverage for each period
     trend_data = []
-    periods = sorted(df[period_col].unique())
 
     for period in periods:
         period_df = df[df[period_col] == period]
@@ -1327,8 +2510,10 @@ def render_cpap_by_weight_trend_chart(
 
         period_row = {period_col: period}
 
-        # Add CPAP rate for each category
-        for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
+        # Add CPAP rate for each category IN ORDER
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
             period_row[f"{category_key}_rate"] = cpap_data[
                 "cpap_rates_by_category"
             ].get(category_key, 0)
@@ -1347,70 +2532,52 @@ def render_cpap_by_weight_trend_chart(
 
     trend_df = pd.DataFrame(trend_data)
 
-    # Create line chart
+    # Create stacked bar chart for CPAP rates by weight category
     fig = go.Figure()
 
-    if selected_category == "All Categories":
-        # Show all categories
-        colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#3498db", "#9b59b6"]
+    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(),
+        key=lambda x: x[1]["sort_order"],
+        reverse=True,  # Reverse for stacking order
+    ):
+        rate_col = f"{category_key}_rate"
+        count_col = f"{category_key}_count"
+        total_col = f"{category_key}_total"
 
-        # Add lines for each BW category
-        for i, (category_key, category_info) in enumerate(
-            BIRTH_WEIGHT_CATEGORIES.items()
-        ):
-            rate_col = f"{category_key}_rate"
-            count_col = f"{category_key}_count"
-            total_col = f"{category_key}_total"
-
-            if rate_col in trend_df.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=trend_df[period_col],
-                        y=trend_df[rate_col],
-                        mode="lines+markers",
-                        name=f"{category_info['name']}",
-                        line=dict(width=2, color=colors[i]),
-                        marker=dict(size=5),
-                        hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}%<br>CPAP Cases: %{{customdata[0]}}<br>Total Newborns: %{{customdata[1]}}<extra></extra>",
-                        customdata=np.column_stack(
-                            (trend_df[count_col], trend_df[total_col])
-                        ),
-                    )
-                )
-    else:
-        # Show only selected category
-        # Find the category key for the selected category
-        selected_category_key = None
-        for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-            if category_info["name"] == selected_category:
-                selected_category_key = category_key
-                break
-
-        if selected_category_key:
-            rate_col = f"{selected_category_key}_rate"
-            count_col = f"{selected_category_key}_count"
-            total_col = f"{selected_category_key}_total"
-
+        if rate_col in trend_df.columns:
             fig.add_trace(
-                go.Scatter(
+                go.Bar(
                     x=trend_df[period_col],
                     y=trend_df[rate_col],
-                    mode="lines+markers",
-                    name=selected_category,
-                    line=dict(width=3, color="#e74c3c"),
-                    marker=dict(size=7),
-                    hovertemplate=f"<b>%{{x}}</b><br>{selected_category}: %{{y:.1f}}%<br>CPAP Cases: %{{customdata[0]}}<br>Total Newborns: %{{customdata[1]}}<extra></extra>",
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
+                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}%<br>CPAP Cases: %{{customdata[0]}}<br>Total Newborns: %{{customdata[1]}}<extra></extra>",
                     customdata=np.column_stack(
                         (trend_df[count_col], trend_df[total_col])
                     ),
                 )
             )
 
+    # Calculate Y-axis range for percentage charts
+    all_rates = []
+    for category_key in BIRTH_WEIGHT_CATEGORIES.keys():
+        rate_col = f"{category_key}_rate"
+        if rate_col in trend_df.columns:
+            all_rates.extend(trend_df[rate_col].tolist())
+
+    if all_rates:
+        max_rate = max(all_rates)
+        y_max = min(100, max_rate * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
+
     fig.update_layout(
-        title=f"{title} - {selected_category}",
-        height=400,
+        title=title,
+        height=500,
         xaxis_title="Period",
-        yaxis_title="CPAP Coverage (%)",
+        yaxis_title="CPAP Coverage Rate (%)",
+        barmode="stack",
         showlegend=True,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -1418,145 +2585,172 @@ def render_cpap_by_weight_trend_chart(
         title_font_color=text_color,
         xaxis=dict(
             type="category",
+            categoryorder="array",
+            categoryarray=periods,  # Ensure chronological order
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        legend=dict(
+            traceorder="reversed",  # Reverse legend to match stacking order
+            title="Birth Weight Categories",
         ),
     )
 
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON INSTEAD OF EXPANDER WITH LARGE TABLE
-    with st.expander(f"📥 Download CPAP Coverage Data", expanded=False):
-        # Create a simplified version for download
-        download_df = trend_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 CPAP Coverage Table")
 
-        # Select only the period and selected category columns
-        if selected_category == "All Categories":
-            # Include all categories for download
-            download_cols = [period_col]
-            for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-                download_cols.extend(
-                    [
-                        f"{category_key}_rate",
-                        f"{category_key}_count",
-                        f"{category_key}_total",
-                    ]
+    # Create a detailed table with rates, counts, and totals for each category
+    table_data = []
+
+    for period in periods:
+        period_data = trend_df[trend_df[period_col] == period].iloc[0]
+        row = {"Period": period}
+
+        # Add data for each category
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            rate_col = f"{category_key}_rate"
+            count_col = f"{category_key}_count"
+            total_col = f"{category_key}_total"
+
+            if rate_col in period_data:
+                rate = period_data[rate_col]
+                count = period_data[count_col]
+                total = period_data[total_col]
+
+                # Format as "Rate% (Count/Total)"
+                row[category_info["short_name"]] = (
+                    f"{rate:.1f}% ({int(count)}/{int(total)})"
                 )
-        else:
-            # Only include selected category
-            download_cols = [period_col]
-            if selected_category_key:
-                download_cols.extend(
-                    [
-                        f"{selected_category_key}_rate",
-                        f"{selected_category_key}_count",
-                        f"{selected_category_key}_total",
-                    ]
-                )
 
-        download_df = download_df[download_cols]
+        table_data.append(row)
 
-        # Rename columns for better readability with clean names
-        column_names = {period_col: "Period"}
+    # Add overall row
+    overall_row = {"Period": "Overall"}
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        count_col = f"{category_key}_count"
+        total_col = f"{category_key}_total"
 
-        if selected_category == "All Categories":
-            for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-                clean_name = clean_category_name(category_info["name"])
-                column_names[f"{category_key}_rate"] = f"{clean_name} CPAP Rate (%)"
-                column_names[f"{category_key}_count"] = f"{clean_name} CPAP Cases"
-                column_names[f"{category_key}_total"] = f"{clean_name} Total Newborns"
-        elif selected_category_key:
-            category_info = BIRTH_WEIGHT_CATEGORIES[selected_category_key]
-            clean_name = clean_category_name(selected_category)
-            column_names[f"{selected_category_key}_rate"] = (
-                f"{clean_name} CPAP Rate (%)"
-            )
-            column_names[f"{selected_category_key}_count"] = f"{clean_name} CPAP Cases"
-            column_names[f"{selected_category_key}_total"] = (
-                f"{clean_name} Total Newborns"
-            )
+        total_count = trend_df[count_col].sum()
+        total_denom = trend_df[total_col].sum()
+        overall_rate = (total_count / total_denom * 100) if total_denom > 0 else 0
 
-        download_df = download_df.rename(columns=column_names)
-
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        clean_filename = (
-            selected_category.replace(" ", "_")
-            .replace("–", "-")
-            .replace("+", "plus")
-            .lower()
-        )
-        download_csv_button(
-            download_df,
-            f"cpap_coverage_{clean_filename}_{timestamp}.csv",
-            "📥 Download CSV",
-            f"Download CPAP coverage data for {selected_category} as CSV",
+        overall_row[category_info["short_name"]] = (
+            f"{overall_rate:.1f}% ({int(total_count)}/{int(total_denom)})"
         )
 
-        # Show a preview of the data
-        st.write(f"Data Preview for {selected_category} (All Columns):")
-        if selected_category == "All Categories":
-            # Show subset for All Categories preview
-            preview_cols = ["Period"]
-            for i, (category_key, category_info) in enumerate(
-                BIRTH_WEIGHT_CATEGORIES.items()
-            ):
-                if i < 3:  # Show only first 3 categories in preview
-                    clean_name = clean_category_name(category_info["name"])
-                    preview_cols.extend(
-                        [
-                            f"{clean_name} CPAP Rate (%)",
-                            f"{clean_name} CPAP Cases",
-                            f"{clean_name} Total Newborns",
-                        ]
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # Add description
+    st.info(
+        "**CPAP Coverage by Birth Weight Category**: Shows the percentage of newborns receiving CPAP therapy, stacked by birth weight categories. Color gradient from red (lowest weight) to green (highest weight) indicates birth weight categories."
+    )
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    # Create a simplified version for download
+    download_df = trend_df.copy()
+
+    # Select only the period and category columns IN ORDER
+    download_cols = [period_col]
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        download_cols.extend(
+            [
+                f"{category_key}_rate",
+                f"{category_key}_count",
+                f"{category_key}_total",
+            ]
+        )
+
+    download_df = download_df[download_cols]
+
+    # Calculate totals for "Overall" row
+    overall_row = {period_col: "Overall"}
+    for col in download_df.columns:
+        if col != period_col:
+            if "_rate" in col:
+                # For rates, calculate weighted average
+                rate_col = col
+                count_col = col.replace("_rate", "_count")
+                total_col = col.replace("_rate", "_total")
+
+                if (
+                    count_col in download_df.columns
+                    and total_col in download_df.columns
+                ):
+                    total_cases = download_df[count_col].sum()
+                    total_newborns = download_df[total_col].sum()
+                    overall_row[rate_col] = (
+                        (total_cases / total_newborns * 100)
+                        if total_newborns > 0
+                        else 0
                     )
-            preview_df = download_df[preview_cols].head(10)
-            st.dataframe(preview_df, use_container_width=True)
-            if len(BIRTH_WEIGHT_CATEGORIES) > 3:
-                st.info(
-                    f"Note: Showing first 3 of {len(BIRTH_WEIGHT_CATEGORIES)} categories in preview. All {len(BIRTH_WEIGHT_CATEGORIES)} categories are included in the download."
-                )
-        else:
-            # Show all columns for single category
-            st.dataframe(download_df.head(10), use_container_width=True)
+            elif "_count" in col or "_total" in col:
+                # For counts and totals, sum them
+                overall_row[col] = download_df[col].sum()
 
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
 
-# ---------------- LEGACY FUNCTION FOR BACKWARD COMPATIBILITY ----------------
-def render_cpap_trend_chart(
-    df,
-    period_col="period_display",
-    title="CPAP Coverage Trend",
-    bg_color="#FFFFFF",
-    text_color=None,
-    facility_uids=None,
-):
-    """Render CPAP coverage trend chart - LEGACY FUNCTION (calls general CPAP)"""
-    # Call the new single plot function for backward compatibility
-    render_cpap_general_trend_chart(
-        df, period_col, title, bg_color, text_color, facility_uids
+    # Rename columns for better readability with clean names IN ORDER
+    column_names = {period_col: "Period"}
+
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        clean_name = clean_category_name(category_info["name"])
+        column_names[f"{category_key}_rate"] = f"{clean_name} CPAP Rate (%)"
+        column_names[f"{category_key}_count"] = f"{clean_name} CPAP Cases"
+        column_names[f"{category_key}_total"] = f"{clean_name} Total Newborns"
+
+    download_df = download_df.rename(columns=column_names)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"cpap_coverage_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download CPAP coverage data as CSV",
     )
 
 
-# ---------------- FACILITY COMPARISON FUNCTIONS (UPDATED) ----------------
-def render_birth_weight_facility_comparison(
+# ---------------- NEW CPAP COMPARISON FUNCTIONS FOR FACILITY ----------------
+def render_cpap_general_facility_comparison(
     df,
     period_col="period_display",
-    title="Birth Weight Distribution - Facility Comparison",
+    title="General CPAP Coverage - Facility Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
     facility_uids=None,
 ):
-    """Render facility comparison for birth weight - FIXED"""
+    """Render facility comparison for general CPAP coverage - FIXED VERSION"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1568,68 +2762,72 @@ def render_birth_weight_facility_comparison(
         st.warning("⚠️ No facilities selected for comparison.")
         return
 
-    # For facility comparison, show bar chart for selected period
-    periods = sorted(df[period_col].unique()) if not df.empty else []
-    if not periods:
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
+
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
         st.warning("⚠️ No data available for comparison.")
         return
 
-    selected_period = st.selectbox(
-        "Select Period for Comparison:",
-        options=periods,
-        key=f"bw_facility_period_{str(facility_uids)}",
-    )
-
-    period_df = df[df[period_col] == selected_period]
-
-    # Compute data for each facility
+    # Compute AGGREGATED CPAP GENERAL data for each facility (sum across all periods)
     facility_data = []
     for facility_name, facility_uid in zip(facility_names, facility_uids):
-        facility_period_df = period_df[period_df["orgUnit"] == facility_uid]
-        if not facility_period_df.empty:
-            bw_data = compute_birth_weight_kpi(facility_period_df, [facility_uid])
+        facility_df = df[df["orgUnit"] == facility_uid]
+        if not facility_df.empty:
+            # Aggregate CPAP GENERAL data across ALL periods
+            cpap_data = compute_cpap_general_kpi(facility_df, [facility_uid])
 
             row_data = {
                 "Facility": facility_name,
-                "Total with Birth Weight": bw_data["total_with_birth_weight"],
+                "CPAP Rate (%)": cpap_data.get("cpap_general_rate", 0.0),
+                "CPAP Cases": cpap_data.get("cpap_general_count", 0),
+                "Total Admitted": cpap_data.get("total_admitted", 0),
             }
-
-            # Add each category count
-            for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-                row_data[category_info["name"]] = bw_data["bw_category_counts"].get(
-                    category_key, 0
-                )
 
             facility_data.append(row_data)
 
     if not facility_data:
-        st.warning("⚠️ No data available for facility comparison.")
+        st.warning("⚠️ No CPAP data available for facility comparison.")
         return
 
     facility_df = pd.DataFrame(facility_data)
 
-    # Create bar chart
+    # Create color palette for facilities
+    color_palette = px.colors.qualitative.Set3  # You can change this palette
+
+    # Create bar chart for general CPAP rates
     fig = go.Figure()
 
-    # Add bars for each BW category
-    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
-        category_name = category_info["name"]
-        if category_name in facility_df.columns:
-            fig.add_trace(
-                go.Bar(
-                    x=facility_df["Facility"],
-                    y=facility_df[category_name],
-                    name=category_name,
-                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.0f}<extra></extra>",
-                )
+    for i, (_, row) in enumerate(facility_df.iterrows()):
+        # Assign a unique color to each facility
+        color_idx = i % len(color_palette)
+        color = color_palette[color_idx]
+
+        fig.add_trace(
+            go.Bar(
+                x=[row["Facility"]],
+                y=[row["CPAP Rate (%)"]],
+                name=row["Facility"],
+                marker_color=color,
+                hovertemplate=f"<b>{row['Facility']}</b><br>General CPAP: %{{y:.1f}}%<br>Cases: {row['CPAP Cases']}<br>Total Admitted: {row['Total Admitted']}<extra></extra>",
+                showlegend=False,  # Don't show legend for single bars
             )
+        )
+
+    # Calculate Y-axis range for percentage charts
+    all_values = facility_df["CPAP Rate (%)"].tolist()
+    if all_values:
+        max_value = max(all_values)
+        y_max = min(100, max_value * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
 
     fig.update_layout(
-        title=f"{title} - {selected_period}",
+        title=f"{title}",
         height=400,
         xaxis_title="Facility",
-        yaxis_title="Number of Newborns",
-        barmode="stack",
+        yaxis_title="General CPAP Coverage (%)",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
@@ -1642,6 +2840,7 @@ def render_birth_weight_facility_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -1649,47 +2848,81 @@ def render_birth_weight_facility_comparison(
         ),
     )
 
+    fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON
-    with st.expander("📥 Download Facility Comparison Data", expanded=False):
-        download_df = facility_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 General CPAP Facility Comparison Table")
 
-        # Clean column names for download
-        column_names = {
-            "Facility": "Facility",
-            "Total with Birth Weight": "Total Newborns with Birth Weight",
+    # Create a detailed table
+    table_data = []
+
+    for _, row in facility_df.iterrows():
+        table_row = {
+            "Facility": row["Facility"],
+            "Rate (%)": f"{row['CPAP Rate (%)']:.1f}%",
+            "CPAP Cases": int(row["CPAP Cases"]),
+            "Total Admitted": int(row["Total Admitted"]),
         }
-        for category_info in BIRTH_WEIGHT_CATEGORIES.values():
-            clean_name = clean_category_name(category_info["name"])
-            column_names[category_info["name"]] = f"{clean_name} Newborns"
+        table_data.append(table_row)
 
-        download_df = download_df.rename(columns=column_names)
+    # Add overall row
+    total_cases = facility_df["CPAP Cases"].sum()
+    total_admitted = facility_df["Total Admitted"].sum()
+    overall_rate = (total_cases / total_admitted * 100) if total_admitted > 0 else 0
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"birth_weight_facility_comparison_{selected_period}_{timestamp}.csv",
-            "📥 Download CSV",
-            "Download birth weight facility comparison data as CSV",
-        )
+    overall_row = {
+        "Facility": "Overall",
+        "Rate (%)": f"{overall_rate:.1f}%",
+        "CPAP Cases": int(total_cases),
+        "Total Admitted": int(total_admitted),
+    }
+    table_data.append(overall_row)
 
-        # Show a preview of the data
-        st.write(f"Data Preview for {selected_period} (All Columns):")
-        st.dataframe(download_df.head(10), use_container_width=True)
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = facility_df.copy()
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Facility": "Overall"}
+    overall_row["CPAP Cases"] = download_df["CPAP Cases"].sum()
+    overall_row["Total Admitted"] = download_df["Total Admitted"].sum()
+    overall_row["CPAP Rate (%)"] = (
+        overall_row["CPAP Cases"] / overall_row["Total Admitted"] * 100
+        if overall_row["Total Admitted"] > 0
+        else 0
+    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"general_cpap_facility_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download general CPAP facility comparison data as CSV",
+    )
 
 
-def render_kmc_facility_comparison(
+def render_cpap_rds_facility_comparison(
     df,
     period_col="period_display",
-    title="KMC Coverage - Facility Comparison",
+    title="CPAP for RDS - Facility Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
     facility_uids=None,
 ):
-    """Render facility comparison for KMC coverage - FIXED WITH CATEGORY SELECTION"""
+    """Render facility comparison for CPAP for RDS - FIXED VERSION"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1701,85 +2934,72 @@ def render_kmc_facility_comparison(
         st.warning("⚠️ No facilities selected for comparison.")
         return
 
-    # For KMC, focus on one category at a time for comparison
-    category_options = [info["name"] for info in BIRTH_WEIGHT_CATEGORIES.values()]
-    selected_category = st.selectbox(
-        "Select Birth Weight Category to Compare:",
-        options=category_options,
-        index=3,  # Default to 2000-2499g
-        key=f"kmc_category_facility_{str(facility_uids)}",
-    )
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
 
-    # Find the category key
-    category_key = None
-    for key, info in BIRTH_WEIGHT_CATEGORIES.items():
-        if info["name"] == selected_category:
-            category_key = key
-            break
-
-    if not category_key:
-        st.error("Selected category not found.")
-        return
-
-    # Get all periods
-    periods = sorted(df[period_col].unique()) if not df.empty else []
-    if not periods:
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
         st.warning("⚠️ No data available for comparison.")
         return
 
-    selected_period = st.selectbox(
-        "Select Period for Comparison:",
-        options=periods,
-        key=f"kmc_facility_period_{str(facility_uids)}",
-    )
-
-    period_df = df[df[period_col] == selected_period]
-
-    # Compute KMC rates for each facility
+    # Compute AGGREGATED CPAP for RDS data for each facility (sum across all periods)
     facility_data = []
     for facility_name, facility_uid in zip(facility_names, facility_uids):
-        facility_period_df = period_df[period_df["orgUnit"] == facility_uid]
-        if not facility_period_df.empty:
-            kmc_data = compute_kmc_coverage_kpi(facility_period_df, [facility_uid])
+        facility_df = df[df["orgUnit"] == facility_uid]
+        if not facility_df.empty:
+            # Aggregate CPAP for RDS data across ALL periods
+            cpap_data = compute_cpap_for_rds_kpi(facility_df, [facility_uid])
 
-            rate = kmc_data["kmc_rates_by_category"].get(category_key, 0)
-            count = kmc_data["kmc_counts_by_category"].get(category_key, 0)
-            total = kmc_data["kmc_total_by_category"].get(category_key, 0)
+            row_data = {
+                "Facility": facility_name,
+                "CPAP Rate (%)": cpap_data.get("cpap_rate", 0.0),
+                "CPAP Cases": cpap_data.get("cpap_count", 0),
+                "Total RDS": cpap_data.get("total_rds", 0),
+            }
 
-            facility_data.append(
-                {
-                    "Facility": facility_name,
-                    "KMC Rate (%)": rate,
-                    "KMC Cases": count,
-                    "Total Newborns": total,  # CHANGED FROM "Total Eligible"
-                }
-            )
+            facility_data.append(row_data)
 
     if not facility_data:
-        st.warning("⚠️ No KMC data available for facility comparison.")
+        st.warning("⚠️ No CPAP for RDS data available for facility comparison.")
         return
 
     facility_df = pd.DataFrame(facility_data)
 
-    # Create bar chart
-    fig = px.bar(
-        facility_df,
-        x="Facility",
-        y="KMC Rate (%)",
-        title=f"{selected_category} KMC Coverage - {selected_period}",
-        height=400,
-        color="Facility",
-        hover_data=["KMC Cases", "Total Newborns"],  # CHANGED
-    )
+    # Create color palette for facilities (SAME as General CPAP for consistency)
+    color_palette = px.colors.qualitative.Set3  # Same palette as General CPAP
 
-    fig.update_traces(
-        hovertemplate="<b>%{x}</b><br>KMC Rate: %{y:.1f}%<br>KMC Cases: %{customdata[0]}<br>Total Newborns: %{customdata[1]}<extra></extra>",
-        customdata=np.column_stack(
-            (facility_df["KMC Cases"], facility_df["Total Newborns"])  # CHANGED
-        ),
-    )
+    # Create bar chart for CPAP for RDS rates
+    fig = go.Figure()
+
+    for i, (_, row) in enumerate(facility_df.iterrows()):
+        # Assign the SAME color to each facility as in General CPAP chart
+        color_idx = i % len(color_palette)
+        color = color_palette[color_idx]
+
+        fig.add_trace(
+            go.Bar(
+                x=[row["Facility"]],
+                y=[row["CPAP Rate (%)"]],
+                name=row["Facility"],
+                marker_color=color,
+                hovertemplate=f"<b>{row['Facility']}</b><br>CPAP for RDS: %{{y:.1f}}%<br>Cases: {row['CPAP Cases']}<br>Total RDS: {row['Total RDS']}<extra></extra>",
+                showlegend=False,  # Don't show legend for single bars
+            )
+        )
+
+    # Calculate Y-axis range for percentage charts
+    all_values = facility_df["CPAP Rate (%)"].tolist()
+    if all_values:
+        max_value = max(all_values)
+        y_max = min(100, max_value * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
 
     fig.update_layout(
+        title=f"{title}",
+        height=400,
+        xaxis_title="Facility",
+        yaxis_title="CPAP for RDS Coverage (%)",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
@@ -1792,6 +3012,7 @@ def render_kmc_facility_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -1802,27 +3023,66 @@ def render_kmc_facility_comparison(
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON
-    with st.expander("📥 Download Facility Comparison Data", expanded=False):
-        download_df = facility_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 CPAP for RDS Facility Comparison Table")
 
-        # Clean filename
-        clean_category = clean_category_name(selected_category)
+    # Create a detailed table
+    table_data = []
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"kmc_coverage_{clean_category.replace(' ', '_').lower()}_facility_comparison_{selected_period}_{timestamp}.csv",
-            "📥 Download CSV",
-            f"Download KMC coverage facility comparison data for {selected_category} as CSV",
-        )
+    for _, row in facility_df.iterrows():
+        table_row = {
+            "Facility": row["Facility"],
+            "Rate (%)": f"{row['CPAP Rate (%)']:.1f}%",
+            "CPAP Cases": int(row["CPAP Cases"]),
+            "Total RDS": int(row["Total RDS"]),
+        }
+        table_data.append(table_row)
 
-        # Show a preview of the data
-        st.write(
-            f"Data Preview for {selected_category} - {selected_period} (All Columns):"
-        )
-        st.dataframe(download_df.head(10), use_container_width=True)
+    # Add overall row
+    total_cases = facility_df["CPAP Cases"].sum()
+    total_rds = facility_df["Total RDS"].sum()
+    overall_rate = (total_cases / total_rds * 100) if total_rds > 0 else 0
+
+    overall_row = {
+        "Facility": "Overall",
+        "Rate (%)": f"{overall_rate:.1f}%",
+        "CPAP Cases": int(total_cases),
+        "Total RDS": int(total_rds),
+    }
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = facility_df.copy()
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Facility": "Overall"}
+    overall_row["CPAP Cases"] = download_df["CPAP Cases"].sum()
+    overall_row["Total RDS"] = download_df["Total RDS"].sum()
+    overall_row["CPAP Rate (%)"] = (
+        overall_row["CPAP Cases"] / overall_row["Total RDS"] * 100
+        if overall_row["Total RDS"] > 0
+        else 0
+    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"cpap_for_rds_facility_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download CPAP for RDS facility comparison data as CSV",
+    )
 
 
 def render_cpap_facility_comparison(
@@ -1834,7 +3094,7 @@ def render_cpap_facility_comparison(
     facility_names=None,
     facility_uids=None,
 ):
-    """Render facility comparison for CPAP coverage - UPDATED (REMOVED PROPHYLACTIC)"""
+    """Render facility comparison for CPAP coverage (by weight categories) - WITH SINGLE TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1846,251 +3106,85 @@ def render_cpap_facility_comparison(
         st.warning("⚠️ No facilities selected for comparison.")
         return
 
-    # Select CPAP type to compare (REMOVED PROPHYLACTIC OPTION)
-    cpap_type = st.selectbox(
-        "Select CPAP Type to Compare:",
-        options=[
-            "General CPAP",
-            "CPAP for RDS",
-            "CPAP by Birth Weight",
-        ],
-        key=f"cpap_type_facility_{str(facility_uids)}",
-    )
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
 
-    periods = sorted(df[period_col].unique()) if not df.empty else []
-    if not periods:
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
         st.warning("⚠️ No data available for comparison.")
         return
 
-    selected_period = st.selectbox(
-        "Select Period for Comparison:",
-        options=periods,
-        key=f"cpap_facility_period_{str(facility_uids)}",
-    )
-
-    period_df = df[df[period_col] == selected_period]
-
-    # Compute data for each facility
+    # Compute AGGREGATED CPAP data for each facility (sum across all periods)
     facility_data = []
     for facility_name, facility_uid in zip(facility_names, facility_uids):
-        facility_period_df = period_df[period_df["orgUnit"] == facility_uid]
-        if not facility_period_df.empty:
-            if cpap_type == "General CPAP":
-                cpap_data = compute_cpap_general_kpi(facility_period_df, [facility_uid])
-                rate = cpap_data.get("cpap_general_rate", 0)
-                count = cpap_data.get("cpap_general_count", 0)
-                total = cpap_data.get("total_admitted", 0)
-                rate_label = "General CPAP Rate (%)"
-                count_label = "General CPAP Cases"
-                total_label = "Total Admitted Newborns"
-            elif cpap_type == "CPAP for RDS":
-                cpap_data = compute_cpap_for_rds_kpi(facility_period_df, [facility_uid])
-                rate = cpap_data.get("cpap_rate", 0)
-                count = cpap_data.get("cpap_count", 0)
-                total = cpap_data.get("total_rds", 0)
-                rate_label = "CPAP for RDS Rate (%)"
-                count_label = "CPAP for RDS Cases"
-                total_label = "Total RDS Newborns"
-            else:  # CPAP by Birth Weight
-                # For CPAP by birth weight, we need to select a category
-                category_options = [
-                    info["name"] for info in BIRTH_WEIGHT_CATEGORIES.values()
-                ]
-                selected_category = st.selectbox(
-                    "Select Birth Weight Category:",
-                    options=category_options,
-                    index=3,
-                    key=f"cpap_category_facility_{str(facility_uids)}",
-                )
+        facility_df = df[df["orgUnit"] == facility_uid]
+        if not facility_df.empty:
+            # Aggregate CPAP data across ALL periods
+            cpap_data = compute_cpap_coverage_by_weight_kpi(facility_df, [facility_uid])
 
-                # Find the category key
-                category_key = None
-                for key, info in BIRTH_WEIGHT_CATEGORIES.items():
-                    if info["name"] == selected_category:
-                        category_key = key
-                        break
+            row_data = {"Facility": facility_name}
 
-                if category_key:
-                    cpap_data = compute_cpap_coverage_by_weight_kpi(
-                        facility_period_df, [facility_uid]
-                    )
-                    rate = cpap_data["cpap_rates_by_category"].get(category_key, 0)
-                    count = cpap_data["cpap_counts_by_category"].get(category_key, 0)
-                    total = cpap_data["cpap_total_by_category"].get(category_key, 0)
-                    rate_label = (
-                        f"{clean_category_name(selected_category)} CPAP Rate (%)"
-                    )
-                    count_label = f"{clean_category_name(selected_category)} CPAP Cases"
-                    total_label = (
-                        f"{clean_category_name(selected_category)} Total Newborns"
-                    )
-                else:
-                    rate = 0
-                    count = 0
-                    total = 0
-                    rate_label = "Rate (%)"
-                    count_label = "Cases"
-                    total_label = "Total"
+            # Store both rates and counts for each category
+            for category_key, category_info in sorted(
+                BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+            ):
+                rate = cpap_data["cpap_rates_by_category"].get(category_key, 0)
+                count = cpap_data["cpap_counts_by_category"].get(category_key, 0)
+                total = cpap_data["cpap_total_by_category"].get(category_key, 0)
 
-            facility_data.append(
-                {
-                    "Facility": facility_name,
-                    rate_label: rate,
-                    count_label: count,
-                    total_label: total,
-                }
-            )
+                # Store rate for chart
+                row_data[category_info["short_name"]] = rate
+                # Store count and total for table
+                row_data[f"{category_info['short_name']}_count"] = count
+                row_data[f"{category_info['short_name']}_total"] = total
+
+            facility_data.append(row_data)
 
     if not facility_data:
-        st.warning(f"⚠️ No {cpap_type} data available for facility comparison.")
+        st.warning("⚠️ No CPAP data available for facility comparison.")
         return
 
     facility_df = pd.DataFrame(facility_data)
 
-    # Create bar chart
-    fig = px.bar(
-        facility_df,
-        x="Facility",
-        y=rate_label,
-        title=f"{cpap_type} - {selected_period}",
-        height=400,
-        color="Facility",
-        hover_data=[count_label, total_label],
-    )
-
-    fig.update_traces(
-        hovertemplate="<b>%{x}</b><br>Coverage: %{y:.1f}%<br>Cases: %{customdata[0]}<br>Total: %{customdata[1]}<extra></extra>",
-        customdata=np.column_stack(
-            (facility_df[count_label], facility_df[total_label])
-        ),
-    )
-
-    fig.update_layout(
-        paper_bgcolor=bg_color,
-        plot_bgcolor=bg_color,
-        font_color=text_color,
-        title_font_color=text_color,
-        xaxis=dict(
-            type="category",
-            tickangle=-45,
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-        ),
-        yaxis=dict(
-            rangemode="tozero",
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-            zeroline=True,
-            zerolinecolor="rgba(128,128,128,0.5)",
-        ),
-    )
-
-    fig.update_layout(yaxis_tickformat=".1f")
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ADD DOWNLOAD BUTTON
-    with st.expander("📥 Download Facility Comparison Data", expanded=False):
-        download_df = facility_df.copy()
-
-        # Clean filename
-        clean_cpap_type = cpap_type.replace(" ", "_").lower()
-
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"cpap_{clean_cpap_type}_facility_comparison_{selected_period}_{timestamp}.csv",
-            "📥 Download CSV",
-            f"Download {cpap_type} facility comparison data as CSV",
-        )
-
-        # Show a preview of the data
-        st.write(f"Data Preview for {cpap_type} - {selected_period} (All Columns):")
-        st.dataframe(download_df.head(10), use_container_width=True)
-
-
-# ---------------- REGION COMPARISON FUNCTIONS (UPDATED) ----------------
-def render_birth_weight_region_comparison(
-    df,
-    period_col="period_display",
-    title="Birth Weight Distribution - Region Comparison",
-    bg_color="#FFFFFF",
-    text_color=None,
-    region_names=None,
-    region_mapping=None,
-    facilities_by_region=None,
-):
-    """Render region comparison for birth weight"""
-    if text_color is None:
-        text_color = auto_text_color(bg_color)
-
-    if not region_names or not region_mapping or not facilities_by_region:
-        st.warning("⚠️ No regions available for comparison.")
-        return
-
-    # Select period for comparison
-    periods = sorted(df[period_col].unique()) if not df.empty else []
-    if not periods:
-        st.warning("⚠️ No data available for comparison.")
-        return
-
-    selected_period = st.selectbox(
-        "Select Period for Comparison:",
-        options=periods,
-        key=f"bw_region_period_{str(region_names)}",
-    )
-
-    period_df = df[df[period_col] == selected_period]
-
-    # Compute data for each region
-    region_data = []
-    for region_name in region_names:
-        facility_uids = facilities_by_region.get(region_name, [])
-        if facility_uids:
-            region_period_df = period_df[period_df["orgUnit"].isin(facility_uids)]
-            if not region_period_df.empty:
-                bw_data = compute_birth_weight_kpi(region_period_df, facility_uids)
-
-                row_data = {
-                    "Region": region_name,
-                    "Total with Birth Weight": bw_data["total_with_birth_weight"],
-                }
-
-                # Add each category count
-                for category_key, category_info in BIRTH_WEIGHT_CATEGORIES.items():
-                    row_data[category_info["name"]] = bw_data["bw_category_counts"].get(
-                        category_key, 0
-                    )
-
-                region_data.append(row_data)
-
-    if not region_data:
-        st.warning("⚠️ No data available for region comparison.")
-        return
-
-    region_df = pd.DataFrame(region_data)
-
-    # Create bar chart
+    # Create stacked bar chart for CPAP rates
     fig = go.Figure()
 
-    # Add bars for each BW category
-    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
-        category_name = category_info["name"]
-        if category_name in region_df.columns:
+    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(),
+        key=lambda x: x[1]["sort_order"],
+        reverse=True,  # Reverse for stacking order
+    ):
+        short_name = category_info["short_name"]
+        if short_name in facility_df.columns:
             fig.add_trace(
                 go.Bar(
-                    x=region_df["Region"],
-                    y=region_df[category_name],
-                    name=category_name,
-                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.0f}<extra></extra>",
+                    x=facility_df["Facility"],
+                    y=facility_df[short_name],
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
+                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
                 )
             )
 
+    # Calculate Y-axis range for percentage charts
+    all_values = []
+    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+        short_name = category_info["short_name"]
+        if short_name in facility_df.columns:
+            all_values.extend(facility_df[short_name].tolist())
+
+    if all_values:
+        max_value = max(all_values)
+        y_max = min(100, max_value * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
+
     fig.update_layout(
-        title=f"{title} - {selected_period}",
-        height=400,
-        xaxis_title="Region",
-        yaxis_title="Number of Newborns",
+        title=f"{title}",
+        height=500,
+        xaxis_title="Facility",
+        yaxis_title="CPAP Coverage Rate (%)",
         barmode="stack",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -2104,55 +3198,134 @@ def render_birth_weight_region_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
+        legend=dict(
+            traceorder="reversed",  # Reverse legend to match stacking order
+            title="Birth Weight Categories",
+        ),
     )
 
+    fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON
-    with st.expander("📥 Download Region Comparison Data", expanded=False):
-        download_df = region_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 CPAP Facility Comparison Table")
 
-        # Clean column names for download
-        column_names = {
-            "Region": "Region",
-            "Total with Birth Weight": "Total Newborns with Birth Weight",
-        }
-        for category_info in BIRTH_WEIGHT_CATEGORIES.values():
-            clean_name = clean_category_name(category_info["name"])
-            column_names[category_info["name"]] = f"{clean_name} Newborns"
+    # Create a detailed table with rates, counts, and totals for each category
+    table_data = []
 
-        download_df = download_df.rename(columns=column_names)
+    for _, row in facility_df.iterrows():
+        table_row = {"Facility": row["Facility"]}
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"birth_weight_region_comparison_{selected_period}_{timestamp}.csv",
-            "📥 Download CSV",
-            "Download birth weight region comparison data as CSV",
+        # Add data for each category
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            short_name = category_info["short_name"]
+            count_col = f"{short_name}_count"
+            total_col = f"{short_name}_total"
+
+            if short_name in row:
+                rate = row[short_name]
+                count = row[count_col] if count_col in row else 0
+                total = row[total_col] if total_col in row else 0
+
+                # Format as "Rate% (Count/Total)"
+                table_row[short_name] = f"{rate:.1f}% ({int(count)}/{int(total)})"
+
+        table_data.append(table_row)
+
+    # Add overall row
+    overall_row = {"Facility": "Overall"}
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        short_name = category_info["short_name"]
+        count_col = f"{short_name}_count"
+        total_col = f"{short_name}_total"
+
+        total_count = (
+            facility_df[count_col].sum() if count_col in facility_df.columns else 0
+        )
+        total_denom = (
+            facility_df[total_col].sum() if total_col in facility_df.columns else 0
+        )
+        overall_rate = (total_count / total_denom * 100) if total_denom > 0 else 0
+
+        overall_row[short_name] = (
+            f"{overall_rate:.1f}% ({int(total_count)}/{int(total_denom)})"
         )
 
-        # Show a preview of the data
-        st.write(f"Data Preview for {selected_period} (All Columns):")
-        st.dataframe(download_df.head(10), use_container_width=True)
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = facility_df.copy()
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Facility": "Overall"}
+    for col in download_df.columns:
+        if col != "Facility":
+            if "_count" in col or "_total" in col:
+                # For counts and totals, sum them
+                overall_row[col] = (
+                    download_df[col].sum() if col in download_df.columns else 0
+                )
+            else:
+                # For rates, calculate weighted average (not simple sum)
+                # Find corresponding count and total columns
+                base_name = col
+                count_col = f"{col}_count"
+                total_col = f"{col}_total"
+
+                if (
+                    count_col in download_df.columns
+                    and total_col in download_df.columns
+                ):
+                    total_count = download_df[count_col].sum()
+                    total_denom = download_df[total_col].sum()
+                    overall_row[col] = (
+                        (total_count / total_denom * 100) if total_denom > 0 else 0
+                    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"cpap_rates_facility_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download CPAP rates facility comparison data as CSV",
+    )
 
 
-def render_kmc_region_comparison(
+# ---------------- NEW CPAP COMPARISON FUNCTIONS FOR REGION ----------------
+def render_cpap_general_region_comparison(
     df,
     period_col="period_display",
-    title="KMC Coverage - Region Comparison",
+    title="General CPAP Coverage - Region Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
 ):
-    """Render region comparison for KMC coverage"""
+    """Render region comparison for general CPAP coverage - FIXED VERSION"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -2160,87 +3333,82 @@ def render_kmc_region_comparison(
         st.warning("⚠️ No regions available for comparison.")
         return
 
-    # Select birth weight category
-    category_options = [info["name"] for info in BIRTH_WEIGHT_CATEGORIES.values()]
-    selected_category = st.selectbox(
-        "Select Birth Weight Category to Compare:",
-        options=category_options,
-        index=3,
-        key=f"kmc_category_region_{str(region_names)}",
-    )
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
 
-    # Find the category key
-    category_key = None
-    for key, info in BIRTH_WEIGHT_CATEGORIES.items():
-        if info["name"] == selected_category:
-            category_key = key
-            break
-
-    if not category_key:
-        st.error("Selected category not found.")
-        return
-
-    # Select period
-    periods = sorted(df[period_col].unique()) if not df.empty else []
-    if not periods:
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
         st.warning("⚠️ No data available for comparison.")
         return
 
-    selected_period = st.selectbox(
-        "Select Period for Comparison:",
-        options=periods,
-        key=f"kmc_region_period_{str(region_names)}",
-    )
-
-    period_df = df[df[period_col] == selected_period]
-
-    # Compute KMC rates for each region
+    # Compute AGGREGATED CPAP GENERAL data for each region (sum across all periods)
     region_data = []
     for region_name in region_names:
-        facility_uids = facilities_by_region.get(region_name, [])
+        facility_uids = []
+        for facility_name, facility_uid in facilities_by_region.get(region_name, []):
+            facility_uids.append(facility_uid)
+
         if facility_uids:
-            region_period_df = period_df[period_df["orgUnit"].isin(facility_uids)]
-            if not region_period_df.empty:
-                kmc_data = compute_kmc_coverage_kpi(region_period_df, facility_uids)
+            # Filter for this region's facilities
+            region_df = df[df["orgUnit"].isin(facility_uids)]
 
-                rate = kmc_data["kmc_rates_by_category"].get(category_key, 0)
-                count = kmc_data["kmc_counts_by_category"].get(category_key, 0)
-                total = kmc_data["kmc_total_by_category"].get(category_key, 0)
+            # CRITICAL: Deduplicate by TEI ID for the entire region
+            region_df = deduplicate_by_tei(region_df)
 
-                region_data.append(
-                    {
-                        "Region": region_name,
-                        "KMC Rate (%)": rate,
-                        "KMC Cases": count,
-                        "Total Newborns": total,  # CHANGED FROM "Total Eligible"
-                    }
-                )
+            if not region_df.empty:
+                # Aggregate CPAP GENERAL data across ALL periods
+                cpap_data = compute_cpap_general_kpi(region_df, facility_uids)
+
+                row_data = {
+                    "Region": region_name,
+                    "CPAP Rate (%)": cpap_data.get("cpap_general_rate", 0.0),
+                    "CPAP Cases": cpap_data.get("cpap_general_count", 0),
+                    "Total Admitted": cpap_data.get("total_admitted", 0),
+                }
+
+                region_data.append(row_data)
 
     if not region_data:
-        st.warning("⚠️ No KMC data available for region comparison.")
+        st.warning("⚠️ No CPAP data available for region comparison.")
         return
 
     region_df = pd.DataFrame(region_data)
 
-    # Create bar chart
-    fig = px.bar(
-        region_df,
-        x="Region",
-        y="KMC Rate (%)",
-        title=f"{selected_category} KMC Coverage - {selected_period}",
-        height=400,
-        color="Region",
-        hover_data=["KMC Cases", "Total Newborns"],  # CHANGED
-    )
+    # Create color palette for regions
+    color_palette = px.colors.qualitative.Pastel  # You can change this palette
 
-    fig.update_traces(
-        hovertemplate="<b>%{x}</b><br>KMC Rate: %{y:.1f}%<br>KMC Cases: %{customdata[0]}<br>Total Newborns: %{customdata[1]}<extra></extra>",
-        customdata=np.column_stack(
-            (region_df["KMC Cases"], region_df["Total Newborns"])  # CHANGED
-        ),
-    )
+    # Create bar chart for general CPAP rates
+    fig = go.Figure()
+
+    for i, (_, row) in enumerate(region_df.iterrows()):
+        # Assign a unique color to each region
+        color_idx = i % len(color_palette)
+        color = color_palette[color_idx]
+
+        fig.add_trace(
+            go.Bar(
+                x=[row["Region"]],
+                y=[row["CPAP Rate (%)"]],
+                name=row["Region"],
+                marker_color=color,
+                hovertemplate=f"<b>{row['Region']}</b><br>General CPAP: %{{y:.1f}}%<br>Cases: {row['CPAP Cases']}<br>Total Admitted: {row['Total Admitted']}<extra></extra>",
+                showlegend=False,  # Don't show legend for single bars
+            )
+        )
+
+    # Calculate Y-axis range for percentage charts
+    all_values = region_df["CPAP Rate (%)"].tolist()
+    if all_values:
+        max_value = max(all_values)
+        y_max = min(100, max_value * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
 
     fig.update_layout(
+        title=f"{title}",
+        height=400,
+        xaxis_title="Region",
+        yaxis_title="General CPAP Coverage (%)",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
@@ -2253,6 +3421,7 @@ def render_kmc_region_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -2263,27 +3432,245 @@ def render_kmc_region_comparison(
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON
-    with st.expander("📥 Download Region Comparison Data", expanded=False):
-        download_df = region_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 General CPAP Region Comparison Table")
 
-        # Clean filename
-        clean_category = clean_category_name(selected_category)
+    # Create a detailed table
+    table_data = []
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"kmc_coverage_{clean_category.replace(' ', '_').lower()}_region_comparison_{selected_period}_{timestamp}.csv",
-            "📥 Download CSV",
-            f"Download KMC coverage region comparison data for {selected_category} as CSV",
+    for _, row in region_df.iterrows():
+        table_row = {
+            "Region": row["Region"],
+            "Rate (%)": f"{row['CPAP Rate (%)']:.1f}%",
+            "CPAP Cases": int(row["CPAP Cases"]),
+            "Total Admitted": int(row["Total Admitted"]),
+        }
+        table_data.append(table_row)
+
+    # Add overall row
+    total_cases = region_df["CPAP Cases"].sum()
+    total_admitted = region_df["Total Admitted"].sum()
+    overall_rate = (total_cases / total_admitted * 100) if total_admitted > 0 else 0
+
+    overall_row = {
+        "Region": "Overall",
+        "Rate (%)": f"{overall_rate:.1f}%",
+        "CPAP Cases": int(total_cases),
+        "Total Admitted": int(total_admitted),
+    }
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = region_df.copy()
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Region": "Overall"}
+    overall_row["CPAP Cases"] = download_df["CPAP Cases"].sum()
+    overall_row["Total Admitted"] = download_df["Total Admitted"].sum()
+    overall_row["CPAP Rate (%)"] = (
+        overall_row["CPAP Cases"] / overall_row["Total Admitted"] * 100
+        if overall_row["Total Admitted"] > 0
+        else 0
+    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"general_cpap_region_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download general CPAP region comparison data as CSV",
+    )
+
+
+def render_cpap_rds_region_comparison(
+    df,
+    period_col="period_display",
+    title="CPAP for RDS - Region Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    region_names=None,
+    region_mapping=None,
+    facilities_by_region=None,
+):
+    """Render region comparison for CPAP for RDS - FIXED VERSION"""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if not region_names or not region_mapping or not facilities_by_region:
+        st.warning("⚠️ No regions available for comparison.")
+        return
+
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
+
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
+        st.warning("⚠️ No data available for comparison.")
+        return
+
+    # Compute AGGREGATED CPAP for RDS data for each region (sum across all periods)
+    region_data = []
+    for region_name in region_names:
+        facility_uids = []
+        for facility_name, facility_uid in facilities_by_region.get(region_name, []):
+            facility_uids.append(facility_uid)
+
+        if facility_uids:
+            # Filter for this region's facilities
+            region_df = df[df["orgUnit"].isin(facility_uids)]
+
+            # CRITICAL: Deduplicate by TEI ID for the entire region
+            region_df = deduplicate_by_tei(region_df)
+
+            if not region_df.empty:
+                # Aggregate CPAP for RDS data across ALL periods
+                cpap_data = compute_cpap_for_rds_kpi(region_df, facility_uids)
+
+                row_data = {
+                    "Region": region_name,
+                    "CPAP Rate (%)": cpap_data.get("cpap_rate", 0.0),
+                    "CPAP Cases": cpap_data.get("cpap_count", 0),
+                    "Total RDS": cpap_data.get("total_rds", 0),
+                }
+
+                region_data.append(row_data)
+
+    if not region_data:
+        st.warning("⚠️ No CPAP for RDS data available for region comparison.")
+        return
+
+    region_df = pd.DataFrame(region_data)
+
+    # Create color palette for regions (SAME as General CPAP for consistency)
+    color_palette = px.colors.qualitative.Pastel  # Same palette as General CPAP
+
+    # Create bar chart for CPAP for RDS rates
+    fig = go.Figure()
+
+    for i, (_, row) in enumerate(region_df.iterrows()):
+        # Assign the SAME color to each region as in General CPAP chart
+        color_idx = i % len(color_palette)
+        color = color_palette[color_idx]
+
+        fig.add_trace(
+            go.Bar(
+                x=[row["Region"]],
+                y=[row["CPAP Rate (%)"]],
+                name=row["Region"],
+                marker_color=color,
+                hovertemplate=f"<b>{row['Region']}</b><br>CPAP for RDS: %{{y:.1f}}%<br>Cases: {row['CPAP Cases']}<br>Total RDS: {row['Total RDS']}<extra></extra>",
+                showlegend=False,  # Don't show legend for single bars
+            )
         )
 
-        # Show a preview of the data
-        st.write(
-            f"Data Preview for {selected_category} - {selected_period} (All Columns):"
-        )
-        st.dataframe(download_df.head(10), use_container_width=True)
+    # Calculate Y-axis range for percentage charts
+    all_values = region_df["CPAP Rate (%)"].tolist()
+    if all_values:
+        max_value = max(all_values)
+        y_max = min(100, max_value * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
+
+    fig.update_layout(
+        title=f"{title}",
+        height=400,
+        xaxis_title="Region",
+        yaxis_title="CPAP for RDS Coverage (%)",
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis=dict(
+            type="category",
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            range=[0, y_max],
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+    )
+
+    fig.update_layout(yaxis_tickformat=".1f")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # SINGLE TABLE
+    st.subheader("📊 CPAP for RDS Region Comparison Table")
+
+    # Create a detailed table
+    table_data = []
+
+    for _, row in region_df.iterrows():
+        table_row = {
+            "Region": row["Region"],
+            "Rate (%)": f"{row['CPAP Rate (%)']:.1f}%",
+            "CPAP Cases": int(row["CPAP Cases"]),
+            "Total RDS": int(row["Total RDS"]),
+        }
+        table_data.append(table_row)
+
+    # Add overall row
+    total_cases = region_df["CPAP Cases"].sum()
+    total_rds = region_df["Total RDS"].sum()
+    overall_rate = (total_cases / total_rds * 100) if total_rds > 0 else 0
+
+    overall_row = {
+        "Region": "Overall",
+        "Rate (%)": f"{overall_rate:.1f}%",
+        "CPAP Cases": int(total_cases),
+        "Total RDS": int(total_rds),
+    }
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = region_df.copy()
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Region": "Overall"}
+    overall_row["CPAP Cases"] = download_df["CPAP Cases"].sum()
+    overall_row["Total RDS"] = download_df["Total RDS"].sum()
+    overall_row["CPAP Rate (%)"] = (
+        overall_row["CPAP Cases"] / overall_row["Total RDS"] * 100
+        if overall_row["Total RDS"] > 0
+        else 0
+    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"cpap_for_rds_region_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download CPAP for RDS region comparison data as CSV",
+    )
 
 
 def render_cpap_region_comparison(
@@ -2296,7 +3683,7 @@ def render_cpap_region_comparison(
     region_mapping=None,
     facilities_by_region=None,
 ):
-    """Render region comparison for CPAP coverage - UPDATED (REMOVED PROPHYLACTIC)"""
+    """Render region comparison for CPAP coverage (by weight categories) - WITH SINGLE TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -2304,135 +3691,98 @@ def render_cpap_region_comparison(
         st.warning("⚠️ No regions available for comparison.")
         return
 
-    # Select CPAP type (REMOVED PROPHYLACTIC OPTION)
-    cpap_type = st.selectbox(
-        "Select CPAP Type to Compare:",
-        options=[
-            "General CPAP",
-            "CPAP for RDS",
-            "CPAP by Birth Weight",
-        ],
-        key=f"cpap_type_region_{str(region_names)}",
-    )
+    # Get periods (for information only)
+    periods = df[period_col].unique() if not df.empty else []
 
-    # Select period
-    periods = sorted(df[period_col].unique()) if not df.empty else []
-    if not periods:
+    # FIX: Check if periods is empty properly
+    if periods is None or len(periods) == 0:
         st.warning("⚠️ No data available for comparison.")
         return
 
-    selected_period = st.selectbox(
-        "Select Period for Comparison:",
-        options=periods,
-        key=f"cpap_region_period_{str(region_names)}",
-    )
-
-    period_df = df[df[period_col] == selected_period]
-
-    # Compute data for each region
+    # Compute AGGREGATED CPAP data for each region (sum across all periods)
     region_data = []
     for region_name in region_names:
-        facility_uids = facilities_by_region.get(region_name, [])
+        facility_uids = []
+        for facility_name, facility_uid in facilities_by_region.get(region_name, []):
+            facility_uids.append(facility_uid)
+
         if facility_uids:
-            region_period_df = period_df[period_df["orgUnit"].isin(facility_uids)]
-            if not region_period_df.empty:
-                if cpap_type == "General CPAP":
-                    cpap_data = compute_cpap_general_kpi(
-                        region_period_df, facility_uids
-                    )
-                    rate = cpap_data.get("cpap_general_rate", 0)
-                    count = cpap_data.get("cpap_general_count", 0)
-                    total = cpap_data.get("total_admitted", 0)
-                    rate_label = "General CPAP Rate (%)"
-                    count_label = "General CPAP Cases"
-                    total_label = "Total Admitted Newborns"
-                elif cpap_type == "CPAP for RDS":
-                    cpap_data = compute_cpap_for_rds_kpi(
-                        region_period_df, facility_uids
-                    )
-                    rate = cpap_data.get("cpap_rate", 0)
-                    count = cpap_data.get("cpap_count", 0)
-                    total = cpap_data.get("total_rds", 0)
-                    rate_label = "CPAP for RDS Rate (%)"
-                    count_label = "CPAP for RDS Cases"
-                    total_label = "Total RDS Newborns"
-                else:  # CPAP by Birth Weight
-                    # For CPAP by birth weight, we need to select a category
-                    category_options = [
-                        info["name"] for info in BIRTH_WEIGHT_CATEGORIES.values()
-                    ]
-                    selected_category = st.selectbox(
-                        "Select Birth Weight Category:",
-                        options=category_options,
-                        index=3,
-                        key=f"cpap_category_region_{str(region_names)}",
-                    )
+            # Filter for this region's facilities
+            region_df = df[df["orgUnit"].isin(facility_uids)]
 
-                    # Find the category key
-                    category_key = None
-                    for key, info in BIRTH_WEIGHT_CATEGORIES.items():
-                        if info["name"] == selected_category:
-                            category_key = key
-                            break
+            # CRITICAL: Deduplicate by TEI ID for the entire region
+            region_df = deduplicate_by_tei(region_df)
 
-                    if category_key:
-                        cpap_data = compute_cpap_coverage_by_weight_kpi(
-                            region_period_df, facility_uids
-                        )
-                        rate = cpap_data["cpap_rates_by_category"].get(category_key, 0)
-                        count = cpap_data["cpap_counts_by_category"].get(
-                            category_key, 0
-                        )
-                        total = cpap_data["cpap_total_by_category"].get(category_key, 0)
-                        rate_label = (
-                            f"{clean_category_name(selected_category)} CPAP Rate (%)"
-                        )
-                        count_label = (
-                            f"{clean_category_name(selected_category)} CPAP Cases"
-                        )
-                        total_label = (
-                            f"{clean_category_name(selected_category)} Total Newborns"
-                        )
-                    else:
-                        rate = 0
-                        count = 0
-                        total = 0
-                        rate_label = "Rate (%)"
-                        count_label = "Cases"
-                        total_label = "Total"
-
-                region_data.append(
-                    {
-                        "Region": region_name,
-                        rate_label: rate,
-                        count_label: count,
-                        total_label: total,
-                    }
+            if not region_df.empty:
+                # Aggregate CPAP data across ALL periods
+                cpap_data = compute_cpap_coverage_by_weight_kpi(
+                    region_df, facility_uids
                 )
 
+                row_data = {"Region": region_name}
+
+                # Store both rates and counts for each category
+                for category_key, category_info in sorted(
+                    BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+                ):
+                    rate = cpap_data["cpap_rates_by_category"].get(category_key, 0)
+                    count = cpap_data["cpap_counts_by_category"].get(category_key, 0)
+                    total = cpap_data["cpap_total_by_category"].get(category_key, 0)
+
+                    # Store rate for chart
+                    row_data[category_info["short_name"]] = rate
+                    # Store count and total for table
+                    row_data[f"{category_info['short_name']}_count"] = count
+                    row_data[f"{category_info['short_name']}_total"] = total
+
+                region_data.append(row_data)
+
     if not region_data:
-        st.warning(f"⚠️ No {cpap_type} data available for region comparison.")
+        st.warning("⚠️ No CPAP data available for region comparison.")
         return
 
     region_df = pd.DataFrame(region_data)
 
-    # Create bar chart
-    fig = px.bar(
-        region_df,
-        x="Region",
-        y=rate_label,
-        title=f"{cpap_type} - {selected_period}",
-        height=400,
-        color="Region",
-        hover_data=[count_label, total_label],
-    )
+    # Create stacked bar chart for CPAP rates
+    fig = go.Figure()
 
-    fig.update_traces(
-        hovertemplate="<b>%{x}</b><br>Coverage: %{y:.1f}%<br>Cases: %{customdata[0]}<br>Total: %{customdata[1]}<extra></extra>",
-        customdata=np.column_stack((region_df[count_label], region_df[total_label])),
-    )
+    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(),
+        key=lambda x: x[1]["sort_order"],
+        reverse=True,  # Reverse for stacking order
+    ):
+        short_name = category_info["short_name"]
+        if short_name in region_df.columns:
+            fig.add_trace(
+                go.Bar(
+                    x=region_df["Region"],
+                    y=region_df[short_name],
+                    name=category_info["name"],
+                    marker_color=category_info["color"],
+                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
+                )
+            )
+
+    # Calculate Y-axis range for percentage charts
+    all_values = []
+    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+        short_name = category_info["short_name"]
+        if short_name in region_df.columns:
+            all_values.extend(region_df[short_name].tolist())
+
+    if all_values:
+        max_value = max(all_values)
+        y_max = min(100, max_value * 1.1)  # Cap at 100% for percentages
+    else:
+        y_max = 100
 
     fig.update_layout(
+        title=f"{title}",
+        height=500,
+        xaxis_title="Region",
+        yaxis_title="CPAP Coverage Rate (%)",
+        barmode="stack",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
@@ -2445,35 +3795,145 @@ def render_cpap_region_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
+            range=[0, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+        ),
+        legend=dict(
+            traceorder="reversed",  # Reverse legend to match stacking order
+            title="Birth Weight Categories",
         ),
     )
 
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ADD DOWNLOAD BUTTON
-    with st.expander("📥 Download Region Comparison Data", expanded=False):
-        download_df = region_df.copy()
+    # SINGLE TABLE
+    st.subheader("📊 CPAP Region Comparison Table")
 
-        # Clean filename
-        clean_cpap_type = cpap_type.replace(" ", "_").lower()
+    # Create a detailed table with rates, counts, and totals for each category
+    table_data = []
 
-        # Use helper function for download
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        download_csv_button(
-            download_df,
-            f"cpap_{clean_cpap_type}_region_comparison_{selected_period}_{timestamp}.csv",
-            "📥 Download CSV",
-            f"Download {cpap_type} region comparison data as CSV",
+    for _, row in region_df.iterrows():
+        table_row = {"Region": row["Region"]}
+
+        # Add data for each category
+        for category_key, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            short_name = category_info["short_name"]
+            count_col = f"{short_name}_count"
+            total_col = f"{short_name}_total"
+
+            if short_name in row:
+                rate = row[short_name]
+                count = row[count_col] if count_col in row else 0
+                total = row[total_col] if total_col in row else 0
+
+                # Format as "Rate% (Count/Total)"
+                table_row[short_name] = f"{rate:.1f}% ({int(count)}/{int(total)})"
+
+        table_data.append(table_row)
+
+    # Add overall row
+    overall_row = {"Region": "Overall"}
+    for category_key, category_info in sorted(
+        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+    ):
+        short_name = category_info["short_name"]
+        count_col = f"{short_name}_count"
+        total_col = f"{short_name}_total"
+
+        total_count = (
+            region_df[count_col].sum() if count_col in region_df.columns else 0
+        )
+        total_denom = (
+            region_df[total_col].sum() if total_col in region_df.columns else 0
+        )
+        overall_rate = (total_count / total_denom * 100) if total_denom > 0 else 0
+
+        overall_row[short_name] = (
+            f"{overall_rate:.1f}% ({int(total_count)}/{int(total_denom)})"
         )
 
-        # Show a preview of the data
-        st.write(f"Data Preview for {cpap_type} - {selected_period} (All Columns):")
-        st.dataframe(download_df.head(10), use_container_width=True)
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("📥 Download Data")
+
+    download_df = region_df.copy()
+
+    # Calculate totals for "Overall" row
+    overall_row = {"Region": "Overall"}
+    for col in download_df.columns:
+        if col != "Region":
+            if "_count" in col or "_total" in col:
+                # For counts and totals, sum them
+                overall_row[col] = (
+                    download_df[col].sum() if col in download_df.columns else 0
+                )
+            else:
+                # For rates, calculate weighted average (not simple sum)
+                # Find corresponding count and total columns
+                base_name = col
+                count_col = f"{col}_count"
+                total_col = f"{col}_total"
+
+                if (
+                    count_col in download_df.columns
+                    and total_col in download_df.columns
+                ):
+                    total_count = download_df[count_col].sum()
+                    total_denom = download_df[total_col].sum()
+                    overall_row[col] = (
+                        (total_count / total_denom * 100) if total_denom > 0 else 0
+                    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    # Use helper function for download
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    download_csv_button(
+        download_df,
+        f"cpap_rates_region_comparison_{timestamp}.csv",
+        "📥 Download CSV",
+        f"Download CPAP rates region comparison data as CSV",
+    )
+
+
+# ---------------- NEW RATE COMPARISON FUNCTIONS (ALIASES) ----------------
+def render_kmc_rate_facility_comparison(*args, **kwargs):
+    """Render facility comparison for KMC coverage - STACKED BAR CHART FOR RATES"""
+    # This is an alias for the main function
+    return render_kmc_facility_comparison(*args, **kwargs)
+
+
+def render_kmc_rate_region_comparison(*args, **kwargs):
+    """Render region comparison for KMC coverage - STACKED BAR CHART FOR RATES"""
+    # This is an alias for the main function
+    return render_kmc_region_comparison(*args, **kwargs)
+
+
+def render_cpap_rate_facility_comparison(*args, **kwargs):
+    """Render facility comparison for CPAP coverage - STACKED BAR CHART FOR RATES"""
+    # This is an alias for the main function
+    return render_cpap_facility_comparison(*args, **kwargs)
+
+
+def render_cpap_rate_region_comparison(*args, **kwargs):
+    """Render region comparison for CPAP coverage - STACKED BAR CHART FOR RATES"""
+    # This is an alias for the main function
+    return render_cpap_region_comparison(*args, **kwargs)
 
 
 # ---------------- Export all functions ----------------
@@ -2484,13 +3944,17 @@ __all__ = [
     # Helper functions
     "download_csv_button",
     "clean_category_name",
+    "deduplicate_by_tei",
+    # Date sorting helper functions
+    "parse_period_to_datetime",
+    "sort_periods_chronologically",
     # Computation functions
     "compute_birth_weight_by_category",
     "compute_total_with_birth_weight",
     "compute_birth_weight_kpi",
     "compute_kmc_by_weight_category",
     "compute_kmc_coverage_kpi",
-    # CPAP computation functions (REMOVED PROPHYLACTIC)
+    # CPAP computation functions
     "compute_cpap_for_rds_kpi",
     "compute_cpap_general_kpi",
     "compute_cpap_by_weight_category",
@@ -2498,22 +3962,32 @@ __all__ = [
     # Chart functions
     "render_birth_weight_trend_chart",
     "render_kmc_coverage_trend_chart",
-    # Individual CPAP chart functions (REMOVED PROPHYLACTIC)
+    # CPAP chart functions
     "render_cpap_general_trend_chart",
     "render_cpap_rds_trend_chart",
     "render_cpap_by_weight_trend_chart",
-    # Legacy function for backward compatibility
-    "render_cpap_trend_chart",
-    # Facility comparison functions
+    # Facility comparison functions (STACKED BARS FOR RATES)
     "render_birth_weight_facility_comparison",
     "render_kmc_facility_comparison",
     "render_cpap_facility_comparison",
-    # Region comparison functions
+    # NEW CPAP FACILITY COMPARISON FUNCTIONS (GENERAL & RDS)
+    "render_cpap_general_facility_comparison",
+    "render_cpap_rds_facility_comparison",
+    # Region comparison functions (STACKED BARS FOR RATES)
     "render_birth_weight_region_comparison",
     "render_kmc_region_comparison",
     "render_cpap_region_comparison",
+    # NEW CPAP REGION COMPARISON FUNCTIONS (GENERAL & RDS)
+    "render_cpap_general_region_comparison",
+    "render_cpap_rds_region_comparison",
+    # NEW RATE COMPARISON FUNCTIONS (ALIASES)
+    "render_kmc_rate_facility_comparison",
+    "render_kmc_rate_region_comparison",
+    "render_cpap_rate_facility_comparison",
+    "render_cpap_rate_region_comparison",
     # Constants
     "BIRTH_WEIGHT_CATEGORIES",
+    "BIRTH_WEIGHT_CATEGORY_NAMES",
     "BIRTH_WEIGHT_COL",
     "KMC_ADMINISTERED_COL",
     "KMC_YES_CODE",
