@@ -930,33 +930,138 @@ def render_newborn_facility_comparison_chart(
 
 def render_newborn_region_comparison_chart(
     df,
-    period_col,
-    value_col,
-    title,
-    bg_color,
-    text_color,
-    region_names,
-    region_mapping,
-    facilities_by_region,
-    numerator_name,
-    denominator_name,
+    period_col="period_display",
+    value_col="value",
+    title="Region Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    region_names=None,
+    region_mapping=None,
+    facilities_by_region=None,
+    numerator_name="Numerator",
+    denominator_name="Denominator",
 ):
-    """Render region comparison chart for newborn KPI"""
-    from utils.kpi_utils import render_region_comparison_chart
+    """Render region comparison chart - CHART ABOVE TABLE VERSION"""
 
-    return render_region_comparison_chart(
-        df,
-        period_col,
-        value_col,
-        title,
-        bg_color,
-        text_color,
-        region_names,
-        region_mapping,
-        facilities_by_region,
-        numerator_name,
-        denominator_name,
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    st.subheader(title)
+
+    if df is None or df.empty:
+        st.info("⚠️ No data available for region comparison.")
+        return
+
+    # Check for required columns
+    required_cols = ["Region", "numerator", "denominator"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+
+    if missing_cols:
+        st.error(f"❌ Missing required columns: {missing_cols}")
+        st.write("Available columns:", list(df.columns))
+        return
+
+    # Calculate region totals
+    region_totals = {}
+    for region_name in region_names:
+        region_data = df[df["Region"] == region_name]
+
+        if not region_data.empty:
+            # SUM the numerator and denominator columns directly
+            total_numerator = region_data["numerator"].sum()
+            total_denominator = region_data["denominator"].sum()
+
+            # Calculate weighted average
+            weighted_rate = (
+                (total_numerator / total_denominator * 100)
+                if total_denominator > 0
+                else 0
+            )
+
+            region_totals[region_name] = {
+                "total_numerator": total_numerator,
+                "total_denominator": total_denominator,
+                "weighted_rate": weighted_rate,
+            }
+
+    # Calculate overall totals
+    overall_numerator = sum(data["total_numerator"] for data in region_totals.values())
+    overall_denominator = sum(
+        data["total_denominator"] for data in region_totals.values()
     )
+    overall_rate = (
+        (overall_numerator / overall_denominator * 100)
+        if overall_denominator > 0
+        else 0
+    )
+
+    # Create comparison table data
+    comparison_data = []
+    for region_name, totals in region_totals.items():
+        comparison_data.append(
+            {
+                "Region": region_name,
+                f"{numerator_name}": totals["total_numerator"],
+                f"{denominator_name}": totals["total_denominator"],
+                "Rate (%)": f"{totals['weighted_rate']:.2f}%",
+            }
+        )
+
+    # Add overall row
+    comparison_data.append(
+        {
+            "Region": "Overall",
+            f"{numerator_name}": overall_numerator,
+            f"{denominator_name}": overall_denominator,
+            "Rate (%)": f"{overall_rate:.2f}%",
+        }
+    )
+
+    comparison_df = pd.DataFrame(comparison_data)
+
+    # *** 1. DISPLAY CHART FIRST ***
+    chart_data = comparison_df[comparison_df["Region"] != "Overall"].copy()
+
+    if not chart_data.empty:
+        chart_data["Rate_float"] = (
+            chart_data["Rate (%)"].str.replace("%", "").astype(float)
+        )
+
+        fig = px.bar(
+            chart_data,
+            x="Region",
+            y="Rate_float",
+            title=f"{title} - Regional Rates",
+            color="Region",
+            text_auto=".1f",
+        )
+
+        fig.update_layout(
+            plot_bgcolor=bg_color,
+            paper_bgcolor=bg_color,
+            font_color=text_color,
+            showlegend=False,
+            yaxis_title="Rate (%)",
+            height=400,  # Fixed height for consistency
+        )
+
+        # Display chart at the top
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Add some spacing between chart and table
+    st.markdown("---")
+
+    # *** 2. DISPLAY TABLE SECOND ***
+    st.markdown("### Regional Data Summary")
+
+    # Display the table
+    st.dataframe(
+        comparison_df,
+        use_container_width=True,
+        height=300,  # Limit table height
+    )
+
+    return comparison_df
 
 
 # ---------------- Admitted Newborns Chart Functions ----------------

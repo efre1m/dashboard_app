@@ -1,4 +1,4 @@
-# kpi_newborn.py - UPDATED TO USE SINGLE TABLE CHART FUNCTIONS
+# kpi_newborn.py - FIXED REGIONAL DENOMINATOR ISSUE
 
 import pandas as pd
 import streamlit as st
@@ -28,7 +28,6 @@ from newborns_dashboard.kpi_utils_newborn_v2 import (
     render_culture_done_sepsis_trend_chart_v2,
 )
 
-# Import simplified functions with SINGLE TABLE DISPLAY
 # Import simplified functions with SINGLE TABLE DISPLAY
 from newborns_dashboard.kpi_utils_newborn_simplified import (
     render_birth_weight_trend_chart,
@@ -1256,12 +1255,12 @@ def render_newborn_comparison_chart(
             # Group by period for this facility
             for period_display, period_group in facility_df.groupby("period_display"):
                 if not period_group.empty:
-                    # Compute KPI WITH ALL SUPPORT
+                    # Compute KPI WITH ALL SUPPORT - PASS ONLY THIS FACILITY'S UID
                     numerator, denominator, _ = (
                         get_numerator_denominator_for_newborn_kpi_with_all(
                             period_group,
                             kpi_selection,
-                            [facility_uid],
+                            [facility_uid],  # CRITICAL FIX: Pass only this facility UID
                             date_range_filters,
                         )
                     )
@@ -1364,11 +1363,22 @@ def render_newborn_comparison_chart(
             if not region_facility_uids:
                 continue
 
+            # Filter data for THIS REGION ONLY
             region_df = df_to_use[
                 df_to_use["orgUnit"].isin(region_facility_uids)
             ].copy()
 
             if region_df.empty:
+                # Add zero values for empty regions
+                region_data.append(
+                    {
+                        "period_display": "All Periods",
+                        "Region": region_name,
+                        "value": 0,
+                        "numerator": 0,
+                        "denominator": 0,
+                    }
+                )
                 continue
 
             # Get correct date column
@@ -1398,9 +1408,19 @@ def render_newborn_comparison_chart(
                 # Filter valid dates
                 region_df = region_df[region_df["event_date"].notna()].copy()
             else:
+                # Skip if date column not found
                 continue
 
             if region_df.empty:
+                region_data.append(
+                    {
+                        "period_display": "All Periods",
+                        "Region": region_name,
+                        "value": 0,
+                        "numerator": 0,
+                        "denominator": 0,
+                    }
+                )
                 continue
 
             # Assign periods
@@ -1410,14 +1430,15 @@ def render_newborn_comparison_chart(
             except:
                 continue
 
+            # Group by period for this region
             for period_display, period_group in region_df.groupby("period_display"):
                 if not period_group.empty:
-                    # Compute KPI WITH ALL SUPPORT
+                    # Compute KPI WITH ALL SUPPORT - PASS ONLY THIS REGION'S FACILITY UIDS
                     numerator, denominator, _ = (
                         get_numerator_denominator_for_newborn_kpi_with_all(
-                            period_group,
+                            period_group,  # This should already be filtered to this region
                             kpi_selection,
-                            region_facility_uids,
+                            region_facility_uids,  # Pass region's facility UIDs
                             date_range_filters,
                         )
                     )
@@ -1460,19 +1481,37 @@ def render_newborn_comparison_chart(
                 value_name=value_name,
             )
         else:
-            render_newborn_region_comparison_chart(
-                df=region_df,
-                period_col="period_display",
-                value_col="value",
-                title=f"{chart_title} - Region Comparison",
-                bg_color=bg_color,
-                text_color=text_color,
-                region_names=region_names,
-                region_mapping=facilities_by_region,
-                facilities_by_region=facilities_by_region,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
+            # Use the FIXED render function from the appropriate module
+            if is_culture_kpi(kpi_selection):
+                # For culture KPIs, the fixed function is now in kpi_utils_newborn.py
+                render_newborn_region_comparison_chart(
+                    df=region_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=f"{chart_title} - Region Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    region_names=region_names,
+                    region_mapping=facilities_by_region,
+                    facilities_by_region=facilities_by_region,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
+            else:
+                # For non-culture KPIs, use the original (now fixed) function
+                render_newborn_region_comparison_chart(
+                    df=region_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=f"{chart_title} - Region Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    region_names=region_names,
+                    region_mapping=facilities_by_region,
+                    facilities_by_region=facilities_by_region,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
     else:
         if comparison_mode == "region":
             st.info(
@@ -1909,61 +1948,76 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
             facility_mask = df["orgUnit"].isin(facility_uids)
             df = df[facility_mask].copy()
 
-    # STEP 1: Use KPI-specific date column OR enrollment_date as fallback
-    date_column_to_use = None
+    # STEP 1: Create a list of possible date columns to check
+    date_columns_to_try = []
 
-    # Try KPI-specific date column first
+    # 1. Try KPI-specific date column first
     if kpi_date_column and kpi_date_column in df.columns:
-        date_column_to_use = kpi_date_column
-    elif "enrollment_date" in df.columns:
-        date_column_to_use = "enrollment_date"
-    elif "event_date" in df.columns:
-        date_column_to_use = "event_date"
-    else:
-        # Find any date column
-        date_cols = [col for col in df.columns if "date" in col.lower()]
-        if date_cols:
-            date_column_to_use = date_cols[0]
-        else:
-            date_column_to_use = None
+        date_columns_to_try.append(kpi_date_column)
 
-    # STEP 2: Apply date filtering if we have a date column
+    # 2. Try enrollment_date as fallback (ALWAYS exists for newborn data)
+    if "enrollment_date" in df.columns and "enrollment_date" not in date_columns_to_try:
+        date_columns_to_try.append("enrollment_date")
+
+    # 3. Try any other date columns
+    date_cols = [
+        col
+        for col in df.columns
+        if "date" in col.lower() and col not in date_columns_to_try
+    ]
+    date_columns_to_try.extend(date_cols[:3])  # Try up to 3 additional date columns
+
+    # 4. Last resort: event_date if it exists
+    if "event_date" in df.columns and "event_date" not in date_columns_to_try:
+        date_columns_to_try.append("event_date")
+
+    # STEP 2: Apply date filtering if we have date columns
     should_filter_by_date = (
-        date_column_to_use is not None
-        and filters.get("quick_range") != "All Time"
+        filters.get("quick_range") != "All Time"
         and filters.get("start_date")
         and filters.get("end_date")
+        and date_columns_to_try  # We have date columns to check
     )
 
-    if should_filter_by_date:
-        try:
-            # Get the start and end dates from filters
-            start_date = pd.Timestamp(filters["start_date"])
-            end_date = pd.Timestamp(filters["end_date"]) + pd.Timedelta(days=1)
+    # Always create event_date column, but only filter if not "All Time"
+    event_date_created = False
 
-            # Convert date column to datetime
-            df[date_column_to_use] = pd.to_numeric(
-                df[date_column_to_use], errors="coerce"
-            )
+    for date_col in date_columns_to_try:
+        if date_col in df.columns:
+            try:
+                # Convert date column to datetime - CORRECT METHOD
+                df["event_date"] = pd.to_datetime(df[date_col], errors="coerce")
 
-            if df[date_column_to_use].notna().sum() > 0:
-                # Apply date filter
-                date_mask = (df[date_column_to_use] >= start_date) & (
-                    df[date_column_to_use] < end_date
-                )
-                df = df[date_mask].copy()
+                # Check if we have valid dates
+                valid_dates = df["event_date"].notna().sum()
+                if valid_dates > 0:
+                    event_date_created = True
 
-        except Exception as error:
-            # If there's an error, keep all patients
-            pass
+                    # Apply date filtering if needed
+                    if should_filter_by_date:
+                        start_date = pd.Timestamp(filters["start_date"])
+                        end_date = pd.Timestamp(filters["end_date"]) + pd.Timedelta(
+                            days=1
+                        )
 
-    # STEP 3: Ensure we have event_date column for period assignment
-    if "event_date" not in df.columns and date_column_to_use:
-        df["event_date"] = pd.to_datetime(df[date_column_to_use], errors="coerce")
-    elif "event_date" not in df.columns:
-        df = normalize_newborn_patient_dates(df)
+                        # Filter by date range
+                        date_mask = (df["event_date"] >= start_date) & (
+                            df["event_date"] < end_date
+                        )
+                        df = df[date_mask].copy()
 
-    # STEP 4: Assign periods for trend analysis
+                    # Break after first successful date column
+                    break
+
+            except Exception as e:
+                # Try next date column if this one fails
+                continue
+
+    # If no date column worked, create a default event_date
+    if not event_date_created:
+        df["event_date"] = pd.Timestamp.now().normalize()
+
+    # STEP 3: Assign periods for trend analysis
     if "period_label" not in filters:
         filters["period_label"] = st.session_state.get("period_label", "Monthly")
 

@@ -1,4 +1,5 @@
-# kpi_utils_newborn_v2.py
+# kpi_utils_newborn_v2.py - FIXED COUNTING FOR REGIONAL COMPARISON
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -66,11 +67,11 @@ YES_CODE = "1"
 MICROBIOLOGY_DATE_COL = "event_date_microbiology_and_labs"
 
 
-# ---------------- CULTURE DONE KPI Functions (V2) ----------------
+# ---------------- CULTURE DONE KPI Functions (V2) - FIXED COUNTING ----------------
 def compute_culture_done_numerator_v2(df, facility_uids=None):
     """
     Compute numerator for Culture Done KPI:
-    Count of babies on antibiotics who had blood culture done
+    Count of UNIQUE babies on antibiotics who had blood culture done
     """
     cache_key = get_cache_key_newborn_v2(df, facility_uids, "culture_done_numerator_v2")
 
@@ -81,28 +82,41 @@ def compute_culture_done_numerator_v2(df, facility_uids=None):
         result = 0
     else:
         filtered_df = df.copy()
-        if facility_uids and "orgUnit" in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        # Count babies with blood culture done (any result)
+        # CRITICAL FIX: Apply facility filter if specified
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            if not isinstance(facility_uids, list):
+                facility_uids = [facility_uids]
+            if facility_uids and facility_uids != ["All Facilities"]:
+                filtered_df = filtered_df[
+                    filtered_df["orgUnit"].isin(facility_uids)
+                ].copy()
+
+        # Count UNIQUE babies with blood culture done (any result)
         if BLOOD_CULTURE_COL not in filtered_df.columns:
             result = 0
         else:
-            df_work = filtered_df.copy()
-            df_work["culture_clean"] = df_work[BLOOD_CULTURE_COL].astype(str)
-            df_work["culture_numeric"] = pd.to_numeric(
-                df_work["culture_clean"].str.split(".").str[0], errors="coerce"
+            # Clean the culture column
+            filtered_df["culture_clean"] = filtered_df[BLOOD_CULTURE_COL].astype(str)
+            filtered_df["culture_numeric"] = pd.to_numeric(
+                filtered_df["culture_clean"].str.split(".").str[0], errors="coerce"
             )
 
-            culture_mask = df_work["culture_numeric"].isin(
-                [float(x) for x in CULTURE_DONE_VALUES]
-            )
+            # Filter rows where culture was done
+            culture_rows = filtered_df[
+                filtered_df["culture_numeric"].isin(
+                    [float(x) for x in CULTURE_DONE_VALUES]
+                )
+            ]
 
-            if "tei_id" in df_work.columns:
-                culture_teis = df_work.loc[culture_mask, "tei_id"].dropna().unique()
-                result = len(culture_teis)
+            # Count UNIQUE patients (tei_id) who had culture done
+            if "tei_id" in culture_rows.columns:
+                # Get unique patients with culture done
+                unique_culture_patients = culture_rows["tei_id"].dropna().unique()
+                result = len(unique_culture_patients)
             else:
-                result = int(culture_mask.sum())
+                # If no tei_id column, count rows (fallback)
+                result = len(culture_rows)
 
     st.session_state.kpi_cache_newborn_v2[cache_key] = result
     return result
@@ -111,7 +125,7 @@ def compute_culture_done_numerator_v2(df, facility_uids=None):
 def compute_antibiotics_denominator_v2(df, facility_uids=None):
     """
     Compute denominator for Culture Done KPI:
-    Total count of babies who received antibiotics
+    Total count of UNIQUE babies who received antibiotics
     """
     cache_key = get_cache_key_newborn_v2(
         df, facility_uids, "antibiotics_denominator_v2"
@@ -124,29 +138,41 @@ def compute_antibiotics_denominator_v2(df, facility_uids=None):
         result = 0
     else:
         filtered_df = df.copy()
+
+        # CRITICAL FIX: Apply facility filter if specified
         if facility_uids and "orgUnit" in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+            if not isinstance(facility_uids, list):
+                facility_uids = [facility_uids]
+            if facility_uids and facility_uids != ["All Facilities"]:
+                filtered_df = filtered_df[
+                    filtered_df["orgUnit"].isin(facility_uids)
+                ].copy()
 
         if ANTIBIOTICS_ADMINISTERED_COL not in filtered_df.columns:
             result = 0
         else:
-            df_work = filtered_df.copy()
-            df_work["antibiotics_clean"] = df_work[ANTIBIOTICS_ADMINISTERED_COL].astype(
-                str
-            )
-            df_work["antibiotics_numeric"] = pd.to_numeric(
-                df_work["antibiotics_clean"].str.split(".").str[0], errors="coerce"
+            # Clean the antibiotics column
+            filtered_df["antibiotics_clean"] = filtered_df[
+                ANTIBIOTICS_ADMINISTERED_COL
+            ].astype(str)
+            filtered_df["antibiotics_numeric"] = pd.to_numeric(
+                filtered_df["antibiotics_clean"].str.split(".").str[0], errors="coerce"
             )
 
-            antibiotics_mask = df_work["antibiotics_numeric"] == float(YES_CODE)
+            # Filter rows where antibiotics were administered
+            antibiotics_rows = filtered_df[
+                filtered_df["antibiotics_numeric"] == float(YES_CODE)
+            ]
 
-            if "tei_id" in df_work.columns:
-                antibiotics_teis = (
-                    df_work.loc[antibiotics_mask, "tei_id"].dropna().unique()
+            # Count UNIQUE patients (tei_id) who received antibiotics
+            if "tei_id" in antibiotics_rows.columns:
+                unique_antibiotics_patients = (
+                    antibiotics_rows["tei_id"].dropna().unique()
                 )
-                result = len(antibiotics_teis)
+                result = len(unique_antibiotics_patients)
             else:
-                result = int(antibiotics_mask.sum())
+                # If no tei_id column, count rows (fallback)
+                result = len(antibiotics_rows)
 
     st.session_state.kpi_cache_newborn_v2[cache_key] = result
     return result
@@ -156,7 +182,7 @@ def compute_culture_done_kpi_v2(df, facility_uids=None):
     """
     Compute Culture Done KPI for the given dataframe
     Formula: % Culture Done for Babies on Antibiotics =
-             (Babies on antibiotics with blood culture done) ÷ (Total babies on antibiotics) × 100
+             (UNIQUE babies on antibiotics with blood culture done) ÷ (UNIQUE babies on antibiotics) × 100
     """
     cache_key = get_cache_key_newborn_v2(df, facility_uids, "culture_done_kpi_v2")
 
@@ -170,10 +196,10 @@ def compute_culture_done_kpi_v2(df, facility_uids=None):
             "antibiotics_count": 0,
         }
     else:
-        # Count babies with culture done (numerator)
+        # Count UNIQUE babies with culture done (numerator)
         culture_count = compute_culture_done_numerator_v2(df, facility_uids)
 
-        # Count babies on antibiotics (denominator)
+        # Count UNIQUE babies on antibiotics (denominator)
         antibiotics_count = compute_antibiotics_denominator_v2(df, facility_uids)
 
         # Calculate culture rate
@@ -191,11 +217,11 @@ def compute_culture_done_kpi_v2(df, facility_uids=None):
     return result
 
 
-# ---------------- CULTURE RESULT RECORDED KPI Functions (V2) ----------------
+# ---------------- CULTURE RESULT RECORDED KPI Functions (V2) - FIXED COUNTING ----------------
 def compute_culture_result_recorded_numerator_v2(df, facility_uids=None):
     """
     Compute numerator for Culture Result Recorded KPI:
-    Count of babies with blood culture done AND result recorded (Negative or Positive only)
+    Count of UNIQUE babies with blood culture done AND result recorded (Negative or Positive only)
     """
     cache_key = get_cache_key_newborn_v2(
         df, facility_uids, "culture_result_recorded_numerator_v2"
@@ -208,28 +234,40 @@ def compute_culture_result_recorded_numerator_v2(df, facility_uids=None):
         result = 0
     else:
         filtered_df = df.copy()
-        if facility_uids and "orgUnit" in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        # Count babies with blood culture result recorded (Negative or Positive only)
+        # CRITICAL FIX: Apply facility filter if specified
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            if not isinstance(facility_uids, list):
+                facility_uids = [facility_uids]
+            if facility_uids and facility_uids != ["All Facilities"]:
+                filtered_df = filtered_df[
+                    filtered_df["orgUnit"].isin(facility_uids)
+                ].copy()
+
+        # Count UNIQUE babies with blood culture result recorded
         if BLOOD_CULTURE_COL not in filtered_df.columns:
             result = 0
         else:
-            df_work = filtered_df.copy()
-            df_work["culture_clean"] = df_work[BLOOD_CULTURE_COL].astype(str)
-            df_work["culture_numeric"] = pd.to_numeric(
-                df_work["culture_clean"].str.split(".").str[0], errors="coerce"
+            # Clean the culture column
+            filtered_df["culture_clean"] = filtered_df[BLOOD_CULTURE_COL].astype(str)
+            filtered_df["culture_numeric"] = pd.to_numeric(
+                filtered_df["culture_clean"].str.split(".").str[0], errors="coerce"
             )
 
-            result_mask = df_work["culture_numeric"].isin(
-                [float(x) for x in CULTURE_RESULT_RECORDED_VALUES]
-            )
+            # Filter rows where culture result was recorded (Negative or Positive only)
+            result_rows = filtered_df[
+                filtered_df["culture_numeric"].isin(
+                    [float(x) for x in CULTURE_RESULT_RECORDED_VALUES]
+                )
+            ]
 
-            if "tei_id" in df_work.columns:
-                result_teis = df_work.loc[result_mask, "tei_id"].dropna().unique()
-                result = len(result_teis)
+            # Count UNIQUE patients (tei_id) with recorded results
+            if "tei_id" in result_rows.columns:
+                unique_result_patients = result_rows["tei_id"].dropna().unique()
+                result = len(unique_result_patients)
             else:
-                result = int(result_mask.sum())
+                # If no tei_id column, count rows (fallback)
+                result = len(result_rows)
 
     st.session_state.kpi_cache_newborn_v2[cache_key] = result
     return result
@@ -239,8 +277,8 @@ def compute_culture_result_recorded_kpi_v2(df, facility_uids=None):
     """
     Compute Culture Result Recorded KPI for the given dataframe
     Formula: % Blood culture result recorded =
-             (Blood culture done with recorded result: Negative or Positive) ÷
-             (Total blood culture done: Negative, Positive, or Unknown) × 100
+             (UNIQUE babies with recorded result: Negative or Positive) ÷
+             (UNIQUE babies with culture done: Negative, Positive, or Unknown) × 100
     """
     cache_key = get_cache_key_newborn_v2(
         df, facility_uids, "culture_result_recorded_kpi_v2"
@@ -256,12 +294,12 @@ def compute_culture_result_recorded_kpi_v2(df, facility_uids=None):
             "culture_done_count": 0,
         }
     else:
-        # Count babies with culture result recorded (numerator) - Negative or Positive only
+        # Count UNIQUE babies with culture result recorded (numerator)
         culture_result_count = compute_culture_result_recorded_numerator_v2(
             df, facility_uids
         )
 
-        # Count all babies with culture done (denominator) - All results
+        # Count UNIQUE babies with culture done (denominator)
         culture_done_count = compute_culture_done_numerator_v2(df, facility_uids)
 
         # Calculate culture result recorded rate
@@ -281,13 +319,13 @@ def compute_culture_result_recorded_kpi_v2(df, facility_uids=None):
     return result
 
 
-# ---------------- CULTURE DONE FOR SEPSIS KPI Functions (V2) ----------------
+# ---------------- CULTURE DONE FOR SEPSIS KPI Functions (V2) - FIXED COUNTING ----------------
 def compute_culture_done_sepsis_kpi_v2(df, facility_uids=None):
     """
     Compute Culture Done for Sepsis KPI for the given dataframe
     Formula: % Culture done for babies with clinical sepsis =
-             (Blood culture done for babies with Probable Sepsis) ÷
-             (Total babies with Probable Sepsis) × 100
+             (UNIQUE babies with sepsis who had blood culture done) ÷
+             (UNIQUE babies with Probable Sepsis) × 100
     """
     cache_key = get_cache_key_newborn_v2(
         df, facility_uids, "culture_done_sepsis_kpi_v2"
@@ -303,10 +341,10 @@ def compute_culture_done_sepsis_kpi_v2(df, facility_uids=None):
             "sepsis_count": 0,
         }
     else:
-        # Count babies with culture done (numerator)
+        # Count UNIQUE babies with culture done (numerator)
         culture_count = compute_culture_done_numerator_v2(df, facility_uids)
 
-        # Count babies with Probable Sepsis (denominator)
+        # Count UNIQUE babies with Probable Sepsis (denominator)
         sepsis_count = compute_probable_sepsis_count(df, facility_uids)
 
         # Calculate culture rate for sepsis cases
@@ -324,7 +362,7 @@ def compute_culture_done_sepsis_kpi_v2(df, facility_uids=None):
     return result
 
 
-# ---------------- Master KPI Function V2 ----------------
+# ---------------- Master KPI Function V2 - FIXED COUNTING ----------------
 def compute_newborn_kpis_v2(df, facility_uids=None, date_column=None):
     """
     Compute all newborn KPIs including culture KPIs with optional date filtering
@@ -335,10 +373,10 @@ def compute_newborn_kpis_v2(df, facility_uids=None, date_column=None):
     if cache_key in st.session_state.kpi_cache_newborn_v2:
         return st.session_state.kpi_cache_newborn_v2[cache_key]
 
-    # Get existing KPIs
+    # Get existing KPIs with proper counting
     existing_kpis = compute_newborn_kpis(df, facility_uids, date_column)
 
-    # Compute new culture KPIs
+    # Compute new culture KPIs with proper counting
     culture_done_data = compute_culture_done_kpi_v2(df, facility_uids)
     culture_result_data = compute_culture_result_recorded_kpi_v2(df, facility_uids)
     culture_sepsis_data = compute_culture_done_sepsis_kpi_v2(df, facility_uids)
@@ -412,8 +450,13 @@ def prepare_data_for_newborn_trend_chart_v2(
         return pd.DataFrame(), None
 
     filtered_df = df.copy()
+
+    # Apply facility filter if specified
     if facility_uids and "orgUnit" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        if facility_uids and facility_uids != ["All Facilities"]:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
     # Get the SPECIFIC date column for this KPI
     date_column = get_relevant_date_column_for_newborn_kpi_v2(kpi_name)
@@ -440,7 +483,7 @@ def prepare_data_for_newborn_trend_chart_v2(
     result_df = filtered_df.copy()
     result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
 
-    # CRITICAL: Apply date range filtering
+    # Apply date range filtering
     if date_range_filters:
         start_date = date_range_filters.get("start_date")
         end_date = date_range_filters.get("end_date")
@@ -471,10 +514,6 @@ def prepare_data_for_newborn_trend_chart_v2(
 
     result_df = assign_period(result_df, "event_date", period_label)
 
-    # Filter by facility if needed
-    if facility_uids and "orgUnit" in result_df.columns:
-        result_df = result_df[result_df["orgUnit"].isin(facility_uids)].copy()
-
     return result_df, date_column
 
 
@@ -488,8 +527,13 @@ def get_numerator_denominator_for_newborn_kpi_v2(
         return (0, 0, 0.0)
 
     filtered_df = df.copy()
+
+    # Apply facility filter if specified
     if facility_uids and "orgUnit" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+        if not isinstance(facility_uids, list):
+            facility_uids = [facility_uids]
+        if facility_uids and facility_uids != ["All Facilities"]:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
     # Get the SPECIFIC date column for this KPI
     date_column = get_relevant_date_column_for_newborn_kpi_v2(kpi_name)
@@ -518,7 +562,7 @@ def get_numerator_denominator_for_newborn_kpi_v2(
     if filtered_df.empty:
         return (0, 0, 0.0)
 
-    # Now compute KPI on date-filtered data
+    # Now compute KPI on date-filtered AND facility-filtered data
     kpi_data = compute_newborn_kpis_v2(filtered_df, facility_uids, date_column)
 
     kpi_mapping = {
@@ -769,6 +813,42 @@ def render_culture_done_sepsis_trend_chart_v2(
     )
 
 
+# ---------------- Debugging Functions ----------------
+def debug_kpi_computation(df, kpi_name, facility_uids=None):
+    """
+    Debug function to show how KPI is being computed
+    """
+    st.write(f"🔍 **DEBUG KPI Computation: {kpi_name}**")
+    st.write(f"Data shape: {df.shape}")
+    st.write(f"Facility UIDs: {facility_uids}")
+
+    # Show unique patients count
+    if "tei_id" in df.columns:
+        unique_patients = df["tei_id"].nunique()
+        st.write(f"Unique patients in data: {unique_patients}")
+
+    # Show column names
+    st.write(f"Columns in data: {list(df.columns)}")
+
+    # For culture KPIs, show specific column values
+    if "Culture" in kpi_name:
+        if "blood_culture_for_suspected_sepsis_microbiology_and_labs" in df.columns:
+            culture_values = (
+                df["blood_culture_for_suspected_sepsis_microbiology_and_labs"]
+                .dropna()
+                .unique()[:10]
+            )
+            st.write(f"Culture values (first 10): {culture_values}")
+
+        if "were_antibiotics_administered?_interventions" in df.columns:
+            abx_values = (
+                df["were_antibiotics_administered?_interventions"]
+                .dropna()
+                .unique()[:10]
+            )
+            st.write(f"Antibiotics values (first 10): {abx_values}")
+
+
 # ---------------- Comprehensive Summary Functions ----------------
 def render_culture_done_comprehensive_summary_v2(
     df,
@@ -788,7 +868,7 @@ def render_culture_done_comprehensive_summary_v2(
         st.info("⚠️ No data available for summary.")
         return
 
-    # Compute KPI
+    # Compute KPI WITH FACILITY FILTER
     culture_data = compute_culture_done_kpi_v2(df, facility_uids)
 
     # Create summary metrics
@@ -805,14 +885,14 @@ def render_culture_done_comprehensive_summary_v2(
         st.metric(
             label="Culture Done Cases",
             value=f"{culture_data['culture_count']:,}",
-            help=f"Number of babies on antibiotics with blood culture done",
+            help=f"Number of UNIQUE babies on antibiotics with blood culture done",
         )
 
     with col3:
         st.metric(
             label="Total babies on Antibiotics",
             value=f"{culture_data['antibiotics_count']:,}",
-            help=f"Total number of babies who received antibiotics",
+            help=f"Total number of UNIQUE babies who received antibiotics",
         )
 
     # Create detailed summary table
@@ -830,9 +910,9 @@ def render_culture_done_comprehensive_summary_v2(
             f"{culture_data['antibiotics_count']:,}",
         ],
         "Description": [
-            "Percentage of babies on antibiotics who had blood culture done",
-            "Number of babies on antibiotics with blood culture done",
-            "Total number of babies who received antibiotics",
+            "Percentage of UNIQUE babies on antibiotics who had blood culture done",
+            "Number of UNIQUE babies on antibiotics with blood culture done",
+            "Total number of UNIQUE babies who received antibiotics",
         ],
     }
 
@@ -863,7 +943,7 @@ def render_culture_result_recorded_comprehensive_summary_v2(
         st.info("⚠️ No data available for summary.")
         return
 
-    # Compute KPI
+    # Compute KPI WITH FACILITY FILTER
     culture_data = compute_culture_result_recorded_kpi_v2(df, facility_uids)
 
     # Create summary metrics
@@ -880,14 +960,14 @@ def render_culture_result_recorded_comprehensive_summary_v2(
         st.metric(
             label="Result Recorded Cases",
             value=f"{culture_data['culture_result_count']:,}",
-            help=f"Number of blood cultures with recorded results (Negative or Positive)",
+            help=f"Number of UNIQUE babies with recorded results (Negative or Positive)",
         )
 
     with col3:
         st.metric(
             label="Total Culture Done Cases",
             value=f"{culture_data['culture_done_count']:,}",
-            help=f"Total number of blood cultures done (all results)",
+            help=f"Total number of UNIQUE babies with culture done (all results)",
         )
 
     # Create detailed summary table
@@ -905,9 +985,9 @@ def render_culture_result_recorded_comprehensive_summary_v2(
             f"{culture_data['culture_done_count']:,}",
         ],
         "Description": [
-            "Percentage of blood cultures with recorded results (Negative or Positive)",
-            "Number of blood cultures with recorded results (Negative or Positive)",
-            "Total number of blood cultures done (Negative, Positive, or Unknown)",
+            "Percentage of UNIQUE babies with recorded results (Negative or Positive)",
+            "Number of UNIQUE babies with recorded results (Negative or Positive)",
+            "Total number of UNIQUE babies with culture done (Negative, Positive, or Unknown)",
         ],
     }
 
@@ -938,7 +1018,7 @@ def render_culture_done_sepsis_comprehensive_summary_v2(
         st.info("⚠️ No data available for summary.")
         return
 
-    # Compute KPI
+    # Compute KPI WITH FACILITY FILTER
     culture_data = compute_culture_done_sepsis_kpi_v2(df, facility_uids)
 
     # Create summary metrics
@@ -955,14 +1035,14 @@ def render_culture_done_sepsis_comprehensive_summary_v2(
         st.metric(
             label="Culture Done Cases",
             value=f"{culture_data['culture_count']:,}",
-            help=f"Number of babies with clinical sepsis who had blood culture done",
+            help=f"Number of UNIQUE babies with clinical sepsis who had blood culture done",
         )
 
     with col3:
         st.metric(
             label="Probable Sepsis Cases",
             value=f"{culture_data['sepsis_count']:,}",
-            help=f"Total number of babies with clinical sepsis",
+            help=f"Total number of UNIQUE babies with clinical sepsis",
         )
 
     # Create detailed summary table
@@ -980,9 +1060,9 @@ def render_culture_done_sepsis_comprehensive_summary_v2(
             f"{culture_data['sepsis_count']:,}",
         ],
         "Description": [
-            "Percentage of babies with clinical sepsis who had blood culture done",
-            "Number of babies with clinical sepsis who had blood culture done",
-            "Total number of babies with clinical sepsis",
+            "Percentage of UNIQUE babies with clinical sepsis who had blood culture done",
+            "Number of UNIQUE babies with clinical sepsis who had blood culture done",
+            "Total number of UNIQUE babies with clinical sepsis",
         ],
     }
 
@@ -1000,16 +1080,16 @@ __all__ = [
     # V2 Cache functions
     "get_cache_key_newborn_v2",
     "clear_cache_newborn_v2",
-    # Culture Done KPI functions
+    # Culture Done KPI functions - FIXED COUNTING
     "compute_culture_done_numerator_v2",
     "compute_antibiotics_denominator_v2",
     "compute_culture_done_kpi_v2",
-    # Culture Result Recorded KPI functions
+    # Culture Result Recorded KPI functions - FIXED COUNTING
     "compute_culture_result_recorded_numerator_v2",
     "compute_culture_result_recorded_kpi_v2",
-    # Culture Done for Sepsis KPI functions
+    # Culture Done for Sepsis KPI functions - FIXED COUNTING
     "compute_culture_done_sepsis_kpi_v2",
-    # Master KPI function V2
+    # Master KPI function V2 - FIXED COUNTING
     "compute_newborn_kpis_v2",
     # Date handling functions V2
     "get_relevant_date_column_for_newborn_kpi_v2",
@@ -1025,6 +1105,8 @@ __all__ = [
     "render_culture_done_comprehensive_summary_v2",
     "render_culture_result_recorded_comprehensive_summary_v2",
     "render_culture_done_sepsis_comprehensive_summary_v2",
+    # Debugging functions
+    "debug_kpi_computation",
     # Constants
     "BLOOD_CULTURE_COL",
     "CULTURE_DONE_VALUES",
