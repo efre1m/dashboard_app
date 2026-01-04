@@ -1379,6 +1379,7 @@ def render_birth_weight_region_comparison(
 
 
 # ---------------- SEPARATE CPAP CHART FUNCTIONS (UPDATED WITH SINGLE TABLE) ----------------
+# ---------------- SEPARATE CPAP CHART FUNCTIONS (UPDATED WITH SINGLE TABLE) ----------------
 def render_cpap_general_trend_chart(
     df,
     period_col="period_display",
@@ -1427,16 +1428,24 @@ def render_cpap_general_trend_chart(
     # Create bar chart for general CPAP
     fig = go.Figure()
 
+    # Prepare hover data as numpy array
+    hover_data = np.column_stack(
+        (trend_df["cpap_general_count"], trend_df["cpap_general_total"])
+    )
+
     fig.add_trace(
         go.Bar(
             x=trend_df[period_col],
             y=trend_df["cpap_general_rate"],
             name="General CPAP",
             marker_color="#3498db",  # Blue for General CPAP
-            hovertemplate="<b>%{{x}}</b><br>General CPAP: %{{y:.1f}}%<br>Cases: %{{customdata[0]}}<br>Total Admitted: %{{customdata[1]}}<extra></extra>",
-            customdata=np.column_stack(
-                (trend_df["cpap_general_count"], trend_df["cpap_general_total"])
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                + "General CPAP: %{y:.1f}%<br>"
+                + "CPAP Cases: %{customdata[0]:.0f}<br>"  # FIXED: Use .0f formatting
+                + "Total Admitted: %{customdata[1]:.0f}<extra></extra>"  # FIXED: Use .0f formatting
             ),
+            customdata=hover_data,
         )
     )
 
@@ -1613,16 +1622,24 @@ def render_cpap_rds_trend_chart(
     # Create bar chart for CPAP for RDS
     fig = go.Figure()
 
+    # Prepare hover data as numpy array
+    hover_data = np.column_stack(
+        (trend_df["cpap_rds_count"], trend_df["cpap_rds_total"])
+    )
+
     fig.add_trace(
         go.Bar(
             x=trend_df[period_col],
             y=trend_df["cpap_rds_rate"],
             name="CPAP for RDS",
             marker_color="#3498db",  # BLUE for CPAP for RDS (same as general CPAP)
-            hovertemplate="<b>%{{x}}</b><br>CPAP for RDS: %{{y:.1f}}%<br>Cases: %{{customdata[0]}}<br>Total RDS: %{{customdata[1]}}<extra></extra>",
-            customdata=np.column_stack(
-                (trend_df["cpap_rds_count"], trend_df["cpap_rds_total"])
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                + "CPAP for RDS: %{y:.1f}%<br>"
+                + "CPAP Cases: %{customdata[0]:.0f}<br>"  # FIXED: Use .0f formatting
+                + "Total RDS: %{customdata[1]:.0f}<extra></extra>"  # FIXED: Use .0f formatting
             ),
+            customdata=hover_data,
         )
     )
 
@@ -1821,7 +1838,12 @@ def render_cpap_general_facility_comparison(
                 y=[row["CPAP Rate (%)"]],
                 name=row["Facility"],
                 marker_color=color,
-                hovertemplate=f"<b>{row['Facility']}</b><br>General CPAP: %{{y:.1f}}%<br>Cases: {row['CPAP Cases']}<br>Total Admitted: {row['Total Admitted']}<extra></extra>",
+                hovertemplate=(
+                    f"<b>{row['Facility']}</b><br>"
+                    + "General CPAP: %{y:.1f}%<br>"
+                    + f"CPAP Cases: {row['CPAP Cases']}<br>"  # FIXED: Direct value access
+                    + f"Total Admitted: {row['Total Admitted']}<extra></extra>"  # FIXED: Direct value access
+                ),
                 showlegend=False,  # Don't show legend for single bars
             )
         )
@@ -1993,7 +2015,12 @@ def render_cpap_rds_facility_comparison(
                 y=[row["CPAP Rate (%)"]],
                 name=row["Facility"],
                 marker_color=color,
-                hovertemplate=f"<b>{row['Facility']}</b><br>CPAP for RDS: %{{y:.1f}}%<br>Cases: {row['CPAP Cases']}<br>Total RDS: {row['Total RDS']}<extra></extra>",
+                hovertemplate=(
+                    f"<b>{row['Facility']}</b><br>"
+                    + "CPAP for RDS: %{y:.1f}%<br>"
+                    + f"CPAP Cases: {row['CPAP Cases']}<br>"  # FIXED: Direct value access
+                    + f"Total RDS: {row['Total RDS']}<extra></extra>"  # FIXED: Direct value access
+                ),
                 showlegend=False,  # Don't show legend for single bars
             )
         )
@@ -2173,7 +2200,12 @@ def render_cpap_general_region_comparison(
                 y=[row["CPAP Rate (%)"]],
                 name=row["Region"],
                 marker_color=color,
-                hovertemplate=f"<b>{row['Region']}</b><br>General CPAP: %{{y:.1f}}%<br>Cases: {row['CPAP Cases']}<br>Total Admitted: {row['Total Admitted']}<extra></extra>",
+                hovertemplate=(
+                    f"<b>{row['Region']}</b><br>"
+                    + "General CPAP: %{y:.1f}%<br>"
+                    + f"CPAP Cases: {row['CPAP Cases']}<br>"  # FIXED: Direct value access
+                    + f"Total Admitted: {row['Total Admitted']}<extra></extra>"  # FIXED: Direct value access
+                ),
                 showlegend=False,  # Don't show legend for single bars
             )
         )
@@ -2352,7 +2384,12 @@ def render_cpap_rds_region_comparison(
                 y=[row["CPAP Rate (%)"]],
                 name=row["Region"],
                 marker_color=color,
-                hovertemplate=f"<b>{row['Region']}</b><br>CPAP for RDS: %{{y:.1f}}%<br>Cases: {row['CPAP Cases']}<br>Total RDS: {row['Total RDS']}<extra></extra>",
+                hovertemplate=(
+                    f"<b>{row['Region']}</b><br>"
+                    + "CPAP for RDS: %{y:.1f}%<br>"
+                    + f"CPAP Cases: {row['CPAP Cases']}<br>"  # FIXED: Direct value access
+                    + f"Total RDS: {row['Total RDS']}<extra></extra>"  # FIXED: Direct value access
+                ),
                 showlegend=False,  # Don't show legend for single bars
             )
         )
