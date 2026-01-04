@@ -43,10 +43,10 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     render_cpap_general_region_comparison,
     render_cpap_rds_region_comparison,
     # Rate comparison aliases (call the above functions)
-    render_kmc_rate_facility_comparison,
-    render_kmc_rate_region_comparison,
-    render_cpap_rate_facility_comparison,
-    render_cpap_rate_region_comparison,
+    render_kmc_facility_comparison,
+    render_kmc_region_comparison,
+    render_cpap_facility_comparison,
+    render_cpap_region_comparison,
 )
 
 # KPI mapping for newborn comparison charts
@@ -1013,112 +1013,6 @@ def render_newborn_trend_chart_section(
         st.error(f"Error rendering chart for {kpi_selection}: {str(e)}")
 
 
-def _render_simplified_kpi_trend_chart(
-    kpi_selection,
-    working_df,
-    chart_title,
-    bg_color,
-    text_color,
-    facility_uids,
-    date_range_filters,
-):
-    """Render trend chart for simplified KPIs (Birth Weight, KMC, CPAP) WITH SINGLE TABLE DISPLAY"""
-
-    # Get KPI configuration
-    kpi_config = get_newborn_kpi_config(kpi_selection)
-    category = kpi_config.get("category", "")
-
-    # Get date column for this simplified KPI
-    date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
-
-    if date_column not in working_df.columns:
-        st.warning(
-            f"⚠️ Required date column '{date_column}' not found for {kpi_selection}"
-        )
-        return
-
-    # Convert to datetime and filter by date range
-    working_df["event_date"] = pd.to_datetime(working_df[date_column], errors="coerce")
-
-    # Apply date range filtering
-    if date_range_filters:
-        start_date = date_range_filters.get("start_date")
-        end_date = date_range_filters.get("end_date")
-
-        if start_date and end_date:
-            start_dt = pd.Timestamp(start_date)
-            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
-
-            working_df = working_df[
-                (working_df["event_date"] >= start_dt)
-                & (working_df["event_date"] < end_dt)
-            ].copy()
-
-    # Filter out rows without valid dates
-    working_df = working_df[working_df["event_date"].notna()].copy()
-
-    if working_df.empty:
-        st.warning(f"⚠️ No data available for {kpi_selection}")
-        return
-
-    # Assign periods
-    period_label = st.session_state.get("period_label", "Monthly")
-    try:
-        working_df = assign_period(working_df, "event_date", period_label)
-    except:
-        st.error("Error assigning periods")
-        return
-
-    # Render based on category USING UPDATED FUNCTIONS WITH SINGLE TABLES
-    if category == "birth_weight":
-        render_birth_weight_trend_chart(
-            working_df,
-            "period_display",
-            chart_title,
-            bg_color,
-            text_color,
-            facility_uids,
-        )
-    elif category == "kmc":
-        render_kmc_coverage_trend_chart(
-            working_df,
-            "period_display",
-            chart_title,
-            bg_color,
-            text_color,
-            facility_uids,
-        )
-    elif category == "cpap_general":
-        render_cpap_general_trend_chart(
-            working_df,
-            "period_display",
-            chart_title,
-            bg_color,
-            text_color,
-            facility_uids,
-        )
-    elif category == "cpap_rds":
-        render_cpap_rds_trend_chart(
-            working_df,
-            "period_display",
-            chart_title,
-            bg_color,
-            text_color,
-            facility_uids,
-        )
-    elif category == "cpap_by_weight":
-        render_cpap_by_weight_trend_chart(
-            working_df,
-            "period_display",
-            chart_title,
-            bg_color,
-            text_color,
-            facility_uids,
-        )
-    else:
-        st.warning(f"⚠️ Unsupported simplified KPI category: {category}")
-
-
 def render_newborn_comparison_chart(
     kpi_selection,
     patient_df=None,
@@ -1515,6 +1409,111 @@ def render_newborn_comparison_chart(
             st.info("⚠️ Invalid comparison mode selected.")
 
 
+def _render_simplified_kpi_trend_chart(
+    kpi_selection,
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render trend chart for simplified KPIs (Birth Weight, KMC, CPAP) WITH SINGLE TABLE DISPLAY"""
+    # Get KPI configuration
+    kpi_config = get_newborn_kpi_config(kpi_selection)
+    category = kpi_config.get("category", "")
+
+    # Get date column for this simplified KPI
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
+
+    if date_column not in working_df.columns:
+        st.warning(
+            f"⚠️ Required date column '{date_column}' not found for {kpi_selection}"
+        )
+        return
+
+    # Convert to datetime and filter by date range
+    working_df["event_date"] = pd.to_datetime(working_df[date_column], errors="coerce")
+
+    # Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+            working_df = working_df[
+                (working_df["event_date"] >= start_dt)
+                & (working_df["event_date"] < end_dt)
+            ].copy()
+
+    # Filter out rows without valid dates
+    working_df = working_df[working_df["event_date"].notna()].copy()
+
+    if working_df.empty:
+        st.warning(f"⚠️ No data available for {kpi_selection}")
+        return
+
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        working_df = assign_period(working_df, "event_date", period_label)
+    except:
+        st.error("Error assigning periods")
+        return
+
+    # Render based on category USING UPDATED FUNCTIONS WITH GROUP BARS
+    if category == "birth_weight":
+        render_birth_weight_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    elif category == "kmc":
+        render_kmc_coverage_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    elif category == "cpap_general":
+        render_cpap_general_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    elif category == "cpap_rds":
+        render_cpap_rds_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    elif category == "cpap_by_weight":
+        render_cpap_by_weight_trend_chart(
+            working_df,
+            "period_display",
+            chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+        )
+    else:
+        st.warning(f"⚠️ Unsupported simplified KPI category: {category}")
+
+
 def _render_simplified_kpi_comparison_chart(
     kpi_selection,
     df_to_use,
@@ -1527,8 +1526,7 @@ def _render_simplified_kpi_comparison_chart(
     text_color,
     is_national,
 ):
-    """Render comparison chart for simplified KPIs WITH SINGLE TABLE DISPLAY"""
-
+    """Render comparison chart for simplified KPIs WITH SINGLE TABLE DISPLAY - UPDATED WITH GROUP BARS"""
     kpi_config = get_newborn_kpi_config(kpi_selection)
     chart_title = kpi_config.get("title", kpi_selection)
     category = kpi_config.get("category", "")
@@ -1583,7 +1581,7 @@ def _render_simplified_kpi_comparison_chart(
 
     # Determine whether to use case counts or rates based on comparison_type
     if comparison_type == "stacked_cases":
-        # Use case counts for birth weight distribution (with single tables)
+        # Use case counts for birth weight distribution (with stacked bars)
         if comparison_mode == "facility" and category == "birth_weight":
             render_birth_weight_facility_comparison(
                 df_to_use,
@@ -1606,10 +1604,11 @@ def _render_simplified_kpi_comparison_chart(
                 facilities_by_region,
             )
     elif comparison_type == "rates":
-        # Use rate comparison functions for KMC and CPAP (with single tables)
+        # Use rate comparison functions for KMC and CPAP (with group bars)
         if comparison_mode == "facility":
             if category == "kmc":
-                render_kmc_rate_facility_comparison(
+                # UPDATED: Call the function with GROUP bars showing rates
+                render_kmc_facility_comparison(
                     df_to_use,
                     "period_display",
                     f"{chart_title} - Facility Comparison",
@@ -1619,7 +1618,7 @@ def _render_simplified_kpi_comparison_chart(
                     facility_uids,
                 )
             elif category == "cpap_general":
-                # Use the NEW specific function for General CPAP facility comparison
+                # Use the specific function for General CPAP facility comparison
                 render_cpap_general_facility_comparison(
                     df_to_use,
                     "period_display",
@@ -1630,7 +1629,7 @@ def _render_simplified_kpi_comparison_chart(
                     facility_uids,
                 )
             elif category == "cpap_rds":
-                # Use the NEW specific function for CPAP for RDS facility comparison
+                # Use the specific function for CPAP for RDS facility comparison
                 render_cpap_rds_facility_comparison(
                     df_to_use,
                     "period_display",
@@ -1641,7 +1640,8 @@ def _render_simplified_kpi_comparison_chart(
                     facility_uids,
                 )
             elif category == "cpap_by_weight":
-                render_cpap_rate_facility_comparison(
+                # UPDATED: Call the function with GROUP bars showing rates
+                render_cpap_facility_comparison(
                     df_to_use,
                     "period_display",
                     f"{chart_title} - Facility Comparison",
@@ -1652,7 +1652,8 @@ def _render_simplified_kpi_comparison_chart(
                 )
         elif comparison_mode == "region" and is_national:
             if category == "kmc":
-                render_kmc_rate_region_comparison(
+                # UPDATED: Call the function with GROUP bars showing rates
+                render_kmc_region_comparison(
                     df_to_use,
                     "period_display",
                     f"{chart_title} - Region Comparison",
@@ -1663,7 +1664,7 @@ def _render_simplified_kpi_comparison_chart(
                     facilities_by_region,
                 )
             elif category == "cpap_general":
-                # Use the NEW specific function for General CPAP region comparison
+                # Use the specific function for General CPAP region comparison
                 render_cpap_general_region_comparison(
                     df_to_use,
                     "period_display",
@@ -1675,7 +1676,7 @@ def _render_simplified_kpi_comparison_chart(
                     facilities_by_region,
                 )
             elif category == "cpap_rds":
-                # Use the NEW specific function for CPAP for RDS region comparison
+                # Use the specific function for CPAP for RDS region comparison
                 render_cpap_rds_region_comparison(
                     df_to_use,
                     "period_display",
@@ -1687,7 +1688,8 @@ def _render_simplified_kpi_comparison_chart(
                     facilities_by_region,
                 )
             elif category == "cpap_by_weight":
-                render_cpap_rate_region_comparison(
+                # UPDATED: Call the function with GROUP bars showing rates
+                render_cpap_region_comparison(
                     df_to_use,
                     "period_display",
                     f"{chart_title} - Region Comparison",
@@ -2142,4 +2144,8 @@ __all__ = [
     "render_cpap_rds_facility_comparison",
     "render_cpap_general_region_comparison",
     "render_cpap_rds_region_comparison",
+    "render_kmc_facility_comparison",
+    "render_kmc_region_comparison",
+    "render_cpap_facility_comparison",
+    "render_cpap_region_comparison",
 ]
