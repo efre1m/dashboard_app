@@ -31,7 +31,7 @@ NEWBORN_PROGRAM_UID = "pLk3Ht2XMKl"  # UPDATED: Your specified newborn UID
 # FIX 1: Correct path calculation for your project structure
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DASHBOARD_UTILS_DIR = os.path.dirname(SCRIPT_DIR)
-DEFAULT_OUTPUT_DIR = os.path.join(DASHBOARD_UTILS_DIR, "imnid")
+DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "imnid")
 DEFAULT_MATERNAL_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "maternal")
 DEFAULT_NEWBORN_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "newborn")
 
