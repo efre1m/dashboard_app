@@ -332,56 +332,165 @@ def get_facilities_for_user(user: dict) -> List[Tuple[str, str]]:
 
 def get_facility_mapping_for_user(user: dict) -> Dict[str, str]:
     """
-    Get facility name to UID mapping for the current user.
-    Returns dict: {facility_name: dhis2_uid}
-    """
-    facilities = get_facilities_for_user(user)
-    return {facility[0]: facility[1] for facility in facilities}
-
-
-def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, str]]]:
-    """
-    Get facilities grouped by region for the current user.
-    Returns dict: {region_name: [(facility_name, dhis2_uid), ...]}
+    Get facility ID to UID mapping for the current user.
+    Returns dict: {facility_id: dhis2_uid}
     """
     conn = get_db_connection()
     cur = conn.cursor()
-    facilities_by_region: Dict[str, List[Tuple[str, str]]] = {}
+    facility_mapping = {}
 
     try:
         role = user.get("role", "")
 
         if role == "national":
-            # National users can see all facilities grouped by region
+            cur.execute("SELECT facility_id, dhis2_uid FROM facilities")
+            rows = cur.fetchall()
+            facility_mapping = {
+                str(row[0]): row[1] for row in rows
+            }  # Convert ID to string
+
+        elif role == "regional" and user.get("region_id"):
+            cur.execute(
+                "SELECT facility_id, dhis2_uid FROM facilities WHERE region_id = %s",
+                (user["region_id"],),
+            )
+            rows = cur.fetchall()
+            facility_mapping = {
+                str(row[0]): row[1] for row in rows
+            }  # Convert ID to string
+
+        elif role == "facility" and user.get("facility_id"):
+            cur.execute(
+                "SELECT facility_id, dhis2_uid FROM facilities WHERE facility_id = %s",
+                (user["facility_id"],),
+            )
+            row = cur.fetchone()
+            if row:
+                facility_mapping = {str(row[0]): row[1]}  # Convert ID to string
+
+    except Exception as e:
+        logging.error(f"Error fetching facility mapping: {e}")
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    # DEBUG: Log what we got
+    logging.info(
+        f"🔍 get_facility_mapping_for_user: Found {len(facility_mapping)} facilities"
+    )
+    if facility_mapping:
+        sample = list(facility_mapping.items())[:3]
+        logging.info(f"🔍 Sample facility mapping: {sample}")
+
+    return facility_mapping
+
+
+def get_facilities_grouped_by_region(
+    user: dict,
+) -> Dict[str, List[Tuple[str, str, str]]]:
+    """
+    Get facilities grouped by DISPLAY region ID (mapped from actual region_id).
+    Returns dict: {display_region_id: [(facility_id, facility_name, dhis2_uid), ...]}
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    facilities_by_region: Dict[str, List[Tuple[str, str, str]]] = {}
+
+    try:
+        role = user.get("role", "")
+
+        if role == "national":
+            # Get ALL facilities with MAPPED display IDs
             cur.execute(
                 """
-                SELECT r.region_name, f.facility_name, f.dhis2_uid 
+                SELECT 
+                    -- Map region_id to display ID
+                    CASE r.region_name
+                        WHEN 'Oromia' THEN 1
+                        WHEN 'Amhara' THEN 2
+                        WHEN 'Tigray' THEN 3
+                        WHEN 'South Ethiopia' THEN 4
+                        WHEN 'Afar' THEN 5
+                        WHEN 'Sidama' THEN 6
+                        WHEN 'Central Ethiopia' THEN 7
+                        WHEN 'South West Ethiopia' THEN 8
+                        ELSE r.region_id
+                    END as display_region_id,
+                    f.facility_id, 
+                    f.facility_name, 
+                    f.dhis2_uid 
                 FROM facilities f
                 JOIN regions r ON f.region_id = r.region_id
-                ORDER BY r.region_name, f.facility_name
+                ORDER BY 
+                    CASE r.region_name
+                        WHEN 'Oromia' THEN 1
+                        WHEN 'Amhara' THEN 2
+                        WHEN 'Tigray' THEN 3
+                        WHEN 'South Ethiopia' THEN 4
+                        WHEN 'Afar' THEN 5
+                        WHEN 'Sidama' THEN 6
+                        WHEN 'Central Ethiopia' THEN 7
+                        WHEN 'South West Ethiopia' THEN 8
+                        ELSE 99
+                    END ASC,
+                    f.facility_id ASC
                 """
             )
             facilities = cur.fetchall()
 
         elif role == "regional" and user.get("region_id"):
-            # Regional users see facilities only in their region
+            # For regional users, map their region_id too
             cur.execute(
                 """
-                SELECT r.region_name, f.facility_name, f.dhis2_uid 
+                SELECT 
+                    CASE r.region_name
+                        WHEN 'Oromia' THEN 1
+                        WHEN 'Amhara' THEN 2
+                        WHEN 'Tigray' THEN 3
+                        WHEN 'South Ethiopia' THEN 4
+                        WHEN 'Afar' THEN 5
+                        WHEN 'Sidama' THEN 6
+                        WHEN 'Central Ethiopia' THEN 7
+                        WHEN 'South West Ethiopia' THEN 8
+                        ELSE r.region_id
+                    END as display_region_id,
+                    f.facility_id, 
+                    f.facility_name, 
+                    f.dhis2_uid 
                 FROM facilities f
                 JOIN regions r ON f.region_id = r.region_id
                 WHERE r.region_id = %s
-                ORDER BY f.facility_name
+                ORDER BY f.facility_id ASC
                 """,
                 (user["region_id"],),
             )
             facilities = cur.fetchall()
 
         elif role == "facility" and user.get("facility_id"):
-            # Facility users see only their facility
+            # For facility users
             cur.execute(
                 """
-                SELECT r.region_name, f.facility_name, f.dhis2_uid 
+                SELECT 
+                    CASE r.region_name
+                        WHEN 'Oromia' THEN 1
+                        WHEN 'Amhara' THEN 2
+                        WHEN 'Tigray' THEN 3
+                        WHEN 'South Ethiopia' THEN 4
+                        WHEN 'Afar' THEN 5
+                        WHEN 'Sidama' THEN 6
+                        WHEN 'Central Ethiopia' THEN 7
+                        WHEN 'South West Ethiopia' THEN 8
+                        ELSE r.region_id
+                    END as display_region_id,
+                    f.facility_id, 
+                    f.facility_name, 
+                    f.dhis2_uid 
                 FROM facilities f
                 JOIN regions r ON f.region_id = r.region_id
                 WHERE f.facility_id = %s
@@ -392,11 +501,14 @@ def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, st
         else:
             facilities = []
 
-        # Group facilities by region
-        for region_name, facility_name, dhis2_uid in facilities:
-            if region_name not in facilities_by_region:
-                facilities_by_region[region_name] = []
-            facilities_by_region[region_name].append((facility_name, dhis2_uid))
+        # Group by DISPLAY region_id
+        for display_region_id, facility_id, facility_name, dhis2_uid in facilities:
+            region_key = str(display_region_id)
+            if region_key not in facilities_by_region:
+                facilities_by_region[region_key] = []
+            facilities_by_region[region_key].append(
+                (str(facility_id), facility_name, dhis2_uid)
+            )
 
     except Exception as e:
         logging.error(f"Error fetching facilities grouped by region: {e}")

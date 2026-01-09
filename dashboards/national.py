@@ -5,6 +5,7 @@ import logging
 import concurrent.futures
 import time
 from datetime import datetime
+from utils.code_utils import get_region_code, get_facility_code
 from newborns_dashboard.national_newborn import (
     render_newborn_dashboard_shared,
 )
@@ -459,16 +460,37 @@ def update_facility_selection(
         display_names = []
         for region in selected_regions:
             if region in facilities_by_region:
+                # NOW GET 3 VALUES: (facility_id, facility_name, dhis2_uid)
                 facility_uids.extend(
-                    fac_uid for _, fac_uid in facilities_by_region[region]
+                    fac_uid for _, _, fac_uid in facilities_by_region[region]
                 )
-                display_names.append(region)
+                display_names.append(f"Region {get_region_code(region)}")
         comparison_mode = "region"
     elif filter_mode == "By Facility" and selected_facilities:
-        facility_uids = [
-            facility_mapping[f] for f in selected_facilities if f in facility_mapping
-        ]
-        display_names = selected_facilities
+        facility_uids = []
+        display_names = []
+        for fac_id in selected_facilities:
+            # IMPORTANT: facility_mapping is {facility_id: dhis2_uid}
+            if fac_id in facility_mapping:
+                # Get UID from facility_mapping
+                fac_uid = facility_mapping[fac_id]
+                facility_uids.append(fac_uid)
+
+                # Find region for display name
+                for region_id, facilities in facilities_by_region.items():
+                    for f_id, f_name, f_uid in facilities:
+                        if f_id == fac_id:
+                            facility_code = get_facility_code(fac_id, region_id)
+                            display_names.append(f"Facility {facility_code}")
+                            break
+            else:
+                logging.warning(f"Facility ID {fac_id} not found in facility_mapping")
+
+        # If no facilities selected or found, show all
+        if not facility_uids:
+            facility_uids = list(facility_mapping.values())
+            display_names = ["All Facilities"]
+
         comparison_mode = "facility"
     else:
         facility_uids = list(facility_mapping.values())
@@ -710,7 +732,9 @@ def render_summary_dashboard_shared(
             # Compute regional data for comparison - UPDATED FOR NEWBORNS
             regional_comparison_data = {}
             for region_name, facilities in facilities_by_region.items():
-                region_facility_uids = [fac_uid for fac_name, fac_uid in facilities]
+                region_facility_uids = [
+                    fac_uid for fac_id, fac_name, fac_uid in facilities
+                ]
 
                 # Maternal count for region (Admitted Mothers)
                 maternal_count = 0
@@ -913,7 +937,7 @@ def render_summary_dashboard_shared(
 
     st.markdown("---")
 
-    # Regional comparison table with 4 columns - UPDATED
+    # Regional comparison table with region codes
     st.markdown("### 📊 Regional Summary")
 
     if regional_comparison_data:
@@ -925,22 +949,23 @@ def render_summary_dashboard_shared(
             data["newborns"] for data in regional_comparison_data.values()
         )
 
-        # Create table structure with 4 columns - UPDATED COLUMN NAME
+        # Create table structure with region codes
         table_data = []
-        for i, region in enumerate(regions, 1):
-            mother_count = regional_comparison_data[region]["mothers"]
-            newborn_count = regional_comparison_data[region]["newborns"]
+        for i, region_id in enumerate(regions, 1):
+            mother_count = regional_comparison_data[region_id]["mothers"]
+            newborn_count = regional_comparison_data[region_id]["newborns"]
+            region_code = get_region_code(region_id)  # Use code_utils function
 
             table_data.append(
                 {
                     "No": i,
-                    "Region Name": region,
+                    "Region": f"Region {region_code}",
                     "Total Admitted Mothers": (
                         f"{mother_count:,}"
                         if isinstance(mother_count, int)
                         else mother_count
                     ),
-                    "Total Admitted Newborns": (  # UPDATED: Now uses admitted newborns count
+                    "Total Admitted Newborns": (
                         f"{newborn_count:,}"
                         if isinstance(newborn_count, int)
                         else newborn_count
@@ -948,11 +973,11 @@ def render_summary_dashboard_shared(
                 }
             )
 
-        # Add TOTAL row - UPDATED COLUMN NAME
+        # Add TOTAL row
         table_data.append(
             {
                 "No": "",
-                "Region Name": "TOTAL",
+                "Region": "TOTAL",
                 "Total Admitted Mothers": f"{total_mothers:,}",
                 "Total Admitted Newborns": f"{total_newborns:,}",
             }
@@ -973,18 +998,19 @@ def render_summary_dashboard_shared(
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Add download button for regional data - UPDATED COLUMN NAME
+        # Download button with region codes
         col_info2, col_download2 = st.columns([3, 1])
         with col_download2:
             download_data = []
-            for region, data in regional_comparison_data.items():
+            for region_id, data in regional_comparison_data.items():
+                region_code = get_region_code(region_id)
                 download_data.append(
                     {
-                        "Region": region,
+                        "Region": f"Region {region_code}",
                         "Total Admitted Mothers": (
                             data["mothers"] if isinstance(data["mothers"], int) else 0
                         ),
-                        "Total Admitted Newborns": (  # UPDATED
+                        "Total Admitted Newborns": (
                             data["newborns"] if isinstance(data["newborns"], int) else 0
                         ),
                     }
@@ -993,7 +1019,7 @@ def render_summary_dashboard_shared(
                 {
                     "Region": "TOTAL",
                     "Total Admitted Mothers": total_mothers,
-                    "Total Admitted Newborns": total_newborns,  # UPDATED
+                    "Total Admitted Newborns": total_newborns,
                 }
             )
             download_df = pd.DataFrame(download_data)
@@ -1124,15 +1150,19 @@ def render_maternal_dashboard_shared(
         header_subtitle = f"all {len(facility_mapping)} facilities"
     elif filter_mode == "By Region" and display_names:
         if len(display_names) == 1:
-            header_title = f"🤰 Maternal Inpatient Data - {display_names[0]} Region"
+            # display_names already has "Region XX" format from update_facility_selection
+            header_title = f"🤰 Maternal Inpatient Data - {display_names[0]}"
         else:
-            header_title = "🤰 Maternal Inpatient Data - Multiple Regions"
+            header_title = f"🤰 Maternal Inpatient Data - {len(display_names)} Regions"
         header_subtitle = f"{len(facility_uids)} facilities"
     elif filter_mode == "By Facility" and display_names:
         if len(display_names) == 1:
+            # display_names already has "Facility XXX" format from update_facility_selection
             header_title = f"🤰 Maternal Inpatient Data - {display_names[0]}"
         else:
-            header_title = "🤰 Maternal Inpatient Data - Multiple Facilities"
+            header_title = (
+                f"🤰 Maternal Inpatient Data - {len(display_names)} Facilities"
+            )
         header_subtitle = f"{len(display_names)} facilities"
     else:
         header_title = f"🤰 Maternal Inpatient Data - {country_name}"
@@ -1457,10 +1487,14 @@ def render():
         temp_selected_facilities = st.session_state.selected_facilities.copy()
 
         if st.session_state.filter_mode == "By Region":
-            region_options = {
-                f"{region} ({len(facilities_by_region.get(region, []))} fac)": region
-                for region in facilities_by_region.keys()
-            }
+            # Simple region codes
+            region_options = {}
+            for region_id in sorted(facilities_by_region.keys()):
+                region_code = get_region_code(region_id)
+                facility_count = len(facilities_by_region.get(region_id, []))
+                display_text = f"Region {region_code} ({facility_count} fac)"
+                region_options[display_text] = region_id
+
             selected_region_labels = st.multiselect(
                 "Choose regions:",
                 options=list(region_options.keys()),
@@ -1480,97 +1514,97 @@ def render():
         elif st.session_state.filter_mode == "By Facility":
             temp_selected_facilities = []
 
-            # Track which regions had "Select All" checked in the previous render
+            # Track selection states
             if "prev_select_all_state" not in st.session_state:
                 st.session_state.prev_select_all_state = {}
 
-            # Track if we need to clear individual checkboxes
             if "clear_individual_boxes" not in st.session_state:
                 st.session_state.clear_individual_boxes = {}
 
-            for region_name, facilities in facilities_by_region.items():
-                facility_names = [fac_name for fac_name, _ in facilities]
+            for region_id, facilities in facilities_by_region.items():
+                region_code = get_region_code(region_id)
 
                 with st.expander(
-                    f"📁 {region_name} ({len(facilities)} facilities)", expanded=False
+                    f"Region {region_code} ({len(facilities)} facilities)",
+                    expanded=False,
                 ):
 
                     # "Select All" checkbox
-                    select_all_key = f"select_all_{region_name}"
+                    select_all_key = f"select_all_{region_id}"
                     select_all = st.checkbox(
-                        f"Select all in {region_name}",
-                        value=False,  # Always start unchecked
+                        f"Select all in Region {region_code}",
+                        value=False,
                         key=select_all_key,
                     )
 
-                    # Check if select_all was just unchecked (went from True to False)
+                    # Track state changes
                     prev_state = st.session_state.prev_select_all_state.get(
-                        region_name, False
+                        region_id, False
                     )
                     select_all_just_unchecked = (
                         prev_state is True and select_all is False
                     )
+                    st.session_state.prev_select_all_state[region_id] = select_all
 
-                    # Update previous state
-                    st.session_state.prev_select_all_state[region_name] = select_all
-
-                    # If select_all_just_unchecked, set a flag to clear individual boxes
                     if select_all_just_unchecked:
-                        st.session_state.clear_individual_boxes[region_name] = True
+                        st.session_state.clear_individual_boxes[region_id] = True
 
-                    # If "Select All" is currently checked, select all facilities
+                    # If "Select All" is checked
                     if select_all:
-                        temp_selected_facilities.extend(facility_names)
-                        st.info(f"✓ All {len(facility_names)} facilities selected")
+                        for fac_id, fac_name, _ in facilities:
+                            temp_selected_facilities.append(str(fac_id))
+                        st.info(f"✓ All {len(facilities)} facilities selected")
                         continue
 
-                    # Show individual checkboxes when "Select All" is NOT checked
+                    # Individual checkboxes
                     col1, col2 = st.columns(2)
-                    facilities_col1 = facility_names[: len(facility_names) // 2]
-                    facilities_col2 = facility_names[len(facility_names) // 2 :]
+                    facilities_col1 = facilities[: len(facilities) // 2]
+                    facilities_col2 = facilities[len(facilities) // 2 :]
 
-                    # Check if we need to clear individual checkboxes for this region
+                    # Check if we need to clear individual checkboxes
                     should_clear = st.session_state.clear_individual_boxes.get(
-                        region_name, False
+                        region_id, False
                     )
 
                     with col1:
-                        for fac_name in facilities_col1:
-                            checkbox_key = f"fac_{region_name}_{fac_name}"
+                        for fac_id, fac_name, _ in facilities_col1:
+                            facility_code = get_facility_code(fac_id, region_id)
+                            checkbox_key = f"fac_{region_id}_{fac_id}"
 
-                            # Determine default value:
-                            # - If we should clear (select_all was just unchecked): False
-                            # - Otherwise: check if previously selected
+                            # Determine default value
                             default_value = (
                                 False
                                 if should_clear
-                                else (fac_name in st.session_state.selected_facilities)
+                                else (fac_id in st.session_state.selected_facilities)
                             )
 
                             is_checked = st.checkbox(
-                                fac_name, value=default_value, key=checkbox_key
+                                f"Facility {facility_code}",
+                                value=default_value,
+                                key=checkbox_key,
                             )
                             if is_checked:
-                                temp_selected_facilities.append(fac_name)
+                                temp_selected_facilities.append(str(fac_id))
 
                     with col2:
-                        for fac_name in facilities_col2:
-                            checkbox_key = f"fac_{region_name}_{fac_name}"
+                        for fac_id, fac_name, _ in facilities_col2:
+                            facility_code = get_facility_code(fac_id, region_id)
+                            checkbox_key = f"fac_{region_id}_{fac_id}"
 
-                            # Determine default value:
-                            # - If we should clear (select_all was just unchecked): False
-                            # - Otherwise: check if previously selected
+                            # Determine default value
                             default_value = (
                                 False
                                 if should_clear
-                                else (fac_name in st.session_state.selected_facilities)
+                                else (fac_id in st.session_state.selected_facilities)
                             )
 
                             is_checked = st.checkbox(
-                                fac_name, value=default_value, key=checkbox_key
+                                f"Facility {facility_code}",
+                                value=default_value,
+                                key=checkbox_key,
                             )
                             if is_checked:
-                                temp_selected_facilities.append(fac_name)
+                                temp_selected_facilities.append(str(fac_id))
 
             # Reset the clear flags after rendering
             st.session_state.clear_individual_boxes = {}
@@ -1588,51 +1622,36 @@ def render():
     # Display selection summary
     total_facilities = len(facility_mapping)
     if st.session_state.filter_mode == "All Facilities":
-        display_text = f"Selected: All ({total_facilities})"
+        display_text = f"All facilities"
     elif (
         st.session_state.filter_mode == "By Region"
         and st.session_state.selected_regions
     ):
-        display_text = f"Selected: {len(st.session_state.selected_regions)} regions"
+        if len(st.session_state.selected_regions) == 1:
+            region_id = st.session_state.selected_regions[0]
+            region_code = get_region_code(region_id)
+            facility_count = len(facilities_by_region.get(region_id, []))
+            display_text = f"Region {region_code} ({facility_count} facilities)"
+        else:
+            display_text = f"{len(st.session_state.selected_regions)} regions"
     elif (
         st.session_state.filter_mode == "By Facility"
         and st.session_state.selected_facilities
     ):
-        # Group selected facilities by region for better display
-        selected_by_region = {}
-        for fac_name in st.session_state.selected_facilities:
-            # Find which region this facility belongs to
-            for region_name, facilities in facilities_by_region.items():
-                facility_names = [name for name, _ in facilities]
-                if fac_name in facility_names:
-                    if region_name not in selected_by_region:
-                        selected_by_region[region_name] = 0
-                    selected_by_region[region_name] += 1
-                    break
-
-        # Create a compact display
-        if len(selected_by_region) == 0:
-            display_text = f"Selected: 0/{total_facilities}"
-        elif len(selected_by_region) == 1:
-            region_name = list(selected_by_region.keys())[0]
-            count = selected_by_region[region_name]
-            total_in_region = len(facilities_by_region.get(region_name, []))
-            display_text = f"Selected: {count}/{total_in_region} in {region_name}"
-        elif len(selected_by_region) <= 3:
-            region_texts = []
-            for region_name, count in selected_by_region.items():
-                total_in_region = len(facilities_by_region.get(region_name, []))
-                # Shorten region name if too long
-                short_region_name = (
-                    region_name[:15] + "..." if len(region_name) > 15 else region_name
-                )
-                region_texts.append(f"{count}/{total_in_region} in {short_region_name}")
-            display_text = f"Selected: {', '.join(region_texts)}"
+        total_selected = len(st.session_state.selected_facilities)
+        if total_selected == 1:
+            fac_id = st.session_state.selected_facilities[0]
+            # Find region for this facility
+            for region_id, facilities in facilities_by_region.items():
+                for f_id, f_name, _ in facilities:
+                    if f_id == fac_id:
+                        facility_code = get_facility_code(fac_id, region_id)
+                        display_text = f"Facility {facility_code}"
+                        break
         else:
-            total_selected = len(st.session_state.selected_facilities)
-            display_text = f"Selected: {total_selected}/{total_facilities} in {len(selected_by_region)} regions"
+            display_text = f"{total_selected} facilities"
     else:
-        display_text = f"Selected: All ({total_facilities})"
+        display_text = f"All facilities"
 
     st.sidebar.markdown(
         f"<p style='color: white; font-size: 13px; margin-top: -10px;'>{display_text}</p>",

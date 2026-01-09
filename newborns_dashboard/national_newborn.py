@@ -5,6 +5,9 @@ import logging
 import time
 from utils.data_service import fetch_program_data_for_user
 
+# Add this import near the top with other imports
+from utils.code_utils import get_region_code, get_facility_code
+
 # Import from newborn-specific dashboard components
 from newborns_dashboard.dash_co_newborn import (
     normalize_newborn_patient_dates,
@@ -113,11 +116,13 @@ def render_newborn_dashboard_shared(
 
     # Optimized header rendering
     if filter_mode == "All Facilities":
-        header_title = f"👶 Newborn Care Form - {country_name}"
+        header_title = f"👶 Newborn Care Form - All"
         header_subtitle = f"all {len(facility_mapping)} facilities"
     elif filter_mode == "By Region" and display_names:
         if len(display_names) == 1:
-            header_title = f"👶 Newborn Care Form - {display_names[0]} Region"
+            region_id = selected_regions[0] if selected_regions else ""
+            region_code = get_region_code(region_id)
+            header_title = f"👶 Newborn Care Form - Region {region_code}"
         else:
             header_title = "👶 Newborn Care Form - Multiple Regions"
         header_subtitle = f"{len(facility_uids)} facilities"
@@ -128,7 +133,7 @@ def render_newborn_dashboard_shared(
             header_title = "👶 Newborn Care Form - Multiple Facilities"
         header_subtitle = f"{len(display_names)} facilities"
     else:
-        header_title = f"👶 Newborn Care Form - {country_name}"
+        header_title = f"👶 Newborn Care Form - All"
         header_subtitle = f"all {len(facility_mapping)} facilities"
 
     st.markdown(
@@ -205,7 +210,11 @@ def render_newborn_dashboard_shared(
     # KPI Cards with FILTERED data
     with kpi_container:
         location_name, location_type = get_location_display_name(
-            filter_mode, selected_regions, selected_facilities, country_name
+            filter_mode,
+            selected_regions,
+            selected_facilities,
+            country_name,
+            facilities_by_region,  # Add this parameter
         )
 
         user_id = str(user.get("id", user.get("username", "default_user")))
@@ -268,7 +277,7 @@ def update_facility_selection(
     facilities_by_region,
     facility_mapping,
 ):
-    """Optimized facility selection update - SAME AS MATERNAL DASHBOARD"""
+    """Optimized facility selection update"""
     if filter_mode == "All Facilities":
         facility_uids = list(facility_mapping.values())
         display_names = ["All Facilities"]
@@ -278,16 +287,37 @@ def update_facility_selection(
         display_names = []
         for region in selected_regions:
             if region in facilities_by_region:
+                # NOW GET 3 VALUES: (facility_id, facility_name, dhis2_uid)
                 facility_uids.extend(
-                    fac_uid for _, fac_uid in facilities_by_region[region]
+                    fac_uid for _, _, fac_uid in facilities_by_region[region]
                 )
-                display_names.append(region)
+                display_names.append(f"Region {get_region_code(region)}")
         comparison_mode = "region"
     elif filter_mode == "By Facility" and selected_facilities:
-        facility_uids = [
-            facility_mapping[f] for f in selected_facilities if f in facility_mapping
-        ]
-        display_names = selected_facilities
+        facility_uids = []
+        display_names = []
+        for fac_id in selected_facilities:
+            # IMPORTANT: facility_mapping is {facility_id: dhis2_uid}
+            if fac_id in facility_mapping:
+                # Get UID from facility_mapping
+                fac_uid = facility_mapping[fac_id]
+                facility_uids.append(fac_uid)
+
+                # Find region for display name
+                for region_id, facilities in facilities_by_region.items():
+                    for f_id, f_name, f_uid in facilities:
+                        if f_id == fac_id:
+                            facility_code = get_facility_code(fac_id, region_id)
+                            display_names.append(f"Facility {facility_code}")
+                            break
+            else:
+                logging.warning(f"Facility ID {fac_id} not found in facility_mapping")
+
+        # If no facilities selected or found, show all
+        if not facility_uids:
+            facility_uids = list(facility_mapping.values())
+            display_names = ["All Facilities"]
+
         comparison_mode = "facility"
     else:
         facility_uids = list(facility_mapping.values())
@@ -298,28 +328,37 @@ def update_facility_selection(
 
 
 def get_location_display_name(
-    filter_mode, selected_regions, selected_facilities, country_name
+    filter_mode,
+    selected_regions,
+    selected_facilities,
+    country_name,
+    facilities_by_region=None,  # Add this parameter
 ):
-    """Optimized location display name generation - SAME AS MATERNAL DASHBOARD"""
+    """Location display name generation with codes"""
+    from utils.code_utils import get_region_code, get_facility_code
+
     if filter_mode == "All Facilities":
-        return country_name, "Country"
+        return "All", "Country"
     elif filter_mode == "By Region" and selected_regions:
-        return (
-            (
-                selected_regions[0]
-                if len(selected_regions) == 1
-                else ", ".join(selected_regions)
-            ),
-            "Region" if len(selected_regions) == 1 else "Regions",
-        )
+        if len(selected_regions) == 1:
+            region_code = get_region_code(selected_regions[0])
+            return f"Region {region_code}", "Region"
+        else:
+            region_codes = [get_region_code(r) for r in selected_regions]
+            return f"Regions {', '.join(region_codes)}", "Regions"
     elif filter_mode == "By Facility" and selected_facilities:
-        return (
-            (
-                selected_facilities[0]
-                if len(selected_facilities) == 1
-                else ", ".join(selected_facilities)
-            ),
-            "Facility" if len(selected_facilities) == 1 else "Facilities",
-        )
+        if len(selected_facilities) == 1:
+            fac_id = selected_facilities[0]
+            # Find region for this facility to get proper code
+            if facilities_by_region:
+                for region_id, facilities in facilities_by_region.items():
+                    for f_id, f_name, f_uid in facilities:
+                        if f_id == fac_id:
+                            facility_code = get_facility_code(fac_id, region_id)
+                            return f"Facility {facility_code}", "Facility"
+            # If not found, just return ID
+            return f"Facility {fac_id}", "Facility"
+        else:
+            return f"{len(selected_facilities)} facilities", "Facilities"
     else:
-        return country_name, "Country"
+        return "All", "Country"
