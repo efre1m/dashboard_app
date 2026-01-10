@@ -1,4 +1,4 @@
-# kpi_utils_newborn_simplified.py - FIXED CPAP COMPARISON FUNCTIONS
+# kpi_utils_newborn_simplified.py - UPDATED WITH NEW VARIABLE NAMES
 
 import pandas as pd
 import plotly.express as px
@@ -51,23 +51,23 @@ def download_csv_button(
     )
 
 
-# ---------------- Newborn KPI Constants ----------------
-# Birth weight column (from maternal birth and infant details)
-BIRTH_WEIGHT_COL = "birth_weight_grams_maternal_birth_and_infant_details"
+# ---------------- Newborn KPI Constants - UPDATED VARIABLE NAMES ----------------
+# Birth weight column (from NICU Admission Careform)
+BIRTH_WEIGHT_COL = "birth_weight_n_nicu_admission_careform"  # Updated: ZiI6RUqXLUl -> birth_weight_n_nicu_admission_careform
 
-# KMC columns
-KMC_ADMINISTERED_COL = "kmc_administered_interventions"
+# KMC columns (from Nurse followup Sheet)
+KMC_ADMINISTERED_COL = "kmc_done_nurse_followup_sheet"  # Updated: U3oBuzSBbWX -> kmc_done_nurse_followup_sheet
 KMC_YES_CODE = "1"
 
-# CPAP columns
-CPAP_ADMINISTERED_COL = "cpap_administered_interventions"
+# CPAP columns (from Neonatal referral form)
+CPAP_ADMINISTERED_COL = "baby_placed_on_cpap_neonatal_referral_form"  # Updated: y2YwnCXkw77 -> baby_placed_on_cpap_neonatal_referral_form
 CPAP_YES_CODE = "1"
 
-# RDS Diagnosis columns
-FIRST_REASON_ADMISSION_COL = "first_reason_for_admission_admission_information"
-SECOND_REASON_ADMISSION_COL = "second_reason_for_admission_admission_information"
-THIRD_REASON_ADMISSION_COL = "third_reason_for_admission_admission_information"
-RDS_CODE = "5"  # RDS diagnosis code
+# RDS Diagnosis columns (from Discharge care form)
+RDS_DIAGNOSIS_COL = "sub_categories_of_prematurity_n_discharge_care_form"  # Updated: lxtEbLnOxfk -> sub_categories_of_prematurity_n_discharge_care_form
+RDS_YES_CODE = (
+    "1"  # Updated: "1" means "Respiratory Distress Syndrome (of Prematurity)"
+)
 
 # ---------------- Birth Weight Categories with Gradient Colors ----------------
 BIRTH_WEIGHT_CATEGORIES = {
@@ -489,9 +489,9 @@ def compute_kmc_coverage_kpi(df, facility_uids=None):
     return result
 
 
-# ---------------- CPAP COVERAGE KPI Functions ----------------
+# ---------------- CPAP COVERAGE KPI Functions - UPDATED RDS LOGIC ----------------
 def get_rds_newborns(df, facility_uids=None):
-    """Identify newborns with RDS diagnosis - FIXED with deduplication"""
+    """Identify newborns with RDS diagnosis - FIXED with deduplication and NEW RDS LOGIC"""
     if df is None or df.empty:
         return set()
 
@@ -500,42 +500,18 @@ def get_rds_newborns(df, facility_uids=None):
     # Deduplicate before identifying RDS
     filtered_df = deduplicate_by_tei(filtered_df)
 
-    required_cols = [
-        FIRST_REASON_ADMISSION_COL,
-        SECOND_REASON_ADMISSION_COL,
-        THIRD_REASON_ADMISSION_COL,
-    ]
-
-    # Check if required columns exist
-    missing_cols = [col for col in required_cols if col not in filtered_df.columns]
-    if missing_cols:
-        logger.warning(f"Missing RDS columns: {missing_cols}")
+    # Check if required column exists
+    if RDS_DIAGNOSIS_COL not in filtered_df.columns:
+        logger.warning(f"Missing RDS column: {RDS_DIAGNOSIS_COL}")
         return set()
 
     try:
-        # Convert all RDS columns to string and check for RDS code
+        # Convert RDS column to string and check for RDS code (value "1" means RDS)
+        # NEW LOGIC: Check if sub_categories_of_prematurity_n_discharge_care_form contains "1"
         rds_mask = (
-            (
-                filtered_df[FIRST_REASON_ADMISSION_COL]
-                .astype(str)
-                .str.split(".")
-                .str[0]
-                == RDS_CODE
-            )
-            | (
-                filtered_df[SECOND_REASON_ADMISSION_COL]
-                .astype(str)
-                .str.split(".")
-                .str[0]
-                == RDS_CODE
-            )
-            | (
-                filtered_df[THIRD_REASON_ADMISSION_COL]
-                .astype(str)
-                .str.split(".")
-                .str[0]
-                == RDS_CODE
-            )
+            filtered_df[RDS_DIAGNOSIS_COL]
+            .astype(str)
+            .str.contains(RDS_YES_CODE, na=False)
         )
 
         if "tei_id" in filtered_df.columns:
@@ -624,7 +600,7 @@ def compute_cpap_general_kpi(df, facility_uids=None):
 
 
 def compute_cpap_for_rds_kpi(df, facility_uids=None):
-    """Compute CPAP coverage for RDS newborns - FIXED with deduplication"""
+    """Compute CPAP coverage for RDS newborns - FIXED with deduplication and NEW RDS LOGIC"""
     cache_key = get_cache_key_simplified(df, facility_uids, "cpap_for_rds_kpi")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -1378,7 +1354,6 @@ def render_birth_weight_region_comparison(
     )
 
 
-# ---------------- SEPARATE CPAP CHART FUNCTIONS (UPDATED WITH SINGLE TABLE) ----------------
 # ---------------- SEPARATE CPAP CHART FUNCTIONS (UPDATED WITH SINGLE TABLE) ----------------
 def render_cpap_general_trend_chart(
     df,
@@ -3987,5 +3962,6 @@ __all__ = [
     "KMC_YES_CODE",
     "CPAP_ADMINISTERED_COL",
     "CPAP_YES_CODE",
-    "RDS_CODE",
+    "RDS_DIAGNOSIS_COL",  # Updated name
+    "RDS_YES_CODE",  # Updated name
 ]

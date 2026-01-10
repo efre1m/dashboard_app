@@ -1,4 +1,4 @@
-# kpi_newborn.py - FIXED REGIONAL DENOMINATOR ISSUE
+# kpi_newborn.py - UPDATED WITH NEW COLUMN NAMES, REMOVED CULTURE TABS
 
 import pandas as pd
 import streamlit as st
@@ -17,15 +17,6 @@ from newborns_dashboard.kpi_utils_newborn import (
     render_admitted_newborns_trend_chart,
     render_admitted_newborns_facility_comparison_chart,
     render_admitted_newborns_region_comparison_chart,
-)
-
-# Import V2 functions for culture KPIs with FIXED region comparison
-from newborns_dashboard.kpi_utils_newborn_v2 import (
-    get_numerator_denominator_for_newborn_kpi_v2,
-    render_culture_done_trend_chart_v2,
-    render_culture_done_facility_comparison_chart_v2,
-    render_culture_result_recorded_trend_chart_v2,
-    render_culture_done_sepsis_trend_chart_v2,
 )
 
 # Import simplified functions with SINGLE TABLE DISPLAY
@@ -90,27 +81,11 @@ NEWBORN_KPI_MAPPING = {
         "title": "Total Admitted Newborns",
         "value_name": "Admitted Newborns",
     },
-    # ANTIBIOTICS KPI
+    # ANTIBIOTICS KPI - UPDATED WITH NEW COLUMN NAMES
     "Antibiotics for Clinical Sepsis (%)": {
         "title": "Antibiotics for Clinical Sepsis (%)",
         "numerator_name": "Newborns with Sepsis Receiving Antibiotics",
         "denominator_name": "Newborns with Probable Sepsis",
-    },
-    # NEW CULTURE KPIs
-    "Culture Done for Babies on Antibiotics (%)": {
-        "title": "Culture Done for Babies on Antibiotics (%)",
-        "numerator_name": "Culture Done Cases",
-        "denominator_name": "Total babies on Antibiotics",
-    },
-    "Blood Culture Result Recorded (%)": {
-        "title": "Blood Culture Result Recorded (%)",
-        "numerator_name": "Result Recorded (Negative/Positive)",
-        "denominator_name": "Total Culture Done (All Results)",
-    },
-    "Culture Done for Babies with Clinical Sepsis (%)": {
-        "title": "Culture Done for Babies with Clinical Sepsis (%)",
-        "numerator_name": "Culture Done Cases",
-        "denominator_name": "Probable Sepsis Cases",
     },
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution": {
@@ -155,7 +130,7 @@ NEWBORN_KPI_MAPPING = {
     },
 }
 
-# KPI options for newborn dashboard
+# KPI options for newborn dashboard (REMOVED CULTURE KPIs)
 NEWBORN_KPI_OPTIONS = [
     "Inborn Rate (%)",
     "Outborn Rate (%)",
@@ -166,10 +141,6 @@ NEWBORN_KPI_OPTIONS = [
     "Outborn Hypothermia Rate (%)",
     "Admitted Newborns",
     "Antibiotics for Clinical Sepsis (%)",
-    # NEW CULTURE KPIs
-    "Culture Done for Babies on Antibiotics (%)",
-    "Blood Culture Result Recorded (%)",
-    "Culture Done for Babies with Clinical Sepsis (%)",
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution",
     "KMC Coverage by Birth Weight",
@@ -179,7 +150,7 @@ NEWBORN_KPI_OPTIONS = [
     "CPAP Coverage by Birth Weight",
 ]
 
-# KPI Groups for Tab Navigation
+# KPI Groups for Tab Navigation (UPDATED - REMOVED SEPsis MANAGEMENT TAB)
 NEWBORN_KPI_GROUPS = {
     "👶 Birth & Hypothermia": [
         "Inborn Rate (%)",
@@ -190,17 +161,12 @@ NEWBORN_KPI_GROUPS = {
         "Outborn Hypothermia Rate (%)",
         "Birth Weight Distribution",
     ],
-    "💊 Sepsis Management": [
-        "Antibiotics for Clinical Sepsis (%)",
-        "Culture Done for Babies with Clinical Sepsis (%)",
-        "Culture Done for Babies on Antibiotics (%)",
-        "Blood Culture Result Recorded (%)",
-    ],
     "🏥 Interventions": [
         "KMC Coverage by Birth Weight",
         "General CPAP Coverage",
         "CPAP for RDS",
         "CPAP Coverage by Birth Weight",
+        "Antibiotics for Clinical Sepsis (%)",  # Moved here from Sepsis Management
     ],
     "📊 Outcomes & Enrollment": [
         "Neonatal Mortality Rate (%)",
@@ -208,58 +174,59 @@ NEWBORN_KPI_GROUPS = {
     ],
 }
 
-# KPI Column Requirements
+# KPI Column Requirements - UPDATED WITH NEW COLUMN NAMES
 NEWBORN_KPI_COLUMN_REQUIREMENTS = {
     "Inborn Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "birth_location_admission_information",
-        "event_date_admission_information",
+        "place_of_delivery_nicu_admission_careform",  # Updated: birth_location_admission_information
+        "event_date_nicu_admission_careform",  # Updated: event_date_admission_information
     ],
     "Outborn Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "birth_location_admission_information",
-        "event_date_admission_information",
+        "place_of_delivery_nicu_admission_careform",  # Updated: birth_location_admission_information
+        "event_date_nicu_admission_careform",  # Updated: event_date_admission_information
     ],
     "Hypothermia on Admission Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "temperature_on_admission_degc_observations_and_nursing_care_1",
-        "event_date_observations_and_nursing_care_1",
+        "temp_at_admission_nicu_admission_careform",  # Updated: temperature_on_admission_degc_observations_and_nursing_care_1
+        "event_date_nicu_admission_careform",  # Updated: event_date_observations_and_nursing_care_1
     ],
     "Hypothermia After Admission Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "lowest_recorded_temperature_celsius_observations_and_nursing_care_2",
-        "event_date_observations_and_nursing_care_2",
+        # Updated: Not available in current dataset, using same as admission
+        "temp_at_admission_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
     ],
     "Neonatal Mortality Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "newborn_status_at_discharge_discharge_and_final_diagnosis",
-        "event_date_discharge_and_final_diagnosis",
+        "newborn_status_at_discharge_n_discharge_care_form",  # Updated: newborn_status_at_discharge_discharge_and_final_diagnosis
+        "event_date_discharge_care_form",  # Updated: event_date_discharge_and_final_diagnosis
     ],
     "Inborn Hypothermia Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "birth_location_admission_information",
-        "temperature_on_admission_degc_observations_and_nursing_care_1",
-        "event_date_admission_information",
+        "place_of_delivery_nicu_admission_careform",  # Updated: birth_location_admission_information
+        "temp_at_admission_nicu_admission_careform",  # Updated: temperature_on_admission_degc_observations_and_nursing_care_1
+        "event_date_nicu_admission_careform",  # Updated: event_date_admission_information
     ],
     "Outborn Hypothermia Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "birth_location_admission_information",
-        "temperature_on_admission_degc_observations_and_nursing_care_1",
-        "event_date_admission_information",
+        "place_of_delivery_nicu_admission_careform",  # Updated: birth_location_admission_information
+        "temp_at_admission_nicu_admission_careform",  # Updated: temperature_on_admission_degc_observations_and_nursing_care_1
+        "event_date_nicu_admission_careform",  # Updated: event_date_admission_information
     ],
     "Admitted Newborns": [
         "orgUnit",
@@ -270,93 +237,60 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "sub_categories_of_infection_discharge_and_final_diagnosis",
-        "were_antibiotics_administered?_interventions",
-        "event_date_discharge_and_final_diagnosis",
-    ],
-    # NEW CULTURE KPIs
-    "Culture Done for Babies on Antibiotics (%)": [
-        "orgUnit",
-        "tei_id",
-        "enrollment_date",
-        "blood_culture_for_suspected_sepsis_microbiology_and_labs",
-        "were_antibiotics_administered?_interventions",
-        "event_date_microbiology_and_labs",
-    ],
-    "Blood Culture Result Recorded (%)": [
-        "orgUnit",
-        "tei_id",
-        "enrollment_date",
-        "blood_culture_for_suspected_sepsis_microbiology_and_labs",
-        "event_date_microbiology_and_labs",
-    ],
-    "Culture Done for Babies with Clinical Sepsis (%)": [
-        "orgUnit",
-        "tei_id",
-        "enrollment_date",
-        "blood_culture_for_suspected_sepsis_microbiology_and_labs",
-        "sub_categories_of_infection_discharge_and_final_diagnosis",
-        "event_date_microbiology_and_labs",
+        "sub_categories_of_infection_n_discharge_care_form",  # Updated: sub_categories_of_infection_discharge_and_final_diagnosis
+        "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform",  # Updated: were_antibiotics_administered?_interventions
+        "event_date_nicu_admission_careform",  # Updated: event_date_discharge_and_final_diagnosis
     ],
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "birth_weight_grams_maternal_birth_and_infant_details",
-        "event_date_maternal_birth_and_infant_details",
+        "birth_weight_n_nicu_admission_careform",  # Updated: birth_weight_grams_maternal_birth_and_infant_details
+        "event_date_nicu_admission_careform",  # Updated: event_date_maternal_birth_and_infant_details
     ],
     "KMC Coverage by Birth Weight": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "birth_weight_grams_maternal_birth_and_infant_details",
-        "kmc_administered_interventions",
-        "event_date_interventions",
+        "birth_weight_n_nicu_admission_careform",  # Updated: birth_weight_grams_maternal_birth_and_infant_details
+        "kmc_done_nurse_followup_sheet",  # Updated: kmc_administered_interventions
+        "event_date_nurse_followup_sheet",  # Updated: event_date_interventions
     ],
-    # CPAP REQUIREMENTS
+    # CPAP REQUIREMENTS - UPDATED
     "General CPAP Coverage": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "cpap_administered_interventions",
-        "event_date_interventions",
+        "baby_placed_on_cpap_neonatal_referral_form",  # Updated: cpap_administered_interventions
+        "event_date_neonatal_referral_form",  # Updated: event_date_interventions
     ],
     "CPAP for RDS": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "cpap_administered_interventions",
-        "first_reason_for_admission_admission_information",
-        "second_reason_for_admission_admission_information",
-        "third_reason_for_admission_admission_information",
-        "event_date_interventions",
+        "baby_placed_on_cpap_neonatal_referral_form",  # Updated: cpap_administered_interventions
+        "sub_categories_of_prematurity_n_discharge_care_form",  # Updated: first_reason_for_admission_admission_information
+        "event_date_neonatal_referral_form",  # Updated: event_date_interventions
     ],
     "CPAP Coverage by Birth Weight": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "cpap_administered_interventions",
-        "birth_weight_grams_maternal_birth_and_infant_details",
-        "event_date_interventions",
+        "baby_placed_on_cpap_neonatal_referral_form",  # Updated: cpap_administered_interventions
+        "birth_weight_n_nicu_admission_careform",  # Updated: birth_weight_grams_maternal_birth_and_infant_details
+        "event_date_neonatal_referral_form",  # Updated: event_date_interventions
     ],
 }
 
-# CULTURE KPI DATE COLUMN MAPPING
-CULTURE_KPI_DATE_COLUMNS = {
-    "Culture Done for Babies on Antibiotics (%)": "event_date_microbiology_and_labs",
-    "Blood Culture Result Recorded (%)": "event_date_microbiology_and_labs",
-    "Culture Done for Babies with Clinical Sepsis (%)": "event_date_microbiology_and_labs",
-}
-
-# SIMPLIFIED KPI DATE COLUMN MAPPING
+# SIMPLIFIED KPI DATE COLUMN MAPPING - UPDATED
 SIMPLIFIED_KPI_DATE_COLUMNS = {
-    "Birth Weight Distribution": "event_date_maternal_birth_and_infant_details",
-    "KMC Coverage by Birth Weight": "event_date_interventions",
-    # CPAP DATE COLUMNS
-    "General CPAP Coverage": "event_date_interventions",
-    "CPAP for RDS": "event_date_interventions",
-    "CPAP Coverage by Birth Weight": "event_date_interventions",
+    "Birth Weight Distribution": "event_date_nicu_admission_careform",
+    "KMC Coverage by Birth Weight": "event_date_nurse_followup_sheet",
+    # CPAP DATE COLUMNS - UPDATED
+    "General CPAP Coverage": "event_date_neonatal_referral_form",
+    "CPAP for RDS": "event_date_neonatal_referral_form",
+    "CPAP Coverage by Birth Weight": "event_date_neonatal_referral_form",
 }
 
 
@@ -400,12 +334,6 @@ def get_newborn_kpi_config(kpi_selection):
     return NEWBORN_KPI_MAPPING.get(kpi_selection, {})
 
 
-def is_culture_kpi(kpi_name):
-    """Check if a KPI is a culture-related KPI"""
-    culture_keywords = ["Culture", "Blood Culture"]
-    return any(keyword in kpi_name for keyword in culture_keywords)
-
-
 def is_simplified_kpi(kpi_name):
     """Check if a KPI is a simplified KPI (Birth Weight, KMC, CPAP)"""
     kpi_config = get_newborn_kpi_config(kpi_name)
@@ -415,17 +343,13 @@ def is_simplified_kpi(kpi_name):
 def get_relevant_date_column_for_newborn_kpi_with_all(kpi_name):
     """
     Get the relevant event date column for a specific newborn KPI
-    Includes culture KPIs and simplified KPIs with correct date columns
+    Includes simplified KPIs with correct date columns
     """
-    # First check if it's a culture KPI
-    if kpi_name in CULTURE_KPI_DATE_COLUMNS:
-        return CULTURE_KPI_DATE_COLUMNS[kpi_name]
-
     # Check if it's a simplified KPI
     if kpi_name in SIMPLIFIED_KPI_DATE_COLUMNS:
         return SIMPLIFIED_KPI_DATE_COLUMNS[kpi_name]
 
-    # Use original function for non-culture KPIs
+    # Use original function for non-simplified KPIs
     return get_relevant_date_column_for_newborn_kpi(kpi_name)
 
 
@@ -434,25 +358,20 @@ def get_numerator_denominator_for_newborn_kpi_with_all(
 ):
     """
     Get numerator and denominator for a specific newborn KPI with date range filtering
-    Supports V1, V2 (culture), and simplified KPIs
+    Supports V1 and simplified KPIs
     """
-    # Use V2 function for culture KPIs
-    if is_culture_kpi(kpi_name):
-        return get_numerator_denominator_for_newborn_kpi_v2(
-            df, kpi_name, facility_uids, date_range_filters
-        )
     # For simplified KPIs, return 0,0,0 as they have special rendering
-    elif is_simplified_kpi(kpi_name):
+    if is_simplified_kpi(kpi_name):
         return (0, 0, 0.0)
     else:
-        # Use existing V1 function for non-culture KPIs
+        # Use existing V1 function for non-simplified KPIs
         return get_numerator_denominator_for_newborn_kpi(
             df, kpi_name, facility_uids, date_range_filters
         )
 
 
 def render_newborn_kpi_tab_navigation():
-    """Render professional tab navigation for Neonatal KPI selection"""
+    """Render professional tab navigation for Neonatal KPI selection - UPDATED WITH 3 TABS"""
 
     st.markdown(
         """
@@ -491,11 +410,10 @@ def render_newborn_kpi_tab_navigation():
     if "selected_newborn_kpi" not in st.session_state:
         st.session_state.selected_newborn_kpi = "Inborn Rate (%)"
 
-    # Create main KPI group tabs
-    tab1, tab2, tab3, tab4 = st.tabs(
+    # Create main KPI group tabs - UPDATED TO 3 TABS
+    tab1, tab2, tab3 = st.tabs(
         [
             "👶 **Birth & Hypothermia**",
-            "💊 **Sepsis Management**",
             "🏥 **Interventions**",
             "📊 **Outcomes & Enrollment**",
         ]
@@ -595,6 +513,7 @@ def render_newborn_kpi_tab_navigation():
     with tab2:
         col1, col2 = st.columns(2)
         col3, col4 = st.columns(2)
+        col5, col6 = st.columns(2)
 
         with col1:
             if st.button(
@@ -611,50 +530,6 @@ def render_newborn_kpi_tab_navigation():
 
         with col2:
             if st.button(
-                "🧫 Culture for Sepsis",
-                key="culture_sepsis_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi
-                    == "Culture Done for Babies with Clinical Sepsis (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Culture Done for Babies with Clinical Sepsis (%)"
-
-        with col3:
-            if st.button(
-                "🧫 Culture Done for Antibiotics",
-                key="culture_done_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Culture Done for Babies on Antibiotics (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Culture Done for Babies on Antibiotics (%)"
-
-        with col4:
-            if st.button(
-                "📋 Culture Results",
-                key="culture_result_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Blood Culture Result Recorded (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Blood Culture Result Recorded (%)"
-
-    with tab3:
-        col1, col2 = st.columns(2)
-        col3, col4 = st.columns(2)
-
-        with col1:
-            if st.button(
                 "🤱 KMC Coverage",
                 key="kmc_btn",
                 use_container_width=True,
@@ -666,7 +541,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "KMC Coverage by Birth Weight"
 
-        with col2:
+        with col3:
             if st.button(
                 "🌀 General CPAP",
                 key="cpap_general_btn",
@@ -679,7 +554,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "General CPAP Coverage"
 
-        with col3:
+        with col4:
             if st.button(
                 "🌀 CPAP for RDS",
                 key="cpap_rds_btn",
@@ -688,7 +563,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "CPAP for RDS"
 
-        with col4:
+        with col5:
             if st.button(
                 "🌀 CPAP by Birth Weight",
                 key="cpap_by_weight_btn",
@@ -701,7 +576,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "CPAP Coverage by Birth Weight"
 
-    with tab4:
+    with tab3:
         col1, col2 = st.columns(2)
 
         with col1:
@@ -820,17 +695,13 @@ def render_newborn_trend_chart_section(
         )
         return
 
-    # FIXED: Use correct date column function for culture KPIs
+    # FIXED: Use correct date column function
     date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
 
     # Prepare data using the correct date column
     if date_column not in working_df.columns:
-        # Try to find the date column
-        if kpi_selection in CULTURE_KPI_DATE_COLUMNS:
-            date_column = CULTURE_KPI_DATE_COLUMNS[kpi_selection]
-        else:
-            # Fallback to original function
-            date_column = get_relevant_date_column_for_newborn_kpi(kpi_selection)
+        # Fallback to original function
+        date_column = get_relevant_date_column_for_newborn_kpi(kpi_selection)
 
     # Filter by date column
     if date_column in working_df.columns:
@@ -940,61 +811,6 @@ def render_newborn_trend_chart_section(
                 value_name,
                 facility_uids,
             )
-        # SPECIAL HANDLING FOR CULTURE KPIs
-        elif is_culture_kpi(kpi_selection):
-            if kpi_selection == "Culture Done for Babies on Antibiotics (%)":
-                render_culture_done_trend_chart_v2(
-                    group,
-                    "period_display",
-                    "value",
-                    chart_title,
-                    bg_color,
-                    text_color,
-                    display_names,
-                    numerator_label,
-                    denominator_label,
-                    facility_uids,
-                )
-            elif kpi_selection == "Blood Culture Result Recorded (%)":
-                render_culture_result_recorded_trend_chart_v2(
-                    group,
-                    "period_display",
-                    "value",
-                    chart_title,
-                    bg_color,
-                    text_color,
-                    display_names,
-                    numerator_label,
-                    denominator_label,
-                    facility_uids,
-                )
-            elif kpi_selection == "Culture Done for Babies with Clinical Sepsis (%)":
-                render_culture_done_sepsis_trend_chart_v2(
-                    group,
-                    "period_display",
-                    "value",
-                    chart_title,
-                    bg_color,
-                    text_color,
-                    display_names,
-                    numerator_label,
-                    denominator_label,
-                    facility_uids,
-                )
-            else:
-                # Fallback for other culture KPIs
-                render_newborn_trend_chart(
-                    group,
-                    "period_display",
-                    "value",
-                    chart_title,
-                    bg_color,
-                    text_color,
-                    display_names,
-                    numerator_label,
-                    denominator_label,
-                    facility_uids,
-                )
         else:
             # Standard trend chart for all other KPIs
             render_newborn_trend_chart(
@@ -1194,36 +1010,8 @@ def render_newborn_comparison_chart(
                 facility_uids=facility_uids,
                 value_name=value_name,
             )
-        # SPECIAL HANDLING FOR CULTURE KPIs
-        elif is_culture_kpi(kpi_selection):
-            if kpi_selection == "Culture Done for Babies on Antibiotics (%)":
-                render_culture_done_facility_comparison_chart_v2(
-                    df=comparison_df,
-                    period_col="period_display",
-                    value_col="value",
-                    title=f"{chart_title} - Facility Comparison",
-                    bg_color=bg_color,
-                    text_color=text_color,
-                    facility_names=display_names,
-                    facility_uids=facility_uids,
-                    numerator_name=numerator_label,
-                    denominator_name=denominator_label,
-                )
-            else:
-                # Use generic comparison for other culture KPIs
-                render_newborn_facility_comparison_chart(
-                    df=comparison_df,
-                    period_col="period_display",
-                    value_col="value",
-                    title=f"{chart_title} - Facility Comparison",
-                    bg_color=bg_color,
-                    text_color=text_color,
-                    facility_names=display_names,
-                    facility_uids=facility_uids,
-                    numerator_name=numerator_label,
-                    denominator_name=denominator_label,
-                )
         else:
+            # Standard comparison for non-simplified KPIs
             render_newborn_facility_comparison_chart(
                 df=comparison_df,
                 period_col="period_display",
@@ -1369,37 +1157,20 @@ def render_newborn_comparison_chart(
                 value_name=value_name,
             )
         else:
-            # Use the FIXED render function from the appropriate module
-            if is_culture_kpi(kpi_selection):
-                # For culture KPIs, the fixed function is now in kpi_utils_newborn.py
-                render_newborn_region_comparison_chart(
-                    df=region_df,
-                    period_col="period_display",
-                    value_col="value",
-                    title=f"{chart_title} - Region Comparison",
-                    bg_color=bg_color,
-                    text_color=text_color,
-                    region_names=region_names,
-                    region_mapping=facilities_by_region,
-                    facilities_by_region=facilities_by_region,
-                    numerator_name=numerator_label,
-                    denominator_name=denominator_label,
-                )
-            else:
-                # For non-culture KPIs, use the original (now fixed) function
-                render_newborn_region_comparison_chart(
-                    df=region_df,
-                    period_col="period_display",
-                    value_col="value",
-                    title=f"{chart_title} - Region Comparison",
-                    bg_color=bg_color,
-                    text_color=text_color,
-                    region_names=region_names,
-                    region_mapping=facilities_by_region,
-                    facilities_by_region=facilities_by_region,
-                    numerator_name=numerator_label,
-                    denominator_name=denominator_label,
-                )
+            # For non-simplified KPIs, use the original function
+            render_newborn_region_comparison_chart(
+                df=region_df,
+                period_col="period_display",
+                value_col="value",
+                title=f"{chart_title} - Region Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=region_names,
+                region_mapping=facilities_by_region,
+                facilities_by_region=facilities_by_region,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
     else:
         if comparison_mode == "region":
             st.info(
@@ -2107,13 +1878,11 @@ __all__ = [
     "NEWBORN_KPI_OPTIONS",
     "NEWBORN_KPI_GROUPS",
     "NEWBORN_KPI_COLUMN_REQUIREMENTS",
-    "CULTURE_KPI_DATE_COLUMNS",
     "SIMPLIFIED_KPI_DATE_COLUMNS",
     # Main functions
     "get_newborn_kpi_filtered_dataframe",
     "get_text_color",
     "get_newborn_kpi_config",
-    "is_culture_kpi",
     "is_simplified_kpi",
     "get_relevant_date_column_for_newborn_kpi_with_all",
     "get_numerator_denominator_for_newborn_kpi_with_all",
