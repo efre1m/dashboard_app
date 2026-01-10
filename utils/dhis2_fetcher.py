@@ -426,6 +426,63 @@ class CSVIntegration:
         return df
 
     @staticmethod
+    def filter_excluded_facilities(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Filter out specific facilities from the transformed dataframe.
+        Removes:
+        1. Facilities named exactly "test" or "test2" (case-insensitive)
+        2. Any facility starting with "test" (case-insensitive)
+        3. Facility named "central ethiopia" (case-insensitive)
+        """
+        if df.empty:
+            return df
+
+        logger.info("🗑️ FILTERING: Removing excluded facilities")
+
+        # Store original count
+        original_count = len(df)
+        excluded_count = 0
+
+        # List to store indices to remove
+        indices_to_remove = []
+
+        # Check all rows
+        for idx, row in df.iterrows():
+            facility_name = row.get("orgUnit_name", "")
+
+            if not isinstance(facility_name, str):
+                continue
+
+            name_lower = facility_name.lower().strip()
+
+            # Check for exact matches
+            if name_lower in ["test", "test2", "central ethiopia"]:
+                indices_to_remove.append(idx)
+                excluded_count += 1
+                continue
+
+            # Check if starts with "test"
+            if name_lower.startswith("test"):
+                indices_to_remove.append(idx)
+                excluded_count += 1
+
+        # Remove the rows
+        if indices_to_remove:
+            filtered_df = df.drop(indices_to_remove).copy()
+            excluded_facilities = df.loc[indices_to_remove, "orgUnit_name"].unique()
+
+            logger.info(f"✅ Facility filtering complete:")
+            logger.info(f"   📊 Original records: {original_count}")
+            logger.info(f"   📊 After filtering: {len(filtered_df)}")
+            logger.info(f"   📊 Excluded records: {excluded_count}")
+            logger.info(f"   🗑️ Excluded facilities: {', '.join(excluded_facilities)}")
+
+            return filtered_df
+        else:
+            logger.info(f"✅ No facilities to exclude found")
+            return df
+
+    @staticmethod
     def filter_csv_data_by_user_access(
         csv_df: pd.DataFrame,
         user_level: str,
@@ -1477,8 +1534,15 @@ class CSVIntegration:
 
         logger.info("📦 POST-PROCESSING TRANSFORMED DATA")
 
-        # Step 1: Apply cleaning (remove has_actual_event, replace placeholders/empty, fill event dates)
-        processed_df = CSVIntegration.clean_transformed_dataframe(df)
+        # Step 1: Filter out excluded facilities
+        processed_df = CSVIntegration.filter_excluded_facilities(df)
+
+        if processed_df.empty:
+            logger.warning("⚠️ No data remaining after facility filtering")
+            return processed_df
+
+        # Step 2: Apply cleaning (remove has_actual_event, replace placeholders/empty, fill event dates)
+        processed_df = CSVIntegration.clean_transformed_dataframe(processed_df)
 
         # Check if this is maternal or newborn program
         is_maternal = (
