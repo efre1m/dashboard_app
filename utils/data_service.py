@@ -610,7 +610,7 @@ def fetch_program_data_for_user(
     """
     Load pre-fetched program data for user from CSV files.
 
-    ✅ FIXED: No transformation needed - we work directly with patient data
+    ✅ UPDATED: Support for new newborn program UID (QYJKpoUeg9F)
     """
     from utils.queries import get_program_by_uid
 
@@ -618,23 +618,26 @@ def fetch_program_data_for_user(
     program_name = program_info.get("program_name", "Unknown Program")
 
     # Map program name/UID to program type
+    # UPDATED: Added new newborn program UID and NCF program name
     if (
-        program_uid == "aLoraiFNkng"
+        program_uid == "aLoraiFNkng"  # Maternal program UID
         or "Maternal" in program_name
         or "maternal" in program_name.lower()
+        or program_name == "Maternal Inpatient Data"
     ):
         program_type = "maternal"
     elif (
-        "Newborn" in program_name
+        program_uid == "QYJKpoUeg9F"  # NEW: NCF program UID
+        or program_uid == "pLk3Ht2XMKl"  # OLD: Newborn Care Form UID
+        or "Newborn" in program_name
         or "newborn" in program_name.lower()
         or program_name == "Newborn Care Form"
+        or program_name == "NCF"  # NEW: NCF program name
     ):
         program_type = "newborn"
     else:
-        if program_uid and program_uid == "aLoraiFNkng":
-            program_type = "maternal"
-        else:
-            program_type = "newborn"
+        # Fallback - if not maternal, assume newborn
+        program_type = "newborn"
 
     logging.info(f"📂 Loading {program_type} program data")
     logging.info(f"   Program UID: {program_uid}")
@@ -758,11 +761,18 @@ def get_newborn_program_uid() -> str:
     from utils.queries import get_all_programs
 
     programs = get_all_programs()
+
+    # UPDATED: First try to find "NCF" (new program)
+    for program in programs:
+        if program.get("program_name") == "NCF":
+            return program.get("program_uid", "")
+
+    # Then try "Newborn Care Form" (old program)
     for program in programs:
         if program.get("program_name") == "Newborn Care Form":
             return program.get("program_uid", "")
 
-    return "TIdYusMYiKl"
+    return "QYJKpoUeg9F"  # UPDATED: Default to new newborn program UID
 
 
 def get_patient_level_summary(patient_df: pd.DataFrame) -> Dict[str, Any]:
