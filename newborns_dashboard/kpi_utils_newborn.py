@@ -33,40 +33,38 @@ def clear_cache_newborn():
 
 
 # ---------------- Newborn KPI Constants ----------------
+# UPDATED: Based on your dataset column names
 # Admission Information columns
-BIRTH_LOCATION_COL = "birth_location_admission_information"
+BIRTH_LOCATION_COL = "place_of_delivery_nicu_admission_careform"
 INBORN_CODE = "1"
 OUTBORN_CODE = "2"
 
 # Observations and Nursing Care 1 columns
-TEMPERATURE_ON_ADMISSION_COL = (
-    "temperature_on_admission_degc_observations_and_nursing_care_1"
-)
+TEMPERATURE_ON_ADMISSION_COL = "temp_at_admission_nicu_admission_careform"
 HYPOTHERMIA_THRESHOLD = 36.5  # °C
 
-# Observations and Nursing Care 2 columns
-LOWEST_TEMPERATURE_COL = (
-    "lowest_recorded_temperature_celsius_observations_and_nursing_care_2"
-)
+# Observations and Nursing Care 2 columns - NOT AVAILABLE
+# LOWEST_TEMPERATURE_COL = "lowest_recorded_temperature_celsius_observations_and_nursing_care_2"
 
 # Discharge columns
-NEWBORN_STATUS_COL = "newborn_status_at_discharge_discharge_and_final_diagnosis"
+NEWBORN_STATUS_COL = "newborn_status_at_discharge_n_discharge_care_form"
 NEWBORN_DEAD_CODE = "0"  # dead code value
 
-# Event date columns
-ADMISSION_DATE_COL = "event_date_admission_information"
-OBS1_DATE_COL = "event_date_observations_and_nursing_care_1"
-OBS2_DATE_COL = "event_date_observations_and_nursing_care_2"
-DISCHARGE_DATE_COL = "event_date_discharge_and_final_diagnosis"
+# Event date columns - UPDATED
+ADMISSION_DATE_COL = "event_date_nicu_admission_careform"
+DISCHARGE_DATE_COL = "event_date_discharge_care_form"
 ENROLLMENT_DATE_COL = "enrollment_date"  # For Admitted Newborns
 
-# ANTIBIOTICS COLUMNS - ADDED
-SUBCATEGORIES_INFECTION_COL = (
-    "sub_categories_of_infection_discharge_and_final_diagnosis"
+# ANTIBIOTICS COLUMNS - UPDATED
+# Maternal medication during pregnancy and labor - value "1" means Antibiotics
+MATERNAL_MEDICATION_COL = (
+    "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform"
 )
-ANTIBIOTICS_ADMINISTERED_COL = "were_antibiotics_administered?_interventions"
+ANTIBIOTICS_CODE = "1"  # Antibiotics code in maternal medication
+
+# Probable sepsis (same logic, different column name)
+SUBCATEGORIES_INFECTION_COL = "sub_categories_of_infection_n_discharge_care_form"
 PROBABLE_SEPSIS_CODE = "1"
-YES_CODE = "1"
 
 
 # ---------------- Base Computation Functions ----------------
@@ -172,7 +170,7 @@ def compute_admitted_newborns_rate(df, facility_uids=None):
     return result
 
 
-# ---------------- ANTIBIOTICS FUNCTIONS - ADDED ----------------
+# ---------------- ANTIBIOTICS FUNCTIONS - UPDATED ----------------
 def compute_probable_sepsis_count(df, facility_uids=None):
     """Count newborns with probable sepsis"""
     cache_key = get_cache_key_newborn(df, facility_uids, "probable_sepsis_count")
@@ -211,7 +209,7 @@ def compute_probable_sepsis_count(df, facility_uids=None):
 
 
 def compute_antibiotics_count(df, facility_uids=None):
-    """Count newborns with probable sepsis AND antibiotics administered"""
+    """Count newborns with maternal antibiotics administered"""
     cache_key = get_cache_key_newborn(df, facility_uids, "antibiotics_count")
 
     if cache_key in st.session_state.kpi_cache_newborn:
@@ -224,39 +222,26 @@ def compute_antibiotics_count(df, facility_uids=None):
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        if (
-            SUBCATEGORIES_INFECTION_COL not in filtered_df.columns
-            or ANTIBIOTICS_ADMINISTERED_COL not in filtered_df.columns
-        ):
+        if MATERNAL_MEDICATION_COL not in filtered_df.columns:
             result = 0
         else:
             df_work = filtered_df.copy()
 
-            # Clean infection column
-            df_work["infection_clean"] = df_work[SUBCATEGORIES_INFECTION_COL].astype(
-                str
-            )
-            df_work["infection_numeric"] = pd.to_numeric(
-                df_work["infection_clean"].str.split(".").str[0], errors="coerce"
+            # Clean maternal medication column
+            df_work["medication_clean"] = df_work[MATERNAL_MEDICATION_COL].astype(str)
+            df_work["medication_numeric"] = pd.to_numeric(
+                df_work["medication_clean"].str.split(".").str[0], errors="coerce"
             )
 
-            # Clean antibiotics column
-            df_work["antibiotics_clean"] = df_work[ANTIBIOTICS_ADMINISTERED_COL].astype(
-                str
-            )
-            df_work["antibiotics_numeric"] = pd.to_numeric(
-                df_work["antibiotics_clean"].str.split(".").str[0], errors="coerce"
-            )
-
-            sepsis_mask = df_work["infection_numeric"] == float(PROBABLE_SEPSIS_CODE)
-            antibiotics_mask = df_work["antibiotics_numeric"] == float(YES_CODE)
-            combined_mask = sepsis_mask & antibiotics_mask
+            antibiotics_mask = df_work["medication_numeric"] == float(ANTIBIOTICS_CODE)
 
             if "tei_id" in df_work.columns:
-                eligible_teis = df_work.loc[combined_mask, "tei_id"].dropna().unique()
+                eligible_teis = (
+                    df_work.loc[antibiotics_mask, "tei_id"].dropna().unique()
+                )
                 result = len(eligible_teis)
             else:
-                result = int(combined_mask.sum())
+                result = int(antibiotics_mask.sum())
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
@@ -273,14 +258,10 @@ def compute_antibiotics_rate(df, facility_uids=None):
         result = (0.0, 0, 0)
     else:
         antibiotics_count = compute_antibiotics_count(df, facility_uids)
-        probable_sepsis_count = compute_probable_sepsis_count(df, facility_uids)
+        total_admitted = compute_total_admitted_newborns(df, facility_uids)
 
-        rate = (
-            (antibiotics_count / probable_sepsis_count * 100)
-            if probable_sepsis_count > 0
-            else 0.0
-        )
-        result = (float(rate), int(antibiotics_count), int(probable_sepsis_count))
+        rate = (antibiotics_count / total_admitted * 100) if total_admitted > 0 else 0.0
+        result = (float(rate), int(antibiotics_count), int(total_admitted))
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
@@ -288,14 +269,14 @@ def compute_antibiotics_rate(df, facility_uids=None):
 
 def compute_antibiotics_kpi(df, facility_uids=None):
     """Compute antibiotics KPI data"""
-    rate, antibiotics_count, probable_sepsis_count = compute_antibiotics_rate(
+    rate, antibiotics_count, total_admitted = compute_antibiotics_rate(
         df, facility_uids
     )
 
     return {
         "antibiotics_rate": float(rate),
         "antibiotics_count": int(antibiotics_count),
-        "probable_sepsis_count": int(probable_sepsis_count),
+        "total_admitted": int(total_admitted),
     }
 
 
@@ -310,8 +291,8 @@ def get_numerator_denominator_for_antibiotics(
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Use discharge date for antibiotics
-    date_column = DISCHARGE_DATE_COL
+    # Use admission date for antibiotics (maternal medication during admission)
+    date_column = ADMISSION_DATE_COL
 
     if date_column in filtered_df.columns:
         filtered_df[date_column] = pd.to_datetime(
@@ -338,13 +319,13 @@ def get_numerator_denominator_for_antibiotics(
     antibiotics_data = compute_antibiotics_kpi(filtered_df, facility_uids)
 
     numerator = antibiotics_data.get("antibiotics_count", 0)
-    denominator = antibiotics_data.get("probable_sepsis_count", 1)
+    denominator = antibiotics_data.get("total_admitted", 1)
     rate = antibiotics_data.get("antibiotics_rate", 0.0)
 
     return (numerator, denominator, rate)
 
 
-# ---------------- Existing Newborn Functions (Keep as is) ----------------
+# ---------------- Existing Newborn Functions ----------------
 def compute_inborn_count(df, facility_uids=None):
     """Count inborn occurrences - VECTORIZED - with UID filtering"""
     if df is None or df.empty:
@@ -407,8 +388,9 @@ def compute_hypothermia_on_admission_count(df, facility_uids=None):
     return int(hypothermia_mask.sum())
 
 
-def compute_hypothermia_after_admission_count(df, facility_uids=None):
-    """Count hypothermia after admission occurrences (lowest recorded temp < 36.5°C)"""
+# NEW FUNCTION: Inborn Hypothermia Count
+def compute_inborn_hypothermia_count(df, facility_uids=None):
+    """Count inborn newborns with hypothermia (<36.5°C)"""
     if df is None or df.empty:
         return 0
 
@@ -416,15 +398,68 @@ def compute_hypothermia_after_admission_count(df, facility_uids=None):
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    if LOWEST_TEMPERATURE_COL not in filtered_df.columns:
+    if (
+        BIRTH_LOCATION_COL not in filtered_df.columns
+        or TEMPERATURE_ON_ADMISSION_COL not in filtered_df.columns
+    ):
         return 0
 
     df_copy = filtered_df.copy()
-    df_copy["lowest_temp_numeric"] = pd.to_numeric(
-        df_copy[LOWEST_TEMPERATURE_COL], errors="coerce"
+
+    # Clean birth location
+    df_copy["birth_location_clean"] = df_copy[BIRTH_LOCATION_COL].astype(str)
+    df_copy["birth_location_numeric"] = pd.to_numeric(
+        df_copy["birth_location_clean"].str.split(".").str[0], errors="coerce"
     )
-    hypothermia_mask = df_copy["lowest_temp_numeric"] < HYPOTHERMIA_THRESHOLD
-    return int(hypothermia_mask.sum())
+
+    # Clean temperature
+    df_copy["temp_numeric"] = pd.to_numeric(
+        df_copy[TEMPERATURE_ON_ADMISSION_COL], errors="coerce"
+    )
+
+    # Count inborn AND hypothermic
+    inborn_hypo_mask = (df_copy["birth_location_numeric"] == 1) & (
+        df_copy["temp_numeric"] < HYPOTHERMIA_THRESHOLD
+    )
+
+    return int(inborn_hypo_mask.sum())
+
+
+# NEW FUNCTION: Outborn Hypothermia Count
+def compute_outborn_hypothermia_count(df, facility_uids=None):
+    """Count outborn newborns with hypothermia (<36.5°C)"""
+    if df is None or df.empty:
+        return 0
+
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    if (
+        BIRTH_LOCATION_COL not in filtered_df.columns
+        or TEMPERATURE_ON_ADMISSION_COL not in filtered_df.columns
+    ):
+        return 0
+
+    df_copy = filtered_df.copy()
+
+    # Clean birth location
+    df_copy["birth_location_clean"] = df_copy[BIRTH_LOCATION_COL].astype(str)
+    df_copy["birth_location_numeric"] = pd.to_numeric(
+        df_copy["birth_location_clean"].str.split(".").str[0], errors="coerce"
+    )
+
+    # Clean temperature
+    df_copy["temp_numeric"] = pd.to_numeric(
+        df_copy[TEMPERATURE_ON_ADMISSION_COL], errors="coerce"
+    )
+
+    # Count outborn AND hypothermic
+    outborn_hypo_mask = (df_copy["birth_location_numeric"] == 2) & (
+        df_copy["temp_numeric"] < HYPOTHERMIA_THRESHOLD
+    )
+
+    return int(outborn_hypo_mask.sum())
 
 
 def compute_neonatal_death_count(df, facility_uids=None):
@@ -505,21 +540,41 @@ def compute_hypothermia_on_admission_rate(df, facility_uids=None):
     return result
 
 
-def compute_hypothermia_after_admission_rate(df, facility_uids=None):
-    """Compute hypothermia after admission rate"""
-    cache_key = get_cache_key_newborn(
-        df, facility_uids, "hypothermia_after_admission_rate"
-    )
+# NEW FUNCTION: Inborn Hypothermia Rate
+def compute_inborn_hypothermia_rate(df, facility_uids=None):
+    """Compute inborn hypothermia rate - CORRECT: hypothermic inborn / total inborn"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "inborn_hypothermia_rate")
     if cache_key in st.session_state.kpi_cache_newborn:
         return st.session_state.kpi_cache_newborn[cache_key]
 
     if df is None or df.empty:
         result = (0.0, 0, 0)
     else:
-        hypothermia_count = compute_hypothermia_after_admission_count(df, facility_uids)
-        total_admitted = compute_total_admitted_newborns(df, facility_uids)
-        rate = (hypothermia_count / total_admitted * 100) if total_admitted > 0 else 0.0
-        result = (rate, hypothermia_count, total_admitted)
+        inborn_hypo_count = compute_inborn_hypothermia_count(df, facility_uids)
+        inborn_count = compute_inborn_count(df, facility_uids)  # CORRECT DENOMINATOR
+
+        rate = (inborn_hypo_count / inborn_count * 100) if inborn_count > 0 else 0.0
+        result = (rate, inborn_hypo_count, inborn_count)
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
+# NEW FUNCTION: Outborn Hypothermia Rate
+def compute_outborn_hypothermia_rate(df, facility_uids=None):
+    """Compute outborn hypothermia rate - CORRECT: hypothermic outborn / total outborn"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "outborn_hypothermia_rate")
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        outborn_hypo_count = compute_outborn_hypothermia_count(df, facility_uids)
+        outborn_count = compute_outborn_count(df, facility_uids)  # CORRECT DENOMINATOR
+
+        rate = (outborn_hypo_count / outborn_count * 100) if outborn_count > 0 else 0.0
+        result = (rate, outborn_hypo_count, outborn_count)
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
@@ -557,19 +612,29 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     total_admitted = compute_total_admitted_newborns(
         filtered_df, facility_uids, date_column
     )
-    inborn_rate, inborn_count, _ = compute_inborn_rate(filtered_df, facility_uids)
-    outborn_rate, outborn_count, _ = compute_outborn_rate(filtered_df, facility_uids)
+    inborn_rate, inborn_count, total_inborn_denom = compute_inborn_rate(
+        filtered_df, facility_uids
+    )
+    outborn_rate, outborn_count, total_outborn_denom = compute_outborn_rate(
+        filtered_df, facility_uids
+    )
     hypothermia_on_admission_rate, hypothermia_on_admission_count, _ = (
         compute_hypothermia_on_admission_rate(filtered_df, facility_uids)
     )
-    hypothermia_after_admission_rate, hypothermia_after_admission_count, _ = (
-        compute_hypothermia_after_admission_rate(filtered_df, facility_uids)
+
+    # ADD THE NEW HYPOTHERMIA BY BIRTH LOCATION KPIs
+    inborn_hypo_rate, inborn_hypo_count, total_inborn_hypo = (
+        compute_inborn_hypothermia_rate(filtered_df, facility_uids)
     )
+    outborn_hypo_rate, outborn_hypo_count, total_outborn_hypo = (
+        compute_outborn_hypothermia_rate(filtered_df, facility_uids)
+    )
+
     neonatal_mortality_rate, death_count, _ = compute_neonatal_mortality_rate(
         filtered_df, facility_uids
     )
-    antibiotics_rate, antibiotics_count, probable_sepsis_count = (
-        compute_antibiotics_rate(filtered_df, facility_uids)
+    antibiotics_rate, antibiotics_count, total_admitted_abx = compute_antibiotics_rate(
+        filtered_df, facility_uids
     )
     admitted_newborns_count = compute_admitted_newborns_count(
         filtered_df, facility_uids
@@ -579,22 +644,30 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         "total_admitted": int(total_admitted),
         "inborn_rate": float(inborn_rate),
         "inborn_count": int(inborn_count),
-        "total_inborn": int(total_admitted),
+        "total_inborn": int(
+            total_inborn_denom
+        ),  # This is total_admitted for distribution
         "outborn_rate": float(outborn_rate),
         "outborn_count": int(outborn_count),
-        "total_outborn": int(total_admitted),
+        "total_outborn": int(
+            total_outborn_denom
+        ),  # This is total_admitted for distribution
         "hypothermia_on_admission_rate": float(hypothermia_on_admission_rate),
         "hypothermia_on_admission_count": int(hypothermia_on_admission_count),
         "total_hypo_admission": int(total_admitted),
-        "hypothermia_after_admission_rate": float(hypothermia_after_admission_rate),
-        "hypothermia_after_admission_count": int(hypothermia_after_admission_count),
-        "total_hypo_after": int(total_admitted),
+        # NEW: Hypothermia by birth location
+        "inborn_hypothermia_rate": float(inborn_hypo_rate),
+        "inborn_hypothermia_count": int(inborn_hypo_count),
+        "total_inborn_hypo": int(total_inborn_hypo),  # This is inborn_count
+        "outborn_hypothermia_rate": float(outborn_hypo_rate),
+        "outborn_hypothermia_count": int(outborn_hypo_count),
+        "total_outborn_hypo": int(total_outborn_hypo),  # This is outborn_count
         "neonatal_mortality_rate": float(neonatal_mortality_rate),
         "death_count": int(death_count),
         "total_deaths": int(total_admitted),
         "antibiotics_rate": float(antibiotics_rate),
         "antibiotics_count": int(antibiotics_count),
-        "probable_sepsis_count": int(probable_sepsis_count),
+        "total_admitted_abx": int(total_admitted_abx),
         "admitted_newborns_count": int(admitted_newborns_count),
     }
 
@@ -605,49 +678,31 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
 # ---------------- Date Handling ----------------
 def get_relevant_date_column_for_newborn_kpi(kpi_name):
     """Get the relevant event date column for a specific newborn KPI"""
-    program_stage_date_mapping = {
-        # Admission Information KPIs
-        "Inborn Rate (%)": "event_date_admission_information",
-        "Outborn Rate (%)": "event_date_admission_information",
-        "Inborn Babies (%)": "event_date_admission_information",
-        "Outborn Babies (%)": "event_date_admission_information",
-        # Observations and Nursing Care 1 KPIs
-        "Hypothermia on Admission Rate (%)": "event_date_observations_and_nursing_care_1",
-        "Hypothermia on Admission (%)": "event_date_observations_and_nursing_care_1",
-        # Observations and Nursing Care 2 KPIs
-        "Hypothermia After Admission Rate (%)": "event_date_observations_and_nursing_care_2",
-        "Hypothermia After Admission (%)": "event_date_observations_and_nursing_care_2",
-        # Discharge KPIs
-        "Neonatal Mortality Rate (%)": "event_date_discharge_and_final_diagnosis",
-        "NMR (%)": "event_date_discharge_and_final_diagnosis",
-        "Antibiotics for Clinical Sepsis (%)": "event_date_discharge_and_final_diagnosis",
-        "Antibiotics Rate (%)": "event_date_discharge_and_final_diagnosis",
-        # Admitted Newborns KPI
+    # CLEAR DIRECT MAPPING - NO WORD SEARCHING
+    kpi_to_date_mapping = {
+        # ============ ADMISSION KPIs (use event_date_nicu_admission_careform) ============
+        "Inborn Rate (%)": "event_date_nicu_admission_careform",
+        "Outborn Rate (%)": "event_date_nicu_admission_careform",
+        "Inborn Babies (%)": "event_date_nicu_admission_careform",
+        "Outborn Babies (%)": "event_date_nicu_admission_careform",
+        "Inborn Hypothermia Rate (%)": "event_date_nicu_admission_careform",
+        "Outborn Hypothermia Rate (%)": "event_date_nicu_admission_careform",
+        # ============ HYPOTHERMIA ON ADMISSION (use event_date_nicu_admission_careform) ============
+        "Hypothermia on Admission Rate (%)": "event_date_nicu_admission_careform",
+        "Hypothermia on Admission (%)": "event_date_nicu_admission_careform",
+        # ============ ANTIBIOTICS (use event_date_nicu_admission_careform) ============
+        "Antibiotics for Clinical Sepsis (%)": "event_date_nicu_admission_careform",
+        "Antibiotics Rate (%)": "event_date_nicu_admission_careform",
+        # ============ DISCHARGE/OUTCOME KPIs (use event_date_discharge_care_form) ============
+        "Neonatal Mortality Rate (%)": "event_date_discharge_care_form",
+        "NMR (%)": "event_date_discharge_care_form",
+        # ============ ADMITTED NEWBORNS (use enrollment_date) ============
         "Admitted Newborns": "enrollment_date",
-        "Total Admitted Newborns": "event_date_admission_information",
+        "Total Admitted Newborns": "enrollment_date",
     }
 
-    for key in program_stage_date_mapping:
-        if key in kpi_name:
-            return program_stage_date_mapping[key]
-
-    if any(word in kpi_name for word in ["Inborn", "Outborn", "Birth Location"]):
-        return "event_date_admission_information"
-    elif (
-        any(word in kpi_name for word in ["Hypothermia", "Temperature", "Admission"])
-        and "After" not in kpi_name
-    ):
-        return "event_date_observations_and_nursing_care_1"
-    elif any(word in kpi_name for word in ["Lowest Temperature", "After Admission"]):
-        return "event_date_observations_and_nursing_care_2"
-    elif any(word in kpi_name for word in ["Mortality", "Death", "Discharge"]):
-        return "event_date_discharge_and_final_diagnosis"
-    elif any(word in kpi_name for word in ["Antibiotics", "Sepsis"]):
-        return "event_date_discharge_and_final_diagnosis"
-    elif any(word in kpi_name for word in ["Admitted Newborns", "Admitted"]):
-        return "enrollment_date"
-
-    return "event_date_admission_information"
+    # Direct lookup - no word searching
+    return kpi_to_date_mapping.get(kpi_name, "enrollment_date")  # Default fallback
 
 
 def prepare_data_for_newborn_trend_chart(
@@ -771,6 +826,7 @@ def get_numerator_denominator_for_newborn_kpi(
     kpi_data = compute_newborn_kpis(filtered_df, facility_uids, date_column)
 
     kpi_mapping = {
+        # Birth location distribution
         "Inborn Rate (%)": {
             "numerator": "inborn_count",
             "denominator": "total_admitted",
@@ -781,16 +837,24 @@ def get_numerator_denominator_for_newborn_kpi(
             "denominator": "total_admitted",
             "value": "outborn_rate",
         },
+        # General hypothermia (all newborns)
         "Hypothermia on Admission Rate (%)": {
             "numerator": "hypothermia_on_admission_count",
             "denominator": "total_admitted",
             "value": "hypothermia_on_admission_rate",
         },
-        "Hypothermia After Admission Rate (%)": {
-            "numerator": "hypothermia_after_admission_count",
-            "denominator": "total_admitted",
-            "value": "hypothermia_after_admission_rate",
+        # NEW: Hypothermia by birth location
+        "Inborn Hypothermia Rate (%)": {
+            "numerator": "inborn_hypothermia_count",
+            "denominator": "total_inborn_hypo",  # This is inborn_count
+            "value": "inborn_hypothermia_rate",
         },
+        "Outborn Hypothermia Rate (%)": {
+            "numerator": "outborn_hypothermia_count",
+            "denominator": "total_outborn_hypo",  # This is outborn_count
+            "value": "outborn_hypothermia_rate",
+        },
+        # Other KPIs
         "Neonatal Mortality Rate (%)": {
             "numerator": "death_count",
             "denominator": "total_admitted",
@@ -803,12 +867,12 @@ def get_numerator_denominator_for_newborn_kpi(
         },
         "Antibiotics for Clinical Sepsis (%)": {
             "numerator": "antibiotics_count",
-            "denominator": "probable_sepsis_count",
+            "denominator": "total_admitted_abx",
             "value": "antibiotics_rate",
         },
         "Antibiotics Rate (%)": {
             "numerator": "antibiotics_count",
-            "denominator": "probable_sepsis_count",
+            "denominator": "total_admitted_abx",
             "value": "antibiotics_rate",
         },
         "Admitted Newborns": {
@@ -826,14 +890,24 @@ def get_numerator_denominator_for_newborn_kpi(
         return (numerator, denominator, value)
 
     # Fallback mappings
-    if "Admitted Newborns" in kpi_name or "Admitted" in kpi_name:
+    if "Inborn Hypothermia" in kpi_name:
+        numerator = kpi_data.get("inborn_hypothermia_count", 0)
+        denominator = kpi_data.get("total_inborn_hypo", 1)  # This is inborn_count
+        value = kpi_data.get("inborn_hypothermia_rate", 0.0)
+        return (numerator, denominator, value)
+    elif "Outborn Hypothermia" in kpi_name:
+        numerator = kpi_data.get("outborn_hypothermia_count", 0)
+        denominator = kpi_data.get("total_outborn_hypo", 1)  # This is outborn_count
+        value = kpi_data.get("outborn_hypothermia_rate", 0.0)
+        return (numerator, denominator, value)
+    elif "Admitted Newborns" in kpi_name or "Admitted" in kpi_name:
         numerator = kpi_data.get("admitted_newborns_count", 0)
         denominator = 1
         value = float(numerator)
         return (numerator, denominator, value)
     elif "Antibiotics" in kpi_name or "Sepsis" in kpi_name:
         numerator = kpi_data.get("antibiotics_count", 0)
-        denominator = kpi_data.get("probable_sepsis_count", 1)
+        denominator = kpi_data.get("total_admitted_abx", 1)
         value = kpi_data.get("antibiotics_rate", 0.0)
         return (numerator, denominator, value)
     elif (
@@ -844,11 +918,6 @@ def get_numerator_denominator_for_newborn_kpi(
         numerator = kpi_data.get("hypothermia_on_admission_count", 0)
         denominator = kpi_data.get("total_admitted", 1)
         value = kpi_data.get("hypothermia_on_admission_rate", 0.0)
-        return (numerator, denominator, value)
-    elif "Hypothermia" in kpi_name and "After" in kpi_name:
-        numerator = kpi_data.get("hypothermia_after_admission_count", 0)
-        denominator = kpi_data.get("total_admitted", 1)
-        value = kpi_data.get("hypothermia_after_admission_rate", 0.0)
         return (numerator, denominator, value)
     elif "Inborn" in kpi_name:
         numerator = kpi_data.get("inborn_count", 0)
@@ -1652,7 +1721,6 @@ __all__ = [
     "compute_total_admitted_newborns",
     "compute_admitted_newborns_count",
     "compute_admitted_newborns_rate",
-    "compute_admitted_newborns_kpi",
     # Antibiotics functions
     "compute_probable_sepsis_count",
     "compute_antibiotics_count",
@@ -1663,13 +1731,15 @@ __all__ = [
     "compute_inborn_count",
     "compute_outborn_count",
     "compute_hypothermia_on_admission_count",
-    "compute_hypothermia_after_admission_count",
+    "compute_inborn_hypothermia_count",  # NEW
+    "compute_outborn_hypothermia_count",  # NEW
     "compute_neonatal_death_count",
     # KPI computation functions
     "compute_inborn_rate",
     "compute_outborn_rate",
     "compute_hypothermia_on_admission_rate",
-    "compute_hypothermia_after_admission_rate",
+    "compute_inborn_hypothermia_rate",  # NEW
+    "compute_outborn_hypothermia_rate",  # NEW
     "compute_neonatal_mortality_rate",
     # Master KPI function
     "compute_newborn_kpis",
@@ -1685,6 +1755,5 @@ __all__ = [
     "render_admitted_newborns_facility_comparison_chart",
     "render_admitted_newborns_region_comparison_chart",
     # Period aggregation functions
-    "aggregate_by_period_with_sorting_newborn",
     "extract_period_columns_newborn",
 ]

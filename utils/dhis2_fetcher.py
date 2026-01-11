@@ -15,7 +15,6 @@ import time
 import traceback
 import webbrowser
 import re
-import os
 
 # Setup logging
 logging.basicConfig(
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ========== CONFIGURATION ==========
 # Program UIDs
 MATERNAL_PROGRAM_UID = "aLoraiFNkng"
-NEWBORN_PROGRAM_UID = "pLk3Ht2XMKl"  # UPDATED: Your specified newborn UID
+NEWBORN_PROGRAM_UID = "QYJKpoUeg9F"  # UPDATED: Newborn Care Form UID
 
 # FIX 1: Correct path calculation for your project structure
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,8 +34,7 @@ DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "imnid")
 DEFAULT_MATERNAL_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "maternal")
 DEFAULT_NEWBORN_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "newborn")
 
-
-# Define data element mappings - EXACT SAME AS data_service.py
+# Define data element mappings - UPDATED FOR NEWBORN CARE FORM
 MATERNAL_HEALTH_ELEMENTS = {
     "Q1p7CxWGUoi",
     "lphtwP2ViZU",
@@ -53,30 +51,25 @@ MATERNAL_HEALTH_ELEMENTS = {
     "K8BCYRU1TUP",
 }
 
+# NEWBORN CARE FORM DATA ELEMENTS (updated as specified)
 NEWBORN_HEALTH_ELEMENTS = {
-    "QK7Fi6OwtDC",
-    "yxWUMt3sCil",
-    "gZi9y12E9i7",
-    "UOmhJkyAK6h",
-    "wlHEf9FdmJM",
-    "T30GbTiVgFR",
-    "OpHw2X58x5i",
-    "gJH6PkYI6IV",
-    "aK5txmRYpVX",
-    "vmOAGuFcaz4",
-    "yBCwmQP0A6a",
-    "nIKIu6f5vbW",
-    "sxtsEDilKZd",
-    "wn0tHaHcceW",
-    "A94ibeuO9GL",
-    "CzIgD0rsk52",  # ADDED: Birth weight
+    "MtIwjNsCLYy",  # Place of delivery
+    "RE3wIu5acNt",  # Temp at admission
+    "ZiI6RUqXLUl",  # Birth Weight n
+    "s9OrsTEv34G",  # Maternal medication during pregnancy and labor
+    "U3oBuzSBbWX",  # Kmc done
+    "y2YwnCXkw77",  # Baby placed on CPAP
+    "ZkeSH8X8MKK",  # Weight on discharge
+    "XITh8vyfqaR",  # Newborn status at discharge n
+    "UGz9phsvHt4",  # Sub-Categories of Infection n
+    "lxtEbLnOxfk",  # Sub-Categories of Prematurity n
 }
 
 REQUIRED_DATA_ELEMENTS = MATERNAL_HEALTH_ELEMENTS | NEWBORN_HEALTH_ELEMENTS
 
-# EXACT SAME DATA_ELEMENT_NAMES as in data_service.py - UPDATED WITH BIRTH WEIGHT
+# UPDATED DATA_ELEMENT_NAMES for newborn care form
 DATA_ELEMENT_NAMES = {
-    # Maternal Health
+    # Maternal Health (UNCHANGED)
     "Q1p7CxWGUoi": "FP Counseling and Method Provided pp",
     "lphtwP2ViZU": "Mode of Delivery maternal",
     "wZig9cek3Gv": "Birth Outcome",
@@ -90,23 +83,17 @@ DATA_ELEMENT_NAMES = {
     "H7J2SxBpObS": "ARV Rx for Newborn (By type) pp",
     "QUlJEvzGcQK": "Birth Weight (grams)",
     "K8BCYRU1TUP": "Instrumental delivery",
-    # Newborn Health
-    "QK7Fi6OwtDC": "KMC Administered",
-    "yxWUMt3sCil": "Weight on admission",
-    "gZi9y12E9i7": "Temperature on admission (°C)",
-    "UOmhJkyAK6h": "Date of Admission",
-    "wlHEf9FdmJM": "CPAP Administered",
-    "T30GbTiVgFR": "First Reason for Admission",
-    "OpHw2X58x5i": "Second Reason for Admission",
-    "gJH6PkYI6IV": "Third Reason for Admission",
-    "aK5txmRYpVX": "birth location",
-    "vmOAGuFcaz4": "Newborn Status at Discharge",
-    "yBCwmQP0A6a": "Discharge Weight (grams)",
-    "nIKIu6f5vbW": "lowest recorded temperature (Celsius)",
-    "sxtsEDilKZd": "Were antibiotics administered?",
-    "wn0tHaHcceW": "Sub-Categories of Infection",
-    "A94ibeuO9GL": "Blood culture for suspected sepsis",
-    "CzIgD0rsk52": "Birth weight (grams)",  # ADDED: Birth weight
+    # Newborn Care Form (UPDATED)
+    "MtIwjNsCLYy": "Place of delivery",
+    "RE3wIu5acNt": "Temp at admission",
+    "ZiI6RUqXLUl": "Birth Weight n",
+    "s9OrsTEv34G": "Maternal medication during pregnancy and labor",
+    "U3oBuzSBbWX": "Kmc done",
+    "y2YwnCXkw77": "Baby placed on CPAP",
+    "ZkeSH8X8MKK": "Weight on discharge",
+    "XITh8vyfqaR": "Newborn status at discharge n",
+    "UGz9phsvHt4": "Sub-Categories of Infection n",
+    "lxtEbLnOxfk": "Sub-Categories of Prematurity n",
 }
 
 # EXACT SAME PROGRAM STAGE MAPPINGS as in data_service.py - WITH HUMAN-READABLE NAMES
@@ -123,73 +110,61 @@ MATERNAL_PROGRAM_STAGE_MAPPING = {
             "yVRLuRU943e",
         ],
         "program_stage_name": "Delivery summary",
+        "is_repeatable": False,  # Usually not repeatable
     },
     "VpBHRE7FlJL": {  # Postpartum care
         "data_elements": ["z7Eb2yFLOBI", "H7J2SxBpObS", "Q1p7CxWGUoi"],
         "program_stage_name": "Postpartum care",
+        "is_repeatable": True,  # Can have multiple postpartum visits
     },
     "DLVsIxjhwMj": {  # Discharge Summary
         "data_elements": ["TjQOcW6tm8k"],
         "program_stage_name": "Discharge Summary",
+        "is_repeatable": False,
     },
     "bwk9bBfYcsD": {  # Instrumental Delivery form
         "data_elements": ["K8BCYRU1TUP"],
         "program_stage_name": "Instrumental Delivery form",
+        "is_repeatable": False,
     },
 }
 
-# UPDATED NEWBORN PROGRAM STAGE MAPPING - Added birth weight and corrected UID
+# UPDATED NEWBORN PROGRAM STAGE MAPPING for Newborn Care Form
+# Based on the provided program stage UIDs and data elements
 NEWBORN_PROGRAM_STAGE_MAPPING = {
-    "l39SlVGlQGs": {  # Admission Information
+    "mv8iC65nP21": {  # NICU Admission Careform
         "data_elements": [
-            "UOmhJkyAK6h",  # Date of Admission
-            "yxWUMt3sCil",  # Weight on admission
-            "T30GbTiVgFR",  # First Reason for Admission
-            "OpHw2X58x5i",  # Second Reason for Admission
-            "gJH6PkYI6IV",  # Third Reason for Admission
-            "aK5txmRYpVX",  # birth location (inborn/outborn)
+            "MtIwjNsCLYy",  # Place of delivery
+            "RE3wIu5acNt",  # Temp at admission
+            "ZiI6RUqXLUl",  # Birth Weight n
+            "s9OrsTEv34G",  # Maternal medication during pregnancy and labor
         ],
-        "program_stage_name": "Admission Information",
+        "program_stage_name": "NICU Admission Careform",
+        "is_repeatable": False,  # Usually one admission per newborn
     },
-    "UK7jsDbVpj6": {  # Maternal Birth And Infant Details - UPDATED UID
+    "eCyte3bTjHS": {  # Nurse followup Sheet
         "data_elements": [
-            "CzIgD0rsk52",  # Birth weight (grams) - ADDED
+            "U3oBuzSBbWX",  # Kmc done
         ],
-        "program_stage_name": "Maternal Birth And Infant Details",
+        "program_stage_name": "Nurse followup Sheet",
+        "is_repeatable": True,  # Can have multiple nurse followups
     },
-    "j0HI2eJjvbj": {  # Observations And Nursing Care 1
+    "vir7ed0Qkyc": {  # Neonatal referral form
         "data_elements": [
-            "gZi9y12E9i7",  # Temperature on admission
+            "y2YwnCXkw77",  # Baby placed on CPAP
         ],
-        "program_stage_name": "Observations And Nursing Care 1",
+        "program_stage_name": "Neonatal referral form",
+        "is_repeatable": False,  # Usually one referral
     },
-    "ed8ErpgTCwx": {  # Interventions
+    "CbH1hYxJdL7": {  # Discharge care form
         "data_elements": [
-            "QK7Fi6OwtDC",  # KMC Administered
-            "wlHEf9FdmJM",  # CPAP Administered
-            "sxtsEDilKZd",  # Were antibiotics administered?
+            "ZkeSH8X8MKK",  # Weight on discharge
+            "XITh8vyfqaR",  # Newborn status at discharge n
+            "UGz9phsvHt4",  # Sub-Categories of Infection n
+            "lxtEbLnOxfk",  # Sub-Categories of Prematurity n
         ],
-        "program_stage_name": "Interventions",
-    },
-    "TOicTEwzSGj": {  # Discharge And Final Diagnosis
-        "data_elements": [
-            "vmOAGuFcaz4",  # Newborn status at discharge
-            "yBCwmQP0A6a",  # Discharge Weight (grams):
-            "wn0tHaHcceW",  # Sub-Categories of Infection:
-        ],
-        "program_stage_name": "Discharge And Final Diagnosis",
-    },
-    "VsVlpG1V2ub": {  # Observations And Nursing Care 2
-        "data_elements": [
-            "nIKIu6f5vbW",  # lowest recorded temperature (Celsius)
-        ],
-        "program_stage_name": "Observations And Nursing Care 2",
-    },
-    "aCrttmnx7FI": {  # Microbiology And Labs
-        "data_elements": [
-            "A94ibeuO9GL",  # Blood culture for suspected sepsis:
-        ],
-        "program_stage_name": "Microbiology And Labs",
+        "program_stage_name": "Discharge care form",
+        "is_repeatable": False,  # One discharge per admission
     },
 }
 
@@ -976,8 +951,8 @@ class CSVIntegration:
     ) -> pd.DataFrame:
         """
         Transform events DataFrame to patient-level format
-        UPDATED: For newborn program, DO NOT create versioned columns since we don't have repeatable stages
-        For maternal program, keep versioned columns for repeatable stages
+        UPDATED: Now properly handles repeatable program stages for BOTH programs
+        FIXED: Now properly handles placeholder events for patients with only enrollment
         """
         if events_df.empty:
             logger.warning("Empty events DataFrame provided for transformation")
@@ -996,6 +971,24 @@ class CSVIntegration:
         logger.info(
             f"   Input: {len(df)} rows from {df['tei_id'].nunique()} unique patients"
         )
+
+        # Check how many rows are placeholders vs actual events
+        placeholder_events = df[df["event"].astype(str).str.startswith("placeholder_")]
+        actual_events = df[~df["event"].astype(str).str.startswith("placeholder_")]
+
+        logger.info(f"   📊 Actual events: {len(actual_events)} rows")
+        logger.info(f"   📊 Placeholder events: {len(placeholder_events)} rows")
+
+        # Check if we have patients with only placeholder events (no actual events)
+        teis_with_actual = actual_events["tei_id"].unique()
+        teis_with_placeholders_only = [
+            tei for tei in df["tei_id"].unique() if tei not in teis_with_actual
+        ]
+
+        if teis_with_placeholders_only:
+            logger.info(
+                f"   👥 Patients with only placeholder events (no actual events): {len(teis_with_placeholders_only)}"
+            )
 
         # Check what program stage names we have
         unique_stages = df["programStageName"].unique()
@@ -1069,53 +1062,117 @@ class CSVIntegration:
                 # Clean program stage name for column naming
                 clean_stage_name = CSVIntegration.clean_column_name(program_stage_name)
 
-                # CRITICAL CHANGE: For NEWBORN program, DO NOT create versioned columns
-                # For MATERNAL program, create versioned columns for repeatable stages
-                if not is_maternal:
-                    # NEWBORN PROGRAM: No version suffixes (non-repeatable stages)
-                    # Find the actual event (skip placeholders)
-                    actual_events = group[
-                        ~group["event"].astype(str).str.startswith("placeholder_")
-                    ]
+                # Check if this program stage is repeatable
+                # For maternal: Postpartum care is repeatable
+                # For newborn: Nurse followup Sheet is repeatable
+                is_repeatable = False
+                if is_maternal and program_stage_name == "Postpartum care":
+                    is_repeatable = True
+                elif not is_maternal and program_stage_name == "Nurse followup Sheet":
+                    is_repeatable = True
 
-                    if not actual_events.empty:
-                        # Use the first actual event found
-                        first_event_row = actual_events.iloc[0]
+                # Check if this group contains only placeholder events
+                has_placeholder = any(
+                    group["event"].astype(str).str.startswith("placeholder_")
+                )
+                has_actual = any(
+                    ~group["event"].astype(str).str.startswith("placeholder_")
+                )
 
-                        # Add event metadata WITHOUT version suffix
-                        if "event" in first_event_row:
-                            patient_row[f"event_{clean_stage_name}"] = first_event_row[
-                                "event"
-                            ]
+                if not is_repeatable:
+                    # NON-REPEATABLE STAGE: No version suffixes
 
-                        # Use eventDate as-is (original DHIS2 format) WITHOUT version suffix
-                        if "eventDate" in first_event_row:
-                            patient_row[f"event_date_{clean_stage_name}"] = (
-                                first_event_row.get("eventDate", "")
+                    if has_actual:
+                        # Has actual events - use them
+                        actual_events = group[
+                            ~group["event"].astype(str).str.startswith("placeholder_")
+                        ]
+
+                        if not actual_events.empty:
+                            # Use the first actual event found
+                            first_event_row = actual_events.iloc[0]
+
+                            # Add event metadata WITHOUT version suffix
+                            if "event" in first_event_row:
+                                patient_row[f"event_{clean_stage_name}"] = (
+                                    first_event_row["event"]
+                                )
+
+                            # Use eventDate as-is (original DHIS2 format) WITHOUT version suffix
+                            if "eventDate" in first_event_row:
+                                patient_row[f"event_date_{clean_stage_name}"] = (
+                                    first_event_row.get("eventDate", "")
+                                )
+
+                            # Process all data elements for this specific event WITHOUT version suffix
+                            for idx, row in actual_events.iterrows():
+                                data_element_name = row["dataElementName"]
+                                value = row["value"]
+                                data_element_uid = row.get("dataElement_uid", "")
+
+                                # Skip empty values
+                                if pd.isna(value) or str(value).strip() == "":
+                                    continue
+
+                                # Clean data element name
+                                clean_element_name = CSVIntegration.clean_column_name(
+                                    data_element_name
+                                )
+
+                                # Create column name WITHOUT version suffix
+                                column_name = f"{clean_element_name}_{clean_stage_name}"
+
+                                # Add to patient row
+                                patient_row[column_name] = value
+                    elif has_placeholder:
+                        # Has only placeholder events - still create the structure
+                        # This is the key fix for patients with only enrollment
+                        first_placeholder = group.iloc[0]
+
+                        # Add placeholder event metadata
+                        patient_row[f"event_{clean_stage_name}"] = first_placeholder[
+                            "event"
+                        ]
+
+                        # IMPORTANT: Use enrollment_date for event_date when we have placeholders
+                        # Get enrollment_date from patient_base
+                        enrollment_date = (
+                            patient_base.loc[
+                                patient_base["tei_id"] == tei_id, "enrollment_date"
+                            ].iloc[0]
+                            if not patient_base.empty
+                            else ""
+                        )
+
+                        patient_row[f"event_date_{clean_stage_name}"] = enrollment_date
+
+                        # Create empty columns for all data elements in this program stage
+                        # Get required data elements for this program stage
+                        program_stage_uid = first_placeholder["programStage_uid"]
+
+                        if is_maternal:
+                            PROGRAM_STAGE_MAPPING = MATERNAL_PROGRAM_STAGE_MAPPING
+                        else:
+                            PROGRAM_STAGE_MAPPING = NEWBORN_PROGRAM_STAGE_MAPPING
+
+                        stage_info = PROGRAM_STAGE_MAPPING.get(program_stage_uid, {})
+                        stage_data_elements = stage_info.get("data_elements", [])
+
+                        for data_element_uid in stage_data_elements:
+                            data_element_name = DATA_ELEMENT_NAMES.get(
+                                data_element_uid, data_element_uid
                             )
-
-                        # Process all data elements for this specific event WITHOUT version suffix
-                        for idx, row in actual_events.iterrows():
-                            data_element_name = row["dataElementName"]
-                            value = row["value"]
-                            data_element_uid = row.get("dataElement_uid", "")
-
-                            # Skip empty values
-                            if pd.isna(value) or str(value).strip() == "":
-                                continue
-
-                            # Clean data element name
                             clean_element_name = CSVIntegration.clean_column_name(
                                 data_element_name
                             )
 
-                            # Create column name WITHOUT version suffix for newborn
+                            # Create column name
                             column_name = f"{clean_element_name}_{clean_stage_name}"
 
-                            # Add to patient row
-                            patient_row[column_name] = value
+                            # Set to empty string (will be filled with "N/A" later)
+                            patient_row[column_name] = ""
                 else:
-                    # MATERNAL PROGRAM: Original logic with versioned columns for repeatable stages
+                    # REPEATABLE STAGE: Create versioned columns
                     # FIRST: Group events by their event ID (each event has its own event ID and event date)
                     # We need to handle multiple events for the same program stage separately
                     event_groups = group.groupby("event")
@@ -1125,11 +1182,68 @@ class CSVIntegration:
 
                     # Process each event (repeated program stage) separately
                     for event_id, event_group in event_groups:
-                        # Skip placeholder events
+                        # Skip placeholder events for repeatable stages
+                        # (we typically don't create placeholders for repeatable stages)
                         if str(event_id).startswith("placeholder_"):
+                            # Still create structure for placeholders in repeatable stages
+                            first_event_row = event_group.iloc[0]
+
+                            # Create version suffix
+                            version_suffix = (
+                                f"_v{version_counter}" if version_counter > 1 else ""
+                            )
+
+                            # Add event metadata with version suffix
+                            if "event" in first_event_row:
+                                patient_row[
+                                    f"event_{clean_stage_name}{version_suffix}"
+                                ] = event_id
+
+                            # Use enrollment_date for event_date when we have placeholders
+                            enrollment_date = (
+                                patient_base.loc[
+                                    patient_base["tei_id"] == tei_id, "enrollment_date"
+                                ].iloc[0]
+                                if not patient_base.empty
+                                else ""
+                            )
+
+                            patient_row[
+                                f"event_date_{clean_stage_name}{version_suffix}"
+                            ] = enrollment_date
+
+                            # Create empty columns for data elements
+                            program_stage_uid = first_event_row["programStage_uid"]
+
+                            if is_maternal:
+                                PROGRAM_STAGE_MAPPING = MATERNAL_PROGRAM_STAGE_MAPPING
+                            else:
+                                PROGRAM_STAGE_MAPPING = NEWBORN_PROGRAM_STAGE_MAPPING
+
+                            stage_info = PROGRAM_STAGE_MAPPING.get(
+                                program_stage_uid, {}
+                            )
+                            stage_data_elements = stage_info.get("data_elements", [])
+
+                            for data_element_uid in stage_data_elements:
+                                data_element_name = DATA_ELEMENT_NAMES.get(
+                                    data_element_uid, data_element_uid
+                                )
+                                clean_element_name = CSVIntegration.clean_column_name(
+                                    data_element_name
+                                )
+
+                                # Create column name with program stage AND version suffix
+                                column_name = f"{clean_element_name}_{clean_stage_name}{version_suffix}"
+
+                                # Set to empty string
+                                patient_row[column_name] = ""
+
+                            # Increment version counter for next event in same program stage
+                            version_counter += 1
                             continue
 
-                        # Sort event group by data element to ensure consistent ordering
+                        # Handle actual events
                         if not event_group.empty:
                             first_event_row = event_group.iloc[0]
 
@@ -1318,6 +1432,21 @@ class CSVIntegration:
             f"   📊 Output: {len(patient_df)} patients, {len(patient_df.columns)} columns"
         )
 
+        # Log event_date columns specifically
+        event_date_cols = [
+            col for col in patient_df.columns if col.startswith("event_date_")
+        ]
+        if event_date_cols:
+            logger.info(f"   📅 Event date columns created: {len(event_date_cols)}")
+            for col in event_date_cols[:3]:
+                non_empty = patient_df[patient_df[col] != ""].shape[0]
+                logger.info(f"      {col}: {non_empty}/{len(patient_df)} non-empty")
+
+                # Show sample of non-empty values
+                if non_empty > 0:
+                    samples = patient_df[patient_df[col] != ""][col].unique()[:2]
+                    logger.info(f"        Samples: {samples}")
+
         return patient_df
 
     @staticmethod
@@ -1351,9 +1480,11 @@ class CSVIntegration:
             col for col in cleaned_df.columns if col.startswith("event_date_")
         ]
 
+        # Initialize event_date_filled_count to 0
+        event_date_filled_count = 0
+
         if event_date_cols and "enrollment_date" in cleaned_df.columns:
             logger.info(f"📅 Filling empty event dates with enrollment date")
-            event_date_filled_count = 0
 
             for event_date_col in event_date_cols:
                 # Find rows where event_date is empty/N/A
@@ -1397,19 +1528,46 @@ class CSVIntegration:
                     placeholder_count += placeholder_mask.sum()
                     cleaned_df.loc[placeholder_mask, col] = "N/A"
 
-        # 3. REPLACE empty cells with "N/A" (for non-date columns)
+        # 3. FIXED: REPLACE ALL empty cells with "N/A" - SIMPLE & EFFECTIVE
         empty_count = 0
         for col in cleaned_df.columns:
-            if cleaned_df[col].dtype == "object":
-                # Replace empty strings
-                empty_mask = cleaned_df[col].astype(str).str.strip() == ""
-                empty_count += empty_mask.sum()
-                cleaned_df.loc[empty_mask, col] = "N/A"
+            # Skip columns that should keep original values
+            if col in [
+                "tei_id",
+                "orgUnit",
+                "orgUnit_name",
+                "program_type",
+                "region_uid",
+                "region_name",
+                "enrollment_status",
+                "enrollment_date",
+                "incident_date",
+            ]:
+                continue
 
-                # Replace NaN
-                nan_mask = cleaned_df[col].isna()
-                empty_count += nan_mask.sum()
-                cleaned_df.loc[nan_mask, col] = "N/A"
+            # Skip date columns (handled above)
+            if col.startswith("event_date_"):
+                continue
+
+            # Convert to string for checking
+            col_as_str = cleaned_df[col].astype(str)
+
+            # Find ALL empty cases
+            empty_mask = (
+                cleaned_df[col].isna()  # NaN values
+                | (col_as_str.str.strip() == "")  # Empty strings
+                | (col_as_str.str.strip() == "nan")  # "nan" strings
+                | (col_as_str.str.strip() == "None")  # "None" strings
+                | (col_as_str.str.strip() == "null")  # "null" strings
+                | col_as_str.str.isspace()  # Only whitespace
+            )
+
+            count = empty_mask.sum()
+
+            if count > 0:
+                # Replace ALL empty with "N/A"
+                cleaned_df.loc[empty_mask, col] = "N/A"
+                empty_count += count
 
         # 6. NEW: REPLACE "yes" IN ARV Rx FOR NEWBORN COLUMNS WITH "N/A"
         arv_rx_cols = [
@@ -1618,16 +1776,22 @@ class CSVIntegration:
             else:
                 logger.warning("   ⚠️ No birth weight columns found - check mapping")
 
-            # Check for any versioned columns (should not have any)
+            # Check for any versioned columns (should only have them for Nurse followup Sheet)
             versioned_cols = [
                 col for col in processed_df.columns if re.search(r"_v\d+$", col)
             ]
             if versioned_cols:
-                logger.warning(
-                    f"   ⚠️ Found {len(versioned_cols)} versioned columns in newborn program (should not have any)"
+                logger.info(
+                    f"   📝 Found {len(versioned_cols)} versioned columns (expected for Nurse followup Sheet)"
                 )
+                # Check which program stages have versioned columns
                 for col in versioned_cols[:5]:
-                    logger.warning(f"      - {col}")
+                    if "nurse_followup_sheet" in col.lower():
+                        logger.info(
+                            f"      ✅ {col}: Expected for Nurse followup Sheet"
+                        )
+                    else:
+                        logger.warning(f"      ⚠️ {col}: Unexpected versioned column")
 
         logger.info(f"✅ POST-PROCESSING COMPLETE")
         logger.info(
@@ -1649,6 +1813,98 @@ class CSVIntegration:
                 )
 
         return processed_df
+
+    @staticmethod
+    def get_all_required_columns(program_type: str) -> List[str]:
+        """
+        Get ALL required columns for a program type (maternal or newborn)
+        This includes columns for ALL program stages and data elements
+        """
+        if program_type == "maternal":
+            PROGRAM_STAGE_MAPPING = MATERNAL_PROGRAM_STAGE_MAPPING
+            program_stage_names = [
+                "Delivery summary",
+                "Postpartum care",
+                "Discharge Summary",
+                "Instrumental Delivery form",
+            ]
+        else:
+            PROGRAM_STAGE_MAPPING = NEWBORN_PROGRAM_STAGE_MAPPING
+            program_stage_names = [
+                "NICU Admission Careform",
+                "Nurse followup Sheet",
+                "Neonatal referral form",
+                "Discharge care form",
+            ]
+
+        all_columns = [
+            "tei_id",
+            "orgUnit",
+            "orgUnit_name",
+            "program_type",
+            "region_uid",
+            "region_name",
+            "enrollment_status",
+            "enrollment_date",
+            "incident_date",
+        ]
+
+        # Add event metadata columns for each program stage
+        for program_stage_name in program_stage_names:
+            clean_stage_name = CSVIntegration.clean_column_name(program_stage_name)
+
+            # Add event and event_date columns
+            all_columns.append(f"event_{clean_stage_name}")
+            all_columns.append(f"event_date_{clean_stage_name}")
+
+            # For repeatable stages, also add versioned columns
+            is_repeatable = False
+            if program_type == "maternal" and program_stage_name == "Postpartum care":
+                is_repeatable = True
+            elif (
+                program_type == "newborn"
+                and program_stage_name == "Nurse followup Sheet"
+            ):
+                is_repeatable = True
+
+            if is_repeatable:
+                # Add up to 5 versions for repeatable stages
+                for i in range(2, 6):  # v2 to v5
+                    all_columns.append(f"event_{clean_stage_name}_v{i}")
+                    all_columns.append(f"event_date_{clean_stage_name}_v{i}")
+
+        # Add data element columns for each program stage
+        for program_stage_uid, stage_info in PROGRAM_STAGE_MAPPING.items():
+            program_stage_name = stage_info["program_stage_name"]
+            clean_stage_name = CSVIntegration.clean_column_name(program_stage_name)
+
+            for data_element_uid in stage_info["data_elements"]:
+                data_element_name = DATA_ELEMENT_NAMES.get(
+                    data_element_uid, data_element_uid
+                )
+                clean_element_name = CSVIntegration.clean_column_name(data_element_name)
+
+                # Add column for this data element
+                column_name = f"{clean_element_name}_{clean_stage_name}"
+                all_columns.append(column_name)
+
+                # For repeatable stages, add versioned columns
+                is_repeatable = stage_info.get("is_repeatable", False)
+                if is_repeatable:
+                    for i in range(2, 6):  # v2 to v5
+                        all_columns.append(
+                            f"{clean_element_name}_{clean_stage_name}_v{i}"
+                        )
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_columns = []
+        for col in all_columns:
+            if col not in seen:
+                seen.add(col)
+                unique_columns.append(col)
+
+        return unique_columns
 
 
 # ========== AUTOMATED PIPELINE CLASS ==========
@@ -1720,6 +1976,10 @@ class AutomatedDHIS2Pipeline:
         self.facility_to_region_map = {}
         self.csv_data = None
 
+        # Store column structures for each program type
+        self.maternal_columns = []
+        self.newborn_columns = []
+
         logger.info("=" * 80)
         logger.info("AUTOMATED DHIS2 PIPELINE INITIALIZED")
         logger.info("=" * 80)
@@ -1740,7 +2000,7 @@ class AutomatedDHIS2Pipeline:
     def process_program(self, program_uid: str, program_name: str) -> bool:
         """
         Process a single program (maternal or newborn)
-        FIXED: Added better logging and verification
+        UPDATED: Now ensures ALL regions get CSV files with ALL columns
         """
         logger.info("=" * 80)
         logger.info(f"🔄 PROCESSING {program_name.upper()} PROGRAM")
@@ -1762,7 +2022,24 @@ class AutomatedDHIS2Pipeline:
             total_regions = len(regions)
             logger.info(f"📊 Found {total_regions} regions")
 
-            # Step 3: Process each region
+            # Step 3: Get ALL required columns for this program type
+            program_type = (
+                "maternal" if program_uid == MATERNAL_PROGRAM_UID else "newborn"
+            )
+            all_required_columns = CSVIntegration.get_all_required_columns(program_type)
+
+            if program_type == "maternal":
+                self.maternal_columns = all_required_columns
+            else:
+                self.newborn_columns = all_required_columns
+
+            logger.info(
+                f"📋 Total columns required for {program_type}: {len(all_required_columns)}"
+            )
+            logger.info(f"   First 5 columns: {all_required_columns[:5]}")
+            logger.info(f"   Last 5 columns: {all_required_columns[-5:]}")
+
+            # Step 4: Process each region
             all_patient_data = []
             regional_files_created = 0
             total_teis_fetched = 0
@@ -1780,101 +2057,139 @@ class AutomatedDHIS2Pipeline:
                 total_teis_fetched += tei_count
                 logger.info(f"   📊 Found {tei_count} TEIs in this region")
 
-                if tei_count == 0:
-                    continue
-
-                # Create events dataframe
-                events_df = CSVIntegration.create_events_dataframe(
-                    tei_data, program_uid, orgunit_names
-                )
-                logger.info(
-                    f"   📈 Created {len(events_df)} events from {tei_count} TEIs"
-                )
-
-                # For maternal program only: integrate CSV data
-                if program_uid == MATERNAL_PROGRAM_UID and self.csv_data is not None:
-                    logger.info("   📁 Integrating CSV data...")
-                    region_csv = CSVIntegration.filter_csv_data_by_user_access(
-                        self.csv_data,
-                        "regional",
-                        region_name,
-                        self.facility_to_region_map,
+                # Create events dataframe (even if empty)
+                if tei_count > 0:
+                    events_df = CSVIntegration.create_events_dataframe(
+                        tei_data, program_uid, orgunit_names
+                    )
+                    logger.info(
+                        f"   📈 Created {len(events_df)} events from {tei_count} TEIs"
                     )
 
-                    if not region_csv.empty:
-                        logger.info(
-                            f"   📊 Found {len(region_csv)} CSV rows for this region"
+                    # For maternal program only: integrate CSV data
+                    if (
+                        program_uid == MATERNAL_PROGRAM_UID
+                        and self.csv_data is not None
+                    ):
+                        logger.info("   📁 Integrating CSV data...")
+                        region_csv = CSVIntegration.filter_csv_data_by_user_access(
+                            self.csv_data,
+                            "regional",
+                            region_name,
+                            self.facility_to_region_map,
                         )
-                        events_df = (
-                            CSVIntegration.integrate_maternal_csv_data_for_region(
-                                events_df, region_csv, region_name
+
+                        if not region_csv.empty:
+                            logger.info(
+                                f"   📊 Found {len(region_csv)} CSV rows for this region"
                             )
+                            events_df = (
+                                CSVIntegration.integrate_maternal_csv_data_for_region(
+                                    events_df, region_csv, region_name
+                                )
+                            )
+                            logger.info(
+                                f"   🔄 After CSV integration: {len(events_df)} events"
+                            )
+
+                    # Transform to patient-level
+                    patient_df = CSVIntegration.transform_events_to_patient_level(
+                        events_df, program_uid
+                    )
+
+                    if not patient_df.empty:
+                        # Post-process
+                        patient_df = CSVIntegration.post_process_dataframe(patient_df)
+                        patient_df["region_uid"] = region_uid
+                        patient_df["region_name"] = region_name
+                        all_patient_data.append(patient_df)
+
+                        logger.info(f"   ✅ Processed {len(patient_df)} patients")
+
+                        # Save individual regional file with ALL columns
+                        saved_path = self.save_region_file(
+                            patient_df, region_name, program_uid, all_required_columns
                         )
-                        logger.info(
-                            f"   🔄 After CSV integration: {len(events_df)} events"
+                        if saved_path:
+                            regional_files_created += 1
+                            logger.info(
+                                f"   💾 Saved to: {os.path.basename(saved_path)}"
+                            )
+                    else:
+                        # Create empty CSV with all columns
+                        saved_path = self.create_empty_region_file(
+                            region_name, program_uid, all_required_columns
                         )
-
-                # Transform to patient-level
-                patient_df = CSVIntegration.transform_events_to_patient_level(
-                    events_df, program_uid
-                )
-
-                if not patient_df.empty:
-                    # Post-process
-                    patient_df = CSVIntegration.post_process_dataframe(patient_df)
-                    patient_df["region_uid"] = region_uid
-                    patient_df["region_name"] = region_name
-                    all_patient_data.append(patient_df)
-
-                    logger.info(f"   ✅ Processed {len(patient_df)} patients")
-
-                    # Save individual regional file
-                    saved_path = self.save_region_file(
-                        patient_df, region_name, program_uid
+                        if saved_path:
+                            regional_files_created += 1
+                            logger.info(
+                                f"   📄 Created empty file: {os.path.basename(saved_path)}"
+                            )
+                else:
+                    # Region has no TEIs - create empty CSV with all columns
+                    saved_path = self.create_empty_region_file(
+                        region_name, program_uid, all_required_columns
                     )
                     if saved_path:
                         regional_files_created += 1
-                        logger.info(f"   💾 Saved to: {os.path.basename(saved_path)}")
+                        logger.info(
+                            f"   📄 Created empty file: {os.path.basename(saved_path)}"
+                        )
 
             # Log total TEIs fetched
             logger.info(
                 f"\n📊 TOTAL TEIs FETCHED FOR {program_name.upper()}: {total_teis_fetched}"
             )
 
-            # Step 4: Combine all regions
-            if not all_patient_data:
-                logger.warning(f"⚠️ No data processed for {program_name}")
-                return False
+            # Step 5: Combine all regions (if any data exists)
+            if all_patient_data:
+                combined_df = pd.concat(all_patient_data, ignore_index=True)
 
-            combined_df = pd.concat(all_patient_data, ignore_index=True)
+                # Ensure combined dataframe has all required columns
+                combined_df = self.ensure_all_columns(combined_df, all_required_columns)
 
-            # Step 5: Save national file to appropriate directory
-            program_type = (
-                "maternal" if program_uid == MATERNAL_PROGRAM_UID else "newborn"
-            )
-            if program_type == "maternal":
-                output_dir = self.maternal_dir
+                # Post-process
+                combined_df = CSVIntegration.post_process_dataframe(combined_df)
+
+                # Step 6: Save national file to appropriate directory
+                if program_type == "maternal":
+                    output_dir = self.maternal_dir
+                else:
+                    output_dir = self.newborn_dir
+
+                # Save national file
+                national_file = os.path.join(output_dir, f"national_{program_type}.csv")
+                combined_df.to_csv(national_file, index=False, encoding="utf-8")
+
+                logger.info("=" * 80)
+                logger.info(f"✅ {program_name.upper()} PROCESSING COMPLETE")
+                logger.info(f"📊 Total patients in combined file: {len(combined_df)}")
+                logger.info(f"🏞️ Total regions: {combined_df['region_name'].nunique()}")
+                logger.info(f"📁 Regional files created: {regional_files_created}")
+                logger.info(f"🌍 National file: {national_file}")
+                logger.info(f"📁 Absolute path: {os.path.abspath(national_file)}")
+
+                # Verify file was created
+                if os.path.exists(national_file):
+                    file_size = os.path.getsize(national_file)
+                    logger.info(f"📦 File size: {file_size:,} bytes")
+                else:
+                    logger.error(f"❌ National file was not created: {national_file}")
             else:
-                output_dir = self.newborn_dir
+                # Create empty national file with all columns
+                empty_df = self.create_empty_dataframe(all_required_columns)
+                if program_type == "maternal":
+                    output_dir = self.maternal_dir
+                else:
+                    output_dir = self.newborn_dir
 
-            # Save national file
-            national_file = os.path.join(output_dir, f"national_{program_type}.csv")
-            combined_df.to_csv(national_file, index=False, encoding="utf-8")
+                national_file = os.path.join(output_dir, f"national_{program_type}.csv")
+                empty_df.to_csv(national_file, index=False, encoding="utf-8")
 
-            logger.info("=" * 80)
-            logger.info(f"✅ {program_name.upper()} PROCESSING COMPLETE")
-            logger.info(f"📊 Total patients in combined file: {len(combined_df)}")
-            logger.info(f"🏞️ Total regions: {combined_df['region_name'].nunique()}")
-            logger.info(f"📁 Regional files created: {regional_files_created}")
-            logger.info(f"🌍 National file: {national_file}")
-            logger.info(f"📁 Absolute path: {os.path.abspath(national_file)}")
-
-            # Verify file was created
-            if os.path.exists(national_file):
-                file_size = os.path.getsize(national_file)
-                logger.info(f"📦 File size: {file_size:,} bytes")
-            else:
-                logger.error(f"❌ National file was not created: {national_file}")
+                logger.info("=" * 80)
+                logger.info(f"⚠️ No data found for {program_name.upper()} program")
+                logger.info(f"📁 Created empty national file: {national_file}")
+                logger.info(f"📊 Regional files created: {regional_files_created}")
 
             logger.info("=" * 80)
 
@@ -1884,6 +2199,35 @@ class AutomatedDHIS2Pipeline:
             logger.error(f"❌ Error processing {program_name}: {str(e)}")
             logger.error(traceback.format_exc())
             return False
+
+    def create_empty_dataframe(self, all_columns: List[str]) -> pd.DataFrame:
+        """Create an empty dataframe with all required columns"""
+        empty_df = pd.DataFrame(columns=all_columns)
+
+        # Fill all columns with "N/A" for consistency
+        for col in all_columns:
+            if col not in empty_df.columns:
+                empty_df[col] = ["N/A"]
+            else:
+                empty_df[col] = empty_df[col].fillna("N/A")
+
+        return empty_df
+
+    def ensure_all_columns(
+        self, df: pd.DataFrame, all_columns: List[str]
+    ) -> pd.DataFrame:
+        """Ensure dataframe has all required columns, adding missing ones with 'N/A'"""
+        missing_columns = [col for col in all_columns if col not in df.columns]
+
+        if missing_columns:
+            logger.info(f"   🔧 Adding {len(missing_columns)} missing columns")
+            for col in missing_columns:
+                df[col] = "N/A"
+
+        # Reorder columns to match the required order
+        df = df[all_columns]
+
+        return df
 
     def load_csv_data(self):
         """Load and map CSV data for maternal program"""
@@ -1920,9 +2264,13 @@ class AutomatedDHIS2Pipeline:
             return False
 
     def save_region_file(
-        self, patient_df: pd.DataFrame, region_name: str, program_uid: str
+        self,
+        patient_df: pd.DataFrame,
+        region_name: str,
+        program_uid: str,
+        all_required_columns: List[str],
     ):
-        """Save individual region file with new naming format: regional_{Region name}_programtype.csv"""
+        """Save individual region file with ALL required columns"""
         try:
             # Clean region name for filename
             clean_region = re.sub(r"[^\w\s-]", "", region_name)
@@ -1935,27 +2283,68 @@ class AutomatedDHIS2Pipeline:
             filename = f"regional_{clean_region}_{program_type}.csv"
 
             # Save to appropriate directory
-            if program_type == "maternal":
-                output_dir = self.maternal_dir
-            else:
-                output_dir = self.newborn_dir
-
+            output_dir = (
+                self.maternal_dir if program_type == "maternal" else self.newborn_dir
+            )
             filepath = os.path.join(output_dir, filename)
 
-            # Save file (without region columns for cleaner regional files)
+            # Ensure all required columns are present
+            patient_df = self.ensure_all_columns(patient_df, all_required_columns)
+
+            # Remove region columns for cleaner regional files
             save_df = patient_df.drop(
                 columns=["region_uid", "region_name"], errors="ignore"
             )
             save_df.to_csv(filepath, index=False, encoding="utf-8")
 
             logger.info(
-                f"   💾 Saved regional file: {filename} ({len(patient_df)} patients)"
+                f"   💾 Saved file: {filename} ({len(patient_df)} patients, {len(all_required_columns)} columns)"
             )
 
             return filepath
-
         except Exception as e:
             logger.error(f"❌ Error saving region file: {str(e)}")
+            return None
+
+    def create_empty_region_file(
+        self, region_name: str, program_uid: str, all_required_columns: List[str]
+    ):
+        """Create empty region file with ALL required columns"""
+        try:
+            # Clean region name for filename
+            clean_region = re.sub(r"[^\w\s-]", "", region_name)
+            clean_region = re.sub(r"[-\s]+", "_", clean_region)
+
+            # Generate filename
+            program_type = (
+                "maternal" if program_uid == MATERNAL_PROGRAM_UID else "newborn"
+            )
+            filename = f"regional_{clean_region}_{program_type}.csv"
+
+            # Save to appropriate directory
+            output_dir = (
+                self.maternal_dir if program_type == "maternal" else self.newborn_dir
+            )
+            filepath = os.path.join(output_dir, filename)
+
+            # Create empty dataframe with all required columns
+            empty_df = pd.DataFrame(columns=all_required_columns)
+
+            # Remove region columns for cleaner regional files
+            empty_df = empty_df.drop(
+                columns=["region_uid", "region_name"], errors="ignore"
+            )
+
+            # Save empty CSV
+            empty_df.to_csv(filepath, index=False, encoding="utf-8")
+
+            logger.info(
+                f"   📄 Created empty file: {filename} (0 patients, {len(empty_df.columns)} columns)"
+            )
+
+            return filepath
+        except Exception as e:
+            logger.error(f"❌ Error creating empty region file: {str(e)}")
             return None
 
     def run_pipeline(self) -> bool:
@@ -2117,7 +2506,7 @@ class DHIS2DataFetcherApp:
         # Subtitle
         subtitle_label = ttk.Label(
             main_frame,
-            text="File naming: regional_{Region name}_programtype.csv and national_programtype.csv | Dates in original DHIS2 format | ARV Rx 'yes' → 'N/A' | Newborn: No version suffixes",
+            text="File naming: regional_{Region name}_programtype.csv and national_programtype.csv | Dates in original DHIS2 format | ARV Rx 'yes' → 'N/A' | Newborn: Nurse followup Sheet is repeatable",
             font=("Arial", 10, "italic"),
         )
         subtitle_label.grid(row=1, column=0, columnspan=3, pady=(0, 20), sticky=tk.W)
@@ -2512,7 +2901,7 @@ class DHIS2DataFetcherApp:
                         f"Plus national files:\n"
                         f"• {pipeline.maternal_dir}\\national_maternal.csv\n"
                         f"• {pipeline.newborn_dir}\\national_newborn.csv\n\n"
-                        f"Total files: All regional files + 2 national files",
+                        f"All files have ALL required columns, even for empty regions.",
                     )
                 )
             else:
@@ -2925,6 +3314,9 @@ class DHIS2DataFetcherApp:
             self.log_message(f"   📊 Found {tei_count} TEIs")
 
             if tei_count == 0:
+                # Create empty CSV for region with no TEIs
+                self.create_empty_region_file_gui(region_name, program_uid)
+                regional_files_created += 1
                 continue
 
             # Create events dataframe
@@ -2962,12 +3354,19 @@ class DHIS2DataFetcherApp:
                 self.log_message(f"   ✅ Processed {len(patient_df)} patients")
 
                 # Save individual regional file (ONE FILE PER REGION)
-                self.save_region_file(patient_df, region_name, program_uid)
+                self.save_region_file_gui(patient_df, region_name, program_uid)
+                regional_files_created += 1
+            else:
+                # Create empty CSV for region with no patient data
+                self.create_empty_region_file_gui(region_name, program_uid)
                 regional_files_created += 1
 
         # Create combined national file
         if self.national_data:
             self.create_combined_national_file(program_uid)
+        else:
+            # Create empty national file
+            self.create_empty_national_file(program_uid)
 
         self.log_message(
             f"\n📁 Regional files created: {regional_files_created}/{total_regions}"
@@ -2994,6 +3393,8 @@ class DHIS2DataFetcherApp:
 
         if tei_count == 0:
             self.log_message("⚠️ No TEIs found for this region")
+            # Create empty CSV for the region
+            self.create_empty_region_file_gui(region_name, program_uid)
             return
 
         # Create events dataframe
@@ -3029,9 +3430,12 @@ class DHIS2DataFetcherApp:
             self.log_message(f"✅ Processed {len(patient_df)} patients")
 
             # Save regional file
-            self.save_region_file(patient_df, region_name, program_uid)
+            self.save_region_file_gui(patient_df, region_name, program_uid)
+        else:
+            # Create empty CSV for the region
+            self.create_empty_region_file_gui(region_name, program_uid)
 
-    def save_region_file(
+    def save_region_file_gui(
         self, patient_df: pd.DataFrame, region_name: str, program_uid: str
     ):
         """Save individual region file with new naming format: regional_{Region name}_programtype.csv"""
@@ -3061,6 +3465,46 @@ class DHIS2DataFetcherApp:
 
         except Exception as e:
             self.log_message(f"❌ Error saving region file: {str(e)}")
+            return None
+
+    def create_empty_region_file_gui(self, region_name: str, program_uid: str):
+        """Create empty region file"""
+        try:
+            # Clean region name for filename
+            clean_region = re.sub(r"[^\w\s-]", "", region_name)
+            clean_region = re.sub(r"[-\s]+", "_", clean_region)
+
+            # Generate filename
+            program_type = (
+                "maternal" if program_uid == MATERNAL_PROGRAM_UID else "newborn"
+            )
+            filename = f"regional_{clean_region}_{program_type}.csv"
+            filepath = os.path.join(self.output_dir.get(), filename)
+
+            # Get all required columns for this program type
+            if program_type == "maternal":
+                all_columns = CSVIntegration.get_all_required_columns("maternal")
+            else:
+                all_columns = CSVIntegration.get_all_required_columns("newborn")
+
+            # Remove region columns
+            all_columns = [
+                col for col in all_columns if col not in ["region_uid", "region_name"]
+            ]
+
+            # Create empty dataframe with all columns
+            empty_df = pd.DataFrame(columns=all_columns)
+
+            # Save empty CSV
+            empty_df.to_csv(filepath, index=False, encoding="utf-8")
+
+            self.log_message(
+                f"📄 Created empty regional file: {filename} (0 patients, {len(all_columns)} columns)"
+            )
+
+            return filepath
+        except Exception as e:
+            self.log_message(f"❌ Error creating empty region file: {str(e)}")
             return None
 
     def create_combined_national_file(self, program_uid: str):
@@ -3100,6 +3544,37 @@ class DHIS2DataFetcherApp:
 
         except Exception as e:
             self.log_message(f"❌ Error creating national file: {str(e)}")
+            return None
+
+    def create_empty_national_file(self, program_uid: str):
+        """Create empty national file"""
+        try:
+            # Generate filename
+            program_type = (
+                "maternal" if program_uid == MATERNAL_PROGRAM_UID else "newborn"
+            )
+            filename = f"national_{program_type}.csv"
+            filepath = os.path.join(self.output_dir.get(), filename)
+
+            # Get all required columns for this program type
+            if program_type == "maternal":
+                all_columns = CSVIntegration.get_all_required_columns("maternal")
+            else:
+                all_columns = CSVIntegration.get_all_required_columns("newborn")
+
+            # Create empty dataframe with all columns
+            empty_df = pd.DataFrame(columns=all_columns)
+
+            # Save empty CSV
+            empty_df.to_csv(filepath, index=False, encoding="utf-8")
+
+            self.log_message(
+                f"📄 Created empty national file: {filename} (0 patients, {len(all_columns)} columns)"
+            )
+
+            return filepath
+        except Exception as e:
+            self.log_message(f"❌ Error creating empty national file: {str(e)}")
             return None
 
     def update_status(self):

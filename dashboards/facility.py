@@ -518,7 +518,7 @@ def render_summary_dashboard_shared(
                 from newborns_dashboard.kpi_utils_newborn import (
                     compute_admitted_newborns_count,  # For Total Admitted Newborns
                     compute_neonatal_mortality_rate,  # For NMR
-                    compute_hypothermia_after_admission_rate,  # For Hypothermia After Admission
+                    compute_hypothermia_on_admission_rate,  # For Hypothermia on Admission
                 )
 
                 # Compute only the 3 required newborn indicators:
@@ -534,7 +534,7 @@ def render_summary_dashboard_shared(
 
                 # 3. Hypothermia After Admission Rate
                 hypothermia_rate, hypo_count, total_hypo = (
-                    compute_hypothermia_after_admission_rate(
+                    compute_hypothermia_on_admission_rate(
                         filtered_newborn, facility_uids
                     )
                 )
@@ -662,9 +662,9 @@ def render_summary_dashboard_shared(
         ),
         (
             col3,
-            "Hypothermia After Admission",
+            "Hypothermia on Admission",
             f"{hypothermia_rate:.2f}%",
-            "Newborns with temp < 36.5°C after admission",
+            "Newborns with temp < 36.5°C on admission",
             "#2ca02c",
         ),
     ]

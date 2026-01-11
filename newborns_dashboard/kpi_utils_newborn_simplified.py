@@ -1,4 +1,4 @@
-# kpi_utils_newborn_simplified.py - FIXED CPAP COMPARISON FUNCTIONS
+# kpi_utils_newborn_simplified.py - COMPLETE UPDATED WITH DATASET VARIABLE NAMES
 
 import pandas as pd
 import plotly.express as px
@@ -51,23 +51,27 @@ def download_csv_button(
     )
 
 
-# ---------------- Newborn KPI Constants ----------------
-# Birth weight column (from maternal birth and infant details)
-BIRTH_WEIGHT_COL = "birth_weight_grams_maternal_birth_and_infant_details"
+# ---------------- Newborn KPI Constants - EXACT DATASET COLUMN NAMES ----------------
+# Birth weight column (from NICU Admission Careform) - CORRECT
+BIRTH_WEIGHT_COL = "birth_weight_n_nicu_admission_careform"
 
-# KMC columns
-KMC_ADMINISTERED_COL = "kmc_administered_interventions"
+# KMC columns (from Nurse followup Sheet) - UPDATED: Multiple columns exist
+KMC_COLUMNS = [
+    "kmc_done_nurse_followup_sheet",
+    "kmc_done_nurse_followup_sheet_v2",
+    "kmc_done_nurse_followup_sheet_v3",
+    "kmc_done_nurse_followup_sheet_v4",
+    "kmc_done_nurse_followup_sheet_v5",
+]
 KMC_YES_CODE = "1"
 
-# CPAP columns
-CPAP_ADMINISTERED_COL = "cpap_administered_interventions"
+# CPAP columns (from Neonatal referral form) - CORRECT
+CPAP_ADMINISTERED_COL = "baby_placed_on_cpap_neonatal_referral_form"
 CPAP_YES_CODE = "1"
 
-# RDS Diagnosis columns
-FIRST_REASON_ADMISSION_COL = "first_reason_for_admission_admission_information"
-SECOND_REASON_ADMISSION_COL = "second_reason_for_admission_admission_information"
-THIRD_REASON_ADMISSION_COL = "third_reason_for_admission_admission_information"
-RDS_CODE = "5"  # RDS diagnosis code
+# RDS Diagnosis columns (from Discharge care form) - UPDATED: lowercase 'n'
+RDS_DIAGNOSIS_COL = "sub_categories_of_prematurity_n_discharge_care_form"
+RDS_YES_CODE = "1"  # "1" means "Respiratory Distress Syndrome (of Prematurity)"
 
 # ---------------- Birth Weight Categories with Gradient Colors ----------------
 BIRTH_WEIGHT_CATEGORIES = {
@@ -172,6 +176,24 @@ def deduplicate_by_tei(df):
         # Keep first record per TEI ID
         return df.drop_duplicates(subset=["tei_id"], keep="first").copy()
     return df.copy()
+
+
+# ---------------- ENHANCED KMC FUNCTION TO HANDLE MULTIPLE COLUMNS ----------------
+def get_kmc_status_for_tei(row):
+    """Check all KMC columns to determine if KMC was done for a TEI"""
+    for kmc_col in KMC_COLUMNS:
+        if kmc_col in row and pd.notna(row[kmc_col]):
+            try:
+                kmc_value = str(row[kmc_col]).strip()
+                if kmc_value == KMC_YES_CODE:
+                    return True
+                elif "." in kmc_value:
+                    # Handle values like "1.0"
+                    if kmc_value.split(".")[0] == KMC_YES_CODE:
+                        return True
+            except:
+                continue
+    return False
 
 
 # ---------------- DATE SORTING HELPER FUNCTIONS ----------------
@@ -376,7 +398,7 @@ def compute_birth_weight_kpi(df, facility_uids=None):
 
 # ---------------- KMC COVERAGE KPI Functions ----------------
 def compute_kmc_by_weight_category(df, facility_uids=None):
-    """Compute KMC administered by birth weight category - FIXED with deduplication"""
+    """Compute KMC administered by birth weight category - ENHANCED with multiple KMC columns"""
     cache_key = get_cache_key_simplified(df, facility_uids, "kmc_by_weight_category")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -392,10 +414,7 @@ def compute_kmc_by_weight_category(df, facility_uids=None):
     # CRITICAL: Deduplicate by TEI ID
     filtered_df = deduplicate_by_tei(filtered_df)
 
-    if (
-        BIRTH_WEIGHT_COL not in filtered_df.columns
-        or KMC_ADMINISTERED_COL not in filtered_df.columns
-    ):
+    if BIRTH_WEIGHT_COL not in filtered_df.columns:
         result = {category: 0 for category in BIRTH_WEIGHT_CATEGORIES.keys()}
         st.session_state.kpi_cache_newborn_simplified[cache_key] = result
         return result
@@ -408,15 +427,11 @@ def compute_kmc_by_weight_category(df, facility_uids=None):
             filtered_df[BIRTH_WEIGHT_COL], errors="coerce"
         )
 
-        # Convert KMC column
-        filtered_df["kmc_numeric"] = pd.to_numeric(
-            filtered_df[KMC_ADMINISTERED_COL].astype(str).str.split(".").str[0],
-            errors="coerce",
-        )
+        # Check for KMC in any column
+        filtered_df["kmc_done"] = filtered_df.apply(get_kmc_status_for_tei, axis=1)
 
         # Filter KMC cases
-        kmc_mask = filtered_df["kmc_numeric"] == float(KMC_YES_CODE)
-        kmc_df = filtered_df[kmc_mask].copy()
+        kmc_df = filtered_df[filtered_df["kmc_done"]].copy()
 
         if kmc_df.empty:
             result = {category: 0 for category in BIRTH_WEIGHT_CATEGORIES.keys()}
@@ -444,7 +459,7 @@ def compute_kmc_by_weight_category(df, facility_uids=None):
 
 
 def compute_kmc_coverage_kpi(df, facility_uids=None):
-    """Compute KMC coverage rate by birth weight category - FIXED"""
+    """Compute KMC coverage rate by birth weight category - ENHANCED with multiple KMC columns"""
     cache_key = get_cache_key_simplified(df, facility_uids, "kmc_coverage_kpi")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -489,9 +504,9 @@ def compute_kmc_coverage_kpi(df, facility_uids=None):
     return result
 
 
-# ---------------- CPAP COVERAGE KPI Functions ----------------
+# ---------------- CPAP COVERAGE KPI Functions - ENHANCED RDS LOGIC ----------------
 def get_rds_newborns(df, facility_uids=None):
-    """Identify newborns with RDS diagnosis - FIXED with deduplication"""
+    """Identify newborns with RDS diagnosis - ENHANCED with exact column name"""
     if df is None or df.empty:
         return set()
 
@@ -500,42 +515,18 @@ def get_rds_newborns(df, facility_uids=None):
     # Deduplicate before identifying RDS
     filtered_df = deduplicate_by_tei(filtered_df)
 
-    required_cols = [
-        FIRST_REASON_ADMISSION_COL,
-        SECOND_REASON_ADMISSION_COL,
-        THIRD_REASON_ADMISSION_COL,
-    ]
-
-    # Check if required columns exist
-    missing_cols = [col for col in required_cols if col not in filtered_df.columns]
-    if missing_cols:
-        logger.warning(f"Missing RDS columns: {missing_cols}")
+    # Check if required column exists
+    if RDS_DIAGNOSIS_COL not in filtered_df.columns:
+        logger.warning(f"Missing RDS column: {RDS_DIAGNOSIS_COL}")
         return set()
 
     try:
-        # Convert all RDS columns to string and check for RDS code
+        # Convert RDS column to string and check for RDS code (value "1" means RDS)
+        # Check if sub_categories_of_prematurity_n_discharge_care_form contains "1"
         rds_mask = (
-            (
-                filtered_df[FIRST_REASON_ADMISSION_COL]
-                .astype(str)
-                .str.split(".")
-                .str[0]
-                == RDS_CODE
-            )
-            | (
-                filtered_df[SECOND_REASON_ADMISSION_COL]
-                .astype(str)
-                .str.split(".")
-                .str[0]
-                == RDS_CODE
-            )
-            | (
-                filtered_df[THIRD_REASON_ADMISSION_COL]
-                .astype(str)
-                .str.split(".")
-                .str[0]
-                == RDS_CODE
-            )
+            filtered_df[RDS_DIAGNOSIS_COL]
+            .astype(str)
+            .str.contains(RDS_YES_CODE, na=False)
         )
 
         if "tei_id" in filtered_df.columns:
@@ -624,7 +615,7 @@ def compute_cpap_general_kpi(df, facility_uids=None):
 
 
 def compute_cpap_for_rds_kpi(df, facility_uids=None):
-    """Compute CPAP coverage for RDS newborns - FIXED with deduplication"""
+    """Compute CPAP coverage for RDS newborns - FIXED with deduplication and ENHANCED RDS LOGIC"""
     cache_key = get_cache_key_simplified(df, facility_uids, "cpap_for_rds_kpi")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -874,18 +865,27 @@ def render_birth_weight_trend_chart(
                 )
             )
 
-    # Calculate Y-axis range
-    all_values = []
-    for category_key in BIRTH_WEIGHT_CATEGORIES.keys():
-        count_col = f"{category_key}_count"
-        if count_col in trend_df.columns:
-            all_values.extend(trend_df[count_col].tolist())
+    # Calculate Y-axis range PROPERLY
+    # We need to calculate the TOTAL height of each stacked bar (sum of all categories for each period)
+    period_totals = []
+    for period in periods:
+        period_data = trend_df[trend_df[period_col] == period].iloc[0]
+        total = 0
+        for category_key in BIRTH_WEIGHT_CATEGORIES.keys():
+            count_col = f"{category_key}_count"
+            if count_col in period_data:
+                total += period_data[count_col]
+        period_totals.append(total)
 
-    if all_values:
-        max_value = max(all_values)
-        y_max = max_value * 1.1  # Add 10% padding
+    if period_totals:
+        max_total = max(period_totals)
+        # Add GENEROUS padding to ensure no cutting off
+        y_max = max_total * 1.3  # 30% padding instead of 10%
+
+        # Always ensure minimum height for visibility
+        y_max = max(y_max, 20)  # Minimum of 20 to see small values
     else:
-        y_max = None
+        y_max = 20  # Default minimum height
 
     fig.update_layout(
         title=title,
@@ -908,7 +908,7 @@ def render_birth_weight_trend_chart(
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[0, y_max] if y_max else None,
+            range=[0, y_max],  # FIXED: Now using calculated y_max
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -918,6 +918,8 @@ def render_birth_weight_trend_chart(
             traceorder="reversed",  # Reverse legend to match stacking order
             title="Birth Weight Categories",
         ),
+        # Add margin to ensure no cutting
+        margin=dict(l=50, r=50, t=50, b=100),
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -1378,7 +1380,6 @@ def render_birth_weight_region_comparison(
     )
 
 
-# ---------------- SEPARATE CPAP CHART FUNCTIONS (UPDATED WITH SINGLE TABLE) ----------------
 # ---------------- SEPARATE CPAP CHART FUNCTIONS (UPDATED WITH SINGLE TABLE) ----------------
 def render_cpap_general_trend_chart(
     df,
@@ -2493,8 +2494,6 @@ def render_cpap_rds_region_comparison(
 
 
 # ---------------- CHART FUNCTIONS (UPDATED WITH GROUP BARS) ----------------
-
-
 def render_kmc_coverage_trend_chart(
     df,
     period_col="period_display",
@@ -2675,12 +2674,12 @@ def render_kmc_coverage_trend_chart(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.write("Format: Rate% (KMC Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # Add description
     st.info(
-        "**KMC Coverage by Birth Weight Category**: Shows the percentage of newborns receiving Kangaroo Mother Care (KMC), grouped by birth weight categories. Color gradient from red (lowest weight) to green (highest weight) indicates birth weight categories."
+        "**KMC Coverage by Birth Weight Category**: Shows the percentage of newborns receiving Kangaroo Mother Care (KMC), grouped by birth weight categories. Color gradient from red (smaller weight value) to green (larger weight value) indicates birth weight categories."
     )
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -2936,12 +2935,12 @@ def render_cpap_by_weight_trend_chart(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.write("Format: Rate% (CPAP Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # Add description
     st.info(
-        "**CPAP Coverage by Birth Weight Category**: Shows the percentage of newborns receiving CPAP therapy, grouped by birth weight categories. Color gradient from red (lowest weight) to green (highest weight) indicates birth weight categories."
+        "**CPAP Coverage by Birth Weight Category**: Shows the percentage of newborns receiving CPAP therapy, grouped by birth weight categories. Color gradient from red (smaller weight value) to green (larger weight value) indicates birth weight categories."
     )
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3187,7 +3186,7 @@ def render_kmc_facility_comparison(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.write("Format: Rate% (KMC Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3405,7 +3404,7 @@ def render_cpap_facility_comparison(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.write("Format: Rate% (CPAP Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3630,7 +3629,7 @@ def render_kmc_region_comparison(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.write("Format: Rate% (KMC Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3857,7 +3856,7 @@ def render_cpap_region_comparison(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.write("Format: Rate% (CPAP Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3939,6 +3938,7 @@ __all__ = [
     "download_csv_button",
     "clean_category_name",
     "deduplicate_by_tei",
+    "get_kmc_status_for_tei",  # NEW: Enhanced KMC function
     # Date sorting helper functions
     "parse_period_to_datetime",
     "sort_periods_chronologically",
@@ -3946,32 +3946,30 @@ __all__ = [
     "compute_birth_weight_by_category",
     "compute_total_with_birth_weight",
     "compute_birth_weight_kpi",
-    "compute_kmc_by_weight_category",
-    "compute_kmc_coverage_kpi",
+    "compute_kmc_by_weight_category",  # ENHANCED with multiple columns
+    "compute_kmc_coverage_kpi",  # ENHANCED with multiple columns
     # CPAP computation functions
-    "compute_cpap_for_rds_kpi",
+    "get_rds_newborns",  # ENHANCED with exact column name
+    "compute_cpap_for_rds_kpi",  # ENHANCED RDS logic
     "compute_cpap_general_kpi",
     "compute_cpap_by_weight_category",
     "compute_cpap_coverage_by_weight_kpi",
     # Chart functions
     "render_birth_weight_trend_chart",
-    "render_kmc_coverage_trend_chart",
+    "render_birth_weight_facility_comparison",
+    "render_birth_weight_region_comparison",
     # CPAP chart functions
     "render_cpap_general_trend_chart",
     "render_cpap_rds_trend_chart",
     "render_cpap_by_weight_trend_chart",
-    # Facility comparison functions (STACKED BARS FOR RATES)
-    "render_birth_weight_facility_comparison",
+    # Facility comparison functions
     "render_kmc_facility_comparison",
     "render_cpap_facility_comparison",
-    # NEW CPAP FACILITY COMPARISON FUNCTIONS (GENERAL & RDS)
     "render_cpap_general_facility_comparison",
     "render_cpap_rds_facility_comparison",
-    # Region comparison functions (STACKED BARS FOR RATES)
-    "render_birth_weight_region_comparison",
+    # Region comparison functions
     "render_kmc_region_comparison",
     "render_cpap_region_comparison",
-    # NEW CPAP REGION COMPARISON FUNCTIONS (GENERAL & RDS)
     "render_cpap_general_region_comparison",
     "render_cpap_rds_region_comparison",
     # NEW RATE COMPARISON FUNCTIONS (ALIASES)
@@ -3979,13 +3977,14 @@ __all__ = [
     "render_kmc_rate_region_comparison",
     "render_cpap_rate_facility_comparison",
     "render_cpap_rate_region_comparison",
-    # Constants
+    # Constants - UPDATED with exact dataset names
     "BIRTH_WEIGHT_CATEGORIES",
     "BIRTH_WEIGHT_CATEGORY_NAMES",
     "BIRTH_WEIGHT_COL",
-    "KMC_ADMINISTERED_COL",
+    "KMC_COLUMNS",  # List of all KMC columns
     "KMC_YES_CODE",
     "CPAP_ADMINISTERED_COL",
     "CPAP_YES_CODE",
-    "RDS_CODE",
+    "RDS_DIAGNOSIS_COL",  # Exact column name from dataset
+    "RDS_YES_CODE",
 ]
