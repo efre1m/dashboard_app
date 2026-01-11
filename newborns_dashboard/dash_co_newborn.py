@@ -1,4 +1,4 @@
-# kpi_newborn.py - UPDATED WITH NEW COLUMN NAMES, REMOVED CULTURE TABS
+# kpi_newborn.py - UPDATED WITH DATASET COLUMN NAMES, REMOVED CULTURE TABS
 
 import pandas as pd
 import streamlit as st
@@ -57,11 +57,6 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Hypothermia Cases",
         "denominator_name": "Total Admitted Newborns",
     },
-    "Hypothermia After Admission Rate (%)": {
-        "title": "Hypothermia After Admission (%)",
-        "numerator_name": "Hypothermia Cases",
-        "denominator_name": "Total Admitted Newborns",
-    },
     "Neonatal Mortality Rate (%)": {
         "title": "Neonatal Mortality Rate (%)",
         "numerator_name": "Dead Cases",
@@ -81,7 +76,7 @@ NEWBORN_KPI_MAPPING = {
         "title": "Total Admitted Newborns",
         "value_name": "Admitted Newborns",
     },
-    # ANTIBIOTICS KPI - UPDATED WITH NEW COLUMN NAMES
+    # ANTIBIOTICS KPI - UPDATED WITH DATASET COLUMN NAMES
     "Antibiotics for Clinical Sepsis (%)": {
         "title": "Antibiotics for Clinical Sepsis (%)",
         "numerator_name": "Newborns with Sepsis Receiving Antibiotics",
@@ -135,7 +130,6 @@ NEWBORN_KPI_OPTIONS = [
     "Inborn Rate (%)",
     "Outborn Rate (%)",
     "Hypothermia on Admission Rate (%)",
-    "Hypothermia After Admission Rate (%)",
     "Neonatal Mortality Rate (%)",
     "Inborn Hypothermia Rate (%)",
     "Outborn Hypothermia Rate (%)",
@@ -150,13 +144,12 @@ NEWBORN_KPI_OPTIONS = [
     "CPAP Coverage by Birth Weight",
 ]
 
-# KPI Groups for Tab Navigation (UPDATED - REMOVED SEPsis MANAGEMENT TAB)
+# KPI Groups for Tab Navigation (UPDATED - REMOVED HYPOTHERMIA AFTER ADMISSION)
 NEWBORN_KPI_GROUPS = {
     "👶 Birth & Hypothermia": [
         "Inborn Rate (%)",
         "Outborn Rate (%)",
         "Hypothermia on Admission Rate (%)",
-        "Hypothermia After Admission Rate (%)",
         "Inborn Hypothermia Rate (%)",
         "Outborn Hypothermia Rate (%)",
         "Birth Weight Distribution",
@@ -174,34 +167,26 @@ NEWBORN_KPI_GROUPS = {
     ],
 }
 
-# KPI Column Requirements - UPDATED WITH NEW COLUMN NAMES
+# KPI Column Requirements - UPDATED WITH DATASET COLUMN NAMES
 NEWBORN_KPI_COLUMN_REQUIREMENTS = {
     "Inborn Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "place_of_delivery_nicu_admission_careform",  # Updated: birth_location_admission_information
-        "event_date_nicu_admission_careform",  # Updated: event_date_admission_information
+        "place_of_delivery_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
     ],
     "Outborn Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "place_of_delivery_nicu_admission_careform",  # Updated: birth_location_admission_information
-        "event_date_nicu_admission_careform",  # Updated: event_date_admission_information
+        "place_of_delivery_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
     ],
     "Hypothermia on Admission Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "temp_at_admission_nicu_admission_careform",  # Updated: temperature_on_admission_degc_observations_and_nursing_care_1
-        "event_date_nicu_admission_careform",  # Updated: event_date_observations_and_nursing_care_1
-    ],
-    "Hypothermia After Admission Rate (%)": [
-        "orgUnit",
-        "tei_id",
-        "enrollment_date",
-        # Updated: Not available in current dataset, using same as admission
         "temp_at_admission_nicu_admission_careform",
         "event_date_nicu_admission_careform",
     ],
@@ -209,24 +194,24 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "newborn_status_at_discharge_n_discharge_care_form",  # Updated: newborn_status_at_discharge_discharge_and_final_diagnosis
-        "event_date_discharge_care_form",  # Updated: event_date_discharge_and_final_diagnosis
+        "newborn_status_at_discharge_n_discharge_care_form",
+        "event_date_discharge_care_form",
     ],
     "Inborn Hypothermia Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "place_of_delivery_nicu_admission_careform",  # Updated: birth_location_admission_information
-        "temp_at_admission_nicu_admission_careform",  # Updated: temperature_on_admission_degc_observations_and_nursing_care_1
-        "event_date_nicu_admission_careform",  # Updated: event_date_admission_information
+        "place_of_delivery_nicu_admission_careform",
+        "temp_at_admission_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
     ],
     "Outborn Hypothermia Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "place_of_delivery_nicu_admission_careform",  # Updated: birth_location_admission_information
-        "temp_at_admission_nicu_admission_careform",  # Updated: temperature_on_admission_degc_observations_and_nursing_care_1
-        "event_date_nicu_admission_careform",  # Updated: event_date_admission_information
+        "place_of_delivery_nicu_admission_careform",
+        "temp_at_admission_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
     ],
     "Admitted Newborns": [
         "orgUnit",
@@ -237,57 +222,62 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "sub_categories_of_infection_n_discharge_care_form",  # Updated: sub_categories_of_infection_discharge_and_final_diagnosis
-        "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform",  # Updated: were_antibiotics_administered?_interventions
-        "event_date_nicu_admission_careform",  # Updated: event_date_discharge_and_final_diagnosis
+        "sub_categories_of_infection_n_discharge_care_form",
+        "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
     ],
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "birth_weight_n_nicu_admission_careform",  # Updated: birth_weight_grams_maternal_birth_and_infant_details
-        "event_date_nicu_admission_careform",  # Updated: event_date_maternal_birth_and_infant_details
+        "birth_weight_n_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
     ],
     "KMC Coverage by Birth Weight": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "birth_weight_n_nicu_admission_careform",  # Updated: birth_weight_grams_maternal_birth_and_infant_details
-        "kmc_done_nurse_followup_sheet",  # Updated: kmc_administered_interventions
-        "event_date_nurse_followup_sheet",  # Updated: event_date_interventions
+        "birth_weight_n_nicu_admission_careform",
+        # Multiple KMC columns
+        "kmc_done_nurse_followup_sheet",
+        "kmc_done_nurse_followup_sheet_v2",
+        "kmc_done_nurse_followup_sheet_v3",
+        "kmc_done_nurse_followup_sheet_v4",
+        "kmc_done_nurse_followup_sheet_v5",
+        "event_date_nurse_followup_sheet",
     ],
-    # CPAP REQUIREMENTS - UPDATED
+    # CPAP REQUIREMENTS - UPDATED WITH DATASET COLUMN NAMES
     "General CPAP Coverage": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "baby_placed_on_cpap_neonatal_referral_form",  # Updated: cpap_administered_interventions
-        "event_date_neonatal_referral_form",  # Updated: event_date_interventions
+        "baby_placed_on_cpap_neonatal_referral_form",
+        "event_date_neonatal_referral_form",
     ],
     "CPAP for RDS": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "baby_placed_on_cpap_neonatal_referral_form",  # Updated: cpap_administered_interventions
-        "sub_categories_of_prematurity_n_discharge_care_form",  # Updated: first_reason_for_admission_admission_information
-        "event_date_neonatal_referral_form",  # Updated: event_date_interventions
+        "baby_placed_on_cpap_neonatal_referral_form",
+        "sub_categories_of_prematurity_n_discharge_care_form",  # RDS diagnosis column
+        "event_date_neonatal_referral_form",
     ],
     "CPAP Coverage by Birth Weight": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
-        "baby_placed_on_cpap_neonatal_referral_form",  # Updated: cpap_administered_interventions
-        "birth_weight_n_nicu_admission_careform",  # Updated: birth_weight_grams_maternal_birth_and_infant_details
-        "event_date_neonatal_referral_form",  # Updated: event_date_interventions
+        "baby_placed_on_cpap_neonatal_referral_form",
+        "birth_weight_n_nicu_admission_careform",
+        "event_date_neonatal_referral_form",
     ],
 }
 
-# SIMPLIFIED KPI DATE COLUMN MAPPING - UPDATED
+# SIMPLIFIED KPI DATE COLUMN MAPPING - UPDATED WITH DATASET NAMES
 SIMPLIFIED_KPI_DATE_COLUMNS = {
     "Birth Weight Distribution": "event_date_nicu_admission_careform",
     "KMC Coverage by Birth Weight": "event_date_nurse_followup_sheet",
-    # CPAP DATE COLUMNS - UPDATED
+    # CPAP DATE COLUMNS - UPDATED WITH DATASET NAMES
     "General CPAP Coverage": "event_date_neonatal_referral_form",
     "CPAP for RDS": "event_date_neonatal_referral_form",
     "CPAP Coverage by Birth Weight": "event_date_neonatal_referral_form",
@@ -425,7 +415,6 @@ def render_newborn_kpi_tab_navigation():
         col1, col2 = st.columns(2)
         col3, col4 = st.columns(2)
         col5, col6 = st.columns(2)
-        col7, _ = st.columns(2)
 
         with col1:
             if st.button(
@@ -460,16 +449,16 @@ def render_newborn_kpi_tab_navigation():
 
         with col4:
             if st.button(
-                "🌡️ Hypothermia After Admission",
-                key="hypo_after_btn",
+                "⚖️ Birth Weight Distribution",
+                key="birth_weight_btn",
                 use_container_width=True,
                 type=(
                     "primary"
-                    if selected_kpi == "Hypothermia After Admission Rate (%)"
+                    if selected_kpi == "Birth Weight Distribution"
                     else "secondary"
                 ),
             ):
-                selected_kpi = "Hypothermia After Admission Rate (%)"
+                selected_kpi = "Birth Weight Distribution"
 
         with col5:
             if st.button(
@@ -496,19 +485,6 @@ def render_newborn_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Outborn Hypothermia Rate (%)"
-
-        with col7:
-            if st.button(
-                "⚖️ Birth Weight Distribution",
-                key="birth_weight_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Birth Weight Distribution"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Birth Weight Distribution"
 
     with tab2:
         col1, col2 = st.columns(2)

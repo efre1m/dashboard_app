@@ -952,6 +952,7 @@ class CSVIntegration:
         """
         Transform events DataFrame to patient-level format
         UPDATED: Now properly handles repeatable program stages for BOTH programs
+        FIXED: Now properly handles placeholder events for patients with only enrollment
         """
         if events_df.empty:
             logger.warning("Empty events DataFrame provided for transformation")
@@ -970,6 +971,24 @@ class CSVIntegration:
         logger.info(
             f"   Input: {len(df)} rows from {df['tei_id'].nunique()} unique patients"
         )
+
+        # Check how many rows are placeholders vs actual events
+        placeholder_events = df[df["event"].astype(str).str.startswith("placeholder_")]
+        actual_events = df[~df["event"].astype(str).str.startswith("placeholder_")]
+
+        logger.info(f"   📊 Actual events: {len(actual_events)} rows")
+        logger.info(f"   📊 Placeholder events: {len(placeholder_events)} rows")
+
+        # Check if we have patients with only placeholder events (no actual events)
+        teis_with_actual = actual_events["tei_id"].unique()
+        teis_with_placeholders_only = [
+            tei for tei in df["tei_id"].unique() if tei not in teis_with_actual
+        ]
+
+        if teis_with_placeholders_only:
+            logger.info(
+                f"   👥 Patients with only placeholder events (no actual events): {len(teis_with_placeholders_only)}"
+            )
 
         # Check what program stage names we have
         unique_stages = df["programStageName"].unique()
@@ -1052,49 +1071,106 @@ class CSVIntegration:
                 elif not is_maternal and program_stage_name == "Nurse followup Sheet":
                     is_repeatable = True
 
+                # Check if this group contains only placeholder events
+                has_placeholder = any(
+                    group["event"].astype(str).str.startswith("placeholder_")
+                )
+                has_actual = any(
+                    ~group["event"].astype(str).str.startswith("placeholder_")
+                )
+
                 if not is_repeatable:
                     # NON-REPEATABLE STAGE: No version suffixes
-                    # Find the actual event (skip placeholders)
-                    actual_events = group[
-                        ~group["event"].astype(str).str.startswith("placeholder_")
-                    ]
 
-                    if not actual_events.empty:
-                        # Use the first actual event found
-                        first_event_row = actual_events.iloc[0]
+                    if has_actual:
+                        # Has actual events - use them
+                        actual_events = group[
+                            ~group["event"].astype(str).str.startswith("placeholder_")
+                        ]
 
-                        # Add event metadata WITHOUT version suffix
-                        if "event" in first_event_row:
-                            patient_row[f"event_{clean_stage_name}"] = first_event_row[
-                                "event"
-                            ]
+                        if not actual_events.empty:
+                            # Use the first actual event found
+                            first_event_row = actual_events.iloc[0]
 
-                        # Use eventDate as-is (original DHIS2 format) WITHOUT version suffix
-                        if "eventDate" in first_event_row:
-                            patient_row[f"event_date_{clean_stage_name}"] = (
-                                first_event_row.get("eventDate", "")
+                            # Add event metadata WITHOUT version suffix
+                            if "event" in first_event_row:
+                                patient_row[f"event_{clean_stage_name}"] = (
+                                    first_event_row["event"]
+                                )
+
+                            # Use eventDate as-is (original DHIS2 format) WITHOUT version suffix
+                            if "eventDate" in first_event_row:
+                                patient_row[f"event_date_{clean_stage_name}"] = (
+                                    first_event_row.get("eventDate", "")
+                                )
+
+                            # Process all data elements for this specific event WITHOUT version suffix
+                            for idx, row in actual_events.iterrows():
+                                data_element_name = row["dataElementName"]
+                                value = row["value"]
+                                data_element_uid = row.get("dataElement_uid", "")
+
+                                # Skip empty values
+                                if pd.isna(value) or str(value).strip() == "":
+                                    continue
+
+                                # Clean data element name
+                                clean_element_name = CSVIntegration.clean_column_name(
+                                    data_element_name
+                                )
+
+                                # Create column name WITHOUT version suffix
+                                column_name = f"{clean_element_name}_{clean_stage_name}"
+
+                                # Add to patient row
+                                patient_row[column_name] = value
+                    elif has_placeholder:
+                        # Has only placeholder events - still create the structure
+                        # This is the key fix for patients with only enrollment
+                        first_placeholder = group.iloc[0]
+
+                        # Add placeholder event metadata
+                        patient_row[f"event_{clean_stage_name}"] = first_placeholder[
+                            "event"
+                        ]
+
+                        # IMPORTANT: Use enrollment_date for event_date when we have placeholders
+                        # Get enrollment_date from patient_base
+                        enrollment_date = (
+                            patient_base.loc[
+                                patient_base["tei_id"] == tei_id, "enrollment_date"
+                            ].iloc[0]
+                            if not patient_base.empty
+                            else ""
+                        )
+
+                        patient_row[f"event_date_{clean_stage_name}"] = enrollment_date
+
+                        # Create empty columns for all data elements in this program stage
+                        # Get required data elements for this program stage
+                        program_stage_uid = first_placeholder["programStage_uid"]
+
+                        if is_maternal:
+                            PROGRAM_STAGE_MAPPING = MATERNAL_PROGRAM_STAGE_MAPPING
+                        else:
+                            PROGRAM_STAGE_MAPPING = NEWBORN_PROGRAM_STAGE_MAPPING
+
+                        stage_info = PROGRAM_STAGE_MAPPING.get(program_stage_uid, {})
+                        stage_data_elements = stage_info.get("data_elements", [])
+
+                        for data_element_uid in stage_data_elements:
+                            data_element_name = DATA_ELEMENT_NAMES.get(
+                                data_element_uid, data_element_uid
                             )
-
-                        # Process all data elements for this specific event WITHOUT version suffix
-                        for idx, row in actual_events.iterrows():
-                            data_element_name = row["dataElementName"]
-                            value = row["value"]
-                            data_element_uid = row.get("dataElement_uid", "")
-
-                            # Skip empty values
-                            if pd.isna(value) or str(value).strip() == "":
-                                continue
-
-                            # Clean data element name
                             clean_element_name = CSVIntegration.clean_column_name(
                                 data_element_name
                             )
 
-                            # Create column name WITHOUT version suffix
+                            # Create column name
                             column_name = f"{clean_element_name}_{clean_stage_name}"
 
-                            # Add to patient row
-                            patient_row[column_name] = value
+                            # Set to empty string (will be filled with "N/A" later)
+                            patient_row[column_name] = ""
                 else:
                     # REPEATABLE STAGE: Create versioned columns
                     # FIRST: Group events by their event ID (each event has its own event ID and event date)
@@ -1106,11 +1182,68 @@ class CSVIntegration:
 
                     # Process each event (repeated program stage) separately
                     for event_id, event_group in event_groups:
-                        # Skip placeholder events
+                        # Skip placeholder events for repeatable stages
+                        # (we typically don't create placeholders for repeatable stages)
                         if str(event_id).startswith("placeholder_"):
+                            # Still create structure for placeholders in repeatable stages
+                            first_event_row = event_group.iloc[0]
+
+                            # Create version suffix
+                            version_suffix = (
+                                f"_v{version_counter}" if version_counter > 1 else ""
+                            )
+
+                            # Add event metadata with version suffix
+                            if "event" in first_event_row:
+                                patient_row[
+                                    f"event_{clean_stage_name}{version_suffix}"
+                                ] = event_id
+
+                            # Use enrollment_date for event_date when we have placeholders
+                            enrollment_date = (
+                                patient_base.loc[
+                                    patient_base["tei_id"] == tei_id, "enrollment_date"
+                                ].iloc[0]
+                                if not patient_base.empty
+                                else ""
+                            )
+
+                            patient_row[
+                                f"event_date_{clean_stage_name}{version_suffix}"
+                            ] = enrollment_date
+
+                            # Create empty columns for data elements
+                            program_stage_uid = first_event_row["programStage_uid"]
+
+                            if is_maternal:
+                                PROGRAM_STAGE_MAPPING = MATERNAL_PROGRAM_STAGE_MAPPING
+                            else:
+                                PROGRAM_STAGE_MAPPING = NEWBORN_PROGRAM_STAGE_MAPPING
+
+                            stage_info = PROGRAM_STAGE_MAPPING.get(
+                                program_stage_uid, {}
+                            )
+                            stage_data_elements = stage_info.get("data_elements", [])
+
+                            for data_element_uid in stage_data_elements:
+                                data_element_name = DATA_ELEMENT_NAMES.get(
+                                    data_element_uid, data_element_uid
+                                )
+                                clean_element_name = CSVIntegration.clean_column_name(
+                                    data_element_name
+                                )
+
+                                # Create column name with program stage AND version suffix
+                                column_name = f"{clean_element_name}_{clean_stage_name}{version_suffix}"
+
+                                # Set to empty string
+                                patient_row[column_name] = ""
+
+                            # Increment version counter for next event in same program stage
+                            version_counter += 1
                             continue
 
-                        # Sort event group by data element to ensure consistent ordering
+                        # Handle actual events
                         if not event_group.empty:
                             first_event_row = event_group.iloc[0]
 
@@ -1298,6 +1431,21 @@ class CSVIntegration:
         logger.info(
             f"   📊 Output: {len(patient_df)} patients, {len(patient_df.columns)} columns"
         )
+
+        # Log event_date columns specifically
+        event_date_cols = [
+            col for col in patient_df.columns if col.startswith("event_date_")
+        ]
+        if event_date_cols:
+            logger.info(f"   📅 Event date columns created: {len(event_date_cols)}")
+            for col in event_date_cols[:3]:
+                non_empty = patient_df[patient_df[col] != ""].shape[0]
+                logger.info(f"      {col}: {non_empty}/{len(patient_df)} non-empty")
+
+                # Show sample of non-empty values
+                if non_empty > 0:
+                    samples = patient_df[patient_df[col] != ""][col].unique()[:2]
+                    logger.info(f"        Samples: {samples}")
 
         return patient_df
 

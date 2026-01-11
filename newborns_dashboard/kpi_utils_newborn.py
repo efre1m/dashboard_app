@@ -43,7 +43,7 @@ OUTBORN_CODE = "2"
 TEMPERATURE_ON_ADMISSION_COL = "temp_at_admission_nicu_admission_careform"
 HYPOTHERMIA_THRESHOLD = 36.5  # °C
 
-# Observations and Nursing Care 2 columns - COMMENTED OUT (not available)
+# Observations and Nursing Care 2 columns - NOT AVAILABLE
 # LOWEST_TEMPERATURE_COL = "lowest_recorded_temperature_celsius_observations_and_nursing_care_2"
 
 # Discharge columns
@@ -388,10 +388,10 @@ def compute_hypothermia_on_admission_count(df, facility_uids=None):
     return int(hypothermia_mask.sum())
 
 
-def compute_hypothermia_after_admission_count(df, facility_uids=None):
-    """Count hypothermia after admission occurrences (lowest recorded temp < 36.5°C)"""
-    # This indicator is not available in current dataset
-    return 0
+# def compute_hypothermia_after_admission_count(df, facility_uids=None):
+#     """Count hypothermia after admission occurrences (lowest recorded temp < 36.5°C)"""
+#     # This indicator is not available in current dataset
+#     return 0
 
 
 def compute_neonatal_death_count(df, facility_uids=None):
@@ -472,18 +472,18 @@ def compute_hypothermia_on_admission_rate(df, facility_uids=None):
     return result
 
 
-def compute_hypothermia_after_admission_rate(df, facility_uids=None):
-    """Compute hypothermia after admission rate"""
-    cache_key = get_cache_key_newborn(
-        df, facility_uids, "hypothermia_after_admission_rate"
-    )
-    if cache_key in st.session_state.kpi_cache_newborn:
-        return st.session_state.kpi_cache_newborn[cache_key]
+# def compute_hypothermia_after_admission_rate(df, facility_uids=None):
+#     """Compute hypothermia after admission rate"""
+#     cache_key = get_cache_key_newborn(
+#         df, facility_uids, "hypothermia_after_admission_rate"
+#     )
+#     if cache_key in st.session_state.kpi_cache_newborn:
+#         return st.session_state.kpi_cache_newborn[cache_key]
 
-    # This indicator is not available in current dataset
-    result = (0.0, 0, 0)
-    st.session_state.kpi_cache_newborn[cache_key] = result
-    return result
+#     # This indicator is not available in current dataset
+#     result = (0.0, 0, 0)
+#     st.session_state.kpi_cache_newborn[cache_key] = result
+#     return result
 
 
 def compute_neonatal_mortality_rate(df, facility_uids=None):
@@ -523,9 +523,10 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     hypothermia_on_admission_rate, hypothermia_on_admission_count, _ = (
         compute_hypothermia_on_admission_rate(filtered_df, facility_uids)
     )
-    hypothermia_after_admission_rate, hypothermia_after_admission_count, _ = (
-        compute_hypothermia_after_admission_rate(filtered_df, facility_uids)
-    )
+    # COMMENTED OUT: Hypothermia after admission not available
+    # hypothermia_after_admission_rate, hypothermia_after_admission_count, _ = (
+    #     compute_hypothermia_after_admission_rate(filtered_df, facility_uids)
+    # )
     neonatal_mortality_rate, death_count, _ = compute_neonatal_mortality_rate(
         filtered_df, facility_uids
     )
@@ -547,9 +548,10 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         "hypothermia_on_admission_rate": float(hypothermia_on_admission_rate),
         "hypothermia_on_admission_count": int(hypothermia_on_admission_count),
         "total_hypo_admission": int(total_admitted),
-        "hypothermia_after_admission_rate": float(hypothermia_after_admission_rate),
-        "hypothermia_after_admission_count": int(hypothermia_after_admission_count),
-        "total_hypo_after": int(total_admitted),
+        # COMMENTED OUT: Hypothermia after admission not available
+        # "hypothermia_after_admission_rate": float(hypothermia_after_admission_rate),
+        # "hypothermia_after_admission_count": int(hypothermia_after_admission_count),
+        # "total_hypo_after": int(total_admitted),
         "neonatal_mortality_rate": float(neonatal_mortality_rate),
         "death_count": int(death_count),
         "total_deaths": int(total_admitted),
@@ -566,49 +568,40 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
 # ---------------- Date Handling ----------------
 def get_relevant_date_column_for_newborn_kpi(kpi_name):
     """Get the relevant event date column for a specific newborn KPI"""
-    program_stage_date_mapping = {
-        # Admission Information KPIs - UPDATED
+    # CLEAR DIRECT MAPPING - NO WORD SEARCHING
+    kpi_to_date_mapping = {
+        # ============ ADMISSION KPIs (use event_date_nicu_admission_careform) ============
         "Inborn Rate (%)": "event_date_nicu_admission_careform",
         "Outborn Rate (%)": "event_date_nicu_admission_careform",
         "Inborn Babies (%)": "event_date_nicu_admission_careform",
         "Outborn Babies (%)": "event_date_nicu_admission_careform",
-        # Observations and Nursing Care 1 KPIs - UPDATED
+        "Inborn Hypothermia Rate (%)": "event_date_nicu_admission_careform",
+        "Outborn Hypothermia Rate (%)": "event_date_nicu_admission_careform",
+        # ============ HYPOTHERMIA ON ADMISSION (use event_date_nicu_admission_careform) ============
         "Hypothermia on Admission Rate (%)": "event_date_nicu_admission_careform",
         "Hypothermia on Admission (%)": "event_date_nicu_admission_careform",
-        # Observations and Nursing Care 2 KPIs
-        "Hypothermia After Admission Rate (%)": "event_date_nicu_admission_careform",  # Using same as admission since not available
-        "Hypothermia After Admission (%)": "event_date_nicu_admission_careform",  # Using same as admission since not available
-        # Discharge KPIs - UPDATED
-        "Neonatal Mortality Rate (%)": "event_date_discharge_care_form",
-        "NMR (%)": "event_date_discharge_care_form",
+        # ============ HYPOTHERMIA AFTER ADMISSION - NOT AVAILABLE ============
+        # "Hypothermia After Admission Rate (%)": "event_date_nicu_admission_careform",
+        # "Hypothermia After Admission (%)": "event_date_nicu_admission_careform",
+        # ============ ANTIBIOTICS (use event_date_nicu_admission_careform) ============
         "Antibiotics for Clinical Sepsis (%)": "event_date_nicu_admission_careform",
         "Antibiotics Rate (%)": "event_date_nicu_admission_careform",
-        # Admitted Newborns KPI
+        # ============ DISCHARGE/OUTCOME KPIs (use event_date_discharge_care_form) ============
+        "Neonatal Mortality Rate (%)": "event_date_discharge_care_form",
+        "NMR (%)": "event_date_discharge_care_form",
+        # ============ ADMITTED NEWBORNS (use enrollment_date) ============
         "Admitted Newborns": "enrollment_date",
-        "Total Admitted Newborns": "event_date_nicu_admission_careform",
+        "Total Admitted Newborns": "enrollment_date",
+        # ============ SIMPLIFIED KPIs (for reference) ============
+        "Birth Weight Distribution": "event_date_nicu_admission_careform",
+        "KMC Coverage by Birth Weight": "event_date_nurse_followup_sheet",
+        "General CPAP Coverage": "event_date_neonatal_referral_form",
+        "CPAP for RDS": "event_date_neonatal_referral_form",
+        "CPAP Coverage by Birth Weight": "event_date_neonatal_referral_form",
     }
 
-    for key in program_stage_date_mapping:
-        if key in kpi_name:
-            return program_stage_date_mapping[key]
-
-    if any(word in kpi_name for word in ["Inborn", "Outborn", "Birth Location"]):
-        return "event_date_nicu_admission_careform"
-    elif (
-        any(word in kpi_name for word in ["Hypothermia", "Temperature", "Admission"])
-        and "After" not in kpi_name
-    ):
-        return "event_date_nicu_admission_careform"
-    elif any(word in kpi_name for word in ["Lowest Temperature", "After Admission"]):
-        return "event_date_nicu_admission_careform"  # Using same as admission since not available
-    elif any(word in kpi_name for word in ["Mortality", "Death", "Discharge"]):
-        return "event_date_discharge_care_form"
-    elif any(word in kpi_name for word in ["Antibiotics", "Sepsis"]):
-        return "event_date_nicu_admission_careform"
-    elif any(word in kpi_name for word in ["Admitted Newborns", "Admitted"]):
-        return "enrollment_date"
-
-    return "event_date_nicu_admission_careform"
+    # Direct lookup - no word searching
+    return kpi_to_date_mapping.get(kpi_name, "enrollment_date")  # Default fallback
 
 
 def prepare_data_for_newborn_trend_chart(
@@ -747,11 +740,12 @@ def get_numerator_denominator_for_newborn_kpi(
             "denominator": "total_admitted",
             "value": "hypothermia_on_admission_rate",
         },
-        "Hypothermia After Admission Rate (%)": {
-            "numerator": "hypothermia_after_admission_count",
-            "denominator": "total_admitted",
-            "value": "hypothermia_after_admission_rate",
-        },
+        # COMMENTED OUT: Hypothermia after admission not available
+        # "Hypothermia After Admission Rate (%)": {
+        #     "numerator": "hypothermia_after_admission_count",
+        #     "denominator": "total_admitted",
+        #     "value": "hypothermia_after_admission_rate",
+        # },
         "Neonatal Mortality Rate (%)": {
             "numerator": "death_count",
             "denominator": "total_admitted",
@@ -806,11 +800,12 @@ def get_numerator_denominator_for_newborn_kpi(
         denominator = kpi_data.get("total_admitted", 1)
         value = kpi_data.get("hypothermia_on_admission_rate", 0.0)
         return (numerator, denominator, value)
-    elif "Hypothermia" in kpi_name and "After" in kpi_name:
-        numerator = kpi_data.get("hypothermia_after_admission_count", 0)
-        denominator = kpi_data.get("total_admitted", 1)
-        value = kpi_data.get("hypothermia_after_admission_rate", 0.0)
-        return (numerator, denominator, value)
+    # COMMENTED OUT: Hypothermia after admission not available
+    # elif "Hypothermia" in kpi_name and "After" in kpi_name:
+    #     numerator = kpi_data.get("hypothermia_after_admission_count", 0)
+    #     denominator = kpi_data.get("total_admitted", 1)
+    #     value = kpi_data.get("hypothermia_after_admission_rate", 0.0)
+    #     return (numerator, denominator, value)
     elif "Inborn" in kpi_name:
         numerator = kpi_data.get("inborn_count", 0)
         denominator = kpi_data.get("total_admitted", 1)
@@ -1623,13 +1618,13 @@ __all__ = [
     "compute_inborn_count",
     "compute_outborn_count",
     "compute_hypothermia_on_admission_count",
-    "compute_hypothermia_after_admission_count",
+    # "compute_hypothermia_after_admission_count",  # COMMENTED OUT: Not available
     "compute_neonatal_death_count",
     # KPI computation functions
     "compute_inborn_rate",
     "compute_outborn_rate",
     "compute_hypothermia_on_admission_rate",
-    "compute_hypothermia_after_admission_rate",
+    # "compute_hypothermia_after_admission_rate",  # COMMENTED OUT: Not available
     "compute_neonatal_mortality_rate",
     # Master KPI function
     "compute_newborn_kpis",
