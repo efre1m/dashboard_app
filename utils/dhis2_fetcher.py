@@ -705,6 +705,126 @@ class CSVIntegration:
         return cleaned
 
     @staticmethod
+    def get_all_required_columns(program_type: str) -> List[str]:
+        """
+        Get all required columns for a program type.
+        This method is used to ensure all required columns exist in the dataframe.
+        """
+        if program_type == "maternal":
+            # Base columns for maternal program
+            base_columns = [
+                "tei_id",
+                "orgUnit",
+                "orgUnit_name",
+                "program_type",
+                "region_uid",
+                "region_name",
+                "enrollment_status",
+                "enrollment_date",
+                "incident_date",
+            ]
+
+            # Add maternal program stage columns
+            all_columns = base_columns.copy()
+
+            # Add columns for each maternal program stage
+            for stage_uid, stage_info in MATERNAL_PROGRAM_STAGE_MAPPING.items():
+                program_stage_name = stage_info["program_stage_name"]
+                clean_stage_name = CSVIntegration.clean_column_name(program_stage_name)
+
+                # Add event and event_date columns
+                all_columns.append(f"event_{clean_stage_name}")
+                all_columns.append(f"event_date_{clean_stage_name}")
+
+                # For repeatable stages, add versioned columns
+                if program_stage_name in [
+                    "Postpartum care"
+                ]:  # Maternal repeatable stages
+                    for i in range(2, 6):  # Up to 5 versions
+                        all_columns.append(f"event_{clean_stage_name}_v{i}")
+                        all_columns.append(f"event_date_{clean_stage_name}_v{i}")
+
+                # Add data element columns
+                for data_element_uid in stage_info["data_elements"]:
+                    data_element_name = DATA_ELEMENT_NAMES.get(
+                        data_element_uid, data_element_uid
+                    )
+                    clean_element_name = CSVIntegration.clean_column_name(
+                        data_element_name
+                    )
+
+                    column_name = f"{clean_element_name}_{clean_stage_name}"
+                    all_columns.append(column_name)
+
+                    # For repeatable stages, add versioned data element columns
+                    if program_stage_name in ["Postpartum care"]:
+                        for i in range(2, 6):
+                            version_suffix = f"_v{i}"
+                            all_columns.append(
+                                f"{clean_element_name}_{clean_stage_name}{version_suffix}"
+                            )
+
+            return all_columns
+
+        elif program_type == "newborn":
+            # Base columns for newborn program
+            base_columns = [
+                "tei_id",
+                "orgUnit",
+                "orgUnit_name",
+                "program_type",
+                "region_uid",
+                "region_name",
+                "enrollment_status",
+                "enrollment_date",
+                "incident_date",
+            ]
+
+            # Add newborn program stage columns
+            all_columns = base_columns.copy()
+
+            # Add columns for each newborn program stage
+            for stage_uid, stage_info in NEWBORN_PROGRAM_STAGE_MAPPING.items():
+                program_stage_name = stage_info["program_stage_name"]
+                clean_stage_name = CSVIntegration.clean_column_name(program_stage_name)
+
+                # Add event and event_date columns
+                all_columns.append(f"event_{clean_stage_name}")
+                all_columns.append(f"event_date_{clean_stage_name}")
+
+                # For repeatable stages (Nurse followup Sheet), add versioned columns
+                if program_stage_name == "Nurse followup Sheet":
+                    for i in range(2, 6):  # Up to 5 versions
+                        all_columns.append(f"event_{clean_stage_name}_v{i}")
+                        all_columns.append(f"event_date_{clean_stage_name}_v{i}")
+
+                # Add data element columns
+                for data_element_uid in stage_info["data_elements"]:
+                    data_element_name = DATA_ELEMENT_NAMES.get(
+                        data_element_uid, data_element_uid
+                    )
+                    clean_element_name = CSVIntegration.clean_column_name(
+                        data_element_name
+                    )
+
+                    column_name = f"{clean_element_name}_{clean_stage_name}"
+                    all_columns.append(column_name)
+
+                    # For repeatable stages, add versioned data element columns
+                    if program_stage_name == "Nurse followup Sheet":
+                        for i in range(2, 6):
+                            version_suffix = f"_v{i}"
+                            all_columns.append(
+                                f"{clean_element_name}_{clean_stage_name}{version_suffix}"
+                            )
+
+            return all_columns
+
+        else:
+            logger.warning(f"Unknown program type: {program_type}")
+            return []
+
+    @staticmethod
     def create_events_dataframe(
         tei_data: Dict, program_uid: str, orgunit_names: Dict[str, str]
     ) -> pd.DataFrame:
@@ -941,6 +1061,217 @@ class CSVIntegration:
         return evt_df
 
     @staticmethod
+    def handle_newborns_without_program_stages(
+        patient_df: pd.DataFrame, program_uid: str, enrollment_data: Dict[str, Dict]
+    ) -> pd.DataFrame:
+        """
+        Handle newborn TEIs that have NO program stage data at all.
+        Creates placeholder columns for ALL required program stages with 'N/A' values
+        and sets all event_date columns to enrollment_date.
+        """
+        if patient_df.empty or program_uid != NEWBORN_PROGRAM_UID:
+            return patient_df
+
+        logger.info("👶 Handling newborns with no program stage data...")
+
+        # Get all required columns for newborn program
+        all_required_columns = CSVIntegration.get_all_required_columns("newborn")
+
+        # Identify TEIs with no program stage data
+        # These would have minimal columns (only base columns)
+        base_columns = [
+            "tei_id",
+            "orgUnit",
+            "orgUnit_name",
+            "program_type",
+            "region_uid",
+            "region_name",
+            "enrollment_status",
+            "enrollment_date",
+            "incident_date",
+        ]
+
+        # Find TEIs that have only base columns (no program stage data)
+        teis_without_stages = []
+        for idx, row in patient_df.iterrows():
+            tei_id = row["tei_id"]
+            # Count how many non-base columns have values
+            non_base_columns_with_data = 0
+            for col in patient_df.columns:
+                if col not in base_columns:
+                    if col in row and row[col] != "" and row[col] != "N/A":
+                        non_base_columns_with_data += 1
+
+            if non_base_columns_with_data == 0:
+                teis_without_stages.append(tei_id)
+
+        if not teis_without_stages:
+            logger.info("   ✅ All newborns have some program stage data")
+            return patient_df
+
+        logger.info(
+            f"   📊 Found {len(teis_without_stages)} newborns with no program stage data"
+        )
+
+        # Process each TEI without program stage data
+        processed_rows = []
+
+        for idx, row in patient_df.iterrows():
+            tei_id = row["tei_id"]
+
+            if tei_id in teis_without_stages:
+                # This TEI has no program stage data - create full structure
+                new_row = row.copy()
+
+                # Get enrollment info for this TEI
+                enrollment_info = enrollment_data.get(tei_id, {})
+                enrollment_date = enrollment_info.get("enrollment_date", "")
+
+                # Create placeholders for ALL newborn program stages
+                for (
+                    program_stage_uid,
+                    stage_info,
+                ) in NEWBORN_PROGRAM_STAGE_MAPPING.items():
+                    program_stage_name = stage_info["program_stage_name"]
+                    clean_stage_name = CSVIntegration.clean_column_name(
+                        program_stage_name
+                    )
+
+                    # Add event and event_date columns (use enrollment_date for event_date)
+                    event_col = f"event_{clean_stage_name}"
+                    event_date_col = f"event_date_{clean_stage_name}"
+
+                    new_row[event_col] = f"placeholder_{tei_id}_{program_stage_uid}"
+                    new_row[event_date_col] = enrollment_date  # Use enrollment_date
+
+                    # Check if this stage is repeatable (Nurse followup Sheet)
+                    if program_stage_name == "Nurse followup Sheet":
+                        # Add up to 5 versions
+                        for i in range(2, 6):
+                            version_suffix = f"_v{i}"
+                            new_row[f"event_{clean_stage_name}{version_suffix}"] = (
+                                f"placeholder_{tei_id}_{program_stage_uid}{version_suffix}"
+                            )
+                            new_row[
+                                f"event_date_{clean_stage_name}{version_suffix}"
+                            ] = enrollment_date
+
+                    # Add data elements for this program stage with 'N/A' values
+                    for data_element_uid in stage_info["data_elements"]:
+                        data_element_name = DATA_ELEMENT_NAMES.get(
+                            data_element_uid, data_element_uid
+                        )
+                        clean_element_name = CSVIntegration.clean_column_name(
+                            data_element_name
+                        )
+
+                        # Non-repeatable stages
+                        column_name = f"{clean_element_name}_{clean_stage_name}"
+                        new_row[column_name] = "N/A"
+
+                        # For repeatable stages, add versioned columns
+                        if program_stage_name == "Nurse followup Sheet":
+                            for i in range(2, 6):
+                                version_suffix = f"_v{i}"
+                                new_row[
+                                    f"{clean_element_name}_{clean_stage_name}{version_suffix}"
+                                ] = "N/A"
+
+                processed_rows.append(new_row)
+                logger.debug(f"      Created placeholders for TEI {tei_id}")
+            else:
+                # Keep existing row as-is
+                processed_rows.append(row)
+
+        # Create new DataFrame
+        result_df = pd.DataFrame(processed_rows)
+
+        # Ensure all required columns exist
+        for col in all_required_columns:
+            if col not in result_df.columns:
+                result_df[col] = "N/A"
+
+        logger.info(
+            f"   ✅ Created {len(teis_without_stages)} newborn placeholders with enrollment dates"
+        )
+        return result_df
+
+    @staticmethod
+    def ensure_all_event_dates_have_enrollment_date(
+        df: pd.DataFrame, program_type: str
+    ) -> pd.DataFrame:
+        """
+        Ensure ALL event_date columns have values, using enrollment_date where empty.
+        """
+        if df.empty:
+            return df
+
+        logger.info(
+            f"📅 Ensuring all event_date columns have values for {program_type}..."
+        )
+
+        # Get all event_date columns
+        event_date_cols = [col for col in df.columns if col.startswith("event_date_")]
+
+        if not event_date_cols:
+            logger.info("   No event_date columns found")
+            return df
+
+        # Initialize counters
+        filled_count = 0
+        total_empty = 0
+
+        for event_date_col in event_date_cols:
+            # Find rows where event_date is empty
+            empty_mask = (
+                (df[event_date_col].isna())
+                | (df[event_date_col].astype(str).str.strip() == "")
+                | (df[event_date_col].astype(str).str.strip() == "N/A")
+                | (df[event_date_col].astype(str).str.strip() == "nan")
+            )
+
+            empty_count = empty_mask.sum()
+            total_empty += empty_count
+
+            if empty_count > 0:
+                # Try to fill with enrollment_date
+                if "enrollment_date" in df.columns:
+                    # Find rows with valid enrollment_date
+                    valid_enrollment_mask = (
+                        df["enrollment_date"].notna()
+                        & (df["enrollment_date"].astype(str).str.strip() != "")
+                        & (df["enrollment_date"].astype(str).str.strip() != "N/A")
+                    )
+
+                    # Fill where both conditions are true
+                    fill_mask = empty_mask & valid_enrollment_mask
+                    fill_count = fill_mask.sum()
+
+                    if fill_count > 0:
+                        df.loc[fill_mask, event_date_col] = df.loc[
+                            fill_mask, "enrollment_date"
+                        ]
+                        filled_count += fill_count
+                        logger.info(
+                            f"   ✅ {event_date_col}: Filled {fill_count} empty dates with enrollment_date"
+                        )
+
+                # For any remaining empty values, set to "N/A"
+                still_empty_mask = empty_mask & (
+                    df[event_date_col].isna()
+                    | (df[event_date_col].astype(str).str.strip() == "")
+                )
+                still_empty_count = still_empty_mask.sum()
+                if still_empty_count > 0:
+                    df.loc[still_empty_mask, event_date_col] = "N/A"
+
+        logger.info(f"   📊 Total event_date columns: {len(event_date_cols)}")
+        logger.info(f"   📊 Empty event dates found: {total_empty}")
+        logger.info(f"   📊 Filled with enrollment_date: {filled_count}")
+
+        return df
+
+    @staticmethod
     def transform_events_to_patient_level(
         events_df: pd.DataFrame, program_uid: str
     ) -> pd.DataFrame:
@@ -992,6 +1323,18 @@ class CSVIntegration:
                 .to_dict()
             )
             patient_base["orgUnit_name"] = patient_base["tei_id"].map(org_name_mapping)
+
+        # Create enrollment data dictionary for later use
+        enrollment_data = {}
+        for tei_id in patient_base["tei_id"].unique():
+            tei_data = df[df["tei_id"] == tei_id]
+            if not tei_data.empty:
+                first_row = tei_data.iloc[0]
+                enrollment_data[tei_id] = {
+                    "enrollment_status": first_row.get("enrollment_status", ""),
+                    "enrollment_date": first_row.get("enrollment_date", ""),
+                    "incident_date": first_row.get("incident_date", ""),
+                }
 
         # Add enrollment information to base patient data - use original dates
         enrollment_cols = ["enrollment_status", "enrollment_date", "incident_date"]
@@ -1226,17 +1569,37 @@ class CSVIntegration:
         # Step 4: Merge all stage data with patient base
         if not all_stage_data:
             logger.warning("No program stage data found after transformation")
-            return patient_base
-
-        # Start with patient base and merge all program stage data
-        patient_df = patient_base
-        for stage_df in all_stage_data:
-            patient_df = patient_df.merge(stage_df, on="tei_id", how="left")
+            # For newborns, create complete placeholder structure
+            if not is_maternal:
+                logger.info(
+                    "Creating complete placeholder structure for newborns with no data"
+                )
+                patient_df = CSVIntegration.handle_newborns_without_program_stages(
+                    patient_base, program_uid, enrollment_data
+                )
+            else:
+                patient_df = patient_base
+        else:
+            # Start with patient base and merge all program stage data
+            patient_df = patient_base
+            for stage_df in all_stage_data:
+                patient_df = patient_df.merge(stage_df, on="tei_id", how="left")
 
         # Fill NaN values with empty string for better readability
         patient_df = patient_df.fillna("")
 
         # ========== POST-TRANSFORMATION FIXES ==========
+
+        # For newborns: Handle cases with no program stage data
+        if not is_maternal:
+            patient_df = CSVIntegration.handle_newborns_without_program_stages(
+                patient_df, program_uid, enrollment_data
+            )
+
+        # Ensure all event_date columns have values
+        patient_df = CSVIntegration.ensure_all_event_dates_have_enrollment_date(
+            patient_df, program_type
+        )
 
         # 1. REORDER COLUMNS: Move "other number of newborns" next to "number of newborns"
         if program_type == "maternal":
@@ -1585,6 +1948,12 @@ class CSVIntegration:
         is_maternal = (
             "program_type" in processed_df.columns
             and processed_df["program_type"].iloc[0] == "maternal"
+        )
+
+        # Step 3: Ensure all event_date columns have values (one more pass)
+        program_type = "maternal" if is_maternal else "newborn"
+        processed_df = CSVIntegration.ensure_all_event_dates_have_enrollment_date(
+            processed_df, program_type
         )
 
         if is_maternal:
