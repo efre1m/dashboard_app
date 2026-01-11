@@ -2674,12 +2674,12 @@ def render_kmc_coverage_trend_chart(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.write("Format: Rate% (KMC Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # Add description
     st.info(
-        "**KMC Coverage by Birth Weight Category**: Shows the percentage of newborns receiving Kangaroo Mother Care (KMC), grouped by birth weight categories. Color gradient from red (lowest weight) to green (highest weight) indicates birth weight categories."
+        "**KMC Coverage by Birth Weight Category**: Shows the percentage of newborns receiving Kangaroo Mother Care (KMC), grouped by birth weight categories. Color gradient from red (smaller weight value) to green (larger weight value) indicates birth weight categories."
     )
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -2935,12 +2935,12 @@ def render_cpap_by_weight_trend_chart(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.write("Format: Rate% (CPAP Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # Add description
     st.info(
-        "**CPAP Coverage by Birth Weight Category**: Shows the percentage of newborns receiving CPAP therapy, grouped by birth weight categories. Color gradient from red (lowest weight) to green (highest weight) indicates birth weight categories."
+        "**CPAP Coverage by Birth Weight Category**: Shows the percentage of newborns receiving CPAP therapy, grouped by birth weight categories. Color gradient from red (smaller weight value) to green (larger weight value) indicates birth weight categories."
     )
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3186,7 +3186,7 @@ def render_kmc_facility_comparison(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.write("Format: Rate% (KMC Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3404,7 +3404,7 @@ def render_cpap_facility_comparison(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.write("Format: Rate% (CPAP Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3629,7 +3629,7 @@ def render_kmc_region_comparison(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (KMC Cases / Total Newborns)")
+    st.write("Format: Rate% (KMC Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
@@ -3856,7 +3856,7 @@ def render_cpap_region_comparison(
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table
-    st.write("Format: Rate% (CPAP Cases / Total Newborns)")
+    st.write("Format: Rate% (CPAP Cases / Total Newborns with birth weight)")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)

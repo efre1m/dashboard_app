@@ -42,15 +42,15 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
 
 # KPI mapping for newborn comparison charts
 NEWBORN_KPI_MAPPING = {
-    "Inborn Rate (%)": {
-        "title": "Inborn Babies (%)",
-        "numerator_name": "Inborn Cases",
-        "denominator_name": "Total Admitted Newborns",
+    "Inborn Hypothermia Rate (%)": {
+        "title": "Hypothermia in Inborn Babies (%)",
+        "numerator_name": "Inborn Hypothermia Cases",
+        "denominator_name": "Total Inborn Babies",
     },
-    "Outborn Rate (%)": {
-        "title": "Outborn Babies (%)",
-        "numerator_name": "Outborn Cases",
-        "denominator_name": "Total Admitted Newborns",
+    "Outborn Hypothermia Rate (%)": {
+        "title": "Hypothermia in Outborn Babies (%)",
+        "numerator_name": "Outborn Hypothermia Cases",
+        "denominator_name": "Total Outborn Babies",
     },
     "Hypothermia on Admission Rate (%)": {
         "title": "Hypothermia on Admission (%)",
@@ -93,7 +93,7 @@ NEWBORN_KPI_MAPPING = {
     "KMC Coverage by Birth Weight": {
         "title": "KMC Coverage by Birth Weight Category",
         "numerator_name": "KMC Cases",
-        "denominator_name": "Total Eligible",
+        "denominator_name": "Total Newborns with Valid Birth Weight",
         "type": "simplified",
         "category": "kmc",
         "comparison_type": "rates",  # Shows rates in comparison charts
@@ -118,7 +118,7 @@ NEWBORN_KPI_MAPPING = {
     "CPAP Coverage by Birth Weight": {
         "title": "CPAP Coverage by Birth Weight Category",
         "numerator_name": "CPAP Cases",
-        "denominator_name": "Total Eligible",
+        "denominator_name": "Total Newborns with Valid Birth Weight",
         "type": "simplified",
         "category": "cpap_by_weight",
         "comparison_type": "rates",  # Shows rates in comparison charts
