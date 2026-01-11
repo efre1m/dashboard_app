@@ -865,18 +865,27 @@ def render_birth_weight_trend_chart(
                 )
             )
 
-    # Calculate Y-axis range
-    all_values = []
-    for category_key in BIRTH_WEIGHT_CATEGORIES.keys():
-        count_col = f"{category_key}_count"
-        if count_col in trend_df.columns:
-            all_values.extend(trend_df[count_col].tolist())
+    # Calculate Y-axis range PROPERLY
+    # We need to calculate the TOTAL height of each stacked bar (sum of all categories for each period)
+    period_totals = []
+    for period in periods:
+        period_data = trend_df[trend_df[period_col] == period].iloc[0]
+        total = 0
+        for category_key in BIRTH_WEIGHT_CATEGORIES.keys():
+            count_col = f"{category_key}_count"
+            if count_col in period_data:
+                total += period_data[count_col]
+        period_totals.append(total)
 
-    if all_values:
-        max_value = max(all_values)
-        y_max = max_value * 1.1  # Add 10% padding
+    if period_totals:
+        max_total = max(period_totals)
+        # Add GENEROUS padding to ensure no cutting off
+        y_max = max_total * 1.3  # 30% padding instead of 10%
+
+        # Always ensure minimum height for visibility
+        y_max = max(y_max, 20)  # Minimum of 20 to see small values
     else:
-        y_max = None
+        y_max = 20  # Default minimum height
 
     fig.update_layout(
         title=title,
@@ -899,7 +908,7 @@ def render_birth_weight_trend_chart(
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[0, y_max] if y_max else None,
+            range=[0, y_max],  # FIXED: Now using calculated y_max
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -909,6 +918,8 @@ def render_birth_weight_trend_chart(
             traceorder="reversed",  # Reverse legend to match stacking order
             title="Birth Weight Categories",
         ),
+        # Add margin to ensure no cutting
+        margin=dict(l=50, r=50, t=50, b=100),
     )
 
     st.plotly_chart(fig, use_container_width=True)
