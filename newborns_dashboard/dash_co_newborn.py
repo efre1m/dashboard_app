@@ -77,11 +77,11 @@ NEWBORN_KPI_MAPPING = {
         "value_name": "Admitted Newborns",
     },
     # ANTIBIOTICS KPI - UPDATED WITH DATASET COLUMN NAMES
-    "Antibiotics for Clinical Sepsis (%)": {
-        "title": "Antibiotics for Clinical Sepsis (%)",
-        "numerator_name": "Newborns with Sepsis Receiving Antibiotics",
-        "denominator_name": "Newborns with Probable Sepsis",
-    },
+    # "Antibiotics for Clinical Sepsis (%)": {
+    #     "title": "Antibiotics for Clinical Sepsis (%)",
+    #     "numerator_name": "Newborns with Sepsis Receiving Antibiotics",
+    #     "denominator_name": "Newborns with Probable Sepsis",
+    # },
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution": {
         "title": "Birth Weight Distribution",
@@ -134,7 +134,7 @@ NEWBORN_KPI_OPTIONS = [
     "Inborn Hypothermia Rate (%)",
     "Outborn Hypothermia Rate (%)",
     "Admitted Newborns",
-    "Antibiotics for Clinical Sepsis (%)",
+    # "Antibiotics for Clinical Sepsis (%)",
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution",
     "KMC Coverage by Birth Weight",
@@ -159,7 +159,7 @@ NEWBORN_KPI_GROUPS = {
         "General CPAP Coverage",
         "CPAP for RDS",
         "CPAP Coverage by Birth Weight",
-        "Antibiotics for Clinical Sepsis (%)",  # Moved here from Sepsis Management
+        # "Antibiotics for Clinical Sepsis (%)",  # Moved here from Sepsis Management
     ],
     "📊 Outcomes & Enrollment": [
         "Neonatal Mortality Rate (%)",
@@ -218,14 +218,14 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
     ],
-    "Antibiotics for Clinical Sepsis (%)": [
-        "orgUnit",
-        "tei_id",
-        "enrollment_date",
-        "sub_categories_of_infection_n_discharge_care_form",
-        "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform",
-        "event_date_nicu_admission_careform",
-    ],
+    # "Antibiotics for Clinical Sepsis (%)": [
+    #     "orgUnit",
+    #     "tei_id",
+    #     "enrollment_date",
+    #     "sub_categories_of_infection_n_discharge_care_form",
+    #     "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform",
+    #     "event_date_nicu_admission_careform",
+    # ],
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
     "Birth Weight Distribution": [
         "orgUnit",
@@ -489,22 +489,8 @@ def render_newborn_kpi_tab_navigation():
     with tab2:
         col1, col2 = st.columns(2)
         col3, col4 = st.columns(2)
-        col5, col6 = st.columns(2)
 
         with col1:
-            if st.button(
-                "💊 Antibiotics for Sepsis",
-                key="antibiotics_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Antibiotics for Clinical Sepsis (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Antibiotics for Clinical Sepsis (%)"
-
-        with col2:
             if st.button(
                 "🤱 KMC Coverage",
                 key="kmc_btn",
@@ -517,7 +503,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "KMC Coverage by Birth Weight"
 
-        with col3:
+        with col2:
             if st.button(
                 "🌀 General CPAP",
                 key="cpap_general_btn",
@@ -530,7 +516,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "General CPAP Coverage"
 
-        with col4:
+        with col3:
             if st.button(
                 "🌀 CPAP for RDS",
                 key="cpap_rds_btn",
@@ -539,7 +525,7 @@ def render_newborn_kpi_tab_navigation():
             ):
                 selected_kpi = "CPAP for RDS"
 
-        with col5:
+        with col4:
             if st.button(
                 "🌀 CPAP by Birth Weight",
                 key="cpap_by_weight_btn",
