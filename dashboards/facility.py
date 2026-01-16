@@ -5,6 +5,7 @@ import logging
 import concurrent.futures
 import time
 from datetime import datetime
+from utils.resource import render_resources_tab
 from newborns_dashboard.facility_newborn import (
     render_newborn_dashboard_shared,
 )
@@ -1015,12 +1016,13 @@ def render():
                 st.sidebar.warning(f"Data: {minutes_old}m old (will auto-refresh)")
 
     # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
-    tab1, tab2, tab3, tab4 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             "🤰 **Maternal**",
             "👶 **Newborn**",
             "📊 **Summary**",
             "📋 **Mentorship**",
+            "📚 **Resources**",
         ]
     )
 
@@ -1142,6 +1144,11 @@ def render():
                 st.session_state.tab_loading["mentorship"] = False
                 st.rerun()
             display_odk_dashboard(user)
-
+    with tab5:
+        if st.session_state.active_tab != "resources":
+            st.session_state.active_tab = "resources"
+            logging.info("Switched to Resources tab")
+    
+        render_resources_tab()
     # Log current active tab state
     logging.info(f"Current active tab: {st.session_state.active_tab}")

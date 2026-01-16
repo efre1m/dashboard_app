@@ -5,6 +5,7 @@ import logging
 import concurrent.futures
 import time
 from datetime import datetime
+from utils.resource import render_resources_tab
 from newborns_dashboard.reginal_newborn import (
     render_newborn_dashboard_shared,
 )
@@ -1417,12 +1418,13 @@ def render():
         )
 
     # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
         [
             "🤰 **Maternal**",
             "👶 **Newborn**",
             "📊 **Summary**",
             "📋 **Mentorship**",
+            "📚 **Resources**",
             "🔍 **Data Quality**",
         ]
     )
@@ -1539,6 +1541,13 @@ def render():
             display_odk_dashboard(user)
 
     with tab5:
+        if st.session_state.active_tab != "resources":
+            st.session_state.active_tab = "resources"
+            logging.info("Switched to Resources tab")
+    
+        render_resources_tab()
+
+    with tab6:
         if st.session_state.active_tab != "data_quality":
             st.session_state.active_tab = "data_quality"
             logging.info("Switched to Data Quality tab")
