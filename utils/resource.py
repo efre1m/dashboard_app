@@ -41,6 +41,8 @@ def load_csv_with_encoding(file_path):
         return pd.DataFrame()
 
 
+# Add caching to the load functions
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def load_maternal_indicators():
     """Load maternal indicator descriptions from CSV file"""
     file_path = Path("utils/maternal_indicator_descripiton.csv")
@@ -55,6 +57,7 @@ def load_maternal_indicators():
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def load_newborn_indicators():
     """Load newborn indicator descriptions from CSV file"""
     file_path = Path("utils/newborn_indicator_description.csv")
@@ -70,22 +73,67 @@ def load_newborn_indicators():
 
 
 def render_resources_tab():
-    """Render the resources tab with both maternal and newborn indicators"""
+    """Render the resources tab with lazy loading"""
+    
+    # Initialize session state for lazy loading
+    if 'resources_loaded' not in st.session_state:
+        st.session_state.resources_loaded = False
+    if 'active_resource_tab' not in st.session_state:
+        st.session_state.active_resource_tab = "maternal"
     
     st.markdown("""
-    <h2 style="color: #2c3e50; margin-bottom: 20px; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
-        📊 Indicator Reference Guide
-    </h2>
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+         padding: 20px; border-radius: 12px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2rem;">📊 Indicator Reference Guide</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9;">
+            Comprehensive reference for maternal and newborn health indicators
+        </p>
+    </div>
     """, unsafe_allow_html=True)
     
+    # Check if resources should be loaded
+    if not st.session_state.resources_loaded:
+        # Show a simple load button
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown(
+                """
+                <div style="text-align: center; padding: 3rem 1rem; background: #f8f9fa;
+                     border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
+                    <div style="font-size: 4rem; margin-bottom: 1rem;">📚</div>
+                    <h2 style="color: #495057; margin-bottom: 1rem;">Resources Dashboard</h2>
+                    <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
+                        Click below to load indicator definitions and formulas
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            
+            if st.button(
+                "Load Resources",
+                use_container_width=True,
+                type="primary",
+                key="load_resources_btn"
+            ):
+                st.session_state.resources_loaded = True
+                st.rerun()
+        return
+    
     # Create tabs for maternal and newborn indicators
-    tab1, tab2 = st.tabs(["Maternal Indicators", "Newborn Indicators"])
+    tab1, tab2 = st.tabs(["🤰 **Maternal Indicators**", "👶 **Newborn Indicators**"])
     
     with tab1:
-        maternal_df = load_maternal_indicators()
+        # Update active tab state
+        if st.session_state.active_resource_tab != "maternal":
+            st.session_state.active_resource_tab = "maternal"
+        
+        # Load maternal indicators (cached)
+        with st.spinner("Loading maternal indicators..."):
+            maternal_df = load_maternal_indicators()
         
         if not maternal_df.empty:
-            st.markdown("#### Maternal Health Indicators")
+            st.markdown("#### 🤰 Maternal Health Indicators")
             
             # Build HTML table
             html = """
@@ -102,7 +150,7 @@ def render_resources_tab():
             }
             
             .custom-table thead {
-                background-color: #2c3e50;
+                background: linear-gradient(135deg, #2e7d32, #1b5e20);
                 color: white;
             }
             
@@ -125,7 +173,7 @@ def render_resources_tab():
             }
             
             .custom-table tbody tr:hover {
-                background-color: #e8f4fd;
+                background-color: #e8f5e9;
             }
             
             .custom-table tbody tr:last-child td {
@@ -183,7 +231,7 @@ def render_resources_tab():
             
             # Download button with fixed data
             st.download_button(
-                "Download Maternal Indicators",
+                "📥 Download Maternal Indicators",
                 data=download_df.to_csv(index=False),
                 file_name="maternal_indicators.csv",
                 mime="text/csv",
@@ -194,10 +242,16 @@ def render_resources_tab():
             st.error("Failed to load maternal indicators.")
     
     with tab2:
-        newborn_df = load_newborn_indicators()
+        # Update active tab state
+        if st.session_state.active_resource_tab != "newborn":
+            st.session_state.active_resource_tab = "newborn"
+        
+        # Load newborn indicators (cached)
+        with st.spinner("Loading newborn indicators..."):
+            newborn_df = load_newborn_indicators()
         
         if not newborn_df.empty:
-            st.markdown("#### Newborn Health Indicators")
+            st.markdown("#### 👶 Newborn Health Indicators")
             
             # Build HTML table
             html = """
@@ -214,7 +268,7 @@ def render_resources_tab():
             }
             
             .custom-table thead {
-                background-color: #2c5282;
+                background: linear-gradient(135deg, #1565c0, #0d47a1);
                 color: white;
             }
             
@@ -237,7 +291,7 @@ def render_resources_tab():
             }
             
             .custom-table tbody tr:hover {
-                background-color: #e0f2fe;
+                background-color: #e3f2fd;
             }
             
             .custom-table tbody tr:last-child td {
@@ -295,7 +349,7 @@ def render_resources_tab():
             
             # Download button with fixed data
             st.download_button(
-                "Download Newborn Indicators",
+                "📥 Download Newborn Indicators",
                 data=download_df.to_csv(index=False),
                 file_name="newborn_indicators.csv",
                 mime="text/csv",
