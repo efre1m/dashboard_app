@@ -26,5 +26,9 @@ class Settings:
     DHIS2_PASSWORD = os.getenv("DHIS2_PASSWORD")
     DHIS2_TIMEOUT = int(os.getenv("DHIS2_TIMEOUT", "30"))
 
+    # LLM Configuration
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+
 # Single settings instance to import anywhere
 settings = Settings()
