@@ -159,6 +159,8 @@ class ChatbotLogic:
         chart_type = "line" # Default
         entity_type = None
         count_requested = False
+        comparison_mode = False
+        comparison_entity = None
         
         if any(w in query_lower for w in ["plot", "graph", "chart", "trend", "visualize", "show me"]):
             intent = "plot"
@@ -179,6 +181,23 @@ class ChatbotLogic:
                 "intent": "chart_options",
                 "kpi": None # Will be filled by context merging if exists
             }
+            
+        # Detect Comparison Mode
+        if any(x in query_lower for x in ["compare", "comparison", " vs ", "versus", "benchmark"]):
+            comparison_mode = True
+            intent = "plot" # Comparison implies visual
+            
+            # Detect Entity
+            if "region" in query_lower:
+                comparison_entity = "region"
+            elif "facilit" in query_lower or "hospital" in query_lower or "clinic" in query_lower:
+                comparison_entity = "facility"
+            else:
+                # Default to whatever is selected or infer
+                # If specific facilities are mentioned later, it will be facility comparison
+                # If "regions" not explicitly said but implied? Let's default to region if no facilities found later?
+                # Actually, let's wait to see if multiple facilities are detected.
+                pass
             
         # 2. Detect KPI
         selected_kpi = None
@@ -234,6 +253,7 @@ class ChatbotLogic:
             "admitted mothers": "Admitted Mothers",
             "admitted": "Admitted Mothers", # Explicit map
             "admissions": "Admitted Mothers",
+            "admission": "Admitted Mothers", # Added singular
             "total mothers": "Admitted Mothers",
             
             # Additional commonly requested counts
@@ -293,28 +313,48 @@ class ChatbotLogic:
         # If no facility found, check REGIONS
         if not selected_facility_uids:
             regions_data = get_facilities_grouped_by_region(self.user)
-            found_region = None
+            found_regions = []
             
-            # Check direct match for regions
+            # Check Match for Regions (Multiple allowed for comparison)
+            found_regions = []
+            
+            # Direct match
             for region_name in regions_data.keys():
                 if region_name.lower() in query_norm:
-                    found_region = region_name
-                    break
+                    found_regions.append(region_name)
             
-            # Fuzzy match for regions if not found
-            if not found_region:
-                 r_matches = difflib.get_close_matches(query_lower, [r.lower() for r in regions_data.keys()], n=1, cutoff=0.6)
-                 if r_matches:
-                      # Map back to original case
-                      for r in regions_data.keys():
-                          if r.lower() == r_matches[0]:
-                              found_region = r
-                              break
+            # Fuzzy match if none found (only try to find one primary if none explicit)
+            if not found_regions:
+                  r_matches = difflib.get_close_matches(query_lower, [r.lower() for r in regions_data.keys()], n=1, cutoff=0.6)
+                  if r_matches:
+                       for r in regions_data.keys():
+                           if r.lower() == r_matches[0]:
+                               found_regions.append(r)
+                               break
             
-            if found_region:
-                facilities_in_region = regions_data[found_region] # List of (name, uid)
-                selected_facility_uids = [f[1] for f in facilities_in_region]
-                selected_facility_names = [f"{found_region} (Region)"]   
+            if found_regions:
+                # If comparison mode is active (via keywords), align entity
+                if comparison_mode and not comparison_entity:
+                    comparison_entity = "region"
+                
+                # If Comparison Mode (explicit or implicit), store these regions
+                if comparison_mode and comparison_entity == "region":
+                     # We will use 'comparison_targets' to store the list
+                     pass 
+                else:
+                     # Standard mode - treat as aggregation filter
+                     pass
+
+                # Collect UIDs from ALL found regions
+                all_uids = []
+                all_names = []
+                for r_name in found_regions:
+                    f_list = regions_data[r_name]
+                    all_uids.extend([f[1] for f in f_list])
+                    all_names.append(f"{r_name} (Region)")
+                
+                selected_facility_uids = all_uids
+                selected_facility_names = all_names
 
             # If still no facility/region found but user says "all facilities" or doesn't specify, 
             # for Facility user it's always their facility.
@@ -393,6 +433,18 @@ class ChatbotLogic:
              except Exception as e:
                  logging.warning(f"Date regex range parse failed: {e}")
 
+        # Fallback for "Jan 1 - 18 2026" (Month occurring once, two days)
+        if not start_date:
+             try:
+                 # Pattern: Month DD - DD YYYY
+                 short_range_match = re.search(r'([a-zA-Z]{3,9})\s+(\d{1,2})\s*[-to]+\s*(\d{1,2})[\s,]+(\d{4})', query, re.IGNORECASE)
+                 if short_range_match:
+                     m, d1, d2, y = short_range_match.groups()
+                     start_date = datetime.strptime(f"{m} {d1} {y}", "%b %d %Y").strftime("%Y-%m-%d")
+                     end_date = datetime.strptime(f"{m} {d2} {y}", "%b %d %Y").strftime("%Y-%m-%d")
+             except Exception as e:
+                 logging.warning(f"Date short range regex parse failed: {e}")
+
         # Fallback for "YYYY/MM/DD - YYYY/MM/DD"
         if not start_date:
              try:
@@ -430,10 +482,20 @@ class ChatbotLogic:
         elif "yearly" in query_lower:
             period_label = "Yearly"
             
-        # Force Plot Intent if Aggregation is requested (and not asking for a definition)
         if period_label and intent != "list_kpis" and "define" not in query_lower and "what is" not in query_lower:
-             intent = "plot" # Aggregation usually implies visual trend
-             
+            intent = "plot" # Aggregation usually implies visual trend
+              
+        # 6. Detect Analysis Type (Max/Min)
+        analysis_type = None
+        if any(x in query_lower for x in ["highest", "max", "peak", "most"]):
+            analysis_type = "max"
+            intent = "text" # Force text response for analysis
+            reset_date = True # Analysis usually implies searching history
+        elif any(x in query_lower for x in ["lowest", "min", "least", "minimum"]):
+            analysis_type = "min"
+            intent = "text" # Force text response for analysis
+            reset_date = True # Analysis usually implies searching history
+
         # --- REFINE INTENT ---
         # If user asks "what is" or "value", assume text.
         # If user asks "plot", "show", "trend", assume plot.
@@ -583,18 +645,34 @@ class ChatbotLogic:
         if "horizontal" in query_lower:
             orientation = "h"
             if chart_type == "line": chart_type = "bar" # Line cannot be horizontal effectively usually
-            
+        
+        # Auto-detect Granularity for Short Date Ranges
+        if final_date_range and not period_label:
+            try:
+                s = datetime.strptime(final_date_range["start_date"], "%Y-%m-%d")
+                e = datetime.strptime(final_date_range["end_date"], "%Y-%m-%d")
+                delta = (e - s).days
+                if delta <= 45: # If range is 1.5 months or less
+                    period_label = "Daily"
+            except:
+                pass
+
         return {
             "intent": intent,
             "chart_type": chart_type,
             "orientation": orientation,
+            "analysis_type": None, # Start with None
             "kpi": selected_kpi,
             "facility_uids": selected_facility_uids,
             "facility_names": selected_facility_names,
             "date_range": final_date_range,
             "period_label": period_label,
+            "analysis_type": analysis_type,
             "entity_type": entity_type,
             "count_requested": count_requested,
+            "comparison_mode": comparison_mode,
+            "comparison_entity": comparison_entity,
+            "comparison_targets": found_regions if comparison_mode and comparison_entity == "region" and found_regions else [],
             "response": None
         }
 
@@ -815,8 +893,8 @@ class ChatbotLogic:
         if random.random() < 0.3:
             suggestion = f"\n\n💡 *{random.choice(tips)}*"
         
-        # If Intent is Plot
-        if parsed["intent"] == "plot":
+        # If Intent is Plot OR Analysis is requested (to get trend data)
+        if parsed["intent"] == "plot" or parsed.get("analysis_type"):
             prepared_df, date_col = prepare_data_for_trend_chart(
                 self.df, 
                 active_kpi_name, 
@@ -825,55 +903,132 @@ class ChatbotLogic:
             )
             
             if prepared_df is None or prepared_df.empty:
-                return None, f"I found no data for **{kpi_name}** matching your criteria."
-
+                # If comparison mode, we might still have data for other regions?
+                # Actually if initial fetch failed, it might be due to filters.
+                # If comparison mode, we ignore this initial check and let the loop handle it
+                if not parsed.get("comparison_mode"):
+                     return None, f"I found no data for **{kpi_name}** matching your criteria."
+            
             # Generate Plot
             # Group by period
-            if "period_display" not in prepared_df.columns:
+            if prepared_df is not None and "period_display" not in prepared_df.columns:
                  # Logic from render_trend_chart_section
-                 if "event_date" in prepared_df.columns:
-                    prepared_df["period_display"] = prepared_df["event_date"].dt.strftime("%b-%y").str.capitalize()
-                    prepared_df["period"] = prepared_df["period_display"]
+                  if "event_date" in prepared_df.columns:
+                     prepared_df["period_display"] = prepared_df["event_date"].dt.strftime("%b-%y").str.capitalize()
+                     prepared_df["period"] = prepared_df["period_display"]
+                     # Add Sort Column (Default Monthly logic for chatbot basics)
+                     prepared_df["period_sort"] = prepared_df["event_date"].dt.to_period("M").dt.start_time
             
-            # Simple custom aggregation for plot
+            # --- COMPARISON MODE LOGIC ---
+            comparison_mode = parsed.get("comparison_mode")
+            comparison_entity = parsed.get("comparison_entity")
+            
+            comparison_groups = [] # List of (EntityName, FilteredDF)
+            
+            if comparison_mode:
+                if comparison_entity == "region":
+                    # Fetch all regions
+                    regions_data = get_facilities_grouped_by_region(self.user)
+                    comp_targets = parsed.get("comparison_targets", [])
+                    
+                    for r_name, facilities in regions_data.items():
+                         # Filter if specific targets requested
+                         if comp_targets and r_name not in comp_targets:
+                             continue
+                             
+                         # Filter main DF by these facilities
+                         r_uids = [f[1] for f in facilities]
+                         comparison_groups.append((r_name, r_uids))
+                         
+                elif comparison_entity == "facility":
+                    # Use selected facilities
+                    # IF only 1 facility selected, comparison mode implies we want to compare it vs others?
+                    # Or maybe user listed specific facilities.
+                    for name, uid in zip(parsed["facility_names"], parsed["facility_uids"]):
+                        comparison_groups.append((name, [uid]))
+            
+            # If NOT comparison mode (or failed setup), default to single group
+            if not comparison_groups:
+                 comparison_groups.append(("Overall", facility_uids))
+
+            # Loop through Groups and Build Data
             chart_data = []
             
-            # Determine Period Order
-            grouped = prepared_df.groupby("period_display")
-            groups = []
-            for name, group in grouped:
-                groups.append((name, group))
-                
-            # Sort groups by min date
-            groups.sort(key=lambda x: x[1]['event_date'].min() if not x[1].empty else datetime.min)
-            
-            for period_name, group_df in groups:
-                 if active_kpi_name == "Admitted Mothers":
-                     from utils.kpi_admitted_mothers import get_numerator_denominator_for_admitted_mothers
-                     numerator, denominator, value = get_numerator_denominator_for_admitted_mothers(group_df, facility_uids, date_range)
-                 else:
-                     numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(group_df, active_kpi_name, facility_uids, date_range)
+            for entity_name, entity_uids in comparison_groups:
+                 # Re-fetch/Filter data for this entity
+                 # We need to call prepare_data_for_trend_chart again OR filter the raw DF?
+                 # Calling prepare_data is safer as it handles dates/missing cols.
+                 # Optimization: If prepared_df already has everything, filtering is faster.
+                 # But prepared_df was built with initial 'facility_uids'. 
+                 # If comparison, initial uids might have been empty (global).
                  
-                 # Resolve Component
-                 plot_value = value
-                 if target_component == "numerator": plot_value = numerator
-                 elif target_component == "denominator": plot_value = denominator
+                 entity_df, _ = prepare_data_for_trend_chart(self.df, active_kpi_name, entity_uids, date_range)
                  
-                 chart_data.append({
-                     "Period": period_name,
-                     "Value": plot_value,
-                     "Numerator": numerator,
-                     "Denominator": denominator
-                 })
+                 if entity_df is None or entity_df.empty:
+                     continue
+
+                 # Determine Period Order
+                 if "period_display" not in entity_df.columns:
+                     if "event_date" in entity_df.columns:
+                        entity_df["period_display"] = entity_df["event_date"].dt.strftime("%b-%y").str.capitalize()
+                        entity_df["period_sort"] = entity_df["event_date"].dt.to_period("M").dt.start_time
+                 
+                 grouped = entity_df.groupby("period_display")
+                 
+                 # Sort groups by period_sort
+                 time_groups = []
+                 for name, group in grouped: 
+                     # Get sort value from first row
+                     sort_val = group['period_sort'].iloc[0] if 'period_sort' in group.columns else (group['event_date'].min() if 'event_date' in group.columns else datetime.min)
+                     time_groups.append((name, group, sort_val))
+                 
+                 # Sort by the extracted sort_val
+                 time_groups.sort(key=lambda x: x[2])
+
+                 for period_name, group_df, sort_val in time_groups:
+                     if active_kpi_name == "Admitted Mothers":
+                         from utils.kpi_admitted_mothers import get_numerator_denominator_for_admitted_mothers
+                         numerator, denominator, value = get_numerator_denominator_for_admitted_mothers(group_df, entity_uids, date_range)
+                     else:
+                         numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(group_df, active_kpi_name, entity_uids, date_range)
+                     
+                     # Resolve Component
+                     plot_value = value
+                     if target_component == "numerator": plot_value = numerator
+                     elif target_component == "denominator": plot_value = denominator
+                     
+                     chart_data.append({
+                         "Period": period_name,
+                         "Entity": entity_name,
+                         "Value": plot_value,
+                         "Numerator": numerator,
+                         "Denominator": denominator,
+                         "SortDate": sort_val
+                     })
             
             plot_df = pd.DataFrame(chart_data)
+            if not plot_df.empty and "SortDate" in plot_df.columns:
+                plot_df.sort_values("SortDate", inplace=True)
             
             if plot_df.empty:
                 return None, "Data processing resulted in empty dataset."
                 
             # Dynamic Chart Generation
             if chart_type == "table":
-                # ADD OVERALL ROW
+                # Comparison Mode Table: Pivot for better readability
+                if parsed.get("comparison_mode"):
+                     # Pivot: Index=Period, Cols=Entity, Values=Value
+                     try:
+                         pivot_df = plot_df.pivot(index='Period', columns='Entity', values='Value')
+                         # Optional: Add mean/total row? simpler is better for now.
+                         # Reset index to make Period a column again for display
+                         pivot_df.reset_index(inplace=True)
+                         return pivot_df, f"Here is the comparison table for **{kpi_name}**."
+                     except Exception as e:
+                         # Fallback if pivot fails (e.g. duplicates)
+                         return plot_df[["Period", "Entity", "Value"]], f"Here is the comparison data for **{kpi_name}**."
+
+                # ADD OVERALL ROW (Standard Mode)
                 total_kpi_value = 0
                 total_numerator = plot_df["Numerator"].sum()
                 total_denominator = plot_df["Denominator"].sum()
@@ -900,18 +1055,47 @@ class ChatbotLogic:
                 # Use concat to append
                 overall_df = pd.DataFrame([overall_row])
                 plot_df = pd.concat([plot_df, overall_df], ignore_index=True)
-
+            
+            # Handle Analysis Request (Max/Min) - NEW
+            analysis_type = parsed.get("analysis_type")
+            if analysis_type and not plot_df.empty:
+                if analysis_type == "max":
+                    # Filter out "Overall" row if present to avoid skewed max
+                    trend_df = plot_df[plot_df["Period"] != "Overall"]
+                    if trend_df.empty: trend_df = plot_df 
+                    
+                    best_row = trend_df.loc[trend_df['Value'].idxmax()]
+                    val = best_row['Value']
+                    period = best_row['Period']
+                    # Check if percentage
+                    val_str = f"{val:.2f}%" if "Rate" in kpi_name or "%" in kpi_name else f"{int(val):,}"
+                    return None, f"The **highest** {kpi_name} was recorded in **{period}** with a value of **{val_str}**."
+                elif analysis_type == "min":
+                    worst_row = plot_df.loc[plot_df['Value'].idxmin()]
+                    val = worst_row['Value']
+                    period = worst_row['Period']
+                    # Check if percentage
+                    val_str = f"{val:.2f}%" if "Rate" in kpi_name or "%" in kpi_name else f"{int(val):,}"
+                    return None, f"The **lowest** {kpi_name} was recorded in **{period}** with a value of **{val_str}**."
+            
+            # If no analysis type, proceed to standard chart/table response
+            # Determine Plot Params
+            color_col = "Entity" if "Entity" in plot_df.columns and plot_df["Entity"].nunique() > 1 else None
+            
+            # Dynamic Chart Generation
+            if chart_type == "table":
+                # ... (Keep existing table logic, maybe adapt for comparison later or let it show raw long-form table)
                 return plot_df, f"Here is the data table for **{kpi_name}**."
                 
             elif chart_type == "bar":
                 if parsed.get("orientation") == "h":
-                    fig = px.bar(plot_df, x="Value", y="Period", title=f"{kpi_name}", height=300, orientation='h', hover_data=["Numerator", "Denominator"])
+                    fig = px.bar(plot_df, x="Value", y="Period", color=color_col,  title=f"{kpi_name}", height=400, orientation='h', barmode='group', hover_data=["Numerator", "Denominator"])
                 else:
-                    fig = px.bar(plot_df, x="Period", y="Value", title=f"{kpi_name}", height=300, hover_data=["Numerator", "Denominator"])
+                    fig = px.bar(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", height=400, barmode='group', hover_data=["Numerator", "Denominator"])
             elif chart_type == "area":
-                fig = px.area(plot_df, x="Period", y="Value", title=f"{kpi_name}", markers=True, height=300, hover_data=["Numerator", "Denominator"])
+                fig = px.area(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, hover_data=["Numerator", "Denominator"])
             else: # Default to line
-                fig = px.line(plot_df, x="Period", y="Value", title=f"{kpi_name}", markers=True, height=300, hover_data=["Numerator", "Denominator"])
+                fig = px.line(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, hover_data=["Numerator", "Denominator"])
                 
             fig.update_traces(marker=dict(size=8)) if chart_type != "bar" else None
             
