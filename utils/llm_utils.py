@@ -63,34 +63,44 @@ INSTRUCTIONS:
 3. Identify the CHART TYPE: "line", "bar", "area", or "table". Default to "line" unless specified.
 
 4. Identify FILTERS:
-   - "facility_names": List of facility names OR region names mentioned. Fuzzy match against the provided list.
+   - "facility_names": List of facility names OR region names mentioned. EXTRACT NAMES EXACTLY AS TYPED if not found in context.
    - "date_range": Calculate start_date and end_date (YYYY-MM-DD) based on relative time to {today}.
 
-5. For "metadata_query":
+5. Identify COMPARISON MODE:
+   - Set "comparison_mode" to true if user uses words like "compare", "vs", "versus".
+   - Set "comparison_entity" to "region" or "facility" based on what is being compared.
+
+6. For "metadata_query":
    - "entity_type": "region" | "facility"
    - "count_requested": true if asking for a number/count, false if asking for a list.
+   - "region_filter": If asking for facilities in a specific region (e.g. "facilities in Tigray"), extract "Tigray".
 
-6. For "list_kpis":
+7. For "list_kpis":
    - Use this intent if the user asks "what indicators do you have" or "list capabilities".
 
-7. For "chat" intent:
+8. For "chat" intent:
    - "response": A helpful, friendly, natural language response.
    - If asked "how can you help", list your capabilities (plotting trends, showing values, listing facilities).
    - If asked about "passwords", "login", "admin access", or irrelevant topics, strictly reply: "I am an AI assistant for data analysis. I cannot help with system administration or passwords."
 
-8. SPECIAL DATE HANDLING:
+9. SPECIAL DATE HANDLING:
    - If user says "from Jan 1 2026 to Jan 18 2026", parse exactly as start_date: "2026-01-01", end_date: "2026-01-18".
    - Handle "Jan 2026" as start: "2026-01-01", end: "2026-01-31".
+   - Handle "Last Year" or "Last Month" by calculating specific dates relative to Current Date.
+   - Handle "This Year" or "This Month" as from start of period to Current Date.
 
 OUTPUT FORMAT (JSON ONLY):
 {{
   "intent": "plot" | "text" | "clear" | "metadata_query" | "chat" | "list_kpis",
   "kpi": "Exact KPI Name from list" | null,
   "chart_type": "line" | "bar" | "area" | "table",
-  "facility_names": ["Abiadi", "Garga"] | [],
+  "facility_names": ["Abiadi", "Adigrat"] | [],
   "date_range": {{ "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" }} | null,
   "entity_type": "region" | "facility" | null,
   "count_requested": true | false,
+  "comparison_mode": true | false,
+  "comparison_entity": "region" | "facility" | null,
+  "region_filter": "Region Name" | null,
   "response": "String response for chat intent" | null
 }}
 

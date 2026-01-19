@@ -60,6 +60,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Ensure toggle labels are visible in the sidebar against white background
+st.markdown("""
+    <style>
+        section[data-testid="stSidebar"] .stWidgetLabel p {
+            color: #0f172a !important;
+            font-weight: 500;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # ====================== SIDEBAR ======================
 with st.sidebar:
     st.title("📊 IMNID Dashboard")
