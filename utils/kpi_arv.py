@@ -42,7 +42,7 @@ ARV_RX_COL = "arv_rx_for_newborn_by_type_pp_postpartum_care"
 BIRTH_OUTCOME_COL = "birth_outcome_delivery_summary"
 NUMBER_OF_NEWBORNS_COL = "number_of_newborns_delivery_summary"
 OTHER_NUMBER_OF_NEWBORNS_COL = "other_number_of_newborns_delivery_summary"
-ARV_DATE_COL = "event_date_postpartum_care"
+ARV_DATE_COL = "enrollment_date"
 
 # Code values
 HIV_POSITIVE_CODES = {"1"}  # HIV positive result
@@ -253,7 +253,7 @@ def compute_arv_rate(df, facility_uids=None):
         # Get date column for ARV (postpartum care)
         date_column = get_relevant_date_column_for_kpi("ARV Prophylaxis Rate (%)")
 
-        # For single-patient per row, use event_date_postpartum_care
+        # Use enrollment_date
         if date_column not in df.columns and ARV_DATE_COL in df.columns:
             date_column = ARV_DATE_COL
 
@@ -300,12 +300,12 @@ def get_numerator_denominator_for_arv(df, facility_uids=None, date_range_filters
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Get the date column for ARV (postpartum care)
+    # Get the date column for ARV (enrollment_date)
     date_column = get_relevant_date_column_for_kpi("ARV Prophylaxis Rate (%)")
 
-    # For single-patient per row, use event_date_postpartum_care
-    if date_column not in filtered_df.columns and ARV_DATE_COL in filtered_df.columns:
-        date_column = ARV_DATE_COL
+    # For single-patient per row, use enrollment_date
+    if date_column not in filtered_df.columns and "enrollment_date" in filtered_df.columns:
+        date_column = "enrollment_date"
 
     # IMPORTANT: Filter to only include rows that have this specific date
     if date_column in filtered_df.columns:
@@ -1242,19 +1242,19 @@ def prepare_data_for_arv_trend(
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Get the date column for ARV (postpartum care)
+    # Get the date column for ARV (enrollment_date)
     date_column = get_relevant_date_column_for_kpi(kpi_name)
 
-    # For single-patient per row, use event_date_postpartum_care
-    if date_column not in filtered_df.columns and ARV_DATE_COL in filtered_df.columns:
-        date_column = ARV_DATE_COL
+    # For single-patient per row, use enrollment_date
+    if date_column not in filtered_df.columns and "enrollment_date" in filtered_df.columns:
+        date_column = "enrollment_date"
 
     # Check if the date column exists
     if date_column not in filtered_df.columns:
-        # Try to use event_date as fallback
-        if "event_date" in filtered_df.columns:
-            date_column = "event_date"
-            st.warning(f"⚠️ ARV date column not found, using 'event_date' instead")
+        # Try to use enrollment_date as fallback
+        if "enrollment_date" in filtered_df.columns:
+            date_column = "enrollment_date"
+            st.warning(f"⚠️ ARV date column not found, using 'enrollment_date' instead")
         else:
             st.warning(f"⚠️ Required date column '{date_column}' not found for ARV data")
             return pd.DataFrame(), date_column

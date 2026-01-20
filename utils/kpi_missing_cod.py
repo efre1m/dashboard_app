@@ -1,9 +1,7 @@
 """
 KPI: Missing Condition of Discharge Documentation
-Measures: Percentage of COMPLETED enrollments where condition of discharge is not documented
-Formula: (COMPLETED enrollments with missing condition of discharge documentation) ÷ (Total COMPLETED enrollments with discharge dates) × 100
-NOTE: Only counts missing documentation for COMPLETED enrollments (status = "COMPLETED")
-ACTIVE enrollments are excluded from both numerator and denominator since patients are still in hospital
+Measures: Percentage of mothers with missing condition of discharge documentation
+Formula: (Mothers with missing CoD AND (Status='Complete' OR Enrollment > 14 days old)) ÷ (Total Enrolled Mothers) × 100
 """
 
 import pandas as pd
@@ -45,21 +43,23 @@ def clear_missing_cod_cache():
 
 # ---------------- KPI Constants ----------------
 CONDITION_OF_DISCHARGE_COL = "condition_of_discharge_discharge_summary"
-ENROLLMENT_STATUS_COL = "enrollment_status"  # New column to check
-DISCHARGE_DATE_COL = "event_date_discharge_summary"  # Date column for denominator
+ENROLLMENT_STATUS_COL = "enrollment_status"
+ENROLLMENT_DATE_COL = "enrollment_date"
+DISCHARGE_DATE_COL = "enrollment_date"
 
 # Empty/Null indicators
 EMPTY_INDICATORS = ["", "nan", "None", "null", "N/A", "n/a", "na", "NA", "undefined"]
 
 # Enrollment status values
-COMPLETED_STATUS = "COMPLETED"
-ACTIVE_STATUS = "ACTIVE"
+COMPLETED_STATUSES = ["COMPLETED", "COMPLETE"]
 
 
 def compute_missing_cod_count(df, facility_uids=None):
     """
-    Count COMPLETED enrollments with missing condition of discharge documentation
-    Counts UNIQUE TEI IDs, not rows
+    Count mothers meeting the Missing COD criteria:
+    Condition 1: CoD is missing AND status is Complete
+    OR
+    Condition 2: CoD is missing AND enrollment is > 14 days old
     """
     cache_key = get_missing_cod_cache_key(df, facility_uids, "missing_count")
 
@@ -73,53 +73,48 @@ def compute_missing_cod_count(df, facility_uids=None):
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        # Filter to only include COMPLETED enrollments with discharge dates
-        date_column = get_relevant_date_column_for_kpi(
-            "Missing Condition of Discharge Documentation"
-        )
-        if date_column in filtered_df.columns:
-            filtered_df[date_column] = pd.to_datetime(
-                filtered_df[date_column], errors="coerce"
-            )
-            filtered_df = filtered_df[filtered_df[date_column].notna()].copy()
-
         if filtered_df.empty:
             result = 0
         else:
-            # Filter to only include COMPLETED enrollments
-            if ENROLLMENT_STATUS_COL in filtered_df.columns:
-                status_vals = filtered_df[ENROLLMENT_STATUS_COL].astype(str).str.strip()
-                completed_mask = status_vals.str.upper() == COMPLETED_STATUS
-                filtered_df = filtered_df[completed_mask].copy()
-            else:
-                # If enrollment_status column doesn't exist, use all rows
-                pass
+            # Check for missing condition of discharge
+            if (
+                CONDITION_OF_DISCHARGE_COL in filtered_df.columns
+                and ENROLLMENT_DATE_COL in filtered_df.columns
+            ):
+                cod_vals = (
+                    filtered_df[CONDITION_OF_DISCHARGE_COL].astype(str).str.strip()
+                )
+                cod_missing = (
+                    cod_vals.isin(EMPTY_INDICATORS)
+                    | (cod_vals == "")
+                    | (cod_vals.str.upper() == "N/A")
+                )
 
-            if filtered_df.empty:
-                result = 0
-            else:
-                # Check for missing condition of discharge
-                if CONDITION_OF_DISCHARGE_COL in filtered_df.columns:
-                    cod_vals = (
-                        filtered_df[CONDITION_OF_DISCHARGE_COL].astype(str).str.strip()
+                # Condition 1: Status = 'Complete'
+                status_complete = pd.Series(False, index=filtered_df.index)
+                if ENROLLMENT_STATUS_COL in filtered_df.columns:
+                    status_vals = (
+                        filtered_df[ENROLLMENT_STATUS_COL].astype(str).str.strip()
                     )
+                    status_complete = status_vals.str.upper().isin(COMPLETED_STATUSES)
 
-                    cod_empty = (
-                        cod_vals.isin(EMPTY_INDICATORS)
-                        | (cod_vals == "")
-                        | (cod_vals.str.upper() == "N/A")
-                    )
+                # Condition 2: Enrollment older than 14 days
+                enrollment_dates = pd.to_datetime(
+                    filtered_df[ENROLLMENT_DATE_COL], errors="coerce"
+                )
+                today = pd.Timestamp(dt.date.today())
+                older_than_14_days = enrollment_dates <= (today - pd.Timedelta(days=14))
 
-                    # Count UNIQUE TEI IDs with missing CoD
-                    if "tei_id" in filtered_df.columns:
-                        missing_teis = (
-                            filtered_df[cod_empty]["tei_id"].dropna().unique()
-                        )
-                        result = len(missing_teis)
-                    else:
-                        result = int(cod_empty.sum())
+                # Logic: Missing CoD AND (Complete OR >14 days)
+                missing_mask = cod_missing & (status_complete | older_than_14_days)
+
+                # Count UNIQUE TEI IDs
+                if "tei_id" in filtered_df.columns:
+                    result = filtered_df[missing_mask]["tei_id"].dropna().nunique()
                 else:
-                    result = 0
+                    result = int(missing_mask.sum())
+            else:
+                result = 0
 
     st.session_state.missing_cod_cache[cache_key] = result
     return result
@@ -128,7 +123,7 @@ def compute_missing_cod_count(df, facility_uids=None):
 def compute_missing_cod_rate(df, facility_uids=None):
     """
     Compute Missing Condition of Discharge Rate
-    Returns: (rate, missing_cases, total_completed_discharges)
+    Returns: (rate, missing_cases, total_enrolled)
     """
     cache_key = get_missing_cod_cache_key(df, facility_uids, "missing_rate")
 
@@ -138,37 +133,29 @@ def compute_missing_cod_rate(df, facility_uids=None):
     if df is None or df.empty:
         result = (0.0, 0, 0)
     else:
-        # Count missing cases (only for COMPLETED enrollments)
+        # Count missing cases based on new logic
         missing_cases = compute_missing_cod_count(df, facility_uids)
 
-        # Get total COMPLETED discharges - COUNT UNIQUE TEI IDs
+        # Get total ENROLLED mothers - COUNT UNIQUE TEI IDs
         filtered_df = df.copy()
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        # Filter to only include COMPLETED enrollments with discharge dates
-        if DISCHARGE_DATE_COL in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df[DISCHARGE_DATE_COL].notna()].copy()
+        # Filter to only include mothers with enrollment dates
+        if ENROLLMENT_DATE_COL in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df[ENROLLMENT_DATE_COL].notna()].copy()
 
-        # Filter by enrollment status = COMPLETED
-        if ENROLLMENT_STATUS_COL in filtered_df.columns:
-            status_vals = filtered_df[ENROLLMENT_STATUS_COL].astype(str).str.strip()
-            completed_mask = status_vals.str.upper() == COMPLETED_STATUS
-            filtered_df = filtered_df[completed_mask].copy()
-
-        # Count UNIQUE TEI IDs for COMPLETED enrollments
+        # Count UNIQUE TEI IDs
         if "tei_id" in filtered_df.columns:
-            total_completed_discharges = filtered_df["tei_id"].dropna().nunique()
+            total_enrolled = filtered_df["tei_id"].dropna().nunique()
         else:
-            total_completed_discharges = len(filtered_df)
+            total_enrolled = len(filtered_df)
 
         # Calculate rate
         rate = (
-            (missing_cases / total_completed_discharges * 100)
-            if total_completed_discharges > 0
-            else 0.0
+            (missing_cases / total_enrolled * 100) if total_enrolled > 0 else 0.0
         )
-        result = (float(rate), int(missing_cases), int(total_completed_discharges))
+        result = (float(rate), int(missing_cases), int(total_enrolled))
 
     st.session_state.missing_cod_cache[cache_key] = result
     return result
@@ -177,16 +164,15 @@ def compute_missing_cod_rate(df, facility_uids=None):
 def compute_missing_cod_kpi(df, facility_uids=None):
     """
     Compute Missing Condition of Discharge KPI data
-    This is the function your dashboard will call
     """
-    rate, missing_cases, total_completed_discharges = compute_missing_cod_rate(
+    rate, missing_cases, total_enrolled = compute_missing_cod_rate(
         df, facility_uids
     )
 
     return {
         "missing_cod_rate": float(rate),
         "missing_cod_cases": int(missing_cases),
-        "total_completed_discharges": int(total_completed_discharges),
+        "total_enrolled_mothers": int(total_enrolled),
     }
 
 
@@ -194,9 +180,8 @@ def get_numerator_denominator_for_missing_cod(
     df, facility_uids=None, date_range_filters=None
 ):
     """
-    Get numerator and denominator for Missing Condition of Discharge KPI WITH DATE RANGE FILTERING
-    Counts UNIQUE TEI IDs for COMPLETED enrollments
-    Returns: (numerator, denominator, rate)
+    Get numerator and denominator for Missing Condition of Discharge KPI
+    Uses ENROLLMENT DATE for period filtering and denominator
     """
     if df is None or df.empty:
         return (0, 0, 0.0)
@@ -205,16 +190,13 @@ def get_numerator_denominator_for_missing_cod(
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Get the SPECIFIC date column for Missing Condition of Discharge
-    date_column = get_relevant_date_column_for_kpi(
-        "Missing Condition of Discharge Documentation"
-    )
+    # Use enrollment date for period filtering
+    date_column = ENROLLMENT_DATE_COL
 
-    # Check if required columns exist
     if date_column not in filtered_df.columns:
         return (0, 0, 0.0)
 
-    # Filter by discharge date
+    # Filter by enrollment date existence
     filtered_df[date_column] = pd.to_datetime(filtered_df[date_column], errors="coerce")
     filtered_df = filtered_df[filtered_df[date_column].notna()].copy()
 
@@ -235,41 +217,14 @@ def get_numerator_denominator_for_missing_cod(
     if filtered_df.empty:
         return (0, 0, 0.0)
 
-    # Filter to only include COMPLETED enrollments
-    if ENROLLMENT_STATUS_COL in filtered_df.columns:
-        status_vals = filtered_df[ENROLLMENT_STATUS_COL].astype(str).str.strip()
-        completed_mask = status_vals.str.upper() == COMPLETED_STATUS
-        completed_df = filtered_df[completed_mask].copy()
+    # Denominator: Total UNIQUE enrolled mothers in this period
+    if "tei_id" in filtered_df.columns:
+        denominator = filtered_df["tei_id"].dropna().nunique()
     else:
-        # If enrollment_status column doesn't exist, use all rows
-        completed_df = filtered_df.copy()
+        denominator = len(filtered_df)
 
-    if completed_df.empty:
-        return (0, 0, 0.0)
-
-    # COUNT UNIQUE TEI IDs for COMPLETED enrollments (denominator)
-    if "tei_id" in completed_df.columns:
-        denominator = completed_df["tei_id"].dropna().nunique()
-    else:
-        denominator = len(completed_df)
-
-    # COUNT UNIQUE TEI IDs with missing condition of discharge (numerator)
-    numerator = 0
-    if CONDITION_OF_DISCHARGE_COL in completed_df.columns and denominator > 0:
-        cod_vals = completed_df[CONDITION_OF_DISCHARGE_COL].astype(str).str.strip()
-
-        cod_empty = (
-            cod_vals.isin(EMPTY_INDICATORS)
-            | (cod_vals == "")
-            | (cod_vals.str.upper() == "N/A")
-        )
-
-        if "tei_id" in completed_df.columns:
-            # Get unique TEI IDs with missing CoD
-            missing_teis = completed_df[cod_empty]["tei_id"].dropna().unique()
-            numerator = len(missing_teis)
-        else:
-            numerator = int(cod_empty.sum())
+    # Numerator: Count mothers meeting Condition 1 or Condition 2
+    numerator = compute_missing_cod_count(filtered_df, facility_uids)
 
     # Calculate rate
     rate = (numerator / denominator * 100) if denominator > 0 else 0.0
@@ -286,8 +241,8 @@ def render_missing_cod_trend_chart(
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
-    numerator_name="COMPLETED Discharges with Missing CoD",
-    denominator_name="Total COMPLETED Discharges",
+    numerator_name="Missing Condition of Discharge",
+    denominator_name="Total Mothers",
     facility_uids=None,
 ):
     """Render trend chart for Missing Condition of Discharge - EXACT SAME AS ASSISTED"""
@@ -302,6 +257,20 @@ def render_missing_cod_trend_chart(
     x_axis_col = period_col
 
     df = df.copy()
+    # Explicit chronological sorting
+    if "period_sort" in df.columns:
+        df = df.sort_values("period_sort")
+        period_order = df[period_col].tolist()
+    else:
+        try:
+            # Fallback for period sorting
+            df['temp_sort'] = pd.to_datetime(df[period_col], format='%b-%y', errors='coerce')
+            df = df.sort_values('temp_sort')
+            period_order = df[period_col].tolist()
+            df = df.drop(columns=['temp_sort'])
+        except:
+            period_order = None
+
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
     chart_options = ["Line", "Bar", "Area"]
@@ -334,6 +303,7 @@ def render_missing_cod_trend_chart(
                 title=title,
                 height=400,
                 hover_data=hover_columns if use_hover_data else None,
+                category_orders={x_axis_col: period_order} if period_order else None
             )
             fig.update_traces(
                 line=dict(width=3),
@@ -347,6 +317,7 @@ def render_missing_cod_trend_chart(
                 title=title,
                 height=400,
                 hover_data=hover_columns if use_hover_data else None,
+                category_orders={x_axis_col: period_order} if period_order else None
             )
         elif chart_type == "area":
             fig = px.area(
@@ -356,6 +327,7 @@ def render_missing_cod_trend_chart(
                 title=title,
                 height=400,
                 hover_data=hover_columns if use_hover_data else None,
+                category_orders={x_axis_col: period_order} if period_order else None
             )
         else:
             fig = px.line(
@@ -367,6 +339,7 @@ def render_missing_cod_trend_chart(
                 title=title,
                 height=400,
                 hover_data=hover_columns if use_hover_data else None,
+                category_orders={x_axis_col: period_order} if period_order else None
             )
             fig.update_traces(
                 line=dict(width=3),
@@ -580,8 +553,8 @@ def render_missing_cod_facility_comparison_chart(
     text_color=None,
     facility_names=None,
     facility_uids=None,
-    numerator_name="COMPLETED Discharges with Missing CoD",
-    denominator_name="Total COMPLETED Discharges",
+    numerator_name="Missing Condition of Discharge",
+    denominator_name="Total Mothers",
 ):
     """Render facility comparison chart - EXACT SAME AS ASSISTED"""
     if text_color is None:
@@ -886,8 +859,8 @@ def render_missing_cod_region_comparison_chart(
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
-    numerator_name="COMPLETED Discharges with Missing CoD",
-    denominator_name="Total COMPLETED Discharges",
+    numerator_name="Missing Condition of Discharge",
+    denominator_name="Total Mothers",
 ):
     """Render region comparison chart - EXACT SAME AS ASSISTED"""
     if text_color is None:
@@ -1177,16 +1150,16 @@ def prepare_data_for_missing_cod_trend(
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Get the SPECIFIC date column for Missing Condition of Discharge (discharge summary)
+    # Get the SPECIFIC date column for Missing Condition of Discharge (enrollment_date)
     date_column = get_relevant_date_column_for_kpi(kpi_name)
 
     # Check if the SPECIFIC date column exists
     if date_column not in filtered_df.columns:
-        # Try to use event_date as fallback
-        if "event_date" in filtered_df.columns:
-            date_column = "event_date"
+        # Try to use enrollment_date as fallback
+        if "enrollment_date" in filtered_df.columns:
+            date_column = "enrollment_date"
             st.warning(
-                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'event_date' instead"
+                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'enrollment_date' instead"
             )
         else:
             st.warning(
@@ -1254,12 +1227,12 @@ def get_missing_cod_kpi_data(df, facility_uids=None):
         }
 
     # Compute KPI
-    rate, missing_cases, total_completed_discharges = compute_missing_cod_rate(
+    rate, missing_cases, total_enrolled = compute_missing_cod_rate(
         df, facility_uids
     )
 
     return {
         "missing_cod_rate": float(rate),
         "missing_cod_cases": int(missing_cases),
-        "total_completed_discharges": int(total_completed_discharges),
+        "total_mothers": int(total_enrolled),
     }

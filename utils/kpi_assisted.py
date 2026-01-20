@@ -91,7 +91,7 @@ def compute_assisted_rate(df, facility_uids=None):
     if df is None or df.empty:
         result = (0.0, 0, 0)
     else:
-        # Get date column for Assisted Delivery (from instrumental delivery form)
+        # Get date column for Assisted Delivery (enrollment_date)
         date_column = get_relevant_date_column_for_kpi("Assisted Delivery Rate (%)")
 
         # Count Assisted deliveries
@@ -143,7 +143,7 @@ def get_numerator_denominator_for_assisted(
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Get the SPECIFIC date column for Assisted Delivery (instrumental delivery form)
+    # Get the SPECIFIC date column for Assisted Delivery (enrollment_date)
     date_column = get_relevant_date_column_for_kpi("Assisted Delivery Rate (%)")
 
     # IMPORTANT: Filter to only include rows that have this specific date
@@ -1081,16 +1081,16 @@ def prepare_data_for_assisted_trend(
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Get the SPECIFIC date column for Assisted Delivery (instrumental delivery form)
+    # Get the SPECIFIC date column for Assisted Delivery (enrollment_date)
     date_column = get_relevant_date_column_for_kpi(kpi_name)
 
     # Check if the SPECIFIC date column exists
     if date_column not in filtered_df.columns:
-        # Try to use event_date as fallback
-        if "event_date" in filtered_df.columns:
-            date_column = "event_date"
+        # Try to use enrollment_date as fallback
+        if "enrollment_date" in filtered_df.columns:
+            date_column = "enrollment_date"
             st.warning(
-                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'event_date' instead"
+                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'enrollment_date' instead"
             )
         else:
             st.warning(

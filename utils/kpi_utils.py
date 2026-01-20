@@ -106,12 +106,12 @@ DEAD_CODE = "4"
 NUMBER_OF_NEWBORNS_COL = "number_of_newborns_delivery_summary"
 OTHER_NUMBER_OF_NEWBORNS_COL = "other_number_of_newborns_delivery_summary"
 
-# Event date columns
-DELIVERY_DATE_COL = "event_date_delivery_summary"
-PNC_DATE_COL = "event_date_postpartum_care"
-DISCHARGE_DATE_COL = "event_date_discharge_summary"
+# Event date columns - UPDATED: ALL KPIs NOW USE ENROLLMENT DATE
+DELIVERY_DATE_COL = "enrollment_date"
+PNC_DATE_COL = "enrollment_date"
+DISCHARGE_DATE_COL = "enrollment_date"
 
-# Enrollment date column - KEPT FOR BACKWARD COMPATIBILITY ONLY
+# Enrollment date column
 ENROLLMENT_DATE_COL = "enrollment_date"
 
 
@@ -530,57 +530,10 @@ def compute_kpis(df, facility_uids=None):
 # ---------------- Date Handling with Program Stage Specific Dates ----------------
 def get_relevant_date_column_for_kpi(kpi_name):
     """
-    Get the relevant event date column for a specific KPI based on program stage
+    Get the relevant date column for a specific KPI.
+    UPDATED: All indicators now use 'enrollment_date' to ensure consistent denominators.
     """
-    # Mapping of KPIs to their program stages and date columns
-    program_stage_date_mapping = {
-        # Delivery Summary KPIs
-        "Stillbirth Rate (%)": "event_date_delivery_summary",
-        "C-Section Rate (%)": "event_date_delivery_summary",
-        "Normal Vaginal Delivery (SVD) Rate (%)": "event_date_delivery_summary",
-        "Postpartum Hemorrhage (PPH) Rate (%)": "event_date_delivery_summary",
-        "Uterotonic Administration Rate (%)": "event_date_delivery_summary",
-        "Missing Mode of Delivery Documentation Rate (%)": "event_date_delivery_summary",
-        "ARV Prophylaxis Rate (%)": "event_date_postpartum_care",
-        # Instrumental Delivery KPIs - UPDATED CORRECT COLUMN NAME
-        "Assisted Delivery Rate (%)": "event_date_instrumental_delivery_form",
-        # Postpartum Care KPIs
-        "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": "event_date_postpartum_care",
-        "FP Acceptance": "event_date_postpartum_care",
-        "IPPCAR": "event_date_postpartum_care",
-        "Early Postnatal Care (PNC) Coverage (%)": "event_date_postpartum_care",
-        "PNC Coverage": "event_date_postpartum_care",
-        "Postnatal Care": "event_date_postpartum_care",
-        "Institutional Maternal Death Rate (%)": "event_date_discharge_summary",
-        "Maternal Death Rate": "event_date_discharge_summary",
-        "Missing Birth Outcome Documentation Rate (%)": "event_date_delivery_summary",
-        "Missing Condition of Discharge Documentation Rate (%)": "event_date_discharge_summary",
-        "Total Admitted Mothers": "enrollment_date",
-        "Admitted Mothers": "enrollment_date",
-    }
-
-    # Try exact match first
-    for key in program_stage_date_mapping:
-        if key in kpi_name:
-            return program_stage_date_mapping[key]
-
-    # Fallback based on keywords
-    if any(word in kpi_name for word in ["Assisted", "Instrumental"]):
-        return "event_date_instrumental_delivery_form"
-    elif any(
-        word in kpi_name
-        for word in ["Delivery", "Birth", "Section", "PPH", "Uterotonic", "SVD"]
-    ):
-        return "event_date_delivery_summary"
-    elif any(
-        word in kpi_name for word in ["PNC", "Postnatal", "Contraceptive", "Postpartum"]
-    ):
-        return "event_date_postpartum_care"
-    elif any(word in kpi_name for word in ["Death", "Discharge", "Maternal"]):
-        return "event_date_discharge_summary"
-
-    # Default to delivery summary date
-    return "event_date_delivery_summary"
+    return "enrollment_date"
 
 
 def prepare_data_for_trend_chart(
@@ -663,30 +616,19 @@ def prepare_data_for_trend_chart(
     return result_df, date_column
 
 
-def extract_event_date_for_period(df, event_name):
+def extract_event_date_for_period(df, event_name=None):
     """
-    Extract event date for period grouping with fallback to enrollment_date
-    event_name should be one of: "Delivery summary", "Postpartum care", "Discharge Summary"
+    Extract event date for period grouping.
+    UPDATED: All indicators now use 'enrollment_date' to ensure consistent denominators.
     """
     if df.empty:
         return pd.DataFrame()
 
-    event_date_columns = {
-        "Delivery summary": "event_date_delivery_summary",
-        "Postpartum care": "event_date_postpartum_care",
-        "Discharge Summary": "event_date_discharge_summary",
-        "Instrumental delivery form": "event_date_instrumental_delivery_form",
-    }
-
     result_df = df.copy()
 
-    if event_date_columns.get(event_name) in df.columns:
-        event_dates = pd.to_datetime(
-            result_df[event_date_columns[event_name]], errors="coerce"
-        )
-
-        # Use only event date (no fallback)
-        result_df["event_date"] = event_dates
+    # Use enrollment_date for all period grouping
+    if "enrollment_date" in result_df.columns:
+        result_df["event_date"] = pd.to_datetime(result_df["enrollment_date"], errors="coerce")
         result_df["period"] = result_df["event_date"].dt.strftime("%Y-%m")
         result_df["period_display"] = result_df["event_date"].dt.strftime("%b-%y")
         result_df["period_sort"] = result_df["event_date"].dt.strftime("%Y%m")

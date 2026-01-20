@@ -1,7 +1,7 @@
 """
 KPI: Missing Mode of Delivery Documentation
 Measures: Percentage of deliveries where BOTH mode of delivery AND instrumental delivery are not documented
-Formula: (Deliveries with missing documentation) ÷ (Total deliveries with delivery dates) × 100
+Formula: (Deliveries with missing documentation) ÷ (Total deliveries with enrollment dates) × 100
 """
 
 import pandas as pd
@@ -44,7 +44,7 @@ def clear_missing_md_cache():
 # ---------------- KPI Constants ----------------
 MODE_OF_DELIVERY_COL = "mode_of_delivery_maternal_delivery_summary"
 INSTRUMENTAL_DELIVERY_COL = "instrumental_delivery_form"
-DELIVERY_DATE_COL = "event_date_delivery_summary"  # Date column for denominator
+DELIVERY_DATE_COL = "enrollment_date"  # Date column for denominator
 
 # Empty/Null indicators
 EMPTY_INDICATORS = ["", "nan", "None", "null", "N/A", "n/a", "na", "NA", "undefined"]
@@ -130,12 +130,12 @@ def compute_missing_md_rate(df, facility_uids=None):
         # Count missing cases
         missing_cases = compute_missing_md_count(df, facility_uids)
 
-        # Get total deliveries - ONLY COUNT ROWS THAT HAVE DELIVERY DATE
+        # Get total deliveries - ONLY COUNT ROWS THAT HAVE ENROLLMENT DATE
         filtered_df = df.copy()
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        # Filter to only include deliveries with dates
+        # Filter to only include deliveries with enrollment dates
         if DELIVERY_DATE_COL in filtered_df.columns:
             filtered_df = filtered_df[filtered_df[DELIVERY_DATE_COL].notna()].copy()
 
@@ -1155,16 +1155,16 @@ def prepare_data_for_missing_md_trend(
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    # Get the SPECIFIC date column for Missing MD (delivery summary)
+    # Get the SPECIFIC date column for Missing MD (enrollment_date)
     date_column = get_relevant_date_column_for_kpi(kpi_name)
 
     # Check if the SPECIFIC date column exists
     if date_column not in filtered_df.columns:
-        # Try to use event_date as fallback
-        if "event_date" in filtered_df.columns:
-            date_column = "event_date"
+        # Try to use enrollment_date as fallback
+        if "enrollment_date" in filtered_df.columns:
+            date_column = "enrollment_date"
             st.warning(
-                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'event_date' instead"
+                f"⚠️ KPI-specific date column not found for {kpi_name}, using 'enrollment_date' instead"
             )
         else:
             st.warning(

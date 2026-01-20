@@ -149,8 +149,8 @@ KPI_MAPPING = {
     },
     "Missing Condition of Discharge": {
         "title": "Missing Condition of Discharge Documentation Rate (%)",
-        "numerator_name": "COMPLETED Discharges with Missing CoD",
-        "denominator_name": "Total COMPLETED Discharges",
+        "numerator_name": "Missing Condition of Discharge",
+        "denominator_name": "Total Mothers",
     },
     "Admitted Mothers": {
         "title": "Total Admitted Mothers",
@@ -165,14 +165,12 @@ KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "fp_counseling_and_method_provided_pp_postpartum_care",
-        "event_date_postpartum_care",
     ],
     "Stillbirth Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "birth_outcome_delivery_summary",
-        "event_date_delivery_summary",
         "number_of_newborns_delivery_summary",
         "other_number_of_newborns_delivery_summary",
     ],
@@ -181,35 +179,30 @@ KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "date_stay_pp_postpartum_care",
-        "event_date_postpartum_care",
     ],
     "Institutional Maternal Death Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "condition_of_discharge_discharge_summary",
-        "event_date_discharge_summary",
     ],
     "C-Section Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "mode_of_delivery_maternal_delivery_summary",
-        "event_date_delivery_summary",
     ],
     "Postpartum Hemorrhage (PPH) Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "obstetric_condition_at_delivery_delivery_summary",
-        "event_date_delivery_summary",
     ],
     "Delivered women who received uterotonic (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "uterotonics_given_delivery_summary",
-        "event_date_delivery_summary",
     ],
     "ARV Prophylaxis Rate (%)": [
         "orgUnit",
@@ -220,22 +213,18 @@ KPI_COLUMN_REQUIREMENTS = {
         "birth_outcome_delivery_summary",
         "number_of_newborns_delivery_summary",
         "other_number_of_newborns_delivery_summary",
-        "event_date_postpartum_care",
-        "event_date_delivery_summary",
     ],
     "Assisted Delivery Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "instrumental_delivery_form",
-        "event_date_instrumental_delivery_form",
     ],
     "Normal Vaginal Delivery (SVD) Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "mode_of_delivery_maternal_delivery_summary",
-        "event_date_delivery_summary",
     ],
     "Missing Mode of Delivery": [
         "orgUnit",
@@ -243,14 +232,12 @@ KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "mode_of_delivery_maternal_delivery_summary",
         "instrumental_delivery_form",
-        "event_date_delivery_summary",
     ],
     "Missing Birth Outcome": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
         "birth_outcome_delivery_summary",
-        "event_date_delivery_summary",
     ],
     "Missing Condition of Discharge": [
         "orgUnit",
@@ -258,7 +245,6 @@ KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "enrollment_status",
         "condition_of_discharge_discharge_summary",
-        "event_date_discharge_summary",
     ],
     "Admitted Mothers": [
         "orgUnit",
@@ -1635,7 +1621,10 @@ def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     kpi_date_column = get_relevant_date_column_for_kpi(current_kpi)
 
     # Try KPI-specific date column first
-    if kpi_date_column and kpi_date_column in df.columns:
+    if "enrollment_date" in df.columns:
+        df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
+        logging.info("✅ normalize_patient_dates: Using enrollment_date")
+    elif kpi_date_column and kpi_date_column in df.columns:
         df["event_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
         logging.info(
             f"✅ normalize_patient_dates: Using KPI-specific '{kpi_date_column}'"

@@ -50,7 +50,7 @@ for key, default_value in ESSENTIAL_STATES.items():
 from components.login import login_component
 from dashboards import facility, regional, national, admin
 from utils.auth import logout
-from components.chatbot import render_chatbot
+# from components.chatbot import render_chatbot
 
 # ====================== STREAMLIT PAGE CONFIG ======================
 st.set_page_config(
@@ -79,9 +79,9 @@ with st.sidebar:
         st.write("---")
         # Chat Bot Mode Toggle
         # Using session state key 'chatbot_mode' to persist the state
-        st.toggle("🤖 Chat Bot Mode", key="chatbot_mode")
+        # st.toggle("🤖 Chat Bot Mode", key="chatbot_mode")
         
-        st.write("---")
+        # st.write("---")
         # Logout button
         if st.button("Logout"):
             logout()
@@ -94,8 +94,9 @@ if not st.session_state.get("authenticated", False):
     login_component()  # Render login page if not authenticated
 else:
     # Check if Chat Bot Mode is active
-    if st.session_state.get("chatbot_mode", False):
-        render_chatbot()
+    if False: # st.session_state.get("chatbot_mode", False):
+        # render_chatbot()
+        pass
     else:
         role = st.session_state["user"].get("role", "")
 
