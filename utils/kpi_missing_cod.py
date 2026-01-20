@@ -90,13 +90,16 @@ def compute_missing_cod_count(df, facility_uids=None):
                     | (cod_vals.str.upper() == "N/A")
                 )
 
-                # Condition 1: Status = 'Complete'
+                # Status masks
                 status_complete = pd.Series(False, index=filtered_df.index)
+                status_active = pd.Series(False, index=filtered_df.index)
+                
                 if ENROLLMENT_STATUS_COL in filtered_df.columns:
                     status_vals = (
-                        filtered_df[ENROLLMENT_STATUS_COL].astype(str).str.strip()
+                        filtered_df[ENROLLMENT_STATUS_COL].astype(str).str.strip().str.upper()
                     )
-                    status_complete = status_vals.str.upper().isin(COMPLETED_STATUSES)
+                    status_complete = status_vals.isin(COMPLETED_STATUSES)
+                    status_active = status_vals == "ACTIVE"
 
                 # Condition 2: Enrollment older than 14 days
                 enrollment_dates = pd.to_datetime(
@@ -105,8 +108,8 @@ def compute_missing_cod_count(df, facility_uids=None):
                 today = pd.Timestamp(dt.date.today())
                 older_than_14_days = enrollment_dates <= (today - pd.Timedelta(days=14))
 
-                # Logic: Missing CoD AND (Complete OR >14 days)
-                missing_mask = cod_missing & (status_complete | older_than_14_days)
+                # Logic: Missing CoD AND (Complete OR (Active AND >14 days))
+                missing_mask = cod_missing & (status_complete | (status_active & older_than_14_days))
 
                 # Count UNIQUE TEI IDs
                 if "tei_id" in filtered_df.columns:
