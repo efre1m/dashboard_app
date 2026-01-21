@@ -1333,6 +1333,9 @@ def render_facility_comparison_chart(
         all_denominators = comparison_df["denominator"].sum()
         grand_overall = (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
         
+        # Determine if this is a rate KPI based on title
+        is_rate_kpi = "Rate" in title or "%" in title
+        
         col1, col2, col3 = st.columns(3)
         with col1:
             val_format = ".2f" if is_rate_kpi else ",.0f"
@@ -1616,6 +1619,9 @@ def render_region_comparison_chart(
         all_numerators = comparison_df["numerator"].sum()
         all_denominators = comparison_df["denominator"].sum()
         grand_overall = (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        
+        # Determine if this is a rate KPI based on title
+        is_rate_kpi = "Rate" in title or "%" in title
         
         col1, col2, col3 = st.columns(3)
         with col1:

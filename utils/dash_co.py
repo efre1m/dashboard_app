@@ -1585,7 +1585,8 @@ def render_comparison_chart(
                 region_names=region_names,
                 region_mapping=facilities_by_region,
                 facilities_by_region=facilities_by_region,
-                value_name="Admitted Mothers",
+                numerator_name="Admitted Mothers",
+                denominator_name="Total Admitted",
             )
         else:
             render_region_comparison_chart(

@@ -137,10 +137,10 @@ st.markdown(
             margin-bottom: 0.1rem !important;
         }
         
-        /* Compact Selectboxes */
-        div[data-baseweb="select"] > div {
+        /* Compact Selectboxes - Allow multiselect to expand */
+        div[data-baseweb="select"], div[data-baseweb="select"] > div {
             min-height: 22px !important;
-            height: 22px !important;
+            height: auto !important;
             font-size: 11px !important;
         }
         

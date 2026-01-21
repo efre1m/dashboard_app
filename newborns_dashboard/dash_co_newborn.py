@@ -42,6 +42,16 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
 
 # KPI mapping for newborn comparison charts
 NEWBORN_KPI_MAPPING = {
+    "Inborn Rate (%)": {
+        "title": "Inborn Rate (%)",
+        "numerator_name": "Inborn Babies",
+        "denominator_name": "Total Admitted Newborns",
+    },
+    "Outborn Rate (%)": {
+        "title": "Outborn Rate (%)",
+        "numerator_name": "Outborn Babies",
+        "denominator_name": "Total Admitted Newborns",
+    },
     "Inborn Hypothermia Rate (%)": {
         "title": "Hypothermia in Inborn Babies (%)",
         "numerator_name": "Inborn Hypothermia Cases",
@@ -1190,6 +1200,8 @@ def _render_simplified_kpi_trend_chart(
             bg_color,
             text_color,
             facility_uids,
+            numerator_name=kpi_config.get("numerator_name", "KMC Cases"),
+            denominator_name=kpi_config.get("denominator_name", "Total Newborns"),
         )
     elif category == "cpap_general":
         render_cpap_general_trend_chart(
@@ -1199,6 +1211,8 @@ def _render_simplified_kpi_trend_chart(
             bg_color,
             text_color,
             facility_uids,
+            numerator_name=kpi_config.get("numerator_name", "CPAP Cases"),
+            denominator_name=kpi_config.get("denominator_name", "Total Admitted"),
         )
     elif category == "cpap_rds":
         render_cpap_rds_trend_chart(
@@ -1208,6 +1222,8 @@ def _render_simplified_kpi_trend_chart(
             bg_color,
             text_color,
             facility_uids,
+            numerator_name=kpi_config.get("numerator_name", "CPAP Cases"),
+            denominator_name=kpi_config.get("denominator_name", "Total RDS Cases"),
         )
     elif category == "cpap_by_weight":
         render_cpap_by_weight_trend_chart(
@@ -1217,6 +1233,8 @@ def _render_simplified_kpi_trend_chart(
             bg_color,
             text_color,
             facility_uids,
+            numerator_name=kpi_config.get("numerator_name", "CPAP Cases"),
+            denominator_name=kpi_config.get("denominator_name", "Total Newborns"),
         )
     else:
         st.warning(f"⚠️ Unsupported simplified KPI category: {category}")

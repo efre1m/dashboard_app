@@ -1524,6 +1524,8 @@ def render_cpap_general_trend_chart(
     bg_color="#FFFFFF",
     text_color=None,
     facility_uids=None,
+    numerator_name="CPAP Cases",
+    denominator_name="Total Admitted Newborns",
 ):
     """Render general CPAP coverage trend chart - WITH SINGLE TABLE"""
     if text_color is None:
@@ -1577,7 +1579,7 @@ def render_cpap_general_trend_chart(
             name="General CPAP",
             marker_color="#3498db",  # Blue for General CPAP
             hovertemplate=get_attractive_hover_template(
-                "General CPAP", "CPAP Cases", "Total Admitted"
+                "General CPAP", numerator_name, denominator_name
             ),
             customdata=hover_data,
         )
@@ -1715,6 +1717,8 @@ def render_cpap_rds_trend_chart(
     bg_color="#FFFFFF",
     text_color=None,
     facility_uids=None,
+    numerator_name="CPAP Cases",
+    denominator_name="Total RDS Cases",
 ):
     """Render CPAP for RDS trend chart - WITH SINGLE TABLE"""
     if text_color is None:
@@ -1768,7 +1772,7 @@ def render_cpap_rds_trend_chart(
             name="CPAP for RDS",
             marker_color="#3498db",  # BLUE for CPAP for RDS (same as general CPAP)
             hovertemplate=get_attractive_hover_template(
-                "CPAP for RDS", "CPAP Cases", "RDS Newborns"
+                "CPAP for RDS", numerator_name, denominator_name
             ),
             customdata=hover_data,
         )
@@ -2631,6 +2635,8 @@ def render_kmc_coverage_trend_chart(
     bg_color="#FFFFFF",
     text_color=None,
     facility_uids=None,
+    numerator_name="KMC Cases",
+    denominator_name="Total Newborns with Birth Weight",
 ):
     """Render KMC coverage trend - WITH GROUP BAR CHART"""
     if text_color is None:
@@ -2697,7 +2703,7 @@ def render_kmc_coverage_trend_chart(
                     name=category_info["name"],
                     marker_color=category_info["color"],
                     hovertemplate=get_attractive_hover_template(
-                        category_info["name"], "KMC Cases", "Total Newborns"
+                        category_info["name"], numerator_name, denominator_name
                     ),
                     customdata=np.column_stack(
                         (trend_df[count_col], trend_df[total_col])
