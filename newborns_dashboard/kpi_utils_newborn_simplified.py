@@ -353,7 +353,7 @@ def compute_total_with_birth_weight(df, facility_uids=None):
 
 
 def compute_birth_weight_kpi(df, facility_uids=None):
-    """Compute birth weight KPI for the given dataframe - FIXED"""
+    """Compute birth weight KPI for the given dataframe - FIXED with correct denominator"""
     cache_key = get_cache_key_simplified(df, facility_uids, "birth_weight_kpi")
 
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
@@ -365,31 +365,23 @@ def compute_birth_weight_kpi(df, facility_uids=None):
                 category: 0 for category in BIRTH_WEIGHT_CATEGORIES.keys()
             },
             "total_with_birth_weight": 0,
+            "total_admitted": 0,
         }
     else:
+        # Get category counts
         category_counts = compute_birth_weight_by_category(df, facility_uids)
         total_with_weight = compute_total_with_birth_weight(df, facility_uids)
-
-        # Calculate sum for verification
-        category_sum = sum(category_counts.values())
-
-        # Log for debugging
-        logger.info(
-            f"Birth weight - Total with weight: {total_with_weight}, Category sum: {category_sum}"
-        )
-
-        # Ensure consistency
-        if category_sum != total_with_weight:
-            logger.warning(
-                f"Birth weight data inconsistent! Category sum: {category_sum}, Total: {total_with_weight}"
-            )
-            # Use the larger value
-            total_with_weight = max(total_with_weight, category_sum)
+        
+        # Get total admitted (unique TEIs)
+        filtered_df = filter_by_facility(df, facility_uids)
+        dedup_df = deduplicate_by_tei(filtered_df)
+        total_admitted = len(dedup_df)
 
         result = {
             "bw_category_counts": category_counts,
             "total_with_birth_weight": int(total_with_weight),
-            "category_sum": int(category_sum),
+            "total_admitted": int(total_admitted),
+            "category_sum": int(sum(category_counts.values())),
         }
 
     st.session_state.kpi_cache_newborn_simplified[cache_key] = result
@@ -796,7 +788,7 @@ def compute_cpap_coverage_by_weight_kpi(df, facility_uids=None):
 def render_birth_weight_trend_chart(
     df,
     period_col="period_display",
-    title="Birth Weight Distribution Trend",
+    title="Birth Weight Rate Trend",
     bg_color="#FFFFFF",
     text_color=None,
     facility_uids=None,
@@ -826,6 +818,7 @@ def render_birth_weight_trend_chart(
         period_row = {
             period_col: period,
             "total_with_birth_weight": bw_data["total_with_birth_weight"],
+            "total_admitted": bw_data["total_admitted"],
         }
 
         # Add each category count
@@ -843,7 +836,7 @@ def render_birth_weight_trend_chart(
 
     trend_df = pd.DataFrame(trend_data)
 
-    # Create stacked bar chart for birth weight distribution
+    # Create stacked bar chart for birth weight rate
     fig = go.Figure()
 
     # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
@@ -855,13 +848,19 @@ def render_birth_weight_trend_chart(
         count_col = f"{category_key}_count"
 
         if count_col in trend_df.columns:
+            # Calculate percentage for this category - USING TOTAL ADMITTED AS DENOMINATOR
+            trend_df[f"{category_key}_rate"] = (
+                trend_df[count_col] / trend_df["total_admitted"] * 100
+            ).fillna(0)
+
             fig.add_trace(
                 go.Bar(
                     x=trend_df[period_col],
-                    y=trend_df[count_col],
+                    y=trend_df[f"{category_key}_rate"],
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.0f}} newborns<extra></extra>",
+                    customdata=trend_df[count_col],
+                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}% (%{{customdata:.0f}} newborns)<extra></extra>",
                 )
             )
 
@@ -891,7 +890,7 @@ def render_birth_weight_trend_chart(
         title=title,
         height=500,
         xaxis_title="Period",
-        yaxis_title="Number of Newborns",
+        yaxis_title="Percentage of Newborns (%)",
         barmode="stack",
         showlegend=True,
         paper_bgcolor=bg_color,
@@ -908,11 +907,12 @@ def render_birth_weight_trend_chart(
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[0, y_max],  # FIXED: Now using calculated y_max
+            range=[0, 105],  # 0 to 105% (with small buffer)
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            ticksuffix="%",
         ),
         legend=dict(
             traceorder="reversed",  # Reverse legend to match stacking order
@@ -925,7 +925,7 @@ def render_birth_weight_trend_chart(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE COMPARISON TABLE
-    st.subheader("📊 Birth Weight Distribution Table")
+    st.subheader("📊 Birth Weight Rate Table (%)")
 
     # Create a table with all categories for each period
     table_data = []
@@ -940,10 +940,13 @@ def render_birth_weight_trend_chart(
         ):
             count_col = f"{category_key}_count"
             if count_col in period_data:
-                row[category_info["short_name"]] = int(period_data[count_col])
+                count = int(period_data[count_col])
+                total = int(period_data["total_admitted"])
+                rate = (count / total * 100) if total > 0 else 0
+                row[category_info["short_name"]] = f"{rate:.1f}% ({count}/{total})"
 
         # Add total
-        row["Total"] = int(period_data["total_with_birth_weight"])
+        row["Total Admitted"] = int(period_data["total_admitted"])
         table_data.append(row)
 
     # Add overall row
@@ -952,15 +955,24 @@ def render_birth_weight_trend_chart(
         BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
     ):
         count_col = f"{category_key}_count"
-        overall_row[category_info["short_name"]] = int(trend_df[count_col].sum())
+        count = int(trend_df[count_col].sum())
+        total = int(trend_df["total_admitted"].sum())
+        rate = (count / total * 100) if total > 0 else 0
+        overall_row[category_info["short_name"]] = f"{rate:.1f}% ({count}/{total})"
 
-    overall_row["Total"] = int(trend_df["total_with_birth_weight"].sum())
+    overall_row["Total Admitted"] = int(trend_df["total_admitted"].sum())
     table_data.append(overall_row)
 
     comparison_df = pd.DataFrame(table_data)
 
     # Display the table without expander
     st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # Footnote description
+    st.info(
+        "**Indicator Definition:** Percentage of newborns in each birth weight category out of the total number of admitted newborns (deliveries) during the selected period. "
+        "The values in brackets represent **(number in category / total admitted newborns)**."
+    )
 
     # SINGLE DOWNLOAD SECTION
     st.subheader("📥 Download Data")
@@ -969,7 +981,7 @@ def render_birth_weight_trend_chart(
     download_df = trend_df.copy()
 
     # Select only the period and count columns IN ORDER
-    download_cols = [period_col, "total_with_birth_weight"]
+    download_cols = [period_col, "total_admitted", "total_with_birth_weight"]
     for category_key, category_info in sorted(
         BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
     ):
@@ -979,6 +991,7 @@ def render_birth_weight_trend_chart(
 
     # Calculate totals for "Overall" row
     overall_row = {period_col: "Overall"}
+    overall_row["total_admitted"] = download_df["total_admitted"].sum()
     overall_row["total_with_birth_weight"] = download_df[
         "total_with_birth_weight"
     ].sum()
@@ -997,7 +1010,8 @@ def render_birth_weight_trend_chart(
     # Rename columns for better readability with clean names IN ORDER
     column_names = {
         period_col: "Period",
-        "total_with_birth_weight": "Total Newborns with Birth Weight",
+        "total_admitted": "Total Admitted Newborns",
+        "total_with_birth_weight": "Total Newborns with Birth Weight Recorded",
     }
     for category_key, category_info in sorted(
         BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
@@ -1011,16 +1025,16 @@ def render_birth_weight_trend_chart(
     timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
     download_csv_button(
         download_df,
-        f"birth_weight_distribution_{timestamp}.csv",
+        f"birth_weight_rate_{timestamp}.csv",
         "📥 Download CSV",
-        "Download the birth weight distribution data as CSV",
+        "Download the birth weight rate data as CSV",
     )
 
 
 def render_birth_weight_facility_comparison(
     df,
     period_col="period_display",
-    title="Birth Weight Distribution - Facility Comparison",
+    title="Birth Weight Rate - Facility Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
@@ -1056,6 +1070,7 @@ def render_birth_weight_facility_comparison(
 
             row_data = {
                 "Facility": facility_name,
+                "Total Admitted": bw_data["total_admitted"],
                 "Total with Birth Weight": bw_data["total_with_birth_weight"],
             }
 
@@ -1086,13 +1101,19 @@ def render_birth_weight_facility_comparison(
     ):
         short_name = category_info["short_name"]
         if short_name in facility_df.columns:
+            # Calculate percentage for this category - USING TOTAL ADMITTED AS DENOMINATOR
+            facility_df[f"{short_name}_rate"] = (
+                facility_df[short_name] / facility_df["Total Admitted"] * 100
+            ).fillna(0)
+
             fig.add_trace(
                 go.Bar(
                     x=facility_df["Facility"],
-                    y=facility_df[short_name],
+                    y=facility_df[f"{short_name}_rate"],
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.0f}<extra></extra>",
+                    customdata=facility_df[short_name],
+                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}% (%{{customdata:.0f}} newborns)<extra></extra>",
                 )
             )
 
@@ -1113,7 +1134,7 @@ def render_birth_weight_facility_comparison(
         title=title,
         height=500,
         xaxis_title="Facility",
-        yaxis_title="Number of Newborns",
+        yaxis_title="Percentage of Newborns (%)",
         barmode="stack",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -1127,11 +1148,12 @@ def render_birth_weight_facility_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[0, y_max] if y_max else None,
+            range=[0, 105],  # 0 to 105% (with small buffer)
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            ticksuffix="%",
         ),
         legend=dict(
             traceorder="reversed",  # Reverse legend to match stacking order
@@ -1141,23 +1163,72 @@ def render_birth_weight_facility_comparison(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # SINGLE COMPARISON TABLE
-    st.subheader("📊 Facility Comparison Table")
-
-    # Display the table with all categories
+    # --- TABLE REFINEMENT ---
+    # 1. Create a display dataframe
     display_df = facility_df.copy()
 
-    # Add overall row
-    overall_row = {"Facility": "Overall"}
-    for col in display_df.columns:
-        if col != "Facility":
-            overall_row[col] = display_df[col].sum()
+    # 2. Calculate Overall totals
+    numeric_cols = ["Total Admitted", "Total with Birth Weight"] + [
+        category_info["short_name"] for category_info in BIRTH_WEIGHT_CATEGORIES.values()
+    ]
+    overall_totals = display_df[numeric_cols].sum()
+    overall_row = {"Facility": "**Overall**"}
+    for col in numeric_cols:
+        overall_row[col] = overall_totals[col]
+    
+    # 3. Add Overall row to display_df
+    display_df = pd.concat([display_df, pd.DataFrame([overall_row])], ignore_index=True)
 
-    overall_df = pd.DataFrame([overall_row])
-    display_df = pd.concat([display_df, overall_df], ignore_index=True)
+    # 4. Add "Birth Weight Rate (%)" column - rate of babies with BW recorded
+    display_df["Birth Weight Rate (%)"] = display_df.apply(
+        lambda row: (
+            f"{(row['Total with Birth Weight'] / row['Total Admitted'] * 100):.1f}% ({int(row['Total with Birth Weight'])}/{int(row['Total Admitted'])})"
+            if row["Total Admitted"] > 0
+            else f"0.0% (0/{int(row['Total Admitted'])})"
+        ),
+        axis=1,
+    )
 
-    # Format the table with all categories
-    st.dataframe(display_df, use_container_width=True, height=300)
+    # 5. Format category columns: rate% (n/m) where m is Total Admitted
+    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+        col = category_info["short_name"]
+        if col in display_df.columns:
+            display_df[col] = display_df.apply(
+                lambda row: (
+                    f"{(row[col] / row['Total Admitted'] * 100):.1f}% ({int(row[col])}/{int(row['Total Admitted'])})"
+                    if row["Total Admitted"] > 0
+                    else f"0.0% (0/{int(row['Total Admitted'])})"
+                ),
+                axis=1,
+            )
+
+    # 6. Convert count columns to int for display (Individual entities)
+    display_df["Total Admitted"] = display_df["Total Admitted"].astype(int)
+    display_df["Total with Birth Weight"] = display_df["Total with Birth Weight"].astype(int)
+
+    # 7. Select and reorder columns for display
+    category_cols = [
+        category_info["short_name"] 
+        for category_info in sorted(BIRTH_WEIGHT_CATEGORIES.values(), key=lambda x: x["sort_order"])
+    ]
+    
+    final_cols = [
+        "Facility", 
+        "Total Admitted", 
+        "Total with Birth Weight", 
+        "Birth Weight Rate (%)"
+    ] + category_cols
+    
+    display_df = display_df[final_cols]
+
+    # Render the table
+    st.dataframe(display_df, use_container_width=True, height=min(400, (len(display_df) + 1) * 35 + 40))
+
+    # Footnote description
+    st.info(
+        "**Indicator Definition:** Percentage of newborns in each birth weight category out of the total number of admitted newborns (deliveries) for the selected timeframe. "
+        "The values in brackets represent **(number in category / total admitted newborns)**."
+    )
 
     # SINGLE DOWNLOAD SECTION
     st.subheader("📥 Download Data")
@@ -1167,7 +1238,8 @@ def render_birth_weight_facility_comparison(
     # Clean column names for download IN ORDER
     column_names = {
         "Facility": "Facility",
-        "Total with Birth Weight": "Total Newborns with Birth Weight",
+        "Total Admitted": "Total Admitted Newborns",
+        "Total with Birth Weight": "Total Newborns with Birth Weight Recorded",
     }
     for category_key, category_info in sorted(
         BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
@@ -1191,16 +1263,16 @@ def render_birth_weight_facility_comparison(
     timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
     download_csv_button(
         download_df,
-        f"birth_weight_facility_comparison_{timestamp}.csv",
+        f"birth_weight_facility_rate_{timestamp}.csv",
         "📥 Download CSV",
-        "Download birth weight facility comparison data as CSV",
+        "Download birth weight facility rate data as CSV",
     )
 
 
 def render_birth_weight_region_comparison(
     df,
     period_col="period_display",
-    title="Birth Weight Distribution - Region Comparison",
+    title="Birth Weight Rate - Region Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     region_names=None,
@@ -1242,6 +1314,7 @@ def render_birth_weight_region_comparison(
 
                 row_data = {
                     "Region": region_name,
+                    "Total Admitted": bw_data["total_admitted"],
                     "Total with Birth Weight": bw_data["total_with_birth_weight"],
                 }
 
@@ -1270,13 +1343,19 @@ def render_birth_weight_region_comparison(
     ):
         short_name = category_info["short_name"]
         if short_name in region_df.columns:
+            # Calculate percentage for this category - USING TOTAL ADMITTED AS DENOMINATOR
+            region_df[f"{short_name}_rate"] = (
+                region_df[short_name] / region_df["Total Admitted"] * 100
+            ).fillna(0)
+
             fig.add_trace(
                 go.Bar(
                     x=region_df["Region"],
-                    y=region_df[short_name],
+                    y=region_df[f"{short_name}_rate"],
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.0f}<extra></extra>",
+                    customdata=region_df[short_name],
+                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}% (%{{customdata:.0f}} newborns)<extra></extra>",
                 )
             )
 
@@ -1297,7 +1376,7 @@ def render_birth_weight_region_comparison(
         title=title,
         height=500,
         xaxis_title="Region",
-        yaxis_title="Number of Newborns",
+        yaxis_title="Percentage of Newborns (%)",
         barmode="stack",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -1311,11 +1390,12 @@ def render_birth_weight_region_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[0, y_max] if y_max else None,
+            range=[0, 105],  # 0 to 105% (with buffer)
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            ticksuffix="%",
         ),
         legend=dict(
             title="Birth Weight Categories",
@@ -1324,23 +1404,72 @@ def render_birth_weight_region_comparison(
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # SINGLE COMPARISON TABLE
-    st.subheader("📊 Region Comparison Table")
-
-    # Display the table with all categories
+    # --- TABLE REFINEMENT ---
+    # 1. Create a display dataframe
     display_df = region_df.copy()
 
-    # Add overall row
-    overall_row = {"Region": "Overall"}
-    for col in display_df.columns:
-        if col != "Region":
-            overall_row[col] = display_df[col].sum()
+    # 2. Calculate Overall totals
+    numeric_cols = ["Total Admitted", "Total with Birth Weight"] + [
+        category_info["short_name"] for category_info in BIRTH_WEIGHT_CATEGORIES.values()
+    ]
+    overall_totals = display_df[numeric_cols].sum()
+    overall_row = {"Region": "**Overall**"}
+    for col in numeric_cols:
+        overall_row[col] = overall_totals[col]
+    
+    # 3. Add Overall row to display_df
+    display_df = pd.concat([display_df, pd.DataFrame([overall_row])], ignore_index=True)
 
-    overall_df = pd.DataFrame([overall_row])
-    display_df = pd.concat([display_df, overall_df], ignore_index=True)
+    # 4. Add "Birth Weight Rate (%)" column - rate of babies with BW recorded
+    display_df["Birth Weight Rate (%)"] = display_df.apply(
+        lambda row: (
+            f"{(row['Total with Birth Weight'] / row['Total Admitted'] * 100):.1f}% ({int(row['Total with Birth Weight'])}/{int(row['Total Admitted'])})"
+            if row["Total Admitted"] > 0
+            else f"0.0% (0/{int(row['Total Admitted'])})"
+        ),
+        axis=1,
+    )
 
-    # Format the table with all categories
-    st.dataframe(display_df, use_container_width=True, height=300)
+    # 5. Format category columns: rate% (n/m) where m is Total Admitted
+    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+        col = category_info["short_name"]
+        if col in display_df.columns:
+            display_df[col] = display_df.apply(
+                lambda row: (
+                    f"{(row[col] / row['Total Admitted'] * 100):.1f}% ({int(row[col])}/{int(row['Total Admitted'])})"
+                    if row["Total Admitted"] > 0
+                    else f"0.0% (0/{int(row['Total Admitted'])})"
+                ),
+                axis=1,
+            )
+
+    # 6. Convert count columns to int for display (Individual entities)
+    display_df["Total Admitted"] = display_df["Total Admitted"].astype(int)
+    display_df["Total with Birth Weight"] = display_df["Total with Birth Weight"].astype(int)
+
+    # 7. Select and reorder columns for display
+    category_cols = [
+        category_info["short_name"] 
+        for category_info in sorted(BIRTH_WEIGHT_CATEGORIES.values(), key=lambda x: x["sort_order"])
+    ]
+    
+    final_cols = [
+        "Region", 
+        "Total Admitted", 
+        "Total with Birth Weight", 
+        "Birth Weight Rate (%)"
+    ] + category_cols
+    
+    display_df = display_df[final_cols]
+
+    # Render the table
+    st.dataframe(display_df, use_container_width=True, height=min(400, (len(display_df) + 1) * 35 + 40))
+
+    # Footnote description
+    st.info(
+        "**Indicator Definition:** Percentage of newborns in each birth weight category out of the total number of admitted newborns (deliveries) for the selected timeframe. "
+        "The values in brackets represent **(number in category / total admitted newborns)**."
+    )
 
     # SINGLE DOWNLOAD SECTION
     st.subheader("📥 Download Data")
@@ -1350,7 +1479,8 @@ def render_birth_weight_region_comparison(
     # Clean column names for download IN ORDER
     column_names = {
         "Region": "Region",
-        "Total with Birth Weight": "Total Newborns with Birth Weight",
+        "Total Admitted": "Total Admitted Newborns",
+        "Total with Birth Weight": "Total Newborns with Birth Weight Recorded",
     }
     for category_key, category_info in sorted(
         BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]

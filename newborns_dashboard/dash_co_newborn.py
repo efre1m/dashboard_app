@@ -83,12 +83,12 @@ NEWBORN_KPI_MAPPING = {
     #     "denominator_name": "Newborns with Probable Sepsis",
     # },
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
-    "Birth Weight Distribution": {
-        "title": "Birth Weight Distribution",
-        "value_name": "Number of Newborns",
+    "Birth Weight Rate": {
+        "title": "Birth Weight Rate",
+        "value_name": "Percentage of Newborns (%)",
         "type": "simplified",
         "category": "birth_weight",
-        "comparison_type": "stacked_cases",  # Shows case counts in stacked bars
+        "comparison_type": "stacked_cases",  # Uses stacked bars in comparison
     },
     "KMC Coverage by Birth Weight": {
         "title": "KMC Coverage by Birth Weight Category",
@@ -123,6 +123,22 @@ NEWBORN_KPI_MAPPING = {
         "category": "cpap_by_weight",
         "comparison_type": "rates",  # Shows rates in comparison charts
     },
+    # DATA QUALITY KPIs
+    "Missing Temperature (%)": {
+        "title": "Missing Temperature at Admission (%)",
+        "numerator_name": "Patients with Missing Temperature",
+        "denominator_name": "Total Admitted Newborns",
+    },
+    "Missing Birth Weight (%)": {
+        "title": "Missing Birth Weight (%)",
+        "numerator_name": "Patients with Missing Birth Weight",
+        "denominator_name": "Total Admitted Newborns",
+    },
+    "Missing Discharge Status (%)": {
+        "title": "Missing Newborn Status at Discharge (%)",
+        "numerator_name": "Patients with Missing Status",
+        "denominator_name": "Total Admitted Newborns",
+    },
 }
 
 # KPI options for newborn dashboard (REMOVED CULTURE KPIs)
@@ -136,12 +152,16 @@ NEWBORN_KPI_OPTIONS = [
     "Admitted Newborns",
     # "Antibiotics for Clinical Sepsis (%)",
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
-    "Birth Weight Distribution",
+    "Birth Weight Rate",
     "KMC Coverage by Birth Weight",
     # CPAP KPIs WITH SINGLE TABLE DISPLAY
     "General CPAP Coverage",
     "CPAP for RDS",
     "CPAP Coverage by Birth Weight",
+    # DATA QUALITY
+    "Missing Temperature (%)",
+    "Missing Birth Weight (%)",
+    "Missing Discharge Status (%)",
 ]
 
 # KPI Groups for Tab Navigation (UPDATED - REMOVED HYPOTHERMIA AFTER ADMISSION)
@@ -152,7 +172,7 @@ NEWBORN_KPI_GROUPS = {
         "Hypothermia on Admission Rate (%)",
         "Inborn Hypothermia Rate (%)",
         "Outborn Hypothermia Rate (%)",
-        "Birth Weight Distribution",
+        "Birth Weight Rate",
     ],
     "🏥 Interventions": [
         "KMC Coverage by Birth Weight",
@@ -164,6 +184,11 @@ NEWBORN_KPI_GROUPS = {
     "📊 Outcomes & Enrollment": [
         "Neonatal Mortality Rate (%)",
         "Admitted Newborns",
+    ],
+    "Missing": [
+        "Missing Temperature (%)",
+        "Missing Birth Weight (%)",
+        "Missing Discharge Status (%)",
     ],
 }
 
@@ -227,7 +252,7 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
     #     "event_date_nicu_admission_careform",
     # ],
     # NEW SIMPLIFIED KPIs WITH SINGLE TABLE DISPLAY
-    "Birth Weight Distribution": [
+    "Birth Weight Rate": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
@@ -271,16 +296,34 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "birth_weight_n_nicu_admission_careform",
         "event_date_neonatal_referral_form",
     ],
+    "Missing Temperature (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "temp_at_admission_nicu_admission_careform",
+    ],
+    "Missing Birth Weight (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "birth_weight_n_nicu_admission_careform",
+    ],
+    "Missing Discharge Status (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "newborn_status_at_discharge_n_discharge_care_form",
+    ],
 }
 
 # SIMPLIFIED KPI DATE COLUMN MAPPING - UPDATED WITH DATASET NAMES
 SIMPLIFIED_KPI_DATE_COLUMNS = {
-    "Birth Weight Distribution": "event_date_nicu_admission_careform",
-    "KMC Coverage by Birth Weight": "event_date_nurse_followup_sheet",
+    "Birth Weight Rate": "enrollment_date",
+    "KMC Coverage by Birth Weight": "enrollment_date",
     # CPAP DATE COLUMNS - UPDATED WITH DATASET NAMES
-    "General CPAP Coverage": "event_date_neonatal_referral_form",
-    "CPAP for RDS": "event_date_neonatal_referral_form",
-    "CPAP Coverage by Birth Weight": "event_date_neonatal_referral_form",
+    "General CPAP Coverage": "enrollment_date",
+    "CPAP for RDS": "enrollment_date",
+    "CPAP Coverage by Birth Weight": "enrollment_date",
 }
 
 
@@ -321,6 +364,9 @@ def get_text_color(bg_color):
 
 def get_newborn_kpi_config(kpi_selection):
     """Get newborn KPI configuration"""
+    # Migration fallback for renamed KPI
+    if kpi_selection == "Birth Weight Distribution":
+        kpi_selection = "Birth Weight Rate"
     return NEWBORN_KPI_MAPPING.get(kpi_selection, {})
 
 
@@ -335,6 +381,10 @@ def get_relevant_date_column_for_newborn_kpi_with_all(kpi_name):
     Get the relevant event date column for a specific newborn KPI
     Includes simplified KPIs with correct date columns
     """
+    # Migration fallback for renamed KPI
+    if kpi_name == "Birth Weight Distribution":
+        kpi_name = "Birth Weight Rate"
+
     # Check if it's a simplified KPI
     if kpi_name in SIMPLIFIED_KPI_DATE_COLUMNS:
         return SIMPLIFIED_KPI_DATE_COLUMNS[kpi_name]
@@ -400,12 +450,13 @@ def render_newborn_kpi_tab_navigation():
     if "selected_newborn_kpi" not in st.session_state:
         st.session_state.selected_newborn_kpi = "Inborn Rate (%)"
 
-    # Create main KPI group tabs - UPDATED TO 3 TABS
-    tab1, tab2, tab3 = st.tabs(
+    # Create main KPI group tabs - UPDATED TO 4 TABS
+    tab1, tab2, tab3, tab4 = st.tabs(
         [
             "👶 **Birth & Hypothermia**",
             "🏥 **Interventions**",
             "📊 **Outcomes & Enrollment**",
+            "❓ **Missing**",
         ]
     )
 
@@ -449,16 +500,16 @@ def render_newborn_kpi_tab_navigation():
 
         with col4:
             if st.button(
-                "⚖️ Birth Weight Distribution",
+                "⚖️ Birth Weight Rate",
                 key="birth_weight_btn",
                 use_container_width=True,
                 type=(
                     "primary"
-                    if selected_kpi == "Birth Weight Distribution"
+                    if selected_kpi == "Birth Weight Rate"
                     else "secondary"
                 ),
             ):
-                selected_kpi = "Birth Weight Distribution"
+                selected_kpi = "Birth Weight Rate"
 
         with col5:
             if st.button(
@@ -564,6 +615,37 @@ def render_newborn_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Admitted Newborns"
+
+    with tab4:
+        col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
+
+        with col1:
+            if st.button(
+                "🌡️ Missing Temperature",
+                key="missing_temp_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Temperature (%)" else "secondary"),
+            ):
+                selected_kpi = "Missing Temperature (%)"
+
+        with col2:
+            if st.button(
+                "⚖️ Missing Birth Weight",
+                key="missing_bw_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Birth Weight (%)" else "secondary"),
+            ):
+                selected_kpi = "Missing Birth Weight (%)"
+
+        with col3:
+            if st.button(
+                "📊 Missing Discharge Status",
+                key="missing_status_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Discharge Status (%)" else "secondary"),
+            ):
+                selected_kpi = "Missing Discharge Status (%)"
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_newborn_kpi:
@@ -1314,7 +1396,7 @@ def _render_simplified_kpi_comparison_chart(
 
     # Determine whether to use case counts or rates based on comparison_type
     if comparison_type == "stacked_cases":
-        # Use case counts for birth weight distribution (with stacked bars)
+        # Use case counts for birth weight rate (with stacked bars)
         if comparison_mode == "facility" and category == "birth_weight":
             render_birth_weight_facility_comparison(
                 df_to_use,
