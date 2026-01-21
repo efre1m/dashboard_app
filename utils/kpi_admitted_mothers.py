@@ -11,11 +11,9 @@ import hashlib
 from utils.kpi_utils import (
     auto_text_color,
     format_period_month_year,
-    compute_total_deliveries,
+    compute_total_deliveries,  # Import for consistency
     get_relevant_date_column_for_kpi,
-    render_trend_chart,
-    render_facility_comparison_chart,
-    render_region_comparison_chart,
+    get_attractive_hover_template,  # FIXED: Added missing import
 )
 
 # ---------------- Caching Setup ----------------
@@ -177,23 +175,321 @@ def get_numerator_denominator_for_admitted_mothers(
 
 
 # ---------------- Chart Functions WITH TABLES ----------------
-# In kpi_admitted_mothers.py - FIXED VERSION WITH UNIQUE KEYS
+
+def render_admitted_mothers_trend_chart(
+    df,
+    period_col="period_display",
+    value_col="value",
+    title="Admitted Mothers Trend",
+    bg_color="#FFFFFF",
+    text_color=None,
+    facility_names=None,
+    value_name="Admitted Mothers",
+    facility_uids=None,
+    **kwargs,
+):
+    """Render trend chart for Admitted Mothers - Specialized for Counts (Bar Chart)"""
+    # Use numerator_name if provided in kwargs
+    final_name = kwargs.get("numerator_name", value_name)
+
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if df is None or df.empty or period_col not in df.columns:
+        st.subheader(title)
+        st.info("⚠️ No data available for the selected period.")
+        return
+
+    x_axis_col = period_col
+
+    df = df.copy()
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
+
+    # Sort periods chronologically
+    if "period_sort" in df.columns:
+        df = df.sort_values("period_sort")
+    else:
+        try:
+            df["sort_key"] = df[period_col].apply(
+                lambda x: (
+                    dt.datetime.strptime(format_period_month_year(x), "%b-%y")
+                    if isinstance(x, str) and "-" in x
+                    else x
+                )
+            )
+            df = df.sort_values("sort_key")
+            df = df.drop(columns=["sort_key"])
+        except Exception:
+            df = df.sort_values(period_col)
+
+    # Create chart
+    try:
+        fig = px.bar(
+            df,
+            x=x_axis_col,
+            y=value_col,
+            title=title,
+            height=400,
+            text=value_col,
+            category_orders={x_axis_col: df[x_axis_col].tolist()},
+        )
+
+        fig.update_traces(
+            texttemplate="%{text:.0f}",
+            textposition="outside",
+            hovertemplate=get_attractive_hover_template(final_name, "", "", is_count=True),
+        )
+    except Exception as e:
+        st.error(f"Error creating chart: {str(e)}")
+        fig = px.bar(
+            df,
+            x=x_axis_col,
+            y=value_col,
+            title=title,
+            height=400,
+        )
+
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis_title="Period (Month-Year)",
+        yaxis_title=final_name,
+        xaxis=dict(
+            type="category",
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            categoryorder="array",
+            categoryarray=df[x_axis_col].tolist(),
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            tickformat=",",
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Table below graph
+    st.markdown("---")
+    st.subheader("📋 Data Table")
+    display_df = df[[x_axis_col, value_col]].copy()
+    display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:,.0f}")
+    total_value = df[value_col].sum() if not df.empty else 0
+    overall_df = pd.DataFrame({x_axis_col: ["Overall"], value_col: [f"{total_value:,.0f}"]})
+    display_df = pd.concat([display_df, overall_df], ignore_index=True)
+    st.dataframe(display_df, use_container_width=True)
+
+    # Add summary statistics
+    if len(df) > 1:
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📈 Latest Count", f"{df[value_col].iloc[-1]:,.0f}")
+        with col2:
+            st.metric("📊 Average per Period", f"{df[value_col].mean():,.1f}")
+        with col3:
+            change = df[value_col].iloc[-1] - df[value_col].iloc[-2]
+            symbol = "▲" if change > 0 else ("▼" if change < 0 else "–")
+            st.metric("📈 Trend from Previous", f"{change:,.0f} {symbol}")
+
+    # Download button
+    import time
+    unique_key = f"maternal_admitted_trend_{int(time.time())}_{hash(str(df))}"
+    summary_df = df[[x_axis_col, value_col]].copy()
+    summary_df[x_axis_col] = summary_df[x_axis_col].apply(format_period_month_year)
+    csv = summary_df.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Chart Data as CSV",
+        data=csv,
+        file_name="admitted_mothers_trend_data.csv",
+        mime="text/csv",
+        key=unique_key,
+    )
 
 
-# ---------------- Chart Functions WITH TABLES ----------------
-def render_admitted_mothers_trend_chart(*args, **kwargs):
-    """Render trend chart for Admitted Mothers using standard utility"""
-    return render_trend_chart(*args, **kwargs)
+def render_admitted_mothers_facility_comparison_chart(
+    df,
+    period_col="period_display",
+    value_col="value",
+    title="Admitted Mothers - Facility Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    facility_names=None,
+    facility_uids=None,
+    value_name="Admitted Mothers",
+    **kwargs,
+):
+    """Render facility comparison chart for Admitted Mothers - Specialized for Counts (Bar Chart)"""
+    # Use numerator_name if provided in kwargs
+    final_name = kwargs.get("numerator_name", value_name)
+
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+
+    if df is None or df.empty:
+        st.info("⚠️ No data available for facility comparison.")
+        return
+
+    # Sort periods properly
+    try:
+        period_order = sorted(
+            df[period_col].unique().tolist(),
+            key=lambda x: (
+                dt.datetime.strptime(format_period_month_year(x), "%b-%y")
+                if isinstance(x, str) and "-" in x
+                else x
+            ),
+        )
+    except:
+        period_order = sorted(df[period_col].unique().tolist())
+
+    # Create the chart - Use bar chart for comparison as requested
+    fig = px.bar(
+        df,
+        x=period_col,
+        y=value_col,
+        color="Facility",
+        title=title,
+        height=500,
+        category_orders={period_col: period_order},
+        barmode="group",
+        text=value_col,
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:,.0f}",
+        textposition="outside",
+        hovertemplate=get_attractive_hover_template(final_name, "", "", is_count=True).replace("%{y", f"%{{fullData.name}}<br>{final_name}: %{{y")
+    )
+
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        xaxis_title="Period (Month-Year)",
+        yaxis_title=final_name,
+        yaxis_tickformat=",",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Table
+    st.markdown("---")
+    st.subheader("📋 Facility Comparison Data")
+    pivot_data = []
+    for f_name in df["Facility"].unique():
+        f_count = df[df["Facility"] == f_name][value_col].sum()
+        pivot_data.append({"Facility": f_name, f"Total {final_name}": f"{f_count:,.0f}"})
+    
+    pivot_data.append({"Facility": "Overall", f"Total {final_name}": f"{df[value_col].sum():,.0f}"})
+    st.dataframe(pd.DataFrame(pivot_data), use_container_width=True)
+
+    import time
+    unique_key = f"maternal_admitted_facility_{int(time.time())}_{hash(str(df))}"
+    st.download_button(
+        label="📥 Download Facility Comparison Data",
+        data=df.to_csv(index=False),
+        file_name="admitted_mothers_facility_comparison.csv",
+        mime="text/csv",
+        key=unique_key,
+    )
 
 
-def render_admitted_mothers_facility_comparison_chart(*args, **kwargs):
-    """Render facility comparison chart for Admitted Mothers using standard utility"""
-    return render_facility_comparison_chart(*args, **kwargs)
+def render_admitted_mothers_region_comparison_chart(
+    df,
+    period_col="period_display",
+    value_col="value",
+    title="Admitted Mothers - Region Comparison",
+    bg_color="#FFFFFF",
+    text_color=None,
+    region_names=None,
+    region_mapping=None,
+    facilities_by_region=None,
+    value_name="Admitted Mothers",
+    **kwargs,
+):
+    """Render region comparison chart for Admitted Mothers - Specialized for Counts (Bar Chart)"""
+    # Use numerator_name if provided in kwargs
+    final_name = kwargs.get("numerator_name", value_name)
 
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
 
-def render_admitted_mothers_region_comparison_chart(*args, **kwargs):
-    """Render region comparison chart for Admitted Mothers using standard utility"""
-    return render_region_comparison_chart(*args, **kwargs)
+    if df is None or df.empty:
+        st.info("⚠️ No data available for region comparison.")
+        return
+
+    # Sort periods properly
+    try:
+        period_order = sorted(
+            df[period_col].unique().tolist(),
+            key=lambda x: (
+                dt.datetime.strptime(format_period_month_year(x), "%b-%y")
+                if isinstance(x, str) and "-" in x
+                else x
+            ),
+        )
+    except:
+        period_order = sorted(df[period_col].unique().tolist())
+
+    # Create the chart - Use bar chart for counts
+    fig = px.bar(
+        df,
+        x=period_col,
+        y=value_col,
+        color="Region",
+        title=title,
+        height=500,
+        category_orders={period_col: period_order},
+        barmode="group",
+        text=value_col,
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:,.0f}",
+        textposition="outside",
+        hovertemplate=get_attractive_hover_template(final_name, "", "", is_count=True).replace("%{y", f"%{{fullData.name}}<br>{final_name}: %{{y")
+    )
+
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        yaxis_title=final_name,
+        yaxis_tickformat=",",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Table
+    st.markdown("---")
+    st.subheader("📋 Region Comparison Data")
+    pivot_data = []
+    for r_name in df["Region"].unique():
+        r_count = df[df["Region"] == r_name][value_col].sum()
+        pivot_data.append({"Region": r_name, f"Total {final_name}": f"{r_count:,.0f}"})
+    
+    pivot_data.append({"Region": "Overall", f"Total {final_name}": f"{df[value_col].sum():,.0f}"})
+    st.dataframe(pd.DataFrame(pivot_data), use_container_width=True)
+
+    import time
+    unique_key = f"maternal_admitted_region_{int(time.time())}_{hash(str(df))}"
+    st.download_button(
+        label="📥 Download Region Comparison Data",
+        data=df.to_csv(index=False),
+        file_name="admitted_mothers_region_comparison.csv",
+        mime="text/csv",
+        key=unique_key,
+    )
 
 
 # ---------------- Additional Helper Functions ----------------
@@ -203,7 +499,6 @@ def prepare_data_for_admitted_mothers_trend(
     """
     Prepare patient-level data for Admitted Mothers trend chart
     Returns: DataFrame filtered by KPI-specific dates AND date range AND the date column used
-    SAME AS ASSISTED DELIVERY FUNCTION
     """
     if df.empty:
         return pd.DataFrame(), None
