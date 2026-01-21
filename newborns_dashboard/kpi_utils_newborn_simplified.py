@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 
 # Import shared utilities
-from utils.kpi_utils import auto_text_color
+from utils.kpi_utils import auto_text_color, get_attractive_hover_template
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -859,8 +859,10 @@ def render_birth_weight_trend_chart(
                     y=trend_df[f"{category_key}_rate"],
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    customdata=trend_df[count_col],
-                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}% (%{{customdata:.0f}} newborns)<extra></extra>",
+                    customdata=trend_df[[count_col, "total_admitted"]],
+                    hovertemplate=get_attractive_hover_template(
+                        category_info["name"], "Newborns", "Total Admitted"
+                    ),
                 )
             )
 
@@ -1112,8 +1114,10 @@ def render_birth_weight_facility_comparison(
                     y=facility_df[f"{short_name}_rate"],
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    customdata=facility_df[short_name],
-                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}% (%{{customdata:.0f}} newborns)<extra></extra>",
+                    customdata=facility_df[[short_name, "Total Admitted"]],
+                    hovertemplate=get_attractive_hover_template(
+                        category_info["name"], "Newborns", "Total Admitted"
+                    ),
                 )
             )
 
@@ -1354,8 +1358,10 @@ def render_birth_weight_region_comparison(
                     y=region_df[f"{short_name}_rate"],
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    customdata=region_df[short_name],
-                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}% (%{{customdata:.0f}} newborns)<extra></extra>",
+                    customdata=region_df[[short_name, "Total Admitted"]],
+                    hovertemplate=get_attractive_hover_template(
+                        category_info["name"], "Newborns", "Total Admitted"
+                    ),
                 )
             )
 
@@ -1570,11 +1576,8 @@ def render_cpap_general_trend_chart(
             y=trend_df["cpap_general_rate"],
             name="General CPAP",
             marker_color="#3498db",  # Blue for General CPAP
-            hovertemplate=(
-                "<b>%{x}</b><br>"
-                + "General CPAP: %{y:.1f}%<br>"
-                + "CPAP Cases: %{customdata[0]:.0f}<br>"  # FIXED: Use .0f formatting
-                + "Total Admitted: %{customdata[1]:.0f}<extra></extra>"  # FIXED: Use .0f formatting
+            hovertemplate=get_attractive_hover_template(
+                "General CPAP", "CPAP Cases", "Total Admitted"
             ),
             customdata=hover_data,
         )
@@ -1764,11 +1767,8 @@ def render_cpap_rds_trend_chart(
             y=trend_df["cpap_rds_rate"],
             name="CPAP for RDS",
             marker_color="#3498db",  # BLUE for CPAP for RDS (same as general CPAP)
-            hovertemplate=(
-                "<b>%{x}</b><br>"
-                + "CPAP for RDS: %{y:.1f}%<br>"
-                + "CPAP Cases: %{customdata[0]:.0f}<br>"  # FIXED: Use .0f formatting
-                + "Total RDS: %{customdata[1]:.0f}<extra></extra>"  # FIXED: Use .0f formatting
+            hovertemplate=get_attractive_hover_template(
+                "CPAP for RDS", "CPAP Cases", "RDS Newborns"
             ),
             customdata=hover_data,
         )
@@ -2696,7 +2696,9 @@ def render_kmc_coverage_trend_chart(
                     y=trend_df[rate_col],
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}%<br>KMC Cases: %{{customdata[0]}}<br>Total Newborns: %{{customdata[1]}}<extra></extra>",
+                    hovertemplate=get_attractive_hover_template(
+                        category_info["name"], "KMC Cases", "Total Newborns"
+                    ),
                     customdata=np.column_stack(
                         (trend_df[count_col], trend_df[total_col])
                     ),
@@ -2957,7 +2959,9 @@ def render_cpap_by_weight_trend_chart(
                     y=trend_df[rate_col],
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    hovertemplate=f"<b>%{{x}}</b><br>{category_info['name']}: %{{y:.1f}}%<br>CPAP Cases: %{{customdata[0]}}<br>Total Newborns: %{{customdata[1]}}<extra></extra>",
+                    hovertemplate=get_attractive_hover_template(
+                        category_info["name"], "CPAP Cases", "Total Newborns"
+                    ),
                     customdata=np.column_stack(
                         (trend_df[count_col], trend_df[total_col])
                     ),

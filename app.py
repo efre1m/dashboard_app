@@ -60,12 +60,99 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Ensure toggle labels are visible in the sidebar against white background
-st.markdown("""
+st.markdown(
+    """
     <style>
+        /* Ultra-Aggressive UI Scaling for "Fits all in one" look */
+        html, body, [data-testid="stAppViewContainer"] {
+            font-size: 11px !important;
+            line-height: 1.2 !important;
+        }
+
+        /* Very Narrow Sidebar */
+        [data-testid="stSidebar"] {
+            min-width: 220px !important;
+            max-width: 220px !important;
+        }
+
+        /* Minimize headings */
+        h1, .main-header { font-size: 1.2rem !important; margin: 0 !important; font-weight: 800 !important; }
+        h2, .section-header { font-size: 1.1rem !important; margin: 0 !important; }
+        h3 { font-size: 1.0rem !important; margin: 0 !important; }
+        
+        /* Ultra-tight content padding */
+        .main .block-container {
+            padding-top: 0rem !important;
+            padding-bottom: 0rem !important;
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
+            max-width: 99.5% !important;
+        }
+
+        /* Smallest possible metric cards */
+        [data-testid="stMetricValue"] {
+            font-size: 1.1rem !important;
+            font-weight: 800 !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.7rem !important;
+            margin-bottom: 0 !important;
+        }
+        [data-testid="stMetric"] {
+            padding: 0px 5px !important;
+            border-radius: 4px !important;
+            background-color: #f8fafc;
+        }
+
+        /* Tiny Sidebar Widgets */
         section[data-testid="stSidebar"] .stWidgetLabel p {
             color: #0f172a !important;
-            font-weight: 500;
+            font-weight: 700;
+            font-size: 10px !important;
+            margin-bottom: 0 !important;
+        }
+        
+        /* Micro Buttons */
+        div.stButton > button {
+            padding: 0.05rem 0.3rem !important;
+            height: 20px !important;
+            min-height: 0 !important;
+            font-size: 10px !important;
+            border-radius: 2px !important;
+            line-height: 1 !important;
+        }
+
+        /* Micro Tabs */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 2px !important;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding: 1px 4px !important;
+            font-size: 10px !important;
+            height: 24px !important;
+        }
+        
+        /* No vertical margins between containers */
+        .element-container {
+            margin-bottom: 0.1rem !important;
+        }
+        
+        /* Compact Selectboxes */
+        div[data-baseweb="select"] > div {
+            min-height: 22px !important;
+            height: 22px !important;
+            font-size: 11px !important;
+        }
+        
+        /* Hide unnecessary dividers */
+        hr {
+            margin: 0.1rem 0 !important;
+            opacity: 0.3;
+        }
+
+        /* Tighten Plotly Charts */
+        .js-plotly-plot .plotly .modebar {
+            transform: scale(0.7) !important;
         }
     </style>
 """, unsafe_allow_html=True)

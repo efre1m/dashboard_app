@@ -7,7 +7,7 @@ import hashlib
 import numpy as np
 import logging
 import warnings
-from utils.kpi_utils import auto_text_color, format_period_month_year
+from utils.kpi_utils import auto_text_color, format_period_month_year, get_attractive_hover_template
 
 warnings.filterwarnings("ignore")
 
@@ -1224,6 +1224,13 @@ def render_newborn_region_comparison_chart(
             title=f"{title} - Regional Rates",
             color="Region",
             text_auto=".1f",
+            custom_data=[numerator_name, denominator_name]
+        )
+
+        fig.update_traces(
+            hovertemplate=get_attractive_hover_template(
+                title, numerator_name, denominator_name
+            )
         )
 
         fig.update_layout(
@@ -1307,7 +1314,6 @@ def render_admitted_newborns_trend_chart(
         y=value_col,
         title=title,
         height=400,
-        hover_data=[value_col],
         text=value_col,
         category_orders={x_axis_col: df[x_axis_col].tolist()},
     )
@@ -1315,9 +1321,7 @@ def render_admitted_newborns_trend_chart(
     fig.update_traces(
         texttemplate="%{text:.0f}",
         textposition="outside",
-        hovertemplate=(
-            f"<b>%{{x}}</b><br>" f"{value_name}: %{{y:,.0f}}<br>" f"<extra></extra>"
-        ),
+        hovertemplate=get_attractive_hover_template(value_name, "", "", is_count=True)
     )
 
     fig.update_layout(
@@ -1597,11 +1601,7 @@ def render_admitted_newborns_facility_comparison_chart(
     fig.update_traces(
         texttemplate="%{text:,.0f}",
         textposition="outside",
-        hovertemplate=(
-            f"<b>%{{x}}</b><br>"
-            f"Facility: %{{fullData.name}}<br>"
-            f"{value_name}: %{{y:,.0f}}<extra></extra>"
-        ),
+        hovertemplate=get_attractive_hover_template(value_name, "", "", is_count=True).replace("%{x}", "%{x}<br>Facility: %{fullData.name}")
     )
 
     fig.update_layout(
@@ -1759,6 +1759,10 @@ def render_admitted_newborns_region_comparison_chart(
             title=f"{title} - Regional Comparison",
             color="Region",
             text_auto=True,
+        )
+
+        fig.update_traces(
+            hovertemplate=get_attractive_hover_template(value_name, "", "", is_count=True)
         )
 
         fig.update_layout(

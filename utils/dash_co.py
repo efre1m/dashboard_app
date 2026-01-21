@@ -335,11 +335,24 @@ def render_kpi_tab_navigation():
     st.markdown(
         """
     <style>
+    /* Ultra-Compact Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 1px 4px !important;
+        font-size: 10px !important;
+        height: 22px !important;
+    }
+    
     div.stButton > button[kind="primary"] {
         background-color: #1f77b4 !important;
         color: white !important;
         border-color: #1a6790 !important;
-        font-weight: 600 !important;
+        font-weight: 800 !important;
+        padding: 0.05rem 0.3rem !important;
+        font-size: 10px !important;
+        margin-bottom: 0px !important;
     }
     
     div.stButton > button[kind="primary"]:hover {
@@ -352,7 +365,10 @@ def render_kpi_tab_navigation():
         background-color: #f8f9fa !important;
         color: #495057 !important;
         border-color: #dee2e6 !important;
-        font-weight: 500 !important;
+        font-weight: 600 !important;
+        padding: 0.05rem 0.3rem !important;
+        font-size: 10px !important;
+        margin-bottom: 0px !important;
     }
     
     div.stButton > button[kind="secondary"]:hover {
@@ -412,11 +428,11 @@ def render_kpi_tab_navigation():
     selected_kpi = st.session_state.selected_kpi
 
     with tab1:
-        col1, col2 = st.columns(2)
+        cols = st.columns(5)
 
-        with col1:
+        with cols[0]:
             if st.button(
-                "📊 Maternal Death Rate",
+                "Maternal Death",
                 key="maternal_death_btn",
                 use_container_width=True,
                 type=(
@@ -427,9 +443,9 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Institutional Maternal Death Rate (%)"
 
-        with col2:
+        with cols[1]:
             if st.button(
-                "📊 Stillbirth Rate",
+                "Stillbirth Rate",
                 key="stillbirth_btn",
                 use_container_width=True,
                 type=(
@@ -439,11 +455,10 @@ def render_kpi_tab_navigation():
                 selected_kpi = "Stillbirth Rate (%)"
 
     with tab2:
-        col1, col2 = st.columns(2)
-
-        with col1:
+        cols = st.columns(5)
+        with cols[0]:
             if st.button(
-                "📊 Postpartum Hemorrhage",
+                "Postpartum Hemorrhage",
                 key="pph_btn",
                 use_container_width=True,
                 type=(
@@ -455,19 +470,19 @@ def render_kpi_tab_navigation():
                 selected_kpi = "Postpartum Hemorrhage (PPH) Rate (%)"
 
     with tab3:
-        col1, col2 = st.columns(2)
-
-        with col1:
+        cols = st.columns(5)
+        with cols[0]:
             if st.button(
-                "📊 C-Section Rate",
+                "C-Section",
                 key="csection_btn",
                 use_container_width=True,
                 type="primary" if selected_kpi == "C-Section Rate (%)" else "secondary",
             ):
                 selected_kpi = "C-Section Rate (%)"
 
+        with cols[1]:
             if st.button(
-                "📊 Uterotonic Administration",
+                "Uterotonic",
                 key="uterotonic_btn",
                 use_container_width=True,
                 type=(
@@ -478,8 +493,9 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Delivered women who received uterotonic (%)"
 
+        with cols[2]:
             if st.button(
-                "📊 Contraceptive Acceptance",
+                "FP Acceptance",
                 key="contraceptive_btn",
                 use_container_width=True,
                 type=(
@@ -493,9 +509,9 @@ def render_kpi_tab_navigation():
                     "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
                 )
 
-        with col2:
+        with cols[3]:
             if st.button(
-                "📊 PNC Coverage",
+                "PNC Coverage",
                 key="pnc_btn",
                 use_container_width=True,
                 type=(
@@ -506,8 +522,9 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Early Postnatal Care (PNC) Coverage (%)"
 
+        with cols[4]:
             if st.button(
-                "📊 ARV Prophylaxis",
+                "ARV Prophylaxis",
                 key="arv_btn",
                 use_container_width=True,
                 type=(
@@ -518,8 +535,10 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "ARV Prophylaxis Rate (%)"
 
+        cols2 = st.columns(5)
+        with cols2[0]:
             if st.button(
-                "📊 Assisted Delivery",
+                "Assisted Deliv.",
                 key="assisted_btn",
                 use_container_width=True,
                 type=(
@@ -530,8 +549,9 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Assisted Delivery Rate (%)"
 
+        with cols2[1]:
             if st.button(
-                "📊 Normal Vaginal Delivery",
+                "Normal Vaginal (SVD)",
                 key="svd_btn",
                 use_container_width=True,
                 type=(
@@ -543,12 +563,11 @@ def render_kpi_tab_navigation():
                 selected_kpi = "Normal Vaginal Delivery (SVD) Rate (%)"
 
     with tab4:
-        st.markdown("### Missing Data Analysis")
-        col1, col2, col3 = st.columns(3)
+        cols = st.columns(5)
 
-        with col1:
+        with cols[0]:
             if st.button(
-                "📊 Missing Mode of Delivery",
+                "Missing Mode Deliv.",
                 key="missing_md_btn",
                 use_container_width=True,
                 type=(
@@ -559,9 +578,9 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Missing Mode of Delivery"
 
-        with col2:
+        with cols[1]:
             if st.button(
-                "📊 Missing Birth Outcome",
+                "Missing Birth Out.",
                 key="missing_bo_btn",
                 use_container_width=True,
                 type=(
@@ -571,9 +590,9 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Missing Birth Outcome"
-        with col3:
+        with cols[2]:
             if st.button(
-                "📊 Missing Condition of Discharge",
+                "Missing Disch. Status",
                 key="missing_cod_btn",
                 use_container_width=True,
                 type=(
@@ -584,13 +603,15 @@ def render_kpi_tab_navigation():
             ):
                 selected_kpi = "Missing Condition of Discharge"
     with tab5:
-        if st.button(
-            "📊 Admitted Mothers",
-            key="admitted_mothers_btn",
-            use_container_width=True,
-            type=("primary" if selected_kpi == "Admitted Mothers" else "secondary"),
-        ):
-            selected_kpi = "Admitted Mothers"
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button(
+                "Admitted Mothers",
+                key="admitted_mothers_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Admitted Mothers" else "secondary"),
+            ):
+                selected_kpi = "Admitted Mothers"
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_kpi:

@@ -80,6 +80,26 @@ def format_period_month_year(period_str):
     return period_str
 
 
+def get_attractive_hover_template(
+    kpi_name, numerator_name, denominator_name, is_count=False
+):
+    """
+    Generate an attractive, well-styled hover template for Plotly charts.
+    """
+    if is_count:
+        return (
+            "<span style='font-size:13px; font-weight:bold; color:#1f2937;'>%{x}</span><br><br>"
+            + f"<span style='color:#4b5563; font-weight:500;'>{kpi_name}:</span> <span style='font-weight:bold; color:#3b82f6; font-size:14px;'>%{{y:,.0f}}</span><extra></extra>"
+        )
+
+    return (
+        "<span style='font-size:13px; font-weight:bold; color:#1f2937;'>%{x}</span><br><br>"
+        + f"<span style='color:#4b5563; font-weight:500;'>{kpi_name}:</span> <span style='font-weight:bold; color:#2ecc71; font-size:14px;'>%{{y:.2f}}%</span><br>"
+        + f"<span style='color:#e67e22; font-weight:500; font-size:12px;'>{numerator_name}:</span> <span style='font-weight:600; color:#374151; font-size:12px;'>%{{customdata[0]:,.0f}}</span><br>"
+        + f"<span style='color:#9b59b6; font-weight:500; font-size:12px;'>{denominator_name}:</span> <span style='font-weight:600; color:#374151; font-size:12px;'>%{{customdata[1]:,.0f}}</span><extra></extra>"
+    )
+
+
 # ---------------- KPI Constants ----------------
 # Patient-level data columns
 FP_ACCEPTANCE_COL = "fp_counseling_and_method_provided_pp_postpartum_care"
@@ -916,7 +936,7 @@ def render_trend_chart(
                 line_shape="linear",
                 title=title,
                 height=400,
-                hover_data=hover_columns if use_hover_data else None,
+                custom_data=[numerator_name, denominator_name] if use_hover_data else None,
             )
             fig.update_traces(
                 line=dict(width=3),
@@ -929,7 +949,7 @@ def render_trend_chart(
                 y=value_col,
                 title=title,
                 height=400,
-                hover_data=hover_columns if use_hover_data else None,
+                custom_data=[numerator_name, denominator_name] if use_hover_data else None,
             )
         elif chart_type == "area":
             fig = px.area(
@@ -938,7 +958,7 @@ def render_trend_chart(
                 y=value_col,
                 title=title,
                 height=400,
-                hover_data=hover_columns if use_hover_data else None,
+                custom_data=[numerator_name, denominator_name] if use_hover_data else None,
             )
         else:
             fig = px.line(
@@ -949,11 +969,24 @@ def render_trend_chart(
                 line_shape="linear",
                 title=title,
                 height=400,
-                hover_data=hover_columns if use_hover_data else None,
+                custom_data=[numerator_name, denominator_name] if use_hover_data else None,
             )
             fig.update_traces(
                 line=dict(width=3),
                 marker=dict(size=7),
+            )
+
+        # Apply standardized hover template
+        if use_hover_data:
+            is_count = not ("Rate" in title or "%" in title)
+            fig.update_traces(
+                hovertemplate=get_attractive_hover_template(
+                    title, numerator_name, denominator_name, is_count=is_count
+                )
+            )
+        else:
+            fig.update_traces(
+                hovertemplate="<b>%{x}</b><br>Value: %{y:,.2f}<extra></extra>"
             )
     except Exception as e:
         st.error(f"Error creating chart: {str(e)}")
@@ -999,93 +1032,85 @@ def render_trend_chart(
     if any(k in title for k in ["Deliveries", "Acceptance"]):
         fig.update_layout(yaxis_tickformat=",")
 
-    # Display the chart
+    # Display metrics at the TOP for immediate visibility
+    if len(df) > 0:
+        col1, col2, col3 = st.columns(3)
+        val_format = ".2f" if ("Rate" in title or "%" in title) else ",.0f"
+        suffix = "%" if ("Rate" in title or "%" in title) else ""
+        
+        with col1:
+            st.metric("📈 Latest Value", f"{df[value_col].iloc[-1]:{val_format}}{suffix}")
+        with col2:
+            st.metric("📊 Average", f"{df[value_col].mean():{val_format}}{suffix}")
+        with col3:
+            if len(df) > 1:
+                last_value = df[value_col].iloc[-1]
+                prev_value = df[value_col].iloc[-2]
+                trend_change = last_value - prev_value
+                trend_symbol = "▲" if trend_change > 0 else ("▼" if trend_change < 0 else "–")
+                st.metric("📈 Trend", f"{trend_change:.2f}{suffix} {trend_symbol}")
+            else:
+                st.metric("📈 Trend", "–")
+
+    # Display the chart with reduced height
+    fig.update_layout(height=260, margin=dict(t=20, b=20, l=10, r=10))
     st.plotly_chart(fig, use_container_width=True)
 
-    # =========== DISPLAY TABLE BELOW GRAPH ===========
-    st.markdown("---")
-    st.subheader("📋 Data Table")
+    # =========== COMPACT TABLE ===========
+    with st.expander("📊 View Detailed Data Table", expanded=True):
+        # Create a clean display dataframe
+        display_df = df.copy()
+        
+        # Select columns to show in table
+        table_columns = [x_axis_col, value_col]
 
-    # Create a clean display dataframe
-    display_df = df.copy()
+        # Add numerator and denominator if available
+        if "numerator" in display_df.columns and "denominator" in display_df.columns:
+            display_df[numerator_name] = display_df["numerator"]
+            display_df[denominator_name] = display_df["denominator"]
+            table_columns.extend([numerator_name, denominator_name])
 
-    # Select columns to show in table
-    table_columns = [x_axis_col, value_col]
+        # Format the dataframe for display
+        display_df = display_df[table_columns].copy()
 
-    # Add numerator and denominator if available
-    if "numerator" in display_df.columns and "denominator" in display_df.columns:
-        display_df[numerator_name] = display_df["numerator"]
-        display_df[denominator_name] = display_df["denominator"]
-        table_columns.extend([numerator_name, denominator_name])
+        # Format numbers
+        if "Rate" in title or "%" in title:
+            display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:.2f}%")
+        else:
+            display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:,.0f}")
 
-    # Format the dataframe for display
-    display_df = display_df[table_columns].copy()
+        if numerator_name in display_df.columns:
+            display_df[numerator_name] = display_df[numerator_name].apply(lambda x: f"{x:,.0f}")
+        if denominator_name in display_df.columns:
+            display_df[denominator_name] = display_df[denominator_name].apply(lambda x: f"{x:,.0f}")
 
-    # Format numbers
-    if "Rate" in title or "%" in title:
-        display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:.2f}%")
-    else:
-        display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:,.0f}")
+        # Add Overall/Total row
+        if "numerator" in df.columns and "denominator" in df.columns:
+            total_numerator = df["numerator"].sum()
+            total_denominator = df["denominator"].sum()
+            overall_value = (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+        else:
+            overall_value = df[value_col].mean() if not df.empty else 0
+            total_numerator = df[value_col].sum() if not df.empty else 0
+            total_denominator = len(df)
 
-    if numerator_name in display_df.columns:
-        display_df[numerator_name] = display_df[numerator_name].apply(
-            lambda x: f"{x:,.0f}"
-        )
-    if denominator_name in display_df.columns:
-        display_df[denominator_name] = display_df[denominator_name].apply(
-            lambda x: f"{x:,.0f}"
-        )
+        # Create overall row
+        overall_row = {
+            x_axis_col: "Overall",
+            value_col: f"{overall_value:.2f}%" if ("Rate" in title or "%" in title) else f"{overall_value:,.0f}",
+        }
 
-    # Add Overall/Total row
-    if "numerator" in df.columns and "denominator" in df.columns:
-        total_numerator = df["numerator"].sum()
-        total_denominator = df["denominator"].sum()
-        overall_value = (
-            (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
-        )
-    else:
-        overall_value = df[value_col].mean() if not df.empty else 0
-        total_numerator = df[value_col].sum() if not df.empty else 0
-        total_denominator = len(df)
+        if numerator_name in display_df.columns:
+            overall_row[numerator_name] = f"{total_numerator:,.0f}"
+        if denominator_name in display_df.columns:
+            overall_row[denominator_name] = f"{total_denominator:,.0f}"
 
-    # Create overall row with consistent date format
-    overall_row = {
-        x_axis_col: "Overall",
-        value_col: f"{overall_value:.2f}%" if "%" in title else f"{overall_value:,.0f}",
-    }
+        # Convert to DataFrame and append
+        overall_df = pd.DataFrame([overall_row])
+        display_df = pd.concat([display_df, overall_df], ignore_index=True)
 
-    if numerator_name in display_df.columns:
-        overall_row[numerator_name] = f"{total_numerator:,.0f}"
-    if denominator_name in display_df.columns:
-        overall_row[denominator_name] = f"{total_denominator:,.0f}"
-
-    # Convert to DataFrame and append
-    overall_df = pd.DataFrame([overall_row])
-    display_df = pd.concat([display_df, overall_df], ignore_index=True)
-
-    # Display the table
-    st.dataframe(display_df, use_container_width=True)
-
-    # Add summary statistics
-    if len(df) > 1:
-        st.markdown("---")
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric("📈 Latest Value", f"{df[value_col].iloc[-1]:.2f}")
-
-        with col2:
-            st.metric("📊 Average", f"{df[value_col].mean():.2f}")
-
-        with col3:
-            # Calculate trend
-            last_value = df[value_col].iloc[-1]
-            prev_value = df[value_col].iloc[-2]
-            trend_change = last_value - prev_value
-            trend_symbol = (
-                "▲" if trend_change > 0 else ("▼" if trend_change < 0 else "–")
-            )
-            st.metric("📈 Trend from Previous", f"{trend_change:.2f} {trend_symbol}")
+        # Display the table
+        st.dataframe(display_df, use_container_width=True)
 
     # Keep the download button - FIX DATE FORMAT ISSUE
     summary_df = df.copy().reset_index(drop=True)
@@ -1135,24 +1160,16 @@ def render_trend_chart(
             summary_df[x_axis_col] = summary_df[x_axis_col].apply(
                 format_period_month_year
             )
+    if x_axis_col in summary_df.columns:
+        summary_df[x_axis_col] = summary_df[x_axis_col].apply(format_period_month_year)
 
-        summary_df = summary_df.rename(columns={value_col: title})
-        summary_table = summary_df.copy()
-
-        overall_value = summary_table[title].mean() if not summary_table.empty else 0
-        overall_row = pd.DataFrame({x_axis_col: ["Overall"], title: [overall_value]})
-        summary_table = pd.concat([summary_table, overall_row], ignore_index=True)
-
-    summary_table.insert(0, "No", range(1, len(summary_table) + 1))
-
-    csv = summary_table.to_csv(index=False)
+    csv = summary_df.to_csv(index=False)
     st.download_button(
         label="📥 Download Chart Data as CSV",
         data=csv,
-        file_name=f"{title.lower().replace(' ', '_')}_chart_data.csv",
+        file_name=f"{title.lower().replace(' ', '_')}_data.csv",
         mime="text/csv",
-        help="Download the exact x, y, and value components shown in the chart",
-        key=unique_key,
+        key=f"dl_btn_{title}_{str(facility_uids)}",
     )
 
 
@@ -1310,7 +1327,19 @@ def render_facility_comparison_chart(
         st.info("⚠️ No valid comparison data available (all facilities have zero data).")
         return
 
-    # Create the chart
+    # Display Grand Overall Metric at the TOP
+    if not comparison_df.empty:
+        all_numerators = comparison_df["numerator"].sum()
+        all_denominators = comparison_df["denominator"].sum()
+        grand_overall = (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            val_format = ".2f" if is_rate_kpi else ",.0f"
+            suffix = "%" if is_rate_kpi else ""
+            st.metric("🌍 Grand Overall Value", f"{grand_overall:{val_format}}{suffix}")
+
+    # Create the chart with reduced height
     fig = px.line(
         comparison_df,
         x="period_display",
@@ -1318,21 +1347,17 @@ def render_facility_comparison_chart(
         color="Facility",
         markers=True,
         title=f"{title} - Facility Comparison",
-        height=500,
+        height=350,
         category_orders={"period_display": period_order},
-        hover_data=["numerator", "denominator"],
+        custom_data=["numerator", "denominator"],
     )
 
     fig.update_traces(
         line=dict(width=3),
         marker=dict(size=7),
-        hovertemplate=(
-            f"<b>%{{x}}</b><br>"
-            f"Facility: %{{fullData.name}}<br>"
-            f"{title}: %{{y:.2f}}<br>"
-            f"{numerator_name}: %{{customdata[0]}}<br>"
-            f"{denominator_name}: %{{customdata[1]}}<extra></extra>"
-        ),
+        hovertemplate=get_attractive_hover_template(
+            title, numerator_name, denominator_name, is_count=not is_rate_kpi
+        ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
     )
 
     fig.update_layout(
@@ -1365,57 +1390,41 @@ def render_facility_comparison_chart(
         ),
     )
 
-    if "Rate" in title or "%" in title:
+    if is_rate_kpi:
         fig.update_layout(yaxis_tickformat=".2f")
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # =========== DISPLAY TABLE BELOW GRAPH ===========
-    st.markdown("---")
-    st.subheader("📋 Facility Comparison Data")
+    # =========== COMPACT TABLE ===========
+    with st.expander("📋 View Facility Comparison Data", expanded=True):
+        # Create pivot table for better display
+        pivot_data = []
 
-    # Create pivot table for better display with Overall row - REMOVED "Periods with Data" column
-    pivot_data = []
+        for facility_name in comparison_df["Facility"].unique():
+            facility_data = comparison_df[comparison_df["Facility"] == facility_name]
+            if not facility_data.empty:
+                total_numerator = facility_data["numerator"].sum()
+                total_denominator = facility_data["denominator"].sum()
+                overall_value = (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
 
-    for facility_name in comparison_df["Facility"].unique():
-        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
-        if not facility_data.empty:
-            total_numerator = facility_data["numerator"].sum()
-            total_denominator = facility_data["denominator"].sum()
-            overall_value = (
-                (total_numerator / total_denominator * 100)
-                if total_denominator > 0
-                else 0
-            )
-
-            pivot_data.append(
-                {
+                pivot_data.append({
                     "Facility": facility_name,
                     numerator_name: f"{total_numerator:,.0f}",
                     denominator_name: f"{total_denominator:,.0f}",
-                    "Overall Value": f"{overall_value:.2f}%",
-                }
-            )
+                    "Overall Value": f"{overall_value:.2f}%" if is_rate_kpi else f"{overall_value:,.0f}",
+                })
 
-    # Add Overall row for all facilities
-    if pivot_data:
-        all_numerators = comparison_df["numerator"].sum()
-        all_denominators = comparison_df["denominator"].sum()
-        grand_overall = (
-            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
-        )
-
-        pivot_data.append(
-            {
+        # Add Overall row
+        if pivot_data:
+            pivot_data.append({
                 "Facility": "Overall",
                 numerator_name: f"{all_numerators:,.0f}",
                 denominator_name: f"{all_denominators:,.0f}",
-                "Overall Value": f"{grand_overall:.2f}%",
-            }
-        )
+                "Overall Value": f"{grand_overall:.2f}%" if is_rate_kpi else f"{grand_overall:,.0f}",
+            })
 
-        pivot_df = pd.DataFrame(pivot_data)
-        st.dataframe(pivot_df, use_container_width=True)
+            pivot_df = pd.DataFrame(pivot_data)
+            st.dataframe(pivot_df, use_container_width=True)
 
     # Keep download functionality
     csv_data = []
@@ -1602,7 +1611,19 @@ def render_region_comparison_chart(
         st.info("⚠️ No valid comparison data available (all regions have zero data).")
         return
 
-    # Create the chart
+    # Display Grand Overall Metric at the TOP
+    if not comparison_df.empty:
+        all_numerators = comparison_df["numerator"].sum()
+        all_denominators = comparison_df["denominator"].sum()
+        grand_overall = (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            val_format = ".2f" if is_rate_kpi else ",.0f"
+            suffix = "%" if is_rate_kpi else ""
+            st.metric("🌍 Grand Overall Value", f"{grand_overall:{val_format}}{suffix}")
+
+    # Create the chart with reduced height
     fig = px.line(
         comparison_df,
         x="period_display",
@@ -1610,21 +1631,17 @@ def render_region_comparison_chart(
         color="Region",
         markers=True,
         title=f"{title} - Region Comparison",
-        height=500,
+        height=350,
         category_orders={"period_display": period_order},
-        hover_data=["numerator", "denominator"],
+        custom_data=["numerator", "denominator"],
     )
 
     fig.update_traces(
         line=dict(width=3),
         marker=dict(size=7),
-        hovertemplate=(
-            f"<b>%{{x}}</b><br>"
-            f"Region: %{{fullData.name}}<br>"
-            f"{title}: %{{y:.2f}}<br>"
-            f"{numerator_name}: %{{customdata[0]}}<br>"
-            f"{denominator_name}: %{{customdata[1]}}<extra></extra>"
-        ),
+        hovertemplate=get_attractive_hover_template(
+            title, numerator_name, denominator_name, is_count=not is_rate_kpi
+        ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
     )
 
     fig.update_layout(
@@ -1657,57 +1674,41 @@ def render_region_comparison_chart(
         ),
     )
 
-    if "Rate" in title or "%" in title:
+    if is_rate_kpi:
         fig.update_layout(yaxis_tickformat=".2f")
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # =========== DISPLAY TABLE BELOW GRAPH ===========
-    st.markdown("---")
-    st.subheader("📋 Region Comparison Data")
+    # =========== COMPACT TABLE ===========
+    with st.expander("📋 View Region Comparison Data", expanded=True):
+        # Create pivot table for better display
+        pivot_data = []
 
-    # Create pivot table for better display with Overall row - REMOVED "Periods with Data" column
-    pivot_data = []
+        for region_name in comparison_df["Region"].unique():
+            region_data = comparison_df[comparison_df["Region"] == region_name]
+            if not region_data.empty:
+                total_numerator = region_data["numerator"].sum()
+                total_denominator = region_data["denominator"].sum()
+                overall_value = (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
 
-    for region_name in comparison_df["Region"].unique():
-        region_data = comparison_df[comparison_df["Region"] == region_name]
-        if not region_data.empty:
-            total_numerator = region_data["numerator"].sum()
-            total_denominator = region_data["denominator"].sum()
-            overall_value = (
-                (total_numerator / total_denominator * 100)
-                if total_denominator > 0
-                else 0
-            )
-
-            pivot_data.append(
-                {
+                pivot_data.append({
                     "Region": region_name,
                     numerator_name: f"{total_numerator:,.0f}",
                     denominator_name: f"{total_denominator:,.0f}",
-                    "Overall Value": f"{overall_value:.2f}%",
-                }
-            )
+                    "Overall Value": f"{overall_value:.2f}%" if is_rate_kpi else f"{overall_value:,.0f}",
+                })
 
-    # Add Overall row for all regions
-    if pivot_data:
-        all_numerators = comparison_df["numerator"].sum()
-        all_denominators = comparison_df["denominator"].sum()
-        grand_overall = (
-            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
-        )
-
-        pivot_data.append(
-            {
+        # Add Overall row
+        if pivot_data:
+            pivot_data.append({
                 "Region": "Overall",
                 numerator_name: f"{all_numerators:,.0f}",
                 denominator_name: f"{all_denominators:,.0f}",
-                "Overall Value": f"{grand_overall:.2f}%",
-            }
-        )
+                "Overall Value": f"{grand_overall:.2f}%" if is_rate_kpi else f"{grand_overall:,.0f}",
+            })
 
-        pivot_df = pd.DataFrame(pivot_data)
-        st.dataframe(pivot_df, use_container_width=True)
+            pivot_df = pd.DataFrame(pivot_data)
+            st.dataframe(pivot_df, use_container_width=True)
 
     # Keep download functionality
     csv_data = []

@@ -463,188 +463,81 @@ def render_newborn_kpi_tab_navigation():
     selected_kpi = st.session_state.selected_newborn_kpi
 
     with tab1:
-        col1, col2 = st.columns(2)
-        col3, col4 = st.columns(2)
-        col5, col6 = st.columns(2)
+        # Birth & Hypothermia - 6 buttons
+        cols_row1 = st.columns(5)
+        cols_row2 = st.columns(5)
 
-        with col1:
-            if st.button(
-                "📊 Inborn Rate",
-                key="inborn_btn",
-                use_container_width=True,
-                type=("primary" if selected_kpi == "Inborn Rate (%)" else "secondary"),
-            ):
+        with cols_row1[0]:
+            if st.button("📊 Inborn Rate", key="inborn_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Inborn Rate (%)" else "secondary")):
                 selected_kpi = "Inborn Rate (%)"
-
-        with col2:
-            if st.button(
-                "📊 Outborn Rate",
-                key="outborn_btn",
-                use_container_width=True,
-                type=("primary" if selected_kpi == "Outborn Rate (%)" else "secondary"),
-            ):
+        with cols_row1[1]:
+            if st.button("📊 Outborn Rate", key="outborn_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Outborn Rate (%)" else "secondary")):
                 selected_kpi = "Outborn Rate (%)"
-
-        with col3:
-            if st.button(
-                "🌡️ Hypothermia on Admission",
-                key="hypo_admission_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Hypothermia on Admission Rate (%)"
-                    else "secondary"
-                ),
-            ):
+        with cols_row1[2]:
+            if st.button("🌡️ Hypo Admission", key="hypo_admission_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Hypothermia on Admission Rate (%)" else "secondary")):
                 selected_kpi = "Hypothermia on Admission Rate (%)"
-
-        with col4:
-            if st.button(
-                "⚖️ Birth Weight Rate",
-                key="birth_weight_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Birth Weight Rate"
-                    else "secondary"
-                ),
-            ):
+        with cols_row1[3]:
+            if st.button("⚖️ Birth Weight", key="birth_weight_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Birth Weight Rate" else "secondary")):
                 selected_kpi = "Birth Weight Rate"
-
-        with col5:
-            if st.button(
-                "👶 Inborn Hypothermia",
-                key="inborn_hypo_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Inborn Hypothermia Rate (%)"
-                    else "secondary"
-                ),
-            ):
+        with cols_row1[4]:
+            if st.button("👶 Inborn Hypo", key="inborn_hypo_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Inborn Hypothermia Rate (%)" else "secondary")):
                 selected_kpi = "Inborn Hypothermia Rate (%)"
-
-        with col6:
-            if st.button(
-                "👶 Outborn Hypothermia",
-                key="outborn_hypo_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Outborn Hypothermia Rate (%)"
-                    else "secondary"
-                ),
-            ):
+        with cols_row2[0]:
+            if st.button("👶 Outborn Hypo", key="outborn_hypo_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Outborn Hypothermia Rate (%)" else "secondary")):
                 selected_kpi = "Outborn Hypothermia Rate (%)"
 
     with tab2:
-        col1, col2 = st.columns(2)
-        col3, col4 = st.columns(2)
-
-        with col1:
-            if st.button(
-                "🤱 KMC Coverage",
-                key="kmc_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "KMC Coverage by Birth Weight"
-                    else "secondary"
-                ),
-            ):
+        # Interventions - 4 buttons
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("🤱 KMC Coverage", key="kmc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "KMC Coverage by Birth Weight" else "secondary")):
                 selected_kpi = "KMC Coverage by Birth Weight"
-
-        with col2:
-            if st.button(
-                "🌀 General CPAP",
-                key="cpap_general_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "General CPAP Coverage"
-                    else "secondary"
-                ),
-            ):
+        with cols[1]:
+            if st.button("🌀 General CPAP", key="cpap_general_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "General CPAP Coverage" else "secondary")):
                 selected_kpi = "General CPAP Coverage"
-
-        with col3:
-            if st.button(
-                "🌀 CPAP for RDS",
-                key="cpap_rds_btn",
-                use_container_width=True,
-                type=("primary" if selected_kpi == "CPAP for RDS" else "secondary"),
-            ):
+        with cols[2]:
+            if st.button("🌀 CPAP for RDS", key="cpap_rds_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "CPAP for RDS" else "secondary")):
                 selected_kpi = "CPAP for RDS"
-
-        with col4:
-            if st.button(
-                "🌀 CPAP by Birth Weight",
-                key="cpap_by_weight_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "CPAP Coverage by Birth Weight"
-                    else "secondary"
-                ),
-            ):
+        with cols[3]:
+            if st.button("🌀 CPAP by Weight", key="cpap_by_weight_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "CPAP Coverage by Birth Weight" else "secondary")):
                 selected_kpi = "CPAP Coverage by Birth Weight"
 
     with tab3:
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if st.button(
-                "📊 Neonatal Mortality",
-                key="nmr_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Neonatal Mortality Rate (%)"
-                    else "secondary"
-                ),
-            ):
+        # Outcomes & Enrollment - 2 buttons
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("📊 Neonatal Mortality", key="nmr_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Neonatal Mortality Rate (%)" else "secondary")):
                 selected_kpi = "Neonatal Mortality Rate (%)"
-
-        with col2:
-            if st.button(
-                "📈 Admitted Newborns",
-                key="admitted_newborns_btn",
-                use_container_width=True,
-                type=(
-                    "primary" if selected_kpi == "Admitted Newborns" else "secondary"
-                ),
-            ):
+        with cols[1]:
+            if st.button("📈 Admitted Newborns", key="admitted_newborns_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Admitted Newborns" else "secondary")):
                 selected_kpi = "Admitted Newborns"
 
     with tab4:
-        col1, col2 = st.columns(2)
-        col3, col4 = st.columns(2)
-
-        with col1:
-            if st.button(
-                "🌡️ Missing Temperature",
-                key="missing_temp_btn",
-                use_container_width=True,
-                type=("primary" if selected_kpi == "Missing Temperature (%)" else "secondary"),
-            ):
+        # Missing - 3 buttons
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("🌡️ Missing Temp", key="missing_temp_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Missing Temperature (%)" else "secondary")):
                 selected_kpi = "Missing Temperature (%)"
-
-        with col2:
-            if st.button(
-                "⚖️ Missing Birth Weight",
-                key="missing_bw_btn",
-                use_container_width=True,
-                type=("primary" if selected_kpi == "Missing Birth Weight (%)" else "secondary"),
-            ):
+        with cols[1]:
+            if st.button("⚖️ Missing BW", key="missing_bw_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Missing Birth Weight (%)" else "secondary")):
                 selected_kpi = "Missing Birth Weight (%)"
-
-        with col3:
-            if st.button(
-                "📊 Missing Discharge Status",
-                key="missing_status_btn",
-                use_container_width=True,
-                type=("primary" if selected_kpi == "Missing Discharge Status (%)" else "secondary"),
-            ):
+        with cols[2]:
+            if st.button("📊 Missing Discharge", key="missing_status_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Missing Discharge Status (%)" else "secondary")):
                 selected_kpi = "Missing Discharge Status (%)"
 
     # Update session state with final selection

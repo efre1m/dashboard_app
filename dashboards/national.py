@@ -1140,42 +1140,15 @@ def render_maternal_dashboard_shared(
         header_subtitle = f"all {len(facility_mapping)} facilities"
 
     st.markdown(
-        f'<div class="main-header" style="margin-bottom: 0.3rem;">{header_title}</div>',
+        f'<div class="main-header" style="margin-bottom: 0.1rem; line-height: 1.2;">{header_title}</div>',
         unsafe_allow_html=True,
     )
-    st.markdown(f"**Displaying data from {header_subtitle}**")
+    st.markdown(f"<div style='margin-bottom: 0.1rem;'><b>Displaying data from {header_subtitle}</b></div>", unsafe_allow_html=True)
 
     # Progress container
-    progress_container = st.empty()
-    with progress_container.container():
-        st.markdown("---")
-        st.markdown("### 📈 Preparing Dashboard...")
-        progress_col1, progress_col2 = st.columns([3, 1])
-        with progress_col1:
-            st.markdown(
-                """
-            <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4;">
-            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">Processing Data</h4>
-            <p style="margin: 5px 0; font-size: 14px;">• Computing KPIs and indicators...</p>
-            <p style="margin: 5px 0; font-size: 14px;">• Generating charts and visualizations...</p>
-            <p style="margin: 5px 0; font-size: 14px;">• Preparing data tables...</p>
-            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">This may take 2-4 minutes depending on data size</p>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-        with progress_col2:
-            st.markdown(
-                """
-            <div style="text-align: center; padding: 10px;">
-            <div style="font-size: 24px;">⏳</div>
-            <div style="font-size: 12px; margin-top: 5px;">Processing</div>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
+    # progress_container removed for layout stability
+    # progress_indicator logic removed
 
-    # Create containers for better performance
     kpi_container = st.container()
 
     # Optimized filter layout - EXACTLY LIKE REGIONAL.PY
@@ -1223,8 +1196,7 @@ def render_maternal_dashboard_shared(
             f"📊 NATIONAL: Computing KPIs for {len(filtered_for_all):,} filtered patients"
         )
 
-    # CLEAR THE PROGRESS INDICATOR ONCE KPI CARDS ARE DONE
-    progress_container.empty()
+    # progress_container.empty() removed
 
     # Charts section
     bg_color = filters["bg_color"]
@@ -1271,12 +1243,7 @@ def render_maternal_dashboard_shared(
 
 def render():
     """Main optimized render function"""
-    st.set_page_config(
-        page_title="National Maternal Health Dashboard",
-        page_icon="🏥",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+    # st.set_page_config removed - only app.py should call this
 
     # Re-initialize session state for safety
     initialize_session_state()
