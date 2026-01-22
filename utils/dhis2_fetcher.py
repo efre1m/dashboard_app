@@ -49,6 +49,16 @@ MATERNAL_HEALTH_ELEMENTS = {
     "H7J2SxBpObS",
     "QUlJEvzGcQK",
     "K8BCYRU1TUP",
+    # ADDITIONAL MATERNAL DATA ELEMENTS
+    "Hn4o3dCqqyT",  # Obstetric complications
+    "nWJf7kvNYRU",  # Episiotomy performed
+    "BiFmMp0p2CB",  # birth outcome newborn 2
+    "ZX1tFRjBAEe",  # birth outcome newborn 3
+    "htcUfQyftnv",  # birth outcome newborn 4
+    "XQr0rrJjjA6",  # Newborn Immunizations and Interventions
+    "i1KXYcH5HMx",  # Newborn Immunizations and Interventions newborn 4
+    "jBggnUjOoyy",  # Newborn Immunizations and Interventions newborn 3
+    "LKTO6tFhdbi",  # Newborn Immunizations and Interventions newborn 2
 }
 
 # NEWBORN CARE FORM DATA ELEMENTS (from second code)
@@ -62,7 +72,7 @@ NEWBORN_HEALTH_ELEMENTS = {
     "ZkeSH8X8MKK",  # Weight on discharge
     "XITh8vyfqaR",  # Newborn status at discharge n
     "UGz9phsvHt4",  # Sub-Categories of Infection n
-    "lxtEbLnOxfk",  # Sub-Categories of Prematurity n
+    "lxtEbLnOxfk",  # Sub-Categories of Prematurity n,
 }
 
 REQUIRED_DATA_ELEMENTS = MATERNAL_HEALTH_ELEMENTS | NEWBORN_HEALTH_ELEMENTS
@@ -83,6 +93,18 @@ DATA_ELEMENT_NAMES = {
     "H7J2SxBpObS": "ARV Rx for Newborn (By type) pp",
     "QUlJEvzGcQK": "Birth Weight (grams)",
     "K8BCYRU1TUP": "Instrumental delivery",
+    
+    # ADDITIONAL MATERNAL DATA ELEMENTS
+    "Hn4o3dCqqyT": "Obstetric complications",
+    "nWJf7kvNYRU": "Episiotomy performed",
+    "BiFmMp0p2CB": "birth outcome newborn 2",
+    "ZX1tFRjBAEe": "birth outcome newborn 3",
+    "htcUfQyftnv": "birth outcome newborn 4",
+    "XQr0rrJjjA6": "Newborn Immunizations and Interventions",
+    "i1KXYcH5HMx": "Newborn Immunizations and Interventions newborn 4",
+    "jBggnUjOoyy": "Newborn Immunizations and Interventions newborn 3",
+    "LKTO6tFhdbi": "Newborn Immunizations and Interventions newborn 2",
+    
     # Newborn Care Form (FROM SECOND CODE)
     "MtIwjNsCLYy": "Place of delivery",
     "RE3wIu5acNt": "Temp at admission",
@@ -108,8 +130,23 @@ MATERNAL_PROGRAM_STAGE_MAPPING = {
             "tIa0WvbPGLk",
             "CJiTafFo0TS",
             "yVRLuRU943e",
+            # ADDITIONAL DATA ELEMENTS FOR DELIVERY SUMMARY
+            "nWJf7kvNYRU",  # Episiotomy performed
+            "BiFmMp0p2CB",  # birth outcome newborn 2
+            "ZX1tFRjBAEe",  # birth outcome newborn 3
+            "htcUfQyftnv",  # birth outcome newborn 4
+            "XQr0rrJjjA6",  # Newborn Immunizations and Interventions
+            "i1KXYcH5HMx",  # Newborn Immunizations and Interventions newborn 4
+            "jBggnUjOoyy",  # Newborn Immunizations and Interventions newborn 3
+            "LKTO6tFhdbi",  # Newborn Immunizations and Interventions newborn 2
         ],
         "program_stage_name": "Delivery summary",
+    },
+    "cBq2rlTwqW9": {  # Diagnosis
+        "data_elements": [
+            "Hn4o3dCqqyT",  # Obstetric complications
+        ],
+        "program_stage_name": "Diagnosis",
     },
     "VpBHRE7FlJL": {  # Postpartum care
         "data_elements": ["z7Eb2yFLOBI", "H7J2SxBpObS", "Q1p7CxWGUoi"],
@@ -124,7 +161,6 @@ MATERNAL_PROGRAM_STAGE_MAPPING = {
         "program_stage_name": "Instrumental Delivery form",
     },
 }
-
 # NEWBORN PROGRAM STAGE MAPPING FROM SECOND CODE
 NEWBORN_PROGRAM_STAGE_MAPPING = {
     "mv8iC65nP21": {  # NICU Admission Careform
@@ -1661,15 +1697,25 @@ class CSVIntegration:
                 # Apply new column order
                 patient_df = patient_df[cols]
 
-        # 2. FIX INSTRUMENTAL DELIVERY: Convert "true"/"false" to "1"/"0" (only for maternal)
+        # 2. FIX INSTRUMENTAL DELIVERY & EPISIOTOMY: Convert "true"/"false" to "1"/"0" (only for maternal)
         if program_type == "maternal":
+            # Find both instrumental delivery and episiotomy columns
             instrumental_cols = [
                 col
                 for col in patient_df.columns
                 if "instrumental_delivery" in col.lower()
             ]
+            
+            episiotomy_cols = [
+                col
+                for col in patient_df.columns
+                if "episiotomy" in col.lower()
+            ]
+            
+            # Combine both lists
+            boolean_cols = instrumental_cols + episiotomy_cols
 
-            for col in instrumental_cols:
+            for col in boolean_cols:
                 if col in patient_df.columns:
                     # Convert boolean values
                     true_count = 0
@@ -1850,6 +1896,16 @@ class CSVIntegration:
             for col in cleaned_df.columns
             if "instrumental" in col.lower() and "delivery" in col.lower()
         ]
+        
+        # Also find episiotomy columns
+        episiotomy_cols = [
+            col
+            for col in cleaned_df.columns
+            if "episiotomy" in col.lower()
+        ]
+        
+        # Combine both lists for processing
+        boolean_cols = instrumental_cols + episiotomy_cols
 
         for col in instrumental_cols:
             # Ensure proper naming format
@@ -1868,8 +1924,8 @@ class CSVIntegration:
                     cleaned_df.rename(columns={col: correct_name}, inplace=True)
                     logger.info(f"   🔧 Renamed column: '{col}' -> '{correct_name}'")
 
-        # Final check: ensure all boolean values in instrumental delivery are 1/0 (maternal only)
-        for col in instrumental_cols:
+        # Final check: ensure all boolean values in instrumental delivery and episiotomy are 1/0 (maternal only)
+        for col in boolean_cols:
             if col in cleaned_df.columns:
                 # Convert any remaining "true"/"false" to "1"/"0"
                 for idx, value in cleaned_df[col].items():
