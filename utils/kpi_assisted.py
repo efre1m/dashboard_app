@@ -15,6 +15,7 @@ from utils.kpi_utils import (
     render_trend_chart,
     render_facility_comparison_chart,
     render_region_comparison_chart,
+    DELIVERY_MODE_COL,
 )
 
 # ---------------- Caching Setup ----------------
@@ -65,7 +66,7 @@ def compute_assisted_count(df, facility_uids=None):
         else:
             df_copy = filtered_df.copy()
 
-            # Convert to string first, then extract numeric part - SAME AS C-SECTION
+            # Convert to string first, then extract numeric part
             df_copy["instrumental_clean"] = df_copy[INSTRUMENTAL_DELIVERY_COL].astype(
                 str
             )
@@ -73,8 +74,22 @@ def compute_assisted_count(df, facility_uids=None):
                 df_copy["instrumental_clean"].str.split(".").str[0], errors="coerce"
             )
 
-            # Count Assisted Delivery (value = 1)
-            assisted_mask = df_copy["instrumental_numeric"] == 1
+            # --- Refined Logic: Exclude SVD (1) and C-section (2) to avoid double counting ---
+            if DELIVERY_MODE_COL in df_copy.columns:
+                df_copy["mode_clean"] = df_copy[DELIVERY_MODE_COL].astype(str)
+                df_copy["mode_numeric"] = pd.to_numeric(
+                    df_copy["mode_clean"].str.split(".").str[0], errors="coerce"
+                )
+                
+                # Count Assisted Delivery (value = 1) ONLY if Mode of Delivery is EMPTY or N/A
+                # (Ignore instrumental delivery if SVD or C-section is already recorded)
+                assisted_mask = (df_copy["instrumental_numeric"] == 1) & (
+                    df_copy["mode_numeric"].isna()
+                )
+            else:
+                # Fallback if mode column missing
+                assisted_mask = df_copy["instrumental_numeric"] == 1
+                
             result = int(assisted_mask.sum())
 
     st.session_state.assisted_cache[cache_key] = result

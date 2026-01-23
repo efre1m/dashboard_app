@@ -645,6 +645,22 @@ def compute_kpis(df, facility_uids=None):
     total_births, live_births, stillbirths_count = compute_birth_counts(
         filtered_df, facility_uids
     )
+    
+    # NEW: Episiotomy Rate
+    from utils.kpi_episiotomy import compute_episiotomy_rate
+    episiotomy_rate, episiotomy_cases, total_vaginal_deliveries = compute_episiotomy_rate(
+        filtered_df, facility_uids
+    )
+    
+    # NEW: SVD Rate
+    from utils.kpi_svd import compute_svd_count
+    svd_deliveries = compute_svd_count(filtered_df, facility_uids)
+    svd_rate = (svd_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0.0
+    
+    # NEW: Assisted Delivery Rate
+    from utils.kpi_assisted import compute_assisted_count
+    assisted_deliveries = compute_assisted_count(filtered_df, facility_uids)
+    assisted_rate = (assisted_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0.0
 
     result = {
         "total_deliveries": int(total_deliveries),
@@ -665,6 +681,13 @@ def compute_kpis(df, facility_uids=None):
         "csection_rate": float(csection_rate),
         "csection_deliveries": int(csection_deliveries),
         "total_deliveries_cs": int(total_deliveries),
+        "episiotomy_rate": float(episiotomy_rate),
+        "episiotomy_cases": int(episiotomy_cases),
+        "total_vaginal_deliveries": int(total_vaginal_deliveries),
+        "svd_deliveries": int(svd_deliveries),
+        "svd_rate": float(svd_rate),
+        "assisted_deliveries": int(assisted_deliveries),
+        "assisted_rate": float(assisted_rate),
     }
 
     st.session_state.kpi_cache[cache_key] = result
@@ -909,6 +932,21 @@ def get_numerator_denominator_for_kpi(
             "denominator": "total_deliveries",
             "value": "csection_rate",
         },
+        "Episiotomy Rate (%)": {
+            "numerator": "episiotomy_cases",
+            "denominator": "total_vaginal_deliveries",
+            "value": "episiotomy_rate",
+        },
+        "SVD Rate (%)": {
+            "numerator": "svd_deliveries",
+            "denominator": "total_deliveries",
+            "value": "svd_rate",
+        },
+        "Assisted Delivery Rate (%)": {
+            "numerator": "assisted_deliveries",
+            "denominator": "total_deliveries",
+            "value": "assisted_rate",
+        },
     }
 
     if kpi_name in kpi_mapping:
@@ -944,6 +982,21 @@ def get_numerator_denominator_for_kpi(
         numerator = kpi_data.get("csection_deliveries", 0)
         denominator = kpi_data.get("total_deliveries", 1)
         value = kpi_data.get("csection_rate", 0.0)
+        return (numerator, denominator, value)
+    elif "Episiotomy" in kpi_name:
+        numerator = kpi_data.get("episiotomy_cases", 0)
+        denominator = kpi_data.get("total_vaginal_deliveries", 1)
+        value = kpi_data.get("episiotomy_rate", 0.0)
+        return (numerator, denominator, value)
+    elif "SVD" in kpi_name or "Normal Vaginal" in kpi_name:
+        numerator = kpi_data.get("svd_deliveries", 0)
+        denominator = kpi_data.get("total_deliveries", 1)
+        value = kpi_data.get("svd_rate", 0.0)
+        return (numerator, denominator, value)
+    elif "Assisted" in kpi_name or "Instrumental" in kpi_name:
+        numerator = kpi_data.get("assisted_deliveries", 0)
+        denominator = kpi_data.get("total_deliveries", 1)
+        value = kpi_data.get("assisted_rate", 0.0)
         return (numerator, denominator, value)
 
     return (0, 0, 0.0)

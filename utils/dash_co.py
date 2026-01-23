@@ -83,6 +83,13 @@ from utils.kpi_admitted_mothers import (
     render_admitted_mothers_region_comparison_chart,
     get_numerator_denominator_for_admitted_mothers,
 )
+from utils.kpi_episiotomy import (
+    compute_episiotomy_kpi,
+    render_episiotomy_trend_chart,
+    render_episiotomy_facility_comparison_chart,
+    render_episiotomy_region_comparison_chart,
+    get_numerator_denominator_for_episiotomy,
+)
 
 
 # KPI mapping for comparison charts - UPDATED NAMES
@@ -156,6 +163,11 @@ KPI_MAPPING = {
         "title": "Total Admitted Mothers",
         "value_name": "Admitted Mothers",
     },
+    "Episiotomy Rate (%)": {
+        "title": "Episiotomy Rate (%)",
+        "numerator_name": "Episiotomy Cases",
+        "denominator_name": "Total Vaginal Deliveries",
+    },
 }
 
 # KPI Column Requirements - What each KPI actually needs
@@ -223,6 +235,7 @@ KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "instrumental_delivery_form",
+        "mode_of_delivery_maternal_delivery_summary",
     ],
     "Normal Vaginal Delivery (SVD) Rate (%)": [
         "orgUnit",
@@ -260,6 +273,14 @@ KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
+    ],
+    "Episiotomy Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "episiotomy_performed_delivery_summary",
+        "mode_of_delivery_maternal_delivery_summary",
+        "instrumental_delivery_form",
     ],
 }
 
@@ -336,6 +357,7 @@ KPI_OPTIONS = [
     "Missing Birth Outcome",
     "Missing Condition of Discharge",
     "Admitted Mothers",
+    "Episiotomy Rate (%)",
 ]
 
 
@@ -408,6 +430,7 @@ def render_kpi_tab_navigation():
             "ARV Prophylaxis Rate (%)",
             "Assisted Delivery Rate (%)",
             "Normal Vaginal Delivery (SVD) Rate (%)",
+            "Episiotomy Rate (%)",
         ],
         "❓ Missing": [
             "Missing Mode of Delivery",
@@ -571,6 +594,19 @@ def render_kpi_tab_navigation():
                 ),
             ):
                 selected_kpi = "Normal Vaginal Delivery (SVD) Rate (%)"
+
+        with cols2[2]:
+            if st.button(
+                "Episiotomy",
+                key="episiotomy_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Episiotomy Rate (%)"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Episiotomy Rate (%)"
 
     with tab4:
         cols = st.columns(5)
@@ -884,6 +920,19 @@ def render_trend_chart_section(
             )
         elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
             render_svd_trend_chart(
+                group,
+                "period_display",
+                "value",
+                chart_title,
+                bg_color,
+                text_color,
+                display_names,
+                numerator_label,
+                denominator_label,
+                facility_uids,
+            )
+        elif kpi_selection == "Episiotomy Rate (%)":
+            render_episiotomy_trend_chart(
                 group,
                 "period_display",
                 "value",
@@ -1307,6 +1356,19 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
+        elif kpi_selection == "Episiotomy Rate (%)":
+            render_episiotomy_facility_comparison_chart(
+                df=comparison_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
         # ADD MISSING MD HERE!
         elif kpi_selection == "Missing Mode of Delivery":
             render_missing_md_facility_comparison_chart(
@@ -1529,6 +1591,20 @@ def render_comparison_chart(
             )
         elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
             render_svd_region_comparison_chart(
+                df=region_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=region_names,
+                region_mapping=facilities_by_region,
+                facilities_by_region=facilities_by_region,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
+        elif kpi_selection == "Episiotomy Rate (%)":
+            render_episiotomy_region_comparison_chart(
                 df=region_df,
                 period_col="period_display",
                 value_col="value",
