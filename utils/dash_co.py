@@ -95,7 +95,7 @@ KPI_MAPPING = {
     "Stillbirth Rate (%)": {
         "title": "Stillbirth Rate (%)",
         "numerator_name": "Stillbirths",
-        "denominator_name": "Total Deliveries",
+        "denominator_name": "Total Newborns",
     },
     "Early Postnatal Care (PNC) Coverage (%)": {
         "title": "Early PNC Coverage (%)",
@@ -144,8 +144,8 @@ KPI_MAPPING = {
     },
     "Missing Birth Outcome": {
         "title": "Missing Birth Outcome Documentation Rate (%)",
-        "numerator_name": "Deliveries with Missing BO",
-        "denominator_name": "Total Deliveries",
+        "numerator_name": "Missing Birth Outcomes",
+        "denominator_name": "Total Newborns",
     },
     "Missing Condition of Discharge": {
         "title": "Missing Condition of Discharge Documentation Rate (%)",
@@ -171,6 +171,10 @@ KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "birth_outcome_delivery_summary",
+        "birth_outcome_newborn_delivery_summary",
+        "birth_outcome_newborn_2_delivery_summary",
+        "birth_outcome_newborn_3_delivery_summary",
+        "birth_outcome_newborn_4_delivery_summary",
         "number_of_newborns_delivery_summary",
         "other_number_of_newborns_delivery_summary",
     ],
@@ -238,6 +242,12 @@ KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "birth_outcome_delivery_summary",
+        "birth_outcome_newborn_delivery_summary",
+        "birth_outcome_newborn_2_delivery_summary",
+        "birth_outcome_newborn_3_delivery_summary",
+        "birth_outcome_newborn_4_delivery_summary",
+        "number_of_newborns_delivery_summary",
+        "other_number_of_newborns_delivery_summary",
     ],
     "Missing Condition of Discharge": [
         "orgUnit",
