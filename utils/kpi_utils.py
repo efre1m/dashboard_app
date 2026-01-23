@@ -662,6 +662,12 @@ def compute_kpis(df, facility_uids=None):
     assisted_deliveries = compute_assisted_count(filtered_df, facility_uids)
     assisted_rate = (assisted_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0.0
 
+    # NEW: Antepartum Complications Rate
+    from utils.kpi_antipartum_compl import compute_antipartum_compl_rate
+    antipartum_rate, antipartum_cases, _ = compute_antipartum_compl_rate(
+        filtered_df, facility_uids
+    )
+
     result = {
         "total_deliveries": int(total_deliveries),
         "fp_acceptance": int(fp_acceptance),
@@ -688,6 +694,8 @@ def compute_kpis(df, facility_uids=None):
         "svd_rate": float(svd_rate),
         "assisted_deliveries": int(assisted_deliveries),
         "assisted_rate": float(assisted_rate),
+        "antipartum_rate": float(antipartum_rate),
+        "antipartum_cases": int(antipartum_cases),
     }
 
     st.session_state.kpi_cache[cache_key] = result
@@ -947,6 +955,11 @@ def get_numerator_denominator_for_kpi(
             "denominator": "total_deliveries",
             "value": "assisted_rate",
         },
+        "Antepartum Complications Rate (%)": {
+            "numerator": "antipartum_cases",
+            "denominator": "total_deliveries",
+            "value": "antipartum_rate",
+        },
     }
 
     if kpi_name in kpi_mapping:
@@ -997,6 +1010,11 @@ def get_numerator_denominator_for_kpi(
         numerator = kpi_data.get("assisted_deliveries", 0)
         denominator = kpi_data.get("total_deliveries", 1)
         value = kpi_data.get("assisted_rate", 0.0)
+        return (numerator, denominator, value)
+    elif "Antepartum" in kpi_name:
+        numerator = kpi_data.get("antipartum_cases", 0)
+        denominator = kpi_data.get("total_deliveries", 1)
+        value = kpi_data.get("antipartum_rate", 0.0)
         return (numerator, denominator, value)
 
     return (0, 0, 0.0)
