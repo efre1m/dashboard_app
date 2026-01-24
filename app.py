@@ -18,10 +18,14 @@ ALL_CACHES = [
     "svd_cache",
     "admitted_mothers_cache",
     "kpi_cache",
+    "episiotomy_cache",
+    "antipartum_compl_cache",
+    "vaccine_coverage_cache",
+    "status_cache",
     # Newborn caches
     "kpi_cache_newborn",
-    "kpi_cache_newborn_simplified",  # Added for kpi_utils_newborn_simplified.py
-    "kpi_cache_newborn_v2",  # Added for kpi_utils_newborn_v2.py
+    "kpi_cache_newborn_simplified",
+    "kpi_cache_newborn_v2",
 ]
 
 # Initialize ALL caches
@@ -50,7 +54,6 @@ for key, default_value in ESSENTIAL_STATES.items():
 from components.login import login_component
 from dashboards import facility, regional, national, admin
 from utils.auth import logout
-# from components.chatbot import render_chatbot
 
 # ====================== STREAMLIT PAGE CONFIG ======================
 st.set_page_config(
@@ -120,6 +123,7 @@ st.markdown(
             font-size: 10px !important;
             border-radius: 2px !important;
             line-height: 1 !important;
+            white-space: normal !important;
         }
 
         /* Micro Tabs */
@@ -155,7 +159,7 @@ st.markdown(
             transform: scale(0.7) !important;
         }
     </style>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 # ====================== SIDEBAR ======================
 with st.sidebar:
@@ -164,11 +168,6 @@ with st.sidebar:
     # Check authentication
     if st.session_state.get("authenticated", False):
         st.write("---")
-        # Chat Bot Mode Toggle
-        # Using session state key 'chatbot_mode' to persist the state
-        # st.toggle("🤖 Chat Bot Mode", key="chatbot_mode")
-        
-        # st.write("---")
         # Logout button
         if st.button("Logout"):
             logout()
@@ -180,21 +179,16 @@ with st.sidebar:
 if not st.session_state.get("authenticated", False):
     login_component()  # Render login page if not authenticated
 else:
-    # Check if Chat Bot Mode is active
-    if False: # st.session_state.get("chatbot_mode", False):
-        # render_chatbot()
-        pass
-    else:
-        role = st.session_state["user"].get("role", "")
+    role = st.session_state["user"].get("role", "")
 
-        if role == "facility":
-            facility.render()
-        elif role == "regional":
-            regional.render()
-        elif role == "national":
-            national.render()
-        elif role == "admin":
-            # Admin dashboard with full CRUD for users, facilities, regions, countries
-            admin.render()
-        else:
-            st.error("❌ Unauthorized role")
+    if role == "facility":
+        facility.render()
+    elif role == "regional":
+        regional.render()
+    elif role == "national":
+        national.render()
+    elif role == "admin":
+        # Admin dashboard with full CRUD for users, facilities, regions, countries
+        admin.render()
+    else:
+        st.error("❌ Unauthorized role")
