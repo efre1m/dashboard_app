@@ -81,6 +81,112 @@ class ChatbotLogic:
         # Default to maternal for backward compatibility or if not specified
         self.df = self.maternal_df
 
+        # --- COMPREHENSIVE TYPO DICTIONARY ---
+        # Maps common misspellings to correct spellings
+        self.COMMON_TYPOS = {
+            # Episiotomy variations
+            "episotomy": "episiotomy",
+            "episotomi": "episiotomy",
+            "episiotmoy": "episiotomy",
+            "episotomie": "episiotomy",
+            "episotomoy": "episiotomy",
+            "episiotiomy": "episiotomy",
+            "episotommy": "episiotomy",
+            "episo": "episiotomy",
+            
+            # Hemorrhage variations
+            "hemorage": "hemorrhage",
+            "hemorrage": "hemorrhage",
+            "hemmorhage": "hemorrhage",
+            "hemmorrhage": "hemorrhage",
+            "hemorrage": "hemorrhage",
+            "hemmorage": "hemorrhage",
+            "hemor": "hemorrhage",
+            
+            # Uterotonic variations
+            "uterotoncic": "uterotonic",
+            "uterotonc": "uterotonic",
+            "utertonic": "uterotonic",
+            "uterotoniic": "uterotonic",
+            "uterotonnic": "uterotonic",
+            "uterotnic": "uterotonic",
+            
+            # Stillbirth variations
+            "still birth": "stillbirth",
+            "stil birth": "stillbirth",
+            "stillbrith": "stillbirth",
+            "stil brith": "stillbirth",
+            "stilbirth": "stillbirth",
+            "stillbith": "stillbirth",
+            
+            # C-Section variations
+            "c section": "csection",
+            "c-section": "csection",
+            "cesarian": "csection",
+            "ceasarean": "csection",
+            "cesarean": "csection",
+            "caesarean": "csection",
+            "sectioin": "section",
+            "sectionn": "section",
+            "cesearian": "csection",
+            "cesection": "csection",
+            
+            # Antepartum variations
+            "ante partum": "antepartum",
+            "antipartum": "antepartum",
+            "antepartam": "antepartum",
+            "antpartem": "antepartum",
+            
+            # Postpartum variations
+            "post partum": "postpartum",
+            "postpartem": "postpartum",
+            "postpartam": "postpartum",
+            
+            # ARV variations
+            "anti retroviral": "antiretroviral",
+            "antiretro viral": "antiretroviral",
+            "antiretro": "antiretroviral",
+            
+            # Hypothermia variations (newborn)
+            "hypthermia": "hypothermia",
+            "hypothemia": "hypothermia",
+            "hypo thermia": "hypothermia",
+            "hipothermia": "hypothermia",
+            "hypothrmia": "hypothermia",
+            
+            # Neonatal variations
+            "neo natal": "neonatal",
+            "neonatel": "neonatal",
+            "neonate": "neonatal",
+            
+            # CPAP variations
+            "c pap": "cpap",
+            "c-pap": "cpap",
+            
+            # KMC variations
+            "kangaro": "kangaroo",
+            "kangaroo care": "kmc",
+            "skin to skin": "kmc",
+            
+            # General typos
+            "birht": "birth",
+            "oucome": "outcome",
+            "indicatofrs": "indicators",
+            "totaly": "totally",
+            "wome": "women",
+            "whor": "who",
+            "abot": "about",
+            "abut": "about",
+            "enrollmet": "enrollment",
+            "admited": "admitted",
+            "admision": "admission",
+            "delivry": "delivery",
+            "vagnal": "vaginal",
+            "materna": "maternal",
+            "materanl": "maternal",
+            "matenal": "maternal",
+        }
+
         # --- SPECIALIZED KPI MAPPING ---
         # Maps full KPI names to their internal utility script suffixes
         # Keys MUST match active_kpi_name (which comes from KPI_MAPPING/KPI_OPTIONS)
@@ -407,80 +513,144 @@ class ChatbotLogic:
         # ... (rest of KPI detection)
 
         # Normalize spaces and remove some punctuation for fuzzy matching
-        # Fix common typos manually
         query_norm = re.sub(r'[^a-z0-9\s]', '', query_lower)
-        # Phase 7 Typos
-        query_norm = query_norm.replace("sectioin", "section").replace("sectionn", "section")
-        query_norm = query_norm.replace("still birth", "stillbirth").replace("c section", "csection")
-        query_norm = query_norm.replace("birht", "birth").replace("oucome", "outcome")
-        query_norm = query_norm.replace("indicatofrs", "indicators").replace("totaly", "totally")
-        query_norm = query_norm.replace("uterotoncic", "uterotonic").replace("wome", "women").replace("whor", "who")
-        query_norm = query_norm.replace("abot", "about").replace("abut", "about")
+        
+        # Apply comprehensive typo corrections
+        for typo, correct in self.COMMON_TYPOS.items():
+            query_norm = query_norm.replace(typo, correct)
+        
+        # Remove extra spaces
+        query_norm = re.sub(r'\s+', ' ', query_norm).strip()
         
         # Comprehensive KPI Map based on dash_co.KPI_MAPPING
+        # Now includes phonetic variations and common typos
         kpi_map = {
-            # Standard KPIs
+            # C-Section (with typos)
             "csection": "C-Section Rate (%)",
-            "c section": "C-Section Rate (%)",
+            "section": "C-Section Rate (%)",
             "caesarean": "C-Section Rate (%)",
+            "cesarean": "C-Section Rate (%)",
+            "cesarian": "C-Section Rate (%)",
+            "ceasarean": "C-Section Rate (%)",
+            
+            # Maternal Death
             "maternal death": "Institutional Maternal Death Rate (%)",
+            "death": "Institutional Maternal Death Rate (%)",
+            "mortality": "Institutional Maternal Death Rate (%)",
+            
+            # Stillbirth (with typos)
             "stillbirth": "Stillbirth Rate (%)",
+            "stil birth": "Stillbirth Rate (%)",
+            "stillbrith": "Stillbirth Rate (%)",
+            
+            # PPH (with typos)
             "pph": "Postpartum Hemorrhage (PPH) Rate (%)",
             "hemorrhage": "Postpartum Hemorrhage (PPH) Rate (%)",
+            "hemorage": "Postpartum Hemorrhage (PPH) Rate (%)",
+            "hemorrage": "Postpartum Hemorrhage (PPH) Rate (%)",
             "bleeding": "Postpartum Hemorrhage (PPH) Rate (%)",
+            "postpartum hemorrhage": "Postpartum Hemorrhage (PPH) Rate (%)",
+            
+            # Uterotonic (with typos)
             "uterotonic": "Delivered women who received uterotonic (%)",
+            "uterotonc": "Delivered women who received uterotonic (%)",
+            "utertonic": "Delivered women who received uterotonic (%)",
             "oxytocin": "Delivered women who received uterotonic (%)",
+            
+            # IPPCAR
             "ippcar": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
             "contraceptive": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
             "family planning": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+            "fp": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+            
+            # PNC
             "pnc": "Early Postnatal Care (PNC) Coverage (%)",
             "postnatal": "Early Postnatal Care (PNC) Coverage (%)",
+            "post natal": "Early Postnatal Care (PNC) Coverage (%)",
+            
+            # ARV
             "arv": "ARV Prophylaxis Rate (%)",
             "antiretroviral": "ARV Prophylaxis Rate (%)",
+            "hiv prophylaxis": "ARV Prophylaxis Rate (%)",
+            
+            # Assisted Delivery
             "assisted delivery": "Assisted Delivery Rate (%)",
+            "assisted": "Assisted Delivery Rate (%)",
             "instrumental": "Assisted Delivery Rate (%)",
             "vacuum": "Assisted Delivery Rate (%)",
             "forceps": "Assisted Delivery Rate (%)",
+            
+            # SVD
             "svd": "Normal Vaginal Delivery (SVD) Rate (%)",
             "vaginal delivery": "Normal Vaginal Delivery (SVD) Rate (%)",
             "normal delivery": "Normal Vaginal Delivery (SVD) Rate (%)",
             "spontaneous": "Normal Vaginal Delivery (SVD) Rate (%)",
+            "vaginal": "Normal Vaginal Delivery (SVD) Rate (%)",
+            
+            # Episiotomy (with typos)
             "episiotomy": "Episiotomy Rate (%)",
+            "episotomy": "Episiotomy Rate (%)",
+            "episotomi": "Episiotomy Rate (%)",
+            "episiotmoy": "Episiotomy Rate (%)",
+            "episo": "Episiotomy Rate (%)",
+            
+            # Antepartum (with typos)
             "antepartum": "Antepartum Complications Rate (%)",
+            "ante partum": "Antepartum Complications Rate (%)",
+            "antipartum": "Antepartum Complications Rate (%)",
             "antenatal complications": "Antepartum Complications Rate (%)",
+            "antenatal": "Antepartum Complications Rate (%)",
             
             # Data Quality / Counts
             "missing mode": "Missing Mode of Delivery",
             "missing birth": "Missing Birth Outcome",
-            "birth outcome": "Missing Birth Outcome", # Explicit map
+            "birth outcome": "Missing Birth Outcome",
             "missing outcome": "Missing Birth Outcome",
             "missing condition": "Missing Condition of Discharge",
             "missing discharge": "Missing Condition of Discharge",
+            
+            # Admitted Mothers
             "admitted mothers": "Admitted Mothers",
-            "admitted": "Admitted Mothers", # Explicit map
+            "admitted": "Admitted Mothers",
             "admissions": "Admitted Mothers",
-            "admission": "Admitted Mothers", # Added singular
+            "admission": "Admitted Mothers",
             "total mothers": "Admitted Mothers",
             "enrollment": "Admitted Mothers",
-            "enrollmet": "Admitted Mothers",
             "total enrollments": "Admitted Mothers",
+            "mothers": "Admitted Mothers",
             
-            # Additional commonly requested counts
+            # Total Deliveries
             "total deliveries": "Total Deliveries",
             "deliveries": "Total Deliveries",
             "births": "Total Deliveries",
             
-            # Newborn indicators
+            # Newborn indicators (with typos)
             "inborn": "Inborn Rate (%)",
             "outborn": "Outborn Rate (%)",
             "neonatal death": "Neonatal Mortality Rate (%)",
+            "neonatal mortality": "Neonatal Mortality Rate (%)",
             "nmr": "Neonatal Mortality Rate (%)",
             "admitted newborns": "Admitted Newborns",
             "newborn admissions": "Admitted Newborns",
+            "newborn admission": "Admitted Newborns",
+            
+            # KMC (with typos)
             "kmc": "KMC Coverage by Birth Weight",
+            "kangaroo": "KMC Coverage by Birth Weight",
+            "kangaro": "KMC Coverage by Birth Weight",
+            "skin to skin": "KMC Coverage by Birth Weight",
+            
+            # CPAP (with typos)
             "cpap": "General CPAP Coverage",
+            "c pap": "General CPAP Coverage",
             "rds": "CPAP for RDS",
-            "hypothermia": "Hypothermia on Admission Rate (%)"
+            "respiratory distress": "CPAP for RDS",
+            
+            # Hypothermia (with typos)
+            "hypothermia": "Hypothermia on Admission Rate (%)",
+            "hypthermia": "Hypothermia on Admission Rate (%)",
+            "hipothermia": "Hypothermia on Admission Rate (%)",
+            "hypo thermia": "Hypothermia on Admission Rate (%)",
         }
         
         # Stop Word Removal for scanning
@@ -632,7 +802,16 @@ class ChatbotLogic:
                  start_date = None
                  end_date = None
 
-        if "this month" in query_lower:
+        # NEW: Handle "this year" and "last year" FIRST (before month/week)
+        if "this year" in query_lower:
+            start_date = f"{today.year}-01-01"
+            end_date = today.strftime("%Y-%m-%d")
+        elif "last year" in query_lower:
+            # Use Calendar Year logic
+            last_year = today.year - 1
+            start_date = f"{last_year}-01-01"
+            end_date = f"{last_year}-12-31"
+        elif "this month" in query_lower:
             start_date = today.replace(day=1).strftime("%Y-%m-%d")
             end_date = today.strftime("%Y-%m-%d")
         elif "last month" in query_lower:
@@ -641,11 +820,6 @@ class ChatbotLogic:
             last_month_start = last_month_end.replace(day=1)
             start_date = last_month_start.strftime("%Y-%m-%d")
             end_date = last_month_end.strftime("%Y-%m-%d")
-        elif "last year" in query_lower:
-            # Use Calendar Year logic (User Request)
-            last_year = today.year - 1
-            start_date = f"{last_year}-01-01"
-            end_date = f"{last_year}-12-31"
         elif "this week" in query_lower:
             # Monday of current week
             weekday = today.weekday()
@@ -675,9 +849,10 @@ class ChatbotLogic:
             except Exception as e:
                 logging.warning(f"Date regex 1 failed: {e}")
 
-        # 2. Check for "Jan 1 - Jan 7 2026" (Year only at end) - REORDERED BEFORE SINGLE DATE
+        # 2. Check for "Jan 1 - Jan 7 2026" (Year only at end)
         if not start_date:
              try:
+                 month_pattern = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
                  range_pattern_end_year = re.compile(f"({month_pattern})[\s,]+(\d{{1,2}})\s*(?:to|-)?\s*({month_pattern})[\s,]+(\d{{1,2}})[\s,]+(\d{{4}})", re.IGNORECASE)
                  range_match = range_pattern_end_year.search(query)
                  
@@ -687,6 +862,21 @@ class ChatbotLogic:
                      end_date = datetime.strptime(f"{m2[:3]} {d2} {y}", "%b %d %Y").strftime("%Y-%m-%d")
              except Exception as e:
                  logging.warning(f"Date regex range pattern 2 failed: {e}")
+        
+        # 2b. NEW: Check for "Jan 1-5" (no year, assume current year)
+        if not start_date:
+             try:
+                 month_pattern = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
+                 range_pattern_no_year = re.compile(f"({month_pattern})[\s,]+(\d{{1,2}})\s*-\s*(\d{{1,2}})", re.IGNORECASE)
+                 range_match = range_pattern_no_year.search(query)
+                 
+                 if range_match:
+                     m1, d1, d2 = range_match.groups()
+                     current_year = today.year
+                     start_date = datetime.strptime(f"{m1[:3]} {d1} {current_year}", "%b %d %Y").strftime("%Y-%m-%d")
+                     end_date = datetime.strptime(f"{m1[:3]} {d2} {current_year}", "%b %d %Y").strftime("%Y-%m-%d")
+             except Exception as e:
+                 logging.warning(f"Date regex range pattern no year failed: {e}")
 
         # 3. Fallback to extracting ANY single dates with years
         if not start_date:
@@ -1210,20 +1400,27 @@ class ChatbotLogic:
 
         # --- HANDLE EXPLAIN INTENT ---
         if parsed["intent"] == "explain":
-            # Using global KPI_MAPPING
+            # Use KB_DEFINITIONS for explanation
             kpi_info = KPI_MAPPING.get(active_kpi_name, {})
             numerator_desc = kpi_info.get("numerator_name", "the numerator")
             denominator_desc = kpi_info.get("denominator_name", "the denominator")
             
-            explanation = f"**{kpi_name}** explanation:\n- **Numerator**: {numerator_desc}\n- **Denominator**: {denominator_desc}"
+            # Check if we have a detailed definition
+            definition = getattr(self, "KB_DEFINITIONS", {}).get(active_kpi_name)
+            
+            if definition:
+                explanation = f"**{kpi_name}** explanation:\n\n{definition}\n\n**Calculation**:\n- **Numerator**: {numerator_desc}\n- **Denominator**: {denominator_desc}"
+            else:
+                explanation = f"**{kpi_name}** explanation:\n- **Numerator**: {numerator_desc}\n- **Denominator**: {denominator_desc}"
+            
             if target_component != "value":
-                explanation += f"\n\nSince you asked for **{kpi_name}**, I'm extracting the **{target_component}** from this indicator."
+                explanation += f"\n\n*Note: Since you asked for **{kpi_name}**, I'm extracting the **{target_component}** from this indicator.*"
                 
             return None, explanation
 
         # --- HANDLE DEFINITION INTENT ---
         if parsed["intent"] == "definition":
-            # Lookup in Static KB
+            # Use KB_DEFINITIONS
             definition = getattr(self, "KB_DEFINITIONS", {}).get(active_kpi_name)
             
             if not definition:
@@ -1236,8 +1433,8 @@ class ChatbotLogic:
             if definition:
                 return None, f"**Definition of {active_kpi_name}**:\n\n{definition}"
             else:
-                 # Fallback (Simulated LLM response for now, to be robust against 429s)
-                 return None, f"I couldn't find a specific definition for **{kpi_name}** in my knowledge base. However, generally in this dashboard, it refers to the tracked health indicator for {kpi_name}."
+                 # Suggest available indicators
+                 return None, f"I don't have a definition for **{kpi_name}** yet. Try asking about indicators like 'PPH', 'C-Section', 'NMR', 'Episiotomy', or 'Admitted Mothers'."
 
         # Proactive Suggestion
         suggestion = ""
@@ -1408,7 +1605,7 @@ class ChatbotLogic:
                      if use_newborn_data:
                          from newborns_dashboard.dash_co_newborn import get_numerator_denominator_for_newborn_kpi_with_all
                          numerator, denominator, value = get_numerator_denominator_for_newborn_kpi_with_all(group_df, active_kpi_name, entity_uids, date_range)
-                     elif kpi_suffix:
+                     elif kpi_suffix and kpi_suffix != "utils":
                          try:
                              module = __import__(f"utils.kpi_{kpi_suffix}", fromlist=[f"get_numerator_denominator_for_{kpi_suffix}"])
                              get_nd_func = getattr(module, f"get_numerator_denominator_for_{kpi_suffix}")
@@ -1417,6 +1614,7 @@ class ChatbotLogic:
                              logging.error(f"Failed to call specialized function for {active_kpi_name}: {e}")
                              numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(group_df, active_kpi_name, entity_uids, date_range)
                      else:
+                         # Use standard kpi_utils for "utils" suffix or no suffix
                          numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(group_df, active_kpi_name, entity_uids, date_range)
                      
                      # Resolve Component
@@ -1624,15 +1822,16 @@ class ChatbotLogic:
             if use_newborn_data:
                 from newborns_dashboard.dash_co_newborn import get_numerator_denominator_for_newborn_kpi_with_all
                 numerator, denominator, value = get_numerator_denominator_for_newborn_kpi_with_all(active_df, active_kpi_name, facility_uids, date_range)
-            elif kpi_suffix:
+            elif kpi_suffix and kpi_suffix != "utils":
                 try:
                     module = __import__(f"utils.kpi_{kpi_suffix}", fromlist=[f"get_numerator_denominator_for_{kpi_suffix}"])
                     get_nd_func = getattr(module, f"get_numerator_denominator_for_{kpi_suffix}")
-                    numerator, denominator, value = get_nd_func(self.df, facility_uids, date_range)
+                    numerator, denominator, value = get_nd_func(prepared_df, facility_uids, date_range)
                 except Exception as e:
                     logging.error(f"Failed to call specialized function for {active_kpi_name}: {e}")
                     numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(prepared_df, active_kpi_name, facility_uids)
             else:
+                  # Use standard kpi_utils for "utils" suffix or no suffix
                   numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(prepared_df, active_kpi_name, facility_uids)
             
             # Resolve Component

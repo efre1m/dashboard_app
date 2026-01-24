@@ -66,21 +66,38 @@ INSTRUCTIONS:
    - "clear": to reset the conversation.
 
 2. Identify the KPI: Match the user's request to one of the exact KPI names listed above.
-   FUZZY MATCHING ALIASES:
-   - "admitted mother"/"total mothers"/"mother count" -> "Admitted Mothers"
-   - "pph"/"postpartum hemorrhage"/"bleeding" -> "Postpartum Hemorrhage (PPH) Rate (%)"
-   - "svd"/"normal delivery"/"vaginal delivery" -> "Normal Vaginal Delivery (SVD) Rate (%)"
-   - "c-section"/"cesarean"/"csection" -> "C-Section Rate (%)"
-   - "arv"/"hiv prophylaxis" -> "ARV Prophylaxis Rate (%)"
-   - "assisted delivery"/"instrumental" -> "Assisted Delivery Rate (%)"
-   - "uterotonic"/"oxytocin" -> "Delivered women who received uterotonic (%)"
-   - "episiotomy" -> "Episiotomy Rate (%)"
-   - "antepartum"/"antenatal complications" -> "Antepartum Complications Rate (%)"
-   - "maternal death"/"mortality" -> "Institutional Maternal Death Rate (%)"
-   - "stillbirth" -> "Stillbirth Rate (%)"
-   - "missing mode"/"missing delivery" -> "Missing Mode of Delivery"
-   - "missing birth outcome" -> "Missing Birth Outcome"
-   - "missing discharge" -> "Missing Condition of Discharge"
+   
+   IMPORTANT: Be VERY lenient with spelling variations and typos. Users may misspell medical terms.
+   
+   FUZZY MATCHING ALIASES (handle typos and variations):
+   
+   **Maternal Indicators:**
+   - "admitted mother"/"total mothers"/"mother count"/"admited"/"admision" → "Admitted Mothers"
+   - "pph"/"postpartum hemorrhage"/"bleeding"/"hemorage"/"hemorrage"/"hemmorhage" → "Postpartum Hemorrhage (PPH) Rate (%)"
+   - "svd"/"normal delivery"/"vaginal delivery"/"vagnal" → "Normal Vaginal Delivery (SVD) Rate (%)"
+   - "c-section"/"cesarean"/"csection"/"cesarian"/"ceasarean"/"c section"/"sectioin" → "C-Section Rate (%)"
+   - "arv"/"hiv prophylaxis"/"antiretroviral"/"anti retroviral" → "ARV Prophylaxis Rate (%)"
+   - "assisted delivery"/"instrumental"/"assisted" → "Assisted Delivery Rate (%)"
+   - "uterotonic"/"oxytocin"/"uterotoncic"/"uterotonc"/"utertonic" → "Delivered women who received uterotonic (%)"
+   - "episiotomy"/"episotomy"/"episotomi"/"episiotmoy"/"episo" → "Episiotomy Rate (%)"
+   - "antepartum"/"antenatal complications"/"ante partum"/"antipartum" → "Antepartum Complications Rate (%)"
+   - "maternal death"/"mortality"/"materna death" → "Institutional Maternal Death Rate (%)"
+   - "stillbirth"/"still birth"/"stil birth"/"stillbrith" → "Stillbirth Rate (%)"
+   - "missing mode"/"missing delivery" → "Missing Mode of Delivery"
+   - "missing birth outcome"/"missing birth"/"missing oucome" → "Missing Birth Outcome"
+   - "missing discharge"/"missing condition" → "Missing Condition of Discharge"
+   - "pnc"/"postnatal"/"post natal" → "Early Postnatal Care (PNC) Coverage (%)"
+   - "ippcar"/"contraceptive"/"family planning"/"fp" → "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
+   
+   **Newborn Indicators:**
+   - "hypothermia"/"hypthermia"/"hipothermia"/"hypo thermia" → "Hypothermia on Admission Rate (%)"
+   - "neonatal death"/"neonatal mortality"/"nmr"/"neo natal death" → "Neonatal Mortality Rate (%)"
+   - "kmc"/"kangaroo"/"kangaro"/"skin to skin"/"kangaroo care" → "KMC Coverage by Birth Weight"
+   - "cpap"/"c pap"/"c-pap" → "General CPAP Coverage"
+   - "rds"/"respiratory distress" → "CPAP for RDS"
+   - "inborn" → "Inborn Rate (%)"
+   - "outborn" → "Outborn Rate (%)"
+   - "admitted newborns"/"newborn admissions"/"newborn admission" → "Admitted Newborns"
 
 3. Identify the CHART TYPE: "line", "bar", "area", or "table". Default to "line" unless specified.
 
