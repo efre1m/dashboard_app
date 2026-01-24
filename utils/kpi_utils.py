@@ -1249,7 +1249,9 @@ def render_trend_chart(
 
     # Display the chart with reduced height
     fig.update_layout(height=260, margin=dict(t=20, b=20, l=10, r=10))
-    st.plotly_chart(fig, use_container_width=True)
+    # Generate unique key for plotly chart
+    chart_key = f"trend_chart_{title.replace(' ', '_')}_{str(facility_uids) if facility_uids else 'overall'}"
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
     # =========== COMPACT TABLE ===========
     with st.expander("📊 View Detailed Data Table", expanded=True):
@@ -1591,7 +1593,9 @@ def render_facility_comparison_chart(
     if is_rate_kpi:
         fig.update_layout(yaxis_tickformat=".2f")
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Generate unique key for facility comparison chart
+    chart_key = f"facility_comp_{title.replace(' ', '_')}_{len(facility_uids) if facility_uids else 0}"
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
     # =========== COMPACT TABLE ===========
     with st.expander("📋 View Facility Comparison Data", expanded=True):
@@ -1878,7 +1882,9 @@ def render_region_comparison_chart(
     if is_rate_kpi:
         fig.update_layout(yaxis_tickformat=".2f")
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Generate unique key for region comparison chart
+    chart_key = f"region_comp_{title.replace(' ', '_')}_{len(region_names) if region_names else 0}"
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
     # =========== COMPACT TABLE ===========
     with st.expander("📋 View Region Comparison Data", expanded=True):

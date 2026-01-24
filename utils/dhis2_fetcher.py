@@ -436,18 +436,56 @@ class CSVIntegration:
         """
         Filter out specific facilities from the transformed dataframe.
         Removes:
-        1. Facilities named exactly "test" or "test2" (case-insensitive)
+        1. Facilities named exactly "test" or "test2" or "central ethiopia" (case-insensitive)
         2. Any facility starting with "test" (case-insensitive)
-        3. Facility named "central ethiopia" (case-insensitive)
+        3. Facilities with specific orgUnit UIDs from the provided list
         """
         if df.empty:
             return df
 
-        logger.info("🗑️ FILTERING: Removing excluded facilities")
+        logger.info("🗑️ FILTERING: Removing excluded facilities and orgUnits")
 
         # Store original count
         original_count = len(df)
         excluded_count = 0
+
+        # List of orgUnit UIDs to exclude
+        EXCLUDED_ORGUNIT_UIDS = {
+            "jiY6PK24hih",
+            "bKRhyQlNF8V",
+            "kENAp29OGPA",
+            "L2FvgupOFkM",
+            "Hxive2ebyzT",
+            "JVVEW4S5O5T",
+            "qufB1z1RwlO",
+            "eqciSfkJRb6",
+            "xKzglVpCHMx",
+            "fp6VdFPjbjA",
+            "wRlAu91XM2l",
+            "riMSFinZIkA",
+            "uklmYfVlxcA",
+            "mePm3H2TeYy",
+            "i5chkF1T7M7",
+            "D2HSBEDG4Qm",
+            "ryDwQExrhU3",
+            "Rax96a14RKy",
+            "SkItAtu5jb0",
+            "j2OcHaBsOha",
+            "j7uCOJyqpRe",
+            "OBVLO30KEif",
+            "OHt39m1Ys9W",
+            "wmKxf1Y8QDL",
+            "F9BGvQwS7YC",
+            "R2ched3KlY4",
+            "dpNwVsIKcBd",
+            "FUXxWD2nECI",
+            "Ej7fPU563UX",
+            "yCf8BdxHPCn",
+            "l7g7sDWapGr",
+            "nopVfgfj0UK"
+        }
+
+        logger.info(f"📋 Excluding {len(EXCLUDED_ORGUNIT_UIDS)} specific orgUnit UIDs")
 
         # List to store indices to remove
         indices_to_remove = []
@@ -455,33 +493,64 @@ class CSVIntegration:
         # Check all rows
         for idx, row in df.iterrows():
             facility_name = row.get("orgUnit_name", "")
+            orgunit_uid = row.get("orgUnit", "")
 
-            if not isinstance(facility_name, str):
-                continue
-
-            name_lower = facility_name.lower().strip()
-
-            # Check for exact matches
-            if name_lower in ["test", "test2", "central ethiopia"]:
+            # Check for orgUnit UID exclusion
+            if orgunit_uid in EXCLUDED_ORGUNIT_UIDS:
                 indices_to_remove.append(idx)
                 excluded_count += 1
                 continue
 
-            # Check if starts with "test"
-            if name_lower.startswith("test"):
-                indices_to_remove.append(idx)
-                excluded_count += 1
+            # Check for name-based exclusions (only if facility_name exists)
+            if facility_name and isinstance(facility_name, str):
+                name_lower = facility_name.lower().strip()
+
+                # Check for exact matches
+                if name_lower in ["test", "test2", "central ethiopia"]:
+                    indices_to_remove.append(idx)
+                    excluded_count += 1
+                    continue
+
+                # Check if starts with "test"
+                if name_lower.startswith("test"):
+                    indices_to_remove.append(idx)
+                    excluded_count += 1
 
         # Remove the rows
         if indices_to_remove:
             filtered_df = df.drop(indices_to_remove).copy()
-            excluded_facilities = df.loc[indices_to_remove, "orgUnit_name"].unique()
+            
+            # Get excluded facilities info for logging
+            excluded_facilities = []
+            excluded_orgunits = []
+            
+            for idx in indices_to_remove:
+                facility_name = df.loc[idx, "orgUnit_name"]
+                orgunit_uid = df.loc[idx, "orgUnit"]
+                
+                if facility_name:
+                    excluded_facilities.append(facility_name)
+                if orgunit_uid:
+                    excluded_orgunits.append(orgunit_uid)
 
             logger.info(f"✅ Facility filtering complete:")
             logger.info(f"   📊 Original records: {original_count}")
             logger.info(f"   📊 After filtering: {len(filtered_df)}")
             logger.info(f"   📊 Excluded records: {excluded_count}")
-            logger.info(f"   🗑️ Excluded facilities: {', '.join(excluded_facilities)}")
+            
+            # Log name-based exclusions
+            if excluded_facilities:
+                unique_facilities = list(set(excluded_facilities))[:10]  # Show first 10
+                logger.info(f"   🗑️ Excluded facilities (names): {', '.join(unique_facilities)}")
+                if len(set(excluded_facilities)) > 10:
+                    logger.info(f"   ... and {len(set(excluded_facilities)) - 10} more")
+            
+            # Log UID-based exclusions
+            if excluded_orgunits:
+                unique_orgunits = list(set(excluded_orgunits))[:10]  # Show first 10
+                logger.info(f"   🗑️ Excluded orgUnits (UIDs): {', '.join(unique_orgunits)}")
+                if len(set(excluded_orgunits)) > 10:
+                    logger.info(f"   ... and {len(set(excluded_orgunits)) - 10} more")
 
             return filtered_df
         else:

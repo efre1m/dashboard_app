@@ -1369,6 +1369,7 @@ def render():
             )
             st.session_state.data_initialized = True
             st.session_state.cached_shared_data = shared_data
+            st.session_state.cached_shared_data_national = shared_data
             logging.info("Initial data loading complete")
     else:
         # Use cached data from session state - no loading needed

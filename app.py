@@ -54,6 +54,7 @@ for key, default_value in ESSENTIAL_STATES.items():
 from components.login import login_component
 from dashboards import facility, regional, national, admin
 from utils.auth import logout
+from components.chatbot import render_chatbot
 
 # ====================== STREAMLIT PAGE CONFIG ======================
 st.set_page_config(
@@ -168,6 +169,10 @@ with st.sidebar:
     # Check authentication
     if st.session_state.get("authenticated", False):
         st.write("---")
+        # Chat Bot Mode Toggle
+        st.toggle("🤖 Chat Bot Mode", key="chatbot_mode")
+        
+        st.write("---")
         # Logout button
         if st.button("Logout"):
             logout()
@@ -179,16 +184,20 @@ with st.sidebar:
 if not st.session_state.get("authenticated", False):
     login_component()  # Render login page if not authenticated
 else:
-    role = st.session_state["user"].get("role", "")
-
-    if role == "facility":
-        facility.render()
-    elif role == "regional":
-        regional.render()
-    elif role == "national":
-        national.render()
-    elif role == "admin":
-        # Admin dashboard with full CRUD for users, facilities, regions, countries
-        admin.render()
+    # Check if Chat Bot Mode is active
+    if st.session_state.get("chatbot_mode", False):
+        render_chatbot()
     else:
-        st.error("❌ Unauthorized role")
+        role = st.session_state["user"].get("role", "")
+
+        if role == "facility":
+            facility.render()
+        elif role == "regional":
+            regional.render()
+        elif role == "national":
+            national.render()
+        elif role == "admin":
+            # Admin dashboard with full CRUD for users, facilities, regions, countries
+            admin.render()
+        else:
+            st.error("❌ Unauthorized role")
