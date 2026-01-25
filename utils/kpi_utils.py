@@ -1080,13 +1080,14 @@ def render_trend_chart(
     numerator_name="Numerator",
     denominator_name="Denominator",
     facility_uids=None,
+    key_suffix="",
 ):
     # Create unique key
     if facility_uids:
         facility_str = "_".join(str(uid) for uid in sorted(facility_uids))
-        unique_key = f"download_{title.replace(' ', '_').lower()}_trend_{facility_str}"
+        unique_key = f"download_{title.replace(' ', '_').lower()}_trend_{facility_str}_{key_suffix}"
     else:
-        unique_key = f"download_{title.replace(' ', '_').lower()}_trend_overall"
+        unique_key = f"download_{title.replace(' ', '_').lower()}_trend_overall_{key_suffix}"
 
     """Render a trend chart for a single facility/region with numerator/denominator data AND TABLE"""
     if text_color is None:
@@ -1099,7 +1100,7 @@ def render_trend_chart(
 
     x_axis_col = period_col
 
-    df = df.copy()
+    df = df.reset_index(drop=True)
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
     chart_options = ["Line", "Bar", "Area"]
@@ -1109,7 +1110,7 @@ def render_trend_chart(
         options=chart_options,
         index=0,
         horizontal=True,
-        key=f"chart_type_{title}_{str(facility_uids)}",
+        key=f"chart_type_{title}_{str(facility_uids)}_{key_suffix}",
     ).lower()
 
     if "numerator" in df.columns and "denominator" in df.columns:
@@ -1366,7 +1367,7 @@ def render_trend_chart(
         data=csv,
         file_name=f"{title.lower().replace(' ', '_')}_data.csv",
         mime="text/csv",
-        key=f"dl_btn_{title}_{str(facility_uids)}",
+        key=f"dl_btn_{title}_{str(facility_uids)}_{key_suffix}",
     )
 
 
@@ -1381,10 +1382,15 @@ def render_facility_comparison_chart(
     facility_uids,
     numerator_name,
     denominator_name,
+    suppress_plot=False,
+    key_suffix="",
 ):
+    # Ensure index is clean
+    df = df.reset_index(drop=True)
+    
     # Create unique key
     facility_str = "_".join(str(uid) for uid in sorted(facility_uids))
-    unique_key = f"download_{title.replace(' ', '_').lower()}_facility_{facility_str}"
+    unique_key = f"download_{title.replace(' ', '_').lower()}_facility_{facility_str}_{key_suffix}"
     """Render a comparison chart showing each facility's performance over time WITH TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
@@ -1594,8 +1600,12 @@ def render_facility_comparison_chart(
         fig.update_layout(yaxis_tickformat=".2f")
 
     # Generate unique key for facility comparison chart
-    chart_key = f"facility_comp_{title.replace(' ', '_')}_{len(facility_uids) if facility_uids else 0}"
-    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    chart_key = f"facility_comp_{title.replace(' ', '_')}_{len(facility_uids) if facility_uids else 0}_{key_suffix}"
+    
+    if not suppress_plot:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    else:
+        st.info(f"💡 Showing comparison table only for **{title}**.")
 
     # =========== COMPACT TABLE ===========
     with st.expander("📋 View Facility Comparison Data", expanded=True):
@@ -1689,13 +1699,18 @@ def render_region_comparison_chart(
     facilities_by_region,
     numerator_name,
     denominator_name,
+    suppress_plot=False,
+    key_suffix="",
 ):
+    # Ensure index is clean
+    df = df.reset_index(drop=True)
+
     # Create unique key
     if region_mapping:
         region_str = "_".join(str(key) for key in region_mapping.keys())
-        unique_key = f"download_{title.replace(' ', '_').lower()}_region_{region_str}"
+        unique_key = f"download_{title.replace(' ', '_').lower()}_region_{region_str}_{key_suffix}"
     else:
-        unique_key = f"download_{title.replace(' ', '_').lower()}_region_all"
+        unique_key = f"download_{title.replace(' ', '_').lower()}_region_all_{key_suffix}"
 
     """Render a comparison chart showing each region's performance over time WITH TABLE"""
     if text_color is None:
@@ -1884,7 +1899,11 @@ def render_region_comparison_chart(
 
     # Generate unique key for region comparison chart
     chart_key = f"region_comp_{title.replace(' ', '_')}_{len(region_names) if region_names else 0}"
-    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    
+    if not suppress_plot:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    else:
+        st.info(f"💡 Showing comparison table only for **{title}**.")
 
     # =========== COMPACT TABLE ===========
     with st.expander("📋 View Region Comparison Data", expanded=True):

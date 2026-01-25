@@ -185,6 +185,28 @@ class ChatbotLogic:
             "materna": "maternal",
             "materanl": "maternal",
             "matenal": "maternal",
+            
+            # Intent/Action Variations
+            "inidcatorys": "indicators",
+            "indicatorys": "indicators",
+            "indicater": "indicator",
+            "indicatry": "indicator",
+            "indicotrs": "indicators",
+            "indcators": "indicators",
+            "indictors": "indicators",
+            "lsit": "list",
+            "listt": "list",
+            "shw": "show",
+            "sho": "show",
+            "reioings": "regions",
+            "reigons": "regions",
+            "reginos": "regions",
+            "faciltiy": "facility",
+            "faciltiyies": "facilities",
+            "faclities": "facilities",
+            "regijon": "region",
+            "regjon": "region",
+            "indicatorys": "indicators",
         }
 
         # --- SPECIALIZED KPI MAPPING ---
@@ -301,6 +323,9 @@ class ChatbotLogic:
         if facility_uids and "orgUnit" in result_df.columns:
              result_df = result_df[result_df["orgUnit"].isin(facility_uids)].copy()
 
+        # FIX: Ensure unique index before specialized rendering
+        result_df = result_df.reset_index(drop=True)
+
         return result_df, date_column
 
 
@@ -309,7 +334,61 @@ class ChatbotLogic:
         Parses the user query to extract intent, kpi, filters.
         Tries LLM first, falls back to regex.
         """
-        query_lower = query.lower() # Defined globally for check
+        query_lower = query.lower()
+        
+        # --- PRE-PROCESS QUERY (Normalization & Typo Correction) ---
+        # Move this to the top so it filters early keyword checks
+        query_norm = re.sub(r'[^a-z0-9\s]', '', query_lower)
+        for typo, correct in self.COMMON_TYPOS.items():
+            query_norm = query_norm.replace(typo, correct)
+        query_norm = re.sub(r'\s+', ' ', query_norm).strip()
+        
+        
+        # Handle follow-up responses FIRST (before LLM)
+        if query_norm in ["yes", "yeah", "sure", "ok", "okay", "yep", "do it"]:
+            context = st.session_state.get("chatbot_context", {})
+            last_question = context.get("last_question", "")
+            if "region" in last_question:
+                return {"intent": "metadata_query", "entity_type": "region", "count_requested": False, "fulfillment_requested": True}
+            elif "facility" in last_question or "facilities" in last_question:
+                # Check if specific region was in last question
+                target_reg = None
+                if "in " in last_question:
+                    target_reg = last_question.split("in ")[-1]
+                return {"intent": "metadata_query", "entity_type": "facility", "count_requested": False, "region_filter": target_reg, "fulfillment_requested": True}
+            elif "indicator" in last_question:
+                return {"intent": "list_kpis"}
+        
+        
+        # Handle explicit list requests - OPTIMIZED FOR PLURALS & VARIATIONS
+        # PRIORITIZE Facility keyword to avoid "list facilities in Tigray region" matching regions regex first
+        entity_type = None
+        count_requested = False
+        
+        if re.search(r'(list|show|shw|sho|display|tell).*(facilities|facility|hospitals?|facilti?yies?|faclities?|units?)', query_norm):
+            entity_type = "facility"
+        elif re.search(r'(list|show|shw|sho|display|tell).*(regions?|reioings?|reigons?|territory|territories)', query_norm):
+            entity_type = "region"
+            
+        if entity_type:
+            # Extract Region if mentioned (even in rule-based mode)
+            from utils.queries import get_facilities_grouped_by_region
+            regions_data = get_facilities_grouped_by_region(self.user)
+            region_found = None
+            for r_name in regions_data.keys():
+                if r_name.lower() in query_norm:
+                    region_found = r_name
+                    break
+            
+            return {
+                "intent": "metadata_query", 
+                "entity_type": entity_type, 
+                "count_requested": False,
+                "region_filter": region_found
+            }
+
+        if re.search(r'(list|show|shw|sho|display|tell).*(indicators?|indicaters?|kpis?|measures?|metrics?)', query_norm):
+            return {"intent": "list_kpis"}
         
         # 0. Try LLM Parsing
         from utils.llm_utils import query_llm
@@ -496,8 +575,15 @@ class ChatbotLogic:
             comparison_mode = True
             intent = "plot" # Comparison implies visual
             
+            # Detect "all facilities" or "all regions"
+            if any(x in query_lower for x in ["all facilities", "all facility", "every facility", "all hospitals"]):
+                comparison_entity = "facility"
+                # Don't set specific facilities - will be populated later
+            elif any(x in query_lower for x in ["all regions", "all region", "every region"]):
+                comparison_entity = "region"
+                # Don't set specific regions - will be populated later
             # Detect Entity
-            if "region" in query_lower:
+            elif "region" in query_lower:
                 comparison_entity = "region"
             elif "facilit" in query_lower or "hospital" in query_lower or "clinic" in query_lower:
                 comparison_entity = "facility"
@@ -512,15 +598,8 @@ class ChatbotLogic:
         selected_kpi = None
         # ... (rest of KPI detection)
 
-        # Normalize spaces and remove some punctuation for fuzzy matching
-        query_norm = re.sub(r'[^a-z0-9\s]', '', query_lower)
-        
-        # Apply comprehensive typo corrections
-        for typo, correct in self.COMMON_TYPOS.items():
-            query_norm = query_norm.replace(typo, correct)
-        
-        # Remove extra spaces
-        query_norm = re.sub(r'\s+', ' ', query_norm).strip()
+        # query_norm is already computed at the start of parse_query
+        # Normalization logic moved to top
         
         # Comprehensive KPI Map based on dash_co.KPI_MAPPING
         # Now includes phonetic variations and common typos
@@ -651,6 +730,18 @@ class ChatbotLogic:
             "hypthermia": "Hypothermia on Admission Rate (%)",
             "hipothermia": "Hypothermia on Admission Rate (%)",
             "hypo thermia": "Hypothermia on Admission Rate (%)",
+
+            # Birth Weight & Other Newborn (with typos)
+            "birth weight": "Birth Weight Rate",
+            "birthweight": "Birth Weight Rate",
+            "birht weight": "Birth Weight Rate",
+            "bw": "Birth Weight Rate",
+            "kmc": "KMC Coverage by Birth Weight",
+            "kangaroo": "KMC Coverage by Birth Weight",
+            "cpap": "General CPAP Coverage",
+            "c-pap": "General CPAP Coverage",
+            "rds": "CPAP for RDS",
+            "respiratory distress": "CPAP for RDS",
         }
         
         # Stop Word Removal for scanning
@@ -994,6 +1085,22 @@ class ChatbotLogic:
         if any(x in query_lower for x in ["color", "style", "background", "theme", "dark mode", "appearance"]):
              intent = "scope_error"
              
+        # Hallucination Guard: Check for specific out-of-scope terms that fuzzily match KPIs
+        # e.g. "temperature" -> "Antepartum" or "Outborn" (incorrectly)
+        hallucination_terms = ["temperature", "temprature", "weather", "climate", "hot", "cold", "fever"]
+        if any(term in query_lower for term in hallucination_terms):
+             # Only trigger if NO valid KPI was explicitly found to override this
+             # But "temperature" might match "hypothermia" (valid). 
+             # We need to be careful. "Hypothermia" is in KPI_MAPPING (or Newborn).
+             # If exact KPI name isn't there, blocking "temperature" is safer.
+             # Let's check if a STRONG match exists first.
+             is_valid_context = False
+             if "hypothermia" in query_lower or "kmc" in query_lower: 
+                 is_valid_context = True # Allow if specific medical term used
+                 
+             if not is_valid_context:
+                 intent = "scope_error_hallucination"
+             
         # Robust Chat/Greeting Detection
         chat_patterns = ["hi", "hello", "hey", "greetings", "who are you", "thanks", "thank you", "help", "good morning", "good afternoon", "how can you help", "what can you help"]
         # Check for exact matches or start of string to avoid false positives
@@ -1218,14 +1325,25 @@ class ChatbotLogic:
         # Handle Scope Error
         if parsed.get("intent") == "scope_error":
              return None, "I'm focused on data analysis and visualization. I cannot change the dashboard's appearance or colors, but I can help you plot trends or find specific values."
+
+        # Handle Hallucination Scope Error
+        if parsed.get("intent") == "scope_error_hallucination":
+             return None, "I detected a term (like 'temperature') that I don't track directly. I specialize in **Maternal** and **Newborn** health indicators.\n\nTry asking about 'Hypothermia' or 'KMC' if you are interested in thermal care, or say 'list indicators' to see what I can do."
              
         # Handle List KPIs
         if parsed.get("intent") == "list_kpis":
-             kpi_list = "\n".join([f"- **{k}**" for k in KPI_MAPPING.keys()])
-             msg = f"Here are the available health indicators in this dashboard:\n\n{kpi_list}"
-             if "how many" in query_lower or "total" in query_lower:
-                 msg = f"There are **{len(KPI_MAPPING)}** available indicators:\n\n{kpi_list}"
-             return None, msg
+             # Check if asking for count only
+             if "how many" in query_lower or "count" in query_lower:
+                 msg = f"I currently have **{len(KPI_MAPPING)}** maternal health indicators available.\n\n"
+                 msg += "Would you like me to list all of them? Just say 'yes' or 'list all indicators'."
+                 # Store context for follow-up
+                 st.session_state["chatbot_context"]["last_question"] = "indicators"
+                 return None, msg
+             else:
+                 # List all indicators
+                 kpi_list = "\n".join([f"- **{k}**" for k in KPI_MAPPING.keys()])
+                 msg = f"Here are all the maternal health indicators I can provide information about:\n\n{kpi_list}"
+                 return None, msg
              
         # Handle Newborn Scope Error
         if parsed.get("intent") == "scope_error_newborn":
@@ -1247,92 +1365,77 @@ class ChatbotLogic:
         if parsed.get("intent") == "metadata_query":
              entity_type = parsed.get("entity_type")
              count_requested = parsed.get("count_requested")
-             facility_names = parsed.get("facility_names", []) # May contain region names
-             region_filter = parsed.get("region_filter") # EXTRACTED FROM LLM
+             facility_names = parsed.get("facility_names", [])
+             region_filter = parsed.get("region_filter")
+             fulfillment_requested = parsed.get("fulfillment_requested", False)
              
-             # If asking about Regions
+             # Resolve chatbot context (guaranteed by app.py)
+             context = st.session_state.get("chatbot_context", {})
+
+             # 1. Handle Regions
              if entity_type == "region":
                  regions_data = get_facilities_grouped_by_region(self.user)
-                 region_names = list(regions_data.keys())
+                 region_names = sorted(list(regions_data.keys()))
                  
-                 if count_requested:
-                     return None, f"There are **{len(region_names)}** regions available."
+                 if count_requested and not fulfillment_requested:
+                     msg = f"There are **{len(region_names)}** regions available.\n\n"
+                     msg += "Would you like me to list them? Just say 'yes' or 'list regions'."
+                     context["last_question"] = "regions"
+                     return None, msg
                  else:
                      return None, f"The available regions are:\n- " + "\n- ".join(region_names)
                      
-             # If asking about Facilities
+             # 2. Handle Facilities
              elif entity_type == "facility":
                  regions_data = get_facilities_grouped_by_region(self.user)
-                 
-                 # Check if specific region mentioned (Try region_filter FIRST)
                  target_region = None
                  
+                 # Resolve region focus if mentioned
                  if region_filter:
-                      # Fuzzy Match the region_filter
                       matches = difflib.get_close_matches(region_filter, regions_data.keys(), n=1, cutoff=0.6)
-                      if matches:
-                          target_region = matches[0]
+                      if matches: target_region = matches[0]
                  
-                 # Fallback: Try to match facility_names (which might contain region name from LLM) if region_filter failed
                  if not target_region and facility_names:
-                     # Check direct match or fuzzy
-                     for potential_region in facility_names:
-                         matches = difflib.get_close_matches(potential_region, regions_data.keys(), n=1, cutoff=0.6)
+                     for potential in facility_names:
+                         matches = difflib.get_close_matches(potential, regions_data.keys(), n=1, cutoff=0.6)
                          if matches:
                              target_region = matches[0]
                              break
                  
                  if target_region:
+                     # Specific region list
                      facilities = regions_data.get(target_region, [])
-                     if count_requested:
-                         return None, f"There are **{len(facilities)}** facilities in **{target_region}**."
+                     fac_names = sorted([f[0] for f in facilities])
+                     
+                     if count_requested and not fulfillment_requested:
+                         msg = f"There are **{len(fac_names)}** facilities in **{target_region}**.\n\n"
+                         msg += "Would you like me to list them? Just say 'yes' or 'list facilities'."
+                         context["last_question"] = f"facilities in {target_region}"
+                         return None, msg
                      else:
-                         fac_names = [f[0] for f in facilities]
-                         # Return list (maybe truncated if too long)
                          msg = f"Here are the facilities in **{target_region}**:\n- " + "\n- ".join(fac_names)
                          if len(fac_names) > 50:
                               msg = f"Here are the first 50 facilities in **{target_region}**:\n- " + "\n- ".join(fac_names[:50]) + "\n...(and more)"
                          return None, msg
                  else:
-                     # Global
+                     # Global facilities
                      all_facilities = get_all_facilities_flat(self.user)
-                     # Check if LLM returned regions in facility_names
-                     # If so, move them to comparison_targets
-                     regions_list = list(regions_data.keys())
-                     
-                     temp_facilities = parsed.get("facility_names", []) # Use a temporary list
-                     clean_facilities = []
-                     final_regions = []
-                     
-                     for name in temp_facilities:
-                         # Check if this name is actually a region (fuzzy match)
-                         match = difflib.get_close_matches(name, regions_list, n=1, cutoff=0.8)
-                         if match:
-                             final_regions.append(match[0])
-                         else:
-                             clean_facilities.append(name)
-                     
-                     if final_regions:
-                         parsed["comparison_targets"].extend(final_regions)
-                         parsed["facility_names"] = clean_facilities
-                         # If we found regions but no actual facilities, change intent/mode?
-                         if not clean_facilities:
-                             parsed["comparison_entity"] = "region"
-                             parsed["comparison_mode"] = True
-                     
-                     # Re-map UIDs for CLEANED facilities only
-                     new_uids = []
-                     all_facilities_flat = get_all_facilities_flat(self.user) # Renamed to avoid conflict
-                     flat_map = {f[0].lower(): f[1] for f in all_facilities_flat}
-                     
-                     for f_name in clean_facilities:
-                         # Try to fuzzy match against all facilities to get UID
-                         m_fac = difflib.get_close_matches(f_name.lower(), flat_map.keys(), n=1, cutoff=0.6)
-                         if m_fac:
-                             new_uids.append(flat_map[m_fac[0]])
-                     
-                     parsed["facility_uids"] = new_uids
-             
+                     if (count_requested or not fulfillment_requested) and not fulfillment_requested:
+                         msg = f"There are **{len(all_facilities)}** facilities available in total.\n\n"
+                         msg += "To see a more specific list, you can ask:\n"
+                         msg += "- 'list facilities for **Tigray** region'\n"
+                         msg += "- 'show facilities in **Amhara**'\n\n"
+                         msg += "Would you like me to list all of them anyway? (This might be a long list!)"
+                         context["last_question"] = "facilities"
+                         return None, msg
+                     else:
+                         # Full List (Confirmated)
+                         all_fac_names = sorted([f[0] for f in all_facilities])
+                         msg = f"Here are all **{len(all_fac_names)}** facilities:\n- " + "\n- ".join(all_fac_names[:50])
+                         if len(all_fac_names) > 50:
+                             msg += "\n...(list truncated for length)"
+                         return None, msg
+
              return None, "I'm not sure which entity (region or facility) you are asking about."
         
         # Update Context even for Metadata queries (so "Total" can be answered next)
@@ -1341,14 +1444,31 @@ class ChatbotLogic:
              return None, None # Should have returned above, but just in case
         
         if not parsed["kpi"]:
-            return None, "I couldn't identify the specific health indicator (KPI) you're asking about. Try phrases like 'C-Section Rate', 'PPH Rate', or 'Total Deliveries'."
+            # Smart response for out-of-scope queries
+            msg = "I couldn't identify a specific health indicator in your question.\n\n"
+            msg += "I currently provide information about **maternal health indicators**.\n\n"
+            msg += "Would you like to see all available indicators? Just say 'show all indicators' or 'list indicators'."
+            return None, msg
 
+        # --- SPECIALIZATION CHECK: Restrict to Maternal Indicators for Plotting/Explaining ---
         # 1. Determine Data Source (Maternal vs Newborn)
         use_newborn_data = False
         kpi_name = parsed["kpi"]
         kpi_lower = kpi_name.lower()
-        if any(x in kpi_lower for x in ["newborn", "neonatal", "inborn", "outborn", "kmc", "cpap", "nmr", "rds", "temperature"]):
+        
+        # Comprehensive check for newborn indicators
+        newborn_indicators = [
+            "inborn", "outborn", "neonatal", "newborn", "nmr", "kmc", "cpap", 
+            "birth weight", "rds", "temperature", "missing temperature", 
+            "missing birth weight", "missing discharge status"
+        ]
+        
+        if any(x in kpi_lower for x in newborn_indicators):
              use_newborn_data = True
+        
+        # If user wants to PLOT or EXPLAIN a newborn indicator, intercept with specialization message
+        if use_newborn_data and parsed["intent"] in ["plot", "explain"]:
+             return None, "I am currently able to plot for **Maternal indicators**. You may say 'list indicators' to see what I can help you with."
              
         active_df = self.newborn_df if use_newborn_data else self.maternal_df
         
@@ -1495,15 +1615,29 @@ class ChatbotLogic:
             all_comparison_uids = [] # To store all UIDs for specialized scripts
             
             comparison_groups = [] # List of (EntityName, FilteredDF)
+            is_compare_all = False  # Flag to track if comparing all entities
             
             if comparison_mode:
+                # Check if "all" comparison was requested in the query
+                query_lower_check = query.lower()
+                if any(x in query_lower_check for x in ["all facilities", "all facility", "every facility", "all hospitals"]):
+                    is_compare_all = True
+                    comparison_entity = "facility"
+                elif any(x in query_lower_check for x in ["all regions", "all region", "every region", "all reioings", "all reigons", "all reginos"]):
+                    is_compare_all = True
+                    comparison_entity = "region"
+                
                 # --- CLARIFICATION CHECK ---
-                if not parsed.get("facility_names") and not parsed.get("comparison_targets"):
-                     return None, "Which **facilities** or **regions** would you like to compare? Please specify at least two, or say 'all regions'."
+                if not parsed.get("facility_names") and not parsed.get("comparison_targets") and not is_compare_all:
+                     return None, "Which **facilities** or **regions** would you like to compare? Please specify at least two, or say 'all facilities' or 'all regions'."
 
                 if comparison_entity == "region":
                     regions_data = get_facilities_grouped_by_region(self.user)
                     comp_targets = parsed.get("comparison_targets", [])
+                    
+                    # If "all regions", populate all
+                    if is_compare_all:
+                        comp_targets = list(regions_data.keys())
                     
                     for r_name, facilities in regions_data.items():
                          if comp_targets and r_name not in comp_targets:
@@ -1515,9 +1649,23 @@ class ChatbotLogic:
                          all_comparison_uids.append(r_name) 
                          
                 elif comparison_entity == "facility":
-                    for name, uid in zip(parsed["facility_names"], parsed["facility_uids"]):
-                        comparison_groups.append((name, [uid]))
-                        all_comparison_uids.append(uid)
+                    # If "all facilities", populate all
+                    if is_compare_all:
+                        all_facilities_flat = get_all_facilities_flat(self.user)
+                        for fac_name, fac_uid in all_facilities_flat:
+                            comparison_groups.append((fac_name, [fac_uid]))
+                            all_comparison_uids.append(fac_uid)
+                    else:
+                        for name, uid in zip(parsed["facility_names"], parsed["facility_uids"]):
+                            comparison_groups.append((name, [uid]))
+                            all_comparison_uids.append(uid)
+                
+                # Force table-only rendering for "all" comparisons unless explicit plot request
+                if is_compare_all:
+                    explicit_plot_keywords = ["plot", "graph", "chart", "visualize", "trend"]
+                    if not any(k in query.lower() for k in explicit_plot_keywords):
+                        chart_type = "table"
+                        suggestion = f"\n\n💡 *Showing comparison table for all {comparison_entity}s. Ask to 'plot' if you want a chart.*"
             
             # If NOT comparison mode (or failed setup), default to single group
             if not comparison_groups:
@@ -1645,6 +1793,8 @@ class ChatbotLogic:
             # --- SPECIALIZED RENDERING (Move BEFORE Generic Logic) ---
             # Check for specialized KPI using both the potentially mapped 'active' name and original name
             kpi_suffix = self.SPECIALIZED_KPI_MAP.get(active_kpi_name) or self.SPECIALIZED_KPI_MAP.get(kpi_name)
+            
+            # Skip specialized rendering if we are in "table" mode for broad comparison (Force generic table)
             if kpi_suffix:
                 try:
                     # Determine module and function prefix
@@ -1693,6 +1843,7 @@ class ChatbotLogic:
                         "func_prefix": func_prefix,
                         "comparison_mode": comparison_mode,
                         "comparison_entity": comparison_entity,
+                        "is_compare_all": is_compare_all,  # Add flag to spec
                         "params": {
                             "active_kpi_name": active_kpi_name,
                             "facility_names": parsed.get("facility_names"),
@@ -1994,7 +2145,11 @@ def render_chatbot():
         params = spec["params"]
         comparison_mode = spec["comparison_mode"]
         comparison_entity = spec["comparison_entity"]
+        is_compare_all = spec.get("is_compare_all", False)  # Get the flag
         message_index = spec.get("message_index", 0)
+        
+        # If comparing all entities, only show the table, not the plot
+        suppress_plot = is_compare_all
         
         try:
             if suffix == "utils":
@@ -2016,15 +2171,15 @@ def render_chatbot():
                     render_func = getattr(module, func_name)
                     
                     if suffix == "utils" or suffix == "newborn":
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"])
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     elif suffix == "newborn_simplified":
-                        render_func(render_df, facility_uids=params["all_comparison_uids"], facility_names=params["facility_names"])
+                        render_func(render_df, facility_uids=params["all_comparison_uids"], facility_names=params["facility_names"], key_suffix=f"msg_{message_index}")
                     elif suffix == "admitted_mothers":
                         # admitted_mothers has a different signature (no num/den labels)
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"])
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     else:
                         # All other specialized maternal modules (pph, svd, arv, etc.) use the same signature as utils
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"])
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                 else:
                     if suffix == "newborn_simplified":
                          func_name = f"{func_prefix}_region_comparison"
@@ -2036,32 +2191,32 @@ def render_chatbot():
                     if suffix == "utils":
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, regions_mapping, params["num_label"], params["den_label"])
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     elif suffix == "newborn":
                         regions_mapping = {} # Fallback
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, params["all_comparison_uids"], params["num_label"], params["den_label"])
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, params["all_comparison_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     elif suffix == "newborn_simplified":
                         render_func(render_df, region_names=params["all_comparison_uids"])
                     elif suffix == "admitted_mothers":
                         # admitted_mothers has a different signature
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"])
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     else:
                         # All other specialized maternal modules use the same signature as utils
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, regions_mapping, params["num_label"], params["den_label"])
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
             else:
                 render_func = getattr(module, f"{func_prefix}_trend_chart")
                 if suffix == "utils" or suffix == "newborn":
-                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"])
+                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
                 elif suffix == "newborn_simplified":
                     render_func(render_df, period_col="period_display", title=params["active_kpi_name"], facility_uids=params.get("facility_uids"))
                 elif suffix == "admitted_mothers":
                     # admitted_mothers has a different signature
-                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], facility_uids=[f"msg_{message_index}"])
+                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
                 else:
                     # All other specialized maternal modules (pph, svd, arv, etc.) use the same signature as utils
-                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"])
+                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
         except Exception as e:
             st.error(f"Error rendering specialized content: {e}")
 
@@ -2132,7 +2287,16 @@ def render_chatbot():
                         
                 except Exception as e:
                     logging.error(f"Chatbot Error: {e}", exc_info=True)
-                    error_msg = f"I encountered an error analyzing your request: {str(e)}"
+                    
+                    # Provide smart error messages
+                    error_type = type(e).__name__
+                    if "KeyError" in error_type:
+                        error_msg = "I couldn't find the requested data field. This indicator might not be available for your selection. Try asking about a different indicator or time period."
+                    elif "AttributeError" in error_type:
+                        error_msg = "I had trouble processing this request. The data structure doesn't support this query. Try rephrasing your question."
+                    else:
+                        error_msg = f"I encountered an issue: {str(e)}\n\nTry asking in a different way or about a different indicator."
+                    
                     message_placeholder.markdown(error_msg)
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
 

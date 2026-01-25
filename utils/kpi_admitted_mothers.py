@@ -202,7 +202,7 @@ def render_admitted_mothers_trend_chart(
 
     x_axis_col = period_col
 
-    df = df.copy()
+    df = df.reset_index(drop=True)
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
     # Sort periods chronologically
@@ -324,6 +324,7 @@ def render_admitted_mothers_facility_comparison_chart(
     facility_names=None,
     facility_uids=None,
     value_name="Admitted Mothers",
+    suppress_plot=False,
     **kwargs,
 ):
     """Render facility comparison chart for Admitted Mothers - Specialized for Counts (Bar Chart)"""
@@ -379,7 +380,10 @@ def render_admitted_mothers_facility_comparison_chart(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    if not suppress_plot:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info(f"💡 Showing comparison table only for **{title}**.")
 
     # Table
     st.markdown("---")
@@ -393,7 +397,8 @@ def render_admitted_mothers_facility_comparison_chart(
     st.dataframe(pd.DataFrame(pivot_data), use_container_width=True)
 
     import time
-    unique_key = f"maternal_admitted_facility_{int(time.time())}_{hash(str(df))}"
+    key_suffix = kwargs.get("key_suffix", "")
+    unique_key = f"maternal_admitted_facility_{int(time.time())}_{key_suffix}_{hash(str(df))}"
     st.download_button(
         label="📥 Download Facility Comparison Data",
         data=df.to_csv(index=False),
@@ -414,6 +419,7 @@ def render_admitted_mothers_region_comparison_chart(
     region_mapping=None,
     facilities_by_region=None,
     value_name="Admitted Mothers",
+    suppress_plot=False,
     **kwargs,
 ):
     """Render region comparison chart for Admitted Mothers - Specialized for Counts (Bar Chart)"""
@@ -422,6 +428,9 @@ def render_admitted_mothers_region_comparison_chart(
 
     if text_color is None:
         text_color = auto_text_color(bg_color)
+
+    # Ensure clean index
+    df = df.reset_index(drop=True)
 
     if df is None or df.empty:
         st.info("⚠️ No data available for region comparison.")
@@ -468,7 +477,10 @@ def render_admitted_mothers_region_comparison_chart(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    if not suppress_plot:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info(f"💡 Showing comparison table only for **{title}**.")
 
     # Table
     st.markdown("---")
@@ -482,7 +494,8 @@ def render_admitted_mothers_region_comparison_chart(
     st.dataframe(pd.DataFrame(pivot_data), use_container_width=True)
 
     import time
-    unique_key = f"maternal_admitted_region_{int(time.time())}_{hash(str(df))}"
+    key_suffix = kwargs.get("key_suffix", "")
+    unique_key = f"maternal_admitted_region_{int(time.time())}_{key_suffix}_{hash(str(df))}"
     st.download_button(
         label="📥 Download Region Comparison Data",
         data=df.to_csv(index=False),

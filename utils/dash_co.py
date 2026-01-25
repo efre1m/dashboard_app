@@ -512,7 +512,7 @@ def render_kpi_tab_navigation():
         cols = st.columns(5)
         with cols[0]:
             if st.button(
-                "Postpartum Hemorrhage",
+                "PPH Rate",
                 key="pph_btn",
                 use_container_width=True,
                 type=(
@@ -525,7 +525,7 @@ def render_kpi_tab_navigation():
 
         with cols[1]:
             if st.button(
-                "Antepartum Complications",
+                "Antepartum Rate",
                 key="antipartum_btn",
                 use_container_width=True,
                 type=(

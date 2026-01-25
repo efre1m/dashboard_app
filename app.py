@@ -42,6 +42,7 @@ ESSENTIAL_STATES = {
     "data_loaded": False,
     "raw_data": None,
     "processed_data": None,
+    "chatbot_context": {},
 }
 
 for key, default_value in ESSENTIAL_STATES.items():

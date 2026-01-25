@@ -1288,13 +1288,7 @@ def render():
 
         if timestamp_key in st.session_state:
             time_elapsed = time.time() - st.session_state[timestamp_key]
-            minutes_old = int(time_elapsed // 60)
-            seconds_old = int(time_elapsed % 60)
-
-            if minutes_old < 30:
-                st.sidebar.info(f"Data: {minutes_old}m {seconds_old}s old")
-            else:
-                st.sidebar.warning(f"Data: {minutes_old}m old (will auto-refresh)")
+            # Sidebar info removed per user request
 
     # ================ SIMPLE FACILITY SELECTION ================
     st.sidebar.markdown("---")

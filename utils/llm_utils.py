@@ -186,5 +186,7 @@ def query_llm(user_query, facilities_list=None):
         return parsed
         
     except Exception as e:
-        logging.error(f"LLM Query Failed: {e}")
+        # LLM Query errors (like 429 Too Many Requests) can be noisy.
+        # Since we use rule-based logic as a robust primary fallback, we can silence these.
+        # logging.error(f"LLM Query Failed: {e}")
         return None
