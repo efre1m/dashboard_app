@@ -1071,6 +1071,7 @@ def render_newborn_trend_chart(
     numerator_name="Numerator",
     denominator_name="Denominator",
     facility_uids=None,
+    **kwargs
 ):
     """Render a trend chart for newborn KPI"""
     from utils.kpi_utils import render_trend_chart
@@ -1100,6 +1101,7 @@ def render_newborn_facility_comparison_chart(
     facility_uids,
     numerator_name,
     denominator_name,
+    **kwargs
 ):
     """Render facility comparison chart for newborn KPI"""
     from utils.kpi_utils import render_facility_comparison_chart
@@ -1130,6 +1132,7 @@ def render_newborn_region_comparison_chart(
     facilities_by_region=None,
     numerator_name="Numerator",
     denominator_name="Denominator",
+    **kwargs
 ):
     """Render region comparison chart - CHART ABOVE TABLE VERSION"""
 
@@ -1272,6 +1275,7 @@ def render_admitted_newborns_trend_chart(
     facility_names=None,
     value_name="Admitted Newborns",
     facility_uids=None,
+    **kwargs
 ):
     """Render trend chart for Admitted Newborns - FIXED WITH UNIQUE KEYS"""
 
@@ -1443,6 +1447,7 @@ def render_admitted_newborns_facility_comparison_chart(
     facility_names=None,
     facility_uids=None,
     value_name="Admitted Newborns",
+    **kwargs
 ):
     """Render facility comparison chart for Admitted Newborns - FIXED WITH UNIQUE KEYS"""
 
@@ -1699,6 +1704,7 @@ def render_admitted_newborns_region_comparison_chart(
     region_mapping=None,
     facilities_by_region=None,
     value_name="Admitted Newborns",
+    **kwargs
 ):
     """Render region comparison chart for Admitted Newborns - FIXED DOWNLOAD BUTTONS"""
 

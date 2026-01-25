@@ -792,6 +792,7 @@ def render_birth_weight_trend_chart(
     bg_color="#FFFFFF",
     text_color=None,
     facility_uids=None,
+    **kwargs
 ):
     """Render trend chart for Birth Weight KPI - WITH SINGLE TABLE"""
     if text_color is None:
@@ -1041,6 +1042,7 @@ def render_birth_weight_facility_comparison(
     text_color=None,
     facility_names=None,
     facility_uids=None,
+    **kwargs
 ):
     """Render facility comparison for birth weight - WITH SINGLE TABLE"""
     if text_color is None:
@@ -1282,6 +1284,7 @@ def render_birth_weight_region_comparison(
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
+    **kwargs
 ):
     """Render region comparison for birth weight - WITH SINGLE TABLE"""
     if text_color is None:
@@ -1526,6 +1529,7 @@ def render_cpap_general_trend_chart(
     facility_uids=None,
     numerator_name="CPAP Cases",
     denominator_name="Total Admitted Newborns",
+    **kwargs
 ):
     """Render general CPAP coverage trend chart - WITH SINGLE TABLE"""
     if text_color is None:
@@ -1719,6 +1723,7 @@ def render_cpap_rds_trend_chart(
     facility_uids=None,
     numerator_name="CPAP Cases",
     denominator_name="Total RDS Cases",
+    **kwargs
 ):
     """Render CPAP for RDS trend chart - WITH SINGLE TABLE"""
     if text_color is None:
@@ -1912,6 +1917,7 @@ def render_cpap_general_facility_comparison(
     text_color=None,
     facility_names=None,
     facility_uids=None,
+    **kwargs
 ):
     """Render facility comparison for general CPAP coverage - FIXED VERSION"""
     if text_color is None:
@@ -2089,6 +2095,7 @@ def render_cpap_rds_facility_comparison(
     text_color=None,
     facility_names=None,
     facility_uids=None,
+    **kwargs
 ):
     """Render facility comparison for CPAP for RDS - FIXED VERSION"""
     if text_color is None:
@@ -2268,6 +2275,7 @@ def render_cpap_general_region_comparison(
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
+    **kwargs
 ):
     """Render region comparison for general CPAP coverage - FIXED VERSION"""
     if text_color is None:
@@ -2452,6 +2460,7 @@ def render_cpap_rds_region_comparison(
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
+    **kwargs
 ):
     """Render region comparison for CPAP for RDS - FIXED VERSION"""
     if text_color is None:
@@ -2637,6 +2646,7 @@ def render_kmc_coverage_trend_chart(
     facility_uids=None,
     numerator_name="KMC Cases",
     denominator_name="Total Newborns with Birth Weight",
+    **kwargs
 ):
     """Render KMC coverage trend - WITH GROUP BAR CHART"""
     if text_color is None:
@@ -2900,6 +2910,7 @@ def render_cpap_by_weight_trend_chart(
     bg_color="#FFFFFF",
     text_color=None,
     facility_uids=None,
+    **kwargs
 ):
     """Render CPAP coverage trend by birth weight category - WITH GROUP BAR CHART"""
     if text_color is None:
@@ -3164,6 +3175,7 @@ def render_kmc_facility_comparison(
     text_color=None,
     facility_names=None,
     facility_uids=None,
+    **kwargs
 ):
     """Render facility comparison for KMC coverage - WITH GROUP BAR CHART"""
     if text_color is None:
@@ -3382,6 +3394,7 @@ def render_cpap_facility_comparison(
     text_color=None,
     facility_names=None,
     facility_uids=None,
+    **kwargs
 ):
     """Render facility comparison for CPAP coverage (by weight categories) - WITH GROUP BAR CHART"""
     if text_color is None:
@@ -3601,6 +3614,7 @@ def render_kmc_region_comparison(
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
+    **kwargs
 ):
     """Render region comparison for KMC coverage - WITH GROUP BAR CHART"""
     if text_color is None:
@@ -3826,6 +3840,7 @@ def render_cpap_region_comparison(
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
+    **kwargs
 ):
     """Render region comparison for CPAP coverage (by weight categories) - WITH GROUP BAR CHART"""
     if text_color is None:

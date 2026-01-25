@@ -1430,10 +1430,16 @@ def render_facility_comparison_chart(
         if pd.notna(row["orgUnit"]) and pd.notna(row["Facility"]):
             facility_mapping[str(row["orgUnit"])] = str(row["Facility"])
 
-    # If we have facility_names parameter, update the mapping
-    if facility_names and len(facility_names) == len(facility_uids):
+    # If we have facility_names parameter, update/restrict the mapping
+    if facility_names and facility_uids and len(facility_names) == len(facility_uids):
+        # STRICT MODE: Only include the requested UIDs
+        scoped_mapping = {}
         for uid, name in zip(facility_uids, facility_names):
-            facility_mapping[str(uid)] = name
+            scoped_mapping[str(uid)] = name
+        facility_mapping = scoped_mapping
+    elif facility_uids:
+        # Filter existing mapping to only include requested UIDs
+        facility_mapping = {uid: name for uid, name in facility_mapping.items() if uid in [str(u) for u in facility_uids]}
 
     # Prepare comparison data
     comparison_data = []
@@ -1729,6 +1735,12 @@ def render_region_comparison_chart(
 
     # Prepare comparison data
     comparison_data = []
+    
+    # Filter target regions if provided
+    target_regions = df["Region"].unique()
+    if region_names:
+        # Convert all to same case for comparison to be safe
+        target_regions = [r for r in target_regions if r in region_names or r.lower() in [n.lower() for n in region_names]]
 
     # Get unique periods in order
     if "period_sort" in df.columns:
@@ -1752,7 +1764,7 @@ def render_region_comparison_chart(
     period_order = [format_period_month_year(p) for p in period_order]
 
     # Prepare data for each region and period
-    for region_name in df["Region"].unique():
+    for region_name in target_regions:
         region_df = df[df["Region"] == region_name].copy()
 
         if region_df.empty:

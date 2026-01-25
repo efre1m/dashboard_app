@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from utils.config import settings
 from utils.dash_co import KPI_MAPPING
-from newborns_dashboard.dash_co_newborn import NEWBORN_KPI_MAPPING
+from utils.dash_co import KPI_MAPPING
 
 logging.basicConfig(level=logging.INFO)
 
@@ -13,15 +13,11 @@ def build_system_prompt(facilities_list=None):
     Constructs the system prompt with domain knowledge.
     """
     
-    # 1. Extract KPI definitions (Maternal & Newborn)
+    # 1. Extract KPI definitions (Strictly Maternal)
     kpi_descriptions = []
     
     # Maternal
     for kpi, details in KPI_MAPPING.items():
-        kpi_descriptions.append(f"- {kpi}: {details.get('title', kpi)}")
-        
-    # Newborn
-    for kpi, details in NEWBORN_KPI_MAPPING.items():
         kpi_descriptions.append(f"- {kpi}: {details.get('title', kpi)}")
         
     kpi_context = "\n".join(kpi_descriptions)
@@ -36,16 +32,18 @@ def build_system_prompt(facilities_list=None):
         elif fac_names:
              fac_names = facilities_list
              
-        if len(fac_names) > 50:
-            facility_context = f"Available Facilities (first 50): {', '.join(fac_names[:50])}..."
+        if len(fac_names) > 150:
+            facility_context = f"Available Facilities (first 150): {', '.join(fac_names[:150])}..."
         else:
             facility_context = f"Available Facilities: {', '.join(fac_names)}"
             
     today = datetime.now().strftime("%Y-%m-%d")
 
     prompt = f"""
-You are an intelligent assistant for a Maternal and Newborn Health Dashboard.
+You are an intelligent assistant for a Maternal Health Dashboard.
 Your job is to parse user queries into structured JSON for the dashboard's data engine.
+
+IMPORTANT: You ONLY have information on Maternal Health indicators. You do NOT have any data on Newborn Care, Programs, or other health areas.
 
 Current Date: {today}
 
@@ -83,21 +81,12 @@ INSTRUCTIONS:
    - "antepartum"/"antenatal complications"/"ante partum"/"antipartum" → "Antepartum Complications Rate (%)"
    - "maternal death"/"mortality"/"materna death" → "Institutional Maternal Death Rate (%)"
    - "stillbirth"/"still birth"/"stil birth"/"stillbrith" → "Stillbirth Rate (%)"
-   - "missing mode"/"missing delivery" → "Missing Mode of Delivery"
+   - "missing mode"/"missing delivery"/"mode of delivery" → "Missing Mode of Delivery"
    - "missing birth outcome"/"missing birth"/"missing oucome" → "Missing Birth Outcome"
-   - "missing discharge"/"missing condition" → "Missing Condition of Discharge"
+   - "missing discharge"/"missing condition"/"mode of discharge"/"discharge condition" → "Missing Condition of Discharge"
    - "pnc"/"postnatal"/"post natal" → "Early Postnatal Care (PNC) Coverage (%)"
    - "ippcar"/"contraceptive"/"family planning"/"fp" → "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
-   
-   **Newborn Indicators:**
-   - "hypothermia"/"hypthermia"/"hipothermia"/"hypo thermia" → "Hypothermia on Admission Rate (%)"
-   - "neonatal death"/"neonatal mortality"/"nmr"/"neo natal death" → "Neonatal Mortality Rate (%)"
-   - "kmc"/"kangaroo"/"kangaro"/"skin to skin"/"kangaroo care" → "KMC Coverage by Birth Weight"
-   - "cpap"/"c pap"/"c-pap" → "General CPAP Coverage"
-   - "rds"/"respiratory distress" → "CPAP for RDS"
-   - "inborn" → "Inborn Rate (%)"
-   - "outborn" → "Outborn Rate (%)"
-   - "admitted newborns"/"newborn admissions"/"newborn admission" → "Admitted Newborns"
+
 
 3. Identify the CHART TYPE: "line", "bar", "area", or "table". Default to "line" unless specified.
 

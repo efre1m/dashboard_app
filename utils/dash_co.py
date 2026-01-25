@@ -1795,6 +1795,8 @@ def render_additional_analytics(
 def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure a single datetime column 'event_date' exists for patient data"""
     if df.empty:
+        if "event_date" not in df.columns:
+            df["event_date"] = pd.Series(dtype="datetime64[ns]")
         return df
 
     df = df.copy()

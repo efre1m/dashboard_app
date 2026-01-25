@@ -1075,6 +1075,10 @@ def render_maternal_dashboard_shared(
     # This will create proper event_date column
     working_df = normalize_patient_dates(working_df)
 
+    if working_df.empty:
+        st.info("ℹ️ No data available for the selected facilities/indicators.")
+        return
+
     # Log date statistics
     valid_dates = working_df["event_date"].notna().sum()
     total_patients = len(working_df)

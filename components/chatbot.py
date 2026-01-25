@@ -70,9 +70,13 @@ class ChatbotLogic:
         self.data = data
         self.user = st.session_state.get("user", {})
         self.facility_mapping = get_facility_mapping_for_user(self.user)
+        # --- UNIVERSAL REGISTRY (FOR EXTRACTION) ---
+        # Get ALL facilities regardless of user role for name detection purposes
+        self.universal_facility_mapping = get_facility_mapping_for_user({"role": "national"})
+        
         # Reverse mapping for easy lookup
         # Revised mapping to match current file state: self.uid_to_name
-        self.uid_to_name = {v: k for k, v in self.facility_mapping.items()}
+        self.uid_to_name = {v: k for k, v in self.universal_facility_mapping.items()}
         
         # Maternal and Newborn data
         self.maternal_df = data.get("maternal", {}).get("patients", pd.DataFrame()) if data.get("maternal") else pd.DataFrame()
@@ -185,6 +189,8 @@ class ChatbotLogic:
             "materna": "maternal",
             "materanl": "maternal",
             "matenal": "maternal",
+            "changi": "chagni",
+            "dangla": "dangela",
             
             # Intent/Action Variations
             "inidcatorys": "indicators",
@@ -193,6 +199,7 @@ class ChatbotLogic:
             "indicatry": "indicator",
             "indicotrs": "indicators",
             "indcators": "indicators",
+            "indictors": "indicators",
             "indictors": "indicators",
             "lsit": "list",
             "listt": "list",
@@ -206,8 +213,25 @@ class ChatbotLogic:
             "faclities": "facilities",
             "regijon": "region",
             "regjon": "region",
-            "indicatorys": "indicators",
+            # "indicatorys": "indicators", # Duplicate
         }
+
+        # --- FACILITY SEARCH INDEX ---
+        # Build an index of first words for fast/partial lookup
+        self.facility_search_index = {}
+        for full_name in self.universal_facility_mapping.keys():
+             clean_name = re.sub(r'\s+', ' ', full_name).strip()
+             first_word = clean_name.split(' ')[0].lower()
+             if first_word not in self.facility_search_index:
+                  self.facility_search_index[first_word] = []
+             self.facility_search_index[first_word].append(full_name)
+        
+        # Debug: Log some sample entries to verify index
+        logging.info(f"🔍 Facility Index Built: {len(self.facility_search_index)} unique first words")
+        for sample_word in ['ambo', 'addis', 'debre']:
+            if sample_word in self.facility_search_index:
+                logging.info(f"  • '{sample_word}': {len(self.facility_search_index[sample_word])} facilities")
+
 
         # --- SPECIALIZED KPI MAPPING ---
         # Maps full KPI names to their internal utility script suffixes
@@ -343,6 +367,15 @@ class ChatbotLogic:
             query_norm = query_norm.replace(typo, correct)
         query_norm = re.sub(r'\s+', ' ', query_norm).strip()
         
+        # --- HARD-REJECT NEWBORN KEYWORDS (PREVENT CONTRADICTIONS) ---
+        # Detect any mention of newborn-related terms including plurals and variations
+        newborn_regex = r'\b(newborns?|cpap|kmc|nmr|neonatal|birth\s?weights?|inborns?|outborns?)\b'
+        if re.search(newborn_regex, query_norm, re.IGNORECASE):
+             return {
+                 "intent": "chat",
+                 "response": "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
+             }
+        
         
         # Handle follow-up responses FIRST (before LLM)
         if query_norm in ["yes", "yeah", "sure", "ok", "okay", "yep", "do it"]:
@@ -358,6 +391,17 @@ class ChatbotLogic:
                 return {"intent": "metadata_query", "entity_type": "facility", "count_requested": False, "region_filter": target_reg, "fulfillment_requested": True}
             elif "indicator" in last_question:
                 return {"intent": "list_kpis"}
+            elif "mean" in last_question and "facility" in last_question:
+                # Handle facility disambiguation pick
+                picked_fac = query.strip()
+                if picked_fac in self.universal_facility_mapping:
+                     return {
+                         "intent": "plot",
+                         "kpi": context.get("pending_kpi"),
+                         "facility_uids": [self.universal_facility_mapping[picked_fac]],
+                         "facility_names": [picked_fac],
+                         "fulfillment_requested": True
+                     }
         
         
         # Handle explicit list requests - OPTIMIZED FOR PLURALS & VARIATIONS
@@ -372,7 +416,6 @@ class ChatbotLogic:
             
         if entity_type:
             # Extract Region if mentioned (even in rule-based mode)
-            from utils.queries import get_facilities_grouped_by_region
             regions_data = get_facilities_grouped_by_region(self.user)
             region_found = None
             for r_name in regions_data.keys():
@@ -393,8 +436,8 @@ class ChatbotLogic:
         # 0. Try LLM Parsing
         from utils.llm_utils import query_llm
         
-        # Prepare list of facility names for context
-        facility_names_list = list(self.facility_mapping.keys())
+        # Prepare list of facility names for context (National scale)
+        facility_names_list = list(self.universal_facility_mapping.keys())
         
         llm_result = query_llm(query, facility_names_list)
         
@@ -423,10 +466,62 @@ class ChatbotLogic:
                 selected_facility_names = []
                 
                 llm_facs = llm_result.get("facility_names", [])
+                logging.info(f"🔍 LLM Extracted Facilities: {llm_facs}")
+                logging.info(f"🔍 Query normalized: '{query_norm}'")
                 
+                # --- MANDATORY AMBIGUITY PRE-CHECK ---
+                # Check if any LLM-extracted name is ambiguous BEFORE resolution
+                if llm_facs:
+                    logging.info(f"🔍 Running ambiguity pre-check on {len(llm_facs)} extracted names...")
+                    for potential_name in llm_facs:
+                         name_norm = re.sub(r'\s+', ' ', potential_name.strip().lower())
+                         first_word = name_norm.split(' ')[0]
+                         index_hits = self.facility_search_index.get(first_word, [])
+                         
+                         logging.info(f"  ⚡ Checking '{potential_name}' -> first_word='{first_word}' -> {len(index_hits)} hits")
+                         
+                         if len(index_hits) > 1:
+                              # Check if this is truly ambiguous (multiple facilities start with same word)
+                              logging.info(f"⚠️ AMBIGUITY DETECTED: '{potential_name}' -> {len(index_hits)} facilities")
+                              options_str = "\n".join([f"- {m}" for m in index_hits[:8]])
+                              return {
+                                  "intent": "chat",
+                                  "response": f"I found **{len(index_hits)}** facilities matching '**{first_word}**'. Which one did you mean?\n\n{options_str}",
+                                  "pending_kpi": llm_result.get("kpi")
+                              }
+                else:
+                    logging.info(f"🔍 LLM didn't extract facilities, will try manual fallback...")
+                
+                # --- AGGRESSIVE RULE-BASED FALLBACK (Word Scan) ---
+                # If LLM didn't find specific facilities, scan prompt words against index
+                if not llm_facs:
+                     query_words = query_norm.split(' ')
+                     for word in query_words:
+                          if len(word) < 3: continue
+                          # Direct key check
+                          hits = self.facility_search_index.get(word)
+                          
+                          # Fuzzy key check if no direct hit
+                          if not hits:
+                               fuzzy_keys = difflib.get_close_matches(word, self.facility_search_index.keys(), n=1, cutoff=0.7)
+                               if fuzzy_keys:
+                                    hits = self.facility_search_index[fuzzy_keys[0]]
+                          
+                          if hits:
+                               # If multiple hits for a single word, trigger DISAMBIGUATION immediately
+                               if len(hits) > 1:
+                                    options_str = "\n".join([f"- {m}" for m in hits[:8]])
+                                    return {
+                                        "intent": "chat",
+                                        "response": f"I found **{len(hits)}** facilities matching '**{word}**'. Which one did you mean?\n\n{options_str}",
+                                        "pending_kpi": llm_result.get("kpi")
+                                    }
+                               else:
+                                    llm_facs.append(hits[0])
+
                 # --- FUZZY MATCHING & RESOLUTION ---
                 # Resolve Facility Names (Handle Typos) AND Region Names
-                regions_data = get_facilities_grouped_by_region(self.user)
+                regions_data = get_facilities_grouped_by_region({"role": "national"})
                 all_regions = list(regions_data.keys())
                 
                 found_regions = []
@@ -435,46 +530,63 @@ class ChatbotLogic:
                     for fname in llm_facs:
                         fname_clean = fname.strip().lower()
                         match_found = False
-
-                        # 1. Try Direct Match (Facility) via UID mapping
-                        if fname in self.facility_mapping:
-                            selected_facility_uids.append(self.facility_mapping[fname])
+                        
+                        # Normalize multiple spaces (e.g. "Ambo   university")
+                        fname_norm = re.sub(r'\s+', ' ', fname_clean)
+                        
+                        # 1. Try Direct Match (Universal) via UID mapping
+                        if fname in self.universal_facility_mapping:
+                            selected_facility_uids.append(self.universal_facility_mapping[fname])
                             selected_facility_names.append(fname)
                             match_found = True
                             continue
                         
-                        # 2. Try Robust Partial Match against ALL facilities (Prioritize this over Region)
-                        all_facilities = list(self.facility_mapping.keys())
+                        # 2. Try First-Word Index & Multi-hit Disambiguation
+                        first_word = fname_norm.split(' ')[0]
+                        search_hits = self.facility_search_index.get(first_word, [])
+                        logging.info(f"Chatbot Search: '{fname_norm}' -> First Word: '{first_word}' -> Hits: {len(search_hits)}")
                         
-                        starts_with_match = None
-                        contains_match = None
+                        # If first_word didn't hit, try fuzzy
+                        if not search_hits:
+                             fuzzy_keys = difflib.get_close_matches(first_word, self.facility_search_index.keys(), n=1, cutoff=0.7)
+                             if fuzzy_keys:
+                                  search_hits = self.facility_search_index[fuzzy_keys[0]]
+                                  logging.info(f"Chatbot Fuzzy Index: '{first_word}' -> '{fuzzy_keys[0]}'")
                         
-                        for f in all_facilities:
-                            f_clean = f.lower()
-                            if f_clean == fname_clean: 
-                                 starts_with_match = f
-                                 break
-                            if f_clean.startswith(fname_clean):
-                                 starts_with_match = f
-                                 break
-                            if fname_clean in f_clean and not contains_match:
-                                 contains_match = f
+                        # Find matches within index hits
+                        potential_matches = []
+                        for hit in search_hits:
+                             hit_norm = re.sub(r'\s+', ' ', hit.lower())
+                             # CRITICAL: Match if query is in hit OR query is a prefix
+                             if fname_norm in hit_norm or hit_norm.startswith(fname_norm) or (len(fname_norm) > 3 and hit_norm.startswith(fname_norm[:4])):
+                                  potential_matches.append(hit)
                         
-                        final_match = starts_with_match or contains_match
-                        
-                        if final_match:
-                             logging.info(f"Chatbot: Resolved '{fname}' to Facility: '{final_match}'")
-                             selected_facility_uids.append(self.facility_mapping[final_match])
+                        # De-duplicate
+                        potential_matches = list(dict.fromkeys(potential_matches))
+                        logging.info(f"Chatbot Potential Matches for '{fname_norm}': {len(potential_matches)}")
+
+                        if len(potential_matches) == 1:
+                             final_match = potential_matches[0]
+                             logging.info(f"Chatbot: Index Matched '{fname}' to Facility: '{final_match}'")
+                             selected_facility_uids.append(self.universal_facility_mapping[final_match])
                              selected_facility_names.append(final_match)
                              match_found = True
+                        elif len(potential_matches) > 1:
+                             # DISAMBIGUATION NEEDED (e.g. "Ambo")
+                             options_str = "\n".join([f"- {m}" for m in potential_matches[:8]])
+                             return {
+                                 "intent": "chat",
+                                 "response": f"I found **{len(potential_matches)}** facilities matching '**{fname}**'. Which one did you mean?\n\n{options_str}",
+                                 "pending_kpi": llm_result.get("kpi")
+                             }
                         
-                        # 3. Fallback to Strict Fuzzy Match (Facility)
+                        # 3. Last Fallback: Fuzzy (Universal)
                         if not match_found:
-                             f_matches = difflib.get_close_matches(fname, all_facilities, n=1, cutoff=0.5)
+                             f_matches = difflib.get_close_matches(fname_norm, list(self.universal_facility_mapping.keys()), n=1, cutoff=0.5)
                              if f_matches:
                                  matched_name = f_matches[0]
                                  logging.info(f"Chatbot: Fuzzy Matched '{fname}' to Facility: '{matched_name}'")
-                                 selected_facility_uids.append(self.facility_mapping[matched_name])
+                                 selected_facility_uids.append(self.universal_facility_mapping[matched_name])
                                  selected_facility_names.append(matched_name)
                                  match_found = True
                         
@@ -490,33 +602,50 @@ class ChatbotLogic:
                                  if r_matches:
                                      found_regions.append(r_matches[0])
                                      match_found = True
+
+
                 
                 # --- DRILL-DOWN / DRILL-UP LOGIC (New) ---
-                if "by facility" in query_lower or "per facility" in query_lower:
-                     # Force facility comparison if region is present
-                     if found_regions:
-                         selected_facility_uids = []
-                         selected_facility_names = []
-                         for r in found_regions:
-                              facs_in_region = regions_data.get(r, [])
-                              selected_facility_uids.extend([f[1] for f in facs_in_region])
-                              selected_facility_names.extend([f[0] for f in facs_in_region])
-                         llm_result["comparison_mode"] = True
-                         llm_result["comparison_entity"] = "facility"
+                # Check for phrases like "by facility", "under [Region]", "in [Region] facilities"
+                drill_down_phrases = ["by facility", "per facility", "under", "in "]
+                is_drill_down = any(phrase in query_lower for phrase in drill_down_phrases) and ("facilit" in query_lower or "hospital" in query_lower)
+                
+                if is_drill_down and found_regions:
+                     selected_facility_uids = []
+                     selected_facility_names = []
+                     for r in found_regions:
+                          facs_in_region = regions_data.get(r, [])
+                          selected_facility_uids.extend([f[1] for f in facs_in_region])
+                          selected_facility_names.extend([f[0] for f in facs_in_region])
+                     llm_result["comparison_mode"] = True
+                     llm_result["comparison_entity"] = "facility"
 
                 # If no facilities filtered by LLM but user is Facility Role, assume their facility
                 if not selected_facility_uids and not found_regions and self.user.get("role") == "facility":
                      selected_facility_uids = list(self.facility_mapping.values())
                      selected_facility_names = list(self.facility_mapping.keys())
                 
-                # Populate associated facilities if only Region was found
+                # Populate associated facilities if only Region was found (and not already drilled down)
                 if found_regions and not selected_facility_uids:
-                     # Get all facilities in these regions
+                     # Get all facilities in these regions for the background data, but keep names as Regions for display
                      for r in found_regions:
                           facs_in_region = regions_data.get(r, [])
                           selected_facility_uids.extend([f[1] for f in facs_in_region])
                           selected_facility_names.append(f"{r} (Region)")
-
+                
+                # FINAL VALIDATION: Ensure names match UIDs length if comparison_mode is facility
+                if llm_result.get("comparison_mode") and llm_result.get("comparison_entity") == "facility":
+                    if len(selected_facility_names) != len(selected_facility_uids):
+                        # Re-populate names from UIDs to ensure 1:1
+                        selected_facility_names = []
+                        for uid in selected_facility_uids:
+                            for name, mapped_uid in self.universal_facility_mapping.items():
+                                if mapped_uid == uid:
+                                    selected_facility_names.append(name)
+                                    break
+                
+                logging.info(f"✅ Final Facility Selection: Names={selected_facility_names}, UIDs={selected_facility_uids}")
+                
                 return {
                     "intent": llm_result.get("intent", "text"),
                     "chart_type": llm_result.get("chart_type", "line"),
@@ -1282,16 +1411,8 @@ class ChatbotLogic:
         
         # Handle List KPIs Intent (New)
         if parsed.get("intent") == "list_kpis":
-            # Include both Maternal and Newborn
-            from newborns_dashboard.dash_co_newborn import NEWBORN_KPI_MAPPING
-            
-            response = "Here are the available **Health Indicators** in this dashboard:\n\n"
-            response += "🤰 **Maternal Indicators**:\n"
+            response = "Here are the available **Maternal Health Indicators** in this dashboard:\n\n"
             for k in KPI_MAPPING.keys():
-                response += f"- {k}\n"
-            
-            response += "\n👶 **Newborn Indicators**:\n"
-            for k in NEWBORN_KPI_MAPPING.keys():
                 response += f"- {k}\n"
             
             response += "\nYou can ask me to **plot** any of these or show their **stats**!"
@@ -1300,8 +1421,15 @@ class ChatbotLogic:
 
         # Handle General Chat
         if parsed.get("intent") == "chat":
-            if parsed.get("response"):
-                return None, parsed.get("response")
+            response = parsed.get("response")
+            
+            # --- SAFETY SCRUB (REDUNDANT) ---
+            # If the response mentions Newborn data, overwrite with guidance
+            if response and re.search(r'\bnewborn\b', response, re.IGNORECASE):
+                response = "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
+            
+            if response:
+                return None, response
             
             # Fallback for local detection (e.g. password)
             q_low = query.lower()
@@ -1445,9 +1573,7 @@ class ChatbotLogic:
         
         if not parsed["kpi"]:
             # Smart response for out-of-scope queries
-            msg = "I couldn't identify a specific health indicator in your question.\n\n"
-            msg += "I currently provide information about **maternal health indicators**.\n\n"
-            msg += "Would you like to see all available indicators? Just say 'show all indicators' or 'list indicators'."
+            msg = "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
             return None, msg
 
         # --- SPECIALIZATION CHECK: Restrict to Maternal Indicators for Plotting/Explaining ---
@@ -1468,7 +1594,7 @@ class ChatbotLogic:
         
         # If user wants to PLOT or EXPLAIN a newborn indicator, intercept with specialization message
         if use_newborn_data and parsed["intent"] in ["plot", "explain"]:
-             return None, "I am currently able to plot for **Maternal indicators**. You may say 'list indicators' to see what I can help you with."
+             return None, "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
              
         active_df = self.newborn_df if use_newborn_data else self.maternal_df
         
@@ -2288,14 +2414,24 @@ def render_chatbot():
                 except Exception as e:
                     logging.error(f"Chatbot Error: {e}", exc_info=True)
                     
-                    # Provide smart error messages
-                    error_type = type(e).__name__
-                    if "KeyError" in error_type:
-                        error_msg = "I couldn't find the requested data field. This indicator might not be available for your selection. Try asking about a different indicator or time period."
-                    elif "AttributeError" in error_type:
-                        error_msg = "I had trouble processing this request. The data structure doesn't support this query. Try rephrasing your question."
+                    # USER FRIENDLY ERROR GUIDANCE
+                    error_msg = "**I had some trouble processing that request.** 🧐\n\n"
+                    
+                    e_str = str(e).lower()
+                    if "kpi" in e_str or "indicator" in e_str:
+                        error_msg += "It seems I couldn't find the specific health indicator you're looking for. I currently specialize in **Maternal Health indicators**."
+                    elif "facility" in e_str or "region" in e_str:
+                        error_msg += "I had trouble identifying the location (facility or region) in your prompt."
+                    elif "local variable" in e_str:
+                        error_msg += "I encountered a technical glitch while resolving names. Please try your request again."
                     else:
-                        error_msg = f"I encountered an issue: {str(e)}\n\nTry asking in a different way or about a different indicator."
+                        error_msg += "I'm not quite sure how to handle that specific question yet."
+                    
+                    error_msg += "\n\n---\n"
+                    error_msg += "💡 **How to Prompt for Best Results:**\n"
+                    error_msg += "- **Be Specific**: Mention an indicator and a location. *(e.g., 'Plot PPH for Tigray')*\n"
+                    error_msg += "- **Ask for Lists**: If you're unsure, ask 'list indicators' or 'show all regions'.\n"
+                    error_msg += "- **Keep it Simple**: Ask one question at a time.\n"
                     
                     message_placeholder.markdown(error_msg)
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
@@ -2318,7 +2454,7 @@ def get_welcome_message(role):
 I can help you analyze data across the **{dashboard_str}** dashboards.
 
 **What I can do for you:**
-- **📊 Plot Charts**: I can generate Line, Bar, and Area charts for Maternal Health indicators (Newborn coming soon).
+- **📊 Plot Charts**: I can generate Line, Bar, and Area charts for Maternal Health indicators.
 - **🔢 Quick Values**: Ask for a specific value (e.g. "What is the PPH rate?") and I'll provide the latest figure.
 - **🗺️ Comparisons**: Ask to compare facilities or regions! (e.g., "Compare Admitted Mothers for Adigrat and Suhul")
 - **📚 Definitions**: Ask "What is [Indicator]?" to get a medical definition.

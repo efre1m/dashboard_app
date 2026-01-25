@@ -79,6 +79,10 @@ def render_newborn_dashboard_shared(
     # =========== CRITICAL: Use normalize_newborn_patient_dates ===========
     working_df = normalize_newborn_patient_dates(working_df)
 
+    if working_df.empty:
+        st.info("ℹ️ No newborn data available for this facility/period.")
+        return
+
     # Log date statistics
     valid_dates = working_df["event_date"].notna().sum()
     total_patients = len(working_df)
