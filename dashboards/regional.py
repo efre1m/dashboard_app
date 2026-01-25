@@ -1010,7 +1010,7 @@ def render_maternal_dashboard_shared(
     # Use the same function as national.py to ensure consistency
     from utils.dash_co import normalize_patient_dates
 
-    # This will create proper event_date column
+    # This will create proper enrollment_date column
     working_df = normalize_patient_dates(working_df)
 
     if working_df.empty:
@@ -1018,10 +1018,10 @@ def render_maternal_dashboard_shared(
         return
 
     # Log date statistics
-    valid_dates = working_df["event_date"].notna().sum()
+    valid_dates = working_df["enrollment_date"].notna().sum()
     total_patients = len(working_df)
     logging.info(
-        f"📅 REGIONAL: event_date - {valid_dates}/{total_patients} valid dates"
+        f"📅 REGIONAL: enrollment_date - {valid_dates}/{total_patients} valid dates"
     )
 
     # Log sample dates to verify they're correct

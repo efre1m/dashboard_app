@@ -84,14 +84,14 @@ def render_newborn_dashboard_shared(
         return
 
     # Log date statistics
-    valid_dates = working_df["event_date"].notna().sum()
+    valid_dates = working_df["enrollment_date"].notna().sum()
     total_patients = len(working_df)
     logging.info(
-        f"📅 NEWBORN FACILITY: event_date - {valid_dates}/{total_patients} valid dates"
+        f"📅 NEWBORN FACILITY: enrollment_date - {valid_dates}/{total_patients} valid dates"
     )
 
     if valid_dates > 0:
-        sample_dates = working_df["event_date"].dropna().head(3).tolist()
+        sample_dates = working_df["enrollment_date"].dropna().head(3).tolist()
         logging.info(f"📅 NEWBORN FACILITY: Sample dates: {sample_dates}")
     # =========== END OF CRITICAL ADDITION ===========
 

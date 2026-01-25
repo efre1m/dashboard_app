@@ -543,7 +543,7 @@ def prepare_data_for_admitted_mothers_trend(
     result_df = filtered_df.copy()
 
     # Convert to datetime
-    result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
+    result_df["enrollment_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
 
     # CRITICAL: Apply date range filtering
     if date_range_filters:
@@ -557,12 +557,12 @@ def prepare_data_for_admitted_mothers_trend(
 
             # Filter by date range
             result_df = result_df[
-                (result_df["event_date"] >= start_dt)
-                & (result_df["event_date"] < end_dt)
+                (result_df["enrollment_date"] >= start_dt)
+                & (result_df["enrollment_date"] < end_dt)
             ].copy()
 
     # Filter out rows without valid dates
-    result_df = result_df[result_df["event_date"].notna()].copy()
+    result_df = result_df[result_df["enrollment_date"].notna()].copy()
 
     if result_df.empty:
         st.info(f"⚠️ No data with valid dates in '{date_column}' for {kpi_name}")
@@ -576,7 +576,7 @@ def prepare_data_for_admitted_mothers_trend(
     # Create period columns using time_filter utility
     from utils.time_filter import assign_period
 
-    result_df = assign_period(result_df, "event_date", period_label)
+    result_df = assign_period(result_df, "enrollment_date", period_label)
 
     # Filter by facility if needed
     if facility_uids and "orgUnit" in result_df.columns:

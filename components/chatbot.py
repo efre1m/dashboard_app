@@ -216,8 +216,23 @@ class ChatbotLogic:
             # "indicatorys": "indicators", # Duplicate
         }
 
-        # --- FACILITY SEARCH INDEX ---
-        # Build an index of first words for fast/partial lookup
+        # --- FACILITY RESOLUTION ENGINE ---
+        # 1. Normalized Mapping (for direct exact matches)
+        self.normalized_facility_mapping = {re.sub(r'\s+', ' ', k).strip().lower(): v for k, v in self.universal_facility_mapping.items()}
+        
+        # 2. Suffix-Blind Mapping (e.g. "Ambo University" -> "Ambo University Hospital")
+        self.suffix_blind_mapping = {}
+        suffixes = [' hospital', ' primary hospital', ' general hospital', ' referral hospital', ' teaching hospital', ' specialized hospital', ' ph', ' gh', ' csh']
+        for k in self.universal_facility_mapping.keys():
+            k_norm = re.sub(r'\s+', ' ', k).strip().lower()
+            self.suffix_blind_mapping[k_norm] = k
+            for s in suffixes:
+                if k_norm.endswith(s):
+                    stripped = k_norm[: -len(s)].strip()
+                    if stripped not in self.suffix_blind_mapping:
+                        self.suffix_blind_mapping[stripped] = k
+        
+        # 3. First-Word Disambiguation Index (for fragments like "Ambo")
         self.facility_search_index = {}
         for full_name in self.universal_facility_mapping.keys():
              clean_name = re.sub(r'\s+', ' ', full_name).strip()
@@ -225,12 +240,12 @@ class ChatbotLogic:
              if first_word not in self.facility_search_index:
                   self.facility_search_index[first_word] = []
              self.facility_search_index[first_word].append(full_name)
+
+        # 4. Greedy Scan List (Sorted by length to catch longest phrases first)
+        self.sorted_facility_names = sorted(self.universal_facility_mapping.keys(), key=len, reverse=True)
+        self.normalized_sorted_names = [re.sub(r'\s+', ' ', n).strip().lower() for n in self.sorted_facility_names]
         
-        # Debug: Log some sample entries to verify index
-        logging.info(f"🔍 Facility Index Built: {len(self.facility_search_index)} unique first words")
-        for sample_word in ['ambo', 'addis', 'debre']:
-            if sample_word in self.facility_search_index:
-                logging.info(f"  • '{sample_word}': {len(self.facility_search_index[sample_word])} facilities")
+        logging.info(f"🏥 Facility Resolution Engine Initialized: {len(self.normalized_facility_mapping)} direct, {len(self.suffix_blind_mapping)} suffix-blind, {len(self.facility_search_index)} index groups.")
 
 
         # --- SPECIALIZED KPI MAPPING ---
@@ -433,6 +448,24 @@ class ChatbotLogic:
         if re.search(r'(list|show|shw|sho|display|tell).*(indicators?|indicaters?|kpis?|measures?|metrics?)', query_norm):
             return {"intent": "list_kpis"}
         
+        # --- GREEDY FACILITY SCAN (Prioritize Full Names in Query) ---
+        # Instead of just relying on the LLM, scan the RAW query for any known facility names
+        greedy_matches = []
+        q_norm_for_scan = re.sub(r'\s+', ' ', query_lower).strip()
+        
+        for norm_name in self.normalized_sorted_names:
+            # Check if this full facility name exists anywhere in the query
+            if norm_name in q_norm_for_scan:
+                uid = self.normalized_facility_mapping[norm_name]
+                # Find original name
+                orig_name = next(k for k in self.universal_facility_mapping.keys() if re.sub(r'\s+', ' ', k).strip().lower() == norm_name)
+                greedy_matches.append((orig_name, uid))
+                # Remove from scan query to prevent sub-matches (e.g. "Ambo" matching inside "Ambo University")
+                q_norm_for_scan = q_norm_for_scan.replace(norm_name, " [MATCHED] ")
+        
+        if greedy_matches:
+            logging.info(f"🚀 Greedy Scan Found: {[m[0] for m in greedy_matches]}")
+
         # 0. Try LLM Parsing
         from utils.llm_utils import query_llm
         
@@ -442,6 +475,19 @@ class ChatbotLogic:
         llm_result = query_llm(query, facility_names_list)
         
         if llm_result:
+            # INTEGRATE GREEDY MATCHES (CRITICAL: Track which names are PRECISE)
+            precise_matches = set()
+            if greedy_matches:
+                precise_matches = {m[0].lower() for m in greedy_matches}
+                if "facility_names" not in llm_result or not llm_result["facility_names"]:
+                    llm_result["facility_names"] = [m[0] for m in greedy_matches]
+                else:
+                    # Merge and deduplicate
+                    existing_lower = [n.lower() for n in llm_result["facility_names"]]
+                    for g_name, _ in greedy_matches:
+                        if g_name.lower() not in existing_lower:
+                            llm_result["facility_names"].append(g_name)
+
             # Handle "chat" intent from LLM
             if llm_result.get("intent") == "chat":
                  return {
@@ -474,21 +520,61 @@ class ChatbotLogic:
                 if llm_facs:
                     logging.info(f"🔍 Running ambiguity pre-check on {len(llm_facs)} extracted names...")
                     for potential_name in llm_facs:
-                         name_norm = re.sub(r'\s+', ' ', potential_name.strip().lower())
+                         name_norm_orig = re.sub(r'\s+', ' ', potential_name.strip())
+                         name_norm = name_norm_orig.lower()
+                         
+                         # 0. SKIP CHECK if name was already found by PRECISE GREEDY SCAN or covers it
+                         is_covered_by_greedy = False
+                         for p_match in precise_matches:
+                             if name_norm in p_match or p_match in name_norm:
+                                 is_covered_by_greedy = True
+                                 break
+                         
+                         if is_covered_by_greedy:
+                             logging.info(f"  ✅ Precise Match Bypass for: '{name_norm}'")
+                             continue
+
+                         # 1. Check for EXACT DIRECT MATCH FIRST (ignore case/spacing)
+                         if name_norm in self.normalized_facility_mapping:
+                             logging.info(f"  ✅ Exact Match Found: '{name_norm}'")
+                             continue # Not ambiguous if exact match
+
+                         # 2. Check for GREEDY SUBSTRING MATCH in full facility list
+                         # If "Ambo University" is a substring of an actual facility name
+                         found_exact_in_list = False
+                         for full_name in self.normalized_facility_mapping.keys():
+                             if name_norm == full_name or full_name.startswith(name_norm):
+                                 # Check if this is a UNIQUE prefix/match
+                                 count_starts = sum(1 for k in self.normalized_facility_mapping.keys() if k.startswith(name_norm))
+                                 if count_starts == 1:
+                                     logging.info(f"  ✅ Unique Prefix Match Found: '{full_name}'")
+                                     found_exact_in_list = True
+                                     break
+                         
+                         if found_exact_in_list:
+                             continue
+
                          first_word = name_norm.split(' ')[0]
                          index_hits = self.facility_search_index.get(first_word, [])
                          
                          logging.info(f"  ⚡ Checking '{potential_name}' -> first_word='{first_word}' -> {len(index_hits)} hits")
                          
                          if len(index_hits) > 1:
-                              # Check if this is truly ambiguous (multiple facilities start with same word)
-                              logging.info(f"⚠️ AMBIGUITY DETECTED: '{potential_name}' -> {len(index_hits)} facilities")
-                              options_str = "\n".join([f"- {m}" for m in index_hits[:8]])
-                              return {
-                                  "intent": "chat",
-                                  "response": f"I found **{len(index_hits)}** facilities matching '**{first_word}**'. Which one did you mean?\n\n{options_str}",
-                                  "pending_kpi": llm_result.get("kpi")
-                              }
+                              # Check if name_norm matches any hit exactly
+                              found_exact_in_hits = False
+                              for hit in index_hits:
+                                  if hit.lower() == name_norm:
+                                      found_exact_in_hits = True
+                                      break
+                              
+                              if not found_exact_in_hits:
+                                   logging.info(f"⚠️ AMBIGUITY DETECTED: '{potential_name}' -> {len(index_hits)} facilities")
+                                   options_str = "\n".join([f"- {m}" for m in index_hits[:8]])
+                                   return {
+                                       "intent": "chat",
+                                       "response": f"I found **{len(index_hits)}** facilities matching '**{first_word}**'. Which one did you mean?\n\n{options_str}",
+                                       "pending_kpi": llm_result.get("kpi")
+                                   }
                 else:
                     logging.info(f"🔍 LLM didn't extract facilities, will try manual fallback...")
                 
@@ -534,45 +620,68 @@ class ChatbotLogic:
                         # Normalize multiple spaces (e.g. "Ambo   university")
                         fname_norm = re.sub(r'\s+', ' ', fname_clean)
                         
-                        # 1. Try Direct Match (Universal) via UID mapping
-                        if fname in self.universal_facility_mapping:
-                            selected_facility_uids.append(self.universal_facility_mapping[fname])
-                            selected_facility_names.append(fname)
+                        # 1. Try Suffix-Blind / Direct Match (Universal)
+                        if fname_norm in self.suffix_blind_mapping:
+                            official_name = self.suffix_blind_mapping[fname_norm]
+                            uid = self.universal_facility_mapping[official_name]
+                            selected_facility_uids.append(uid)
+                            selected_facility_names.append(official_name)
+                            logging.info(f"Chatbot: Suffix-Blind Match: '{fname_norm}' -> '{official_name}' (UID: {uid})")
                             match_found = True
                             continue
                         
-                        # 2. Try First-Word Index & Multi-hit Disambiguation
+                        # 2. Check PRECISE MATCH BYPASS (if found by greedy scan prefix)
+                        if fname_norm in precise_matches:
+                             # This was already validated as unique in greedy scan
+                             # Find the best hit for it
+                             best_hit = None
+                             for full_name in self.normalized_facility_mapping.keys():
+                                 if full_name.startswith(fname_norm) or fname_norm in full_name:
+                                     best_hit = full_name
+                                     break
+                             if best_hit:
+                                 official_name = next(k for k in self.universal_facility_mapping.keys() if re.sub(r'\s+', ' ', k).strip().lower() == best_hit)
+                                 uid = self.universal_facility_mapping[official_name]
+                                 selected_facility_uids.append(uid)
+                                 selected_facility_names.append(official_name)
+                                 match_found = True
+                                 continue
+
+                        # 3. Try First-Word Index & Multi-hit Resolution
                         first_word = fname_norm.split(' ')[0]
                         search_hits = self.facility_search_index.get(first_word, [])
                         logging.info(f"Chatbot Search: '{fname_norm}' -> First Word: '{first_word}' -> Hits: {len(search_hits)}")
                         
-                        # If first_word didn't hit, try fuzzy
-                        if not search_hits:
-                             fuzzy_keys = difflib.get_close_matches(first_word, self.facility_search_index.keys(), n=1, cutoff=0.7)
-                             if fuzzy_keys:
-                                  search_hits = self.facility_search_index[fuzzy_keys[0]]
-                                  logging.info(f"Chatbot Fuzzy Index: '{first_word}' -> '{fuzzy_keys[0]}'")
-                        
                         # Find matches within index hits
                         potential_matches = []
                         for hit in search_hits:
-                             hit_norm = re.sub(r'\s+', ' ', hit.lower())
-                             # CRITICAL: Match if query is in hit OR query is a prefix
-                             if fname_norm in hit_norm or hit_norm.startswith(fname_norm) or (len(fname_norm) > 3 and hit_norm.startswith(fname_norm[:4])):
+                             hit_norm = hit.lower()
+                             if fname_norm in hit_norm or hit_norm.startswith(fname_norm):
                                   potential_matches.append(hit)
                         
                         # De-duplicate
                         potential_matches = list(dict.fromkeys(potential_matches))
-                        logging.info(f"Chatbot Potential Matches for '{fname_norm}': {len(potential_matches)}")
-
-                        if len(potential_matches) == 1:
+                        
+                        # CRITICAL: If we have an exact match inside hits, pick it
+                        exact_match_inside = None
+                        for hit in potential_matches:
+                            if hit.lower() == fname_norm:
+                                exact_match_inside = hit
+                                break
+                        
+                        if exact_match_inside:
+                             logging.info(f"Chatbot: Exact Match inside hits Found for '{fname}': '{exact_match_inside}'")
+                             selected_facility_uids.append(self.universal_facility_mapping[exact_match_inside])
+                             selected_facility_names.append(exact_match_inside)
+                             match_found = True
+                        elif len(potential_matches) == 1:
                              final_match = potential_matches[0]
                              logging.info(f"Chatbot: Index Matched '{fname}' to Facility: '{final_match}'")
                              selected_facility_uids.append(self.universal_facility_mapping[final_match])
                              selected_facility_names.append(final_match)
                              match_found = True
                         elif len(potential_matches) > 1:
-                             # DISAMBIGUATION NEEDED (e.g. "Ambo")
+                             # AMBIGUOUS (e.g. "Ambo")
                              options_str = "\n".join([f"- {m}" for m in potential_matches[:8]])
                              return {
                                  "intent": "chat",

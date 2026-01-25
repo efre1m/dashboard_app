@@ -748,10 +748,10 @@ def render_maternal_dashboard_shared(
         return
 
     # Log date statistics
-    valid_dates = working_df["event_date"].notna().sum()
+    valid_dates = working_df["enrollment_date"].notna().sum()
     total_patients = len(working_df)
     logging.info(
-        f"📅 FACILITY: event_date - {valid_dates}/{total_patients} valid dates"
+        f"📅 FACILITY: enrollment_date - {valid_dates}/{total_patients} valid dates"
     )
 
     # Log sample dates to verify they're correct

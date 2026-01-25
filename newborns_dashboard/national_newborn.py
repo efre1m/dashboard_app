@@ -96,14 +96,14 @@ def render_newborn_dashboard_shared(
         return
 
     # Log date statistics
-    valid_dates = working_df["event_date"].notna().sum()
+    valid_dates = working_df["enrollment_date"].notna().sum()
     total_patients = len(working_df)
     logging.info(
-        f"📅 NEWBORN REGIONAL: event_date - {valid_dates}/{total_patients} valid dates"
+        f"📅 NEWBORN NATIONAL: enrollment_date - {valid_dates}/{total_patients} valid dates"
     )
 
     if valid_dates > 0:
-        sample_dates = working_df["event_date"].dropna().head(3).tolist()
+        sample_dates = working_df["enrollment_date"].dropna().head(3).tolist()
         logging.info(f"📅 NEWBORN NATIONAL: Sample dates: {sample_dates}")
     # =========== END OF CRITICAL ADDITION ===========
 
@@ -196,7 +196,10 @@ def render_newborn_dashboard_shared(
     logging.info(f"   - Period label: {filters.get('period_label', 'Monthly')}")
     logging.info(f"   - Facility UIDs: {len(facility_uids)}")
 
-    filtered_for_all = apply_newborn_patient_filters(working_df, filters, facility_uids)
+    # Ensure period calculation uses enrollment_date
+    working_df_for_period = working_df.copy()
+    
+    filtered_for_all = apply_newborn_patient_filters(working_df_for_period, filters, facility_uids)
 
     logging.info(
         f"🔍 NEWBORN NATIONAL: After apply_newborn_patient_filters: {len(filtered_for_all)} patients"

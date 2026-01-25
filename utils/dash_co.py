@@ -1793,10 +1793,10 @@ def render_additional_analytics(
 
 
 def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure a single datetime column 'event_date' exists for patient data"""
+    """Ensure a single datetime column 'enrollment_date' exists for patient data"""
     if df.empty:
-        if "event_date" not in df.columns:
-            df["event_date"] = pd.Series(dtype="datetime64[ns]")
+        if "enrollment_date" not in df.columns:
+            df["enrollment_date"] = pd.Series(dtype="datetime64[ns]")
         return df
 
     df = df.copy()
@@ -1811,15 +1811,15 @@ def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
 
     # Try KPI-specific date column first
     if "enrollment_date" in df.columns:
-        df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
+        df["enrollment_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
         logging.info("✅ normalize_patient_dates: Using enrollment_date")
     elif kpi_date_column and kpi_date_column in df.columns:
-        df["event_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
+        df["enrollment_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
         logging.info(
             f"✅ normalize_patient_dates: Using KPI-specific '{kpi_date_column}'"
         )
     elif "combined_date" in df.columns:
-        df["event_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
+        df["enrollment_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
         logging.info("✅ normalize_patient_dates: Using combined_date")
     else:
         # Look for program stage event dates
@@ -1831,25 +1831,18 @@ def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
 
         for col in program_stage_date_columns:
             try:
-                df["event_date"] = pd.to_datetime(df[col], errors="coerce")
-                if not df["event_date"].isna().all():
+                df["enrollment_date"] = pd.to_datetime(df[col], errors="coerce")
+                if not df["enrollment_date"].isna().all():
                     logging.info(
-                        f"✅ normalize_patient_dates: Using {col} for event_date"
+                        f"✅ normalize_patient_dates: Using {col} for enrollment_date"
                     )
                     break
             except:
                 continue
 
-    # If no program stage date found, try enrollment_date
-    if (
-        "event_date" not in df.columns or df["event_date"].isna().all()
-    ) and "enrollment_date" in df.columns:
-        df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
-        logging.info("✅ normalize_patient_dates: Using enrollment_date for event_date")
-
     # If still no date found, use current date
-    if "event_date" not in df.columns or df["event_date"].isna().all():
-        df["event_date"] = pd.Timestamp.now().normalize()
+    if "enrollment_date" not in df.columns or df["enrollment_date"].isna().all():
+        df["enrollment_date"] = pd.Timestamp.now().normalize()
         logging.warning(
             "⚠️ normalize_patient_dates: No valid date column found, using current date"
         )
@@ -2070,18 +2063,18 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
         logging.info("   - No facility filter applied")
 
     # CRITICAL FIX: Always use normalize_patient_dates for consistency
-    # This ensures we have a proper event_date column
+    # This ensures we have a proper enrollment_date column
     df = normalize_patient_dates(df)
 
-    # Use event_date for all filtering (KPI-specific filtering happens in get_numerator_denominator_for_kpi)
-    logging.info(f"   ✅ Using normalized event_date for date filtering")
+    # Use enrollment_date for all filtering (KPI-specific filtering happens in get_numerator_denominator_for_kpi)
+    logging.info(f"   ✅ Using normalized enrollment_date for date filtering")
 
     # STEP 1: Check if we should filter by date
     should_filter_by_date = (
         not skip_date_filtering  # Not "All Time"
         and filters.get("start_date")  # Has start date
         and filters.get("end_date")  # Has end date
-        and "event_date" in df.columns  # Has event_date column
+        and "enrollment_date" in df.columns  # Has enrollment_date column
     )
 
     if should_filter_by_date:
@@ -2094,17 +2087,17 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
                 f"🔍 DATE FILTER: Filtering from {start_date.date()} to {end_date.date()}"
             )
 
-            # STEP 3: Use event_date for filtering (already created by normalize_patient_dates)
-            date_column_to_use = "event_date"
+            # STEP 3: Use enrollment_date for filtering (already created by normalize_patient_dates)
+            date_column_to_use = "enrollment_date"
 
-            # Check if event_date has data
-            event_dates_valid = df["event_date"].notna().sum()
+            # Check if enrollment_date has data
+            enrollment_dates_valid = df["enrollment_date"].notna().sum()
             logging.info(
-                f"📅 Using 'event_date' column ({event_dates_valid} valid dates)"
+                f"📅 Using 'enrollment_date' column ({enrollment_dates_valid} valid dates)"
             )
 
             # STEP 4: Apply the date filter
-            if date_column_to_use and event_dates_valid > 0:
+            if date_column_to_use and enrollment_dates_valid > 0:
                 # Make sure the date column is properly formatted as datetime
                 df[date_column_to_use] = pd.to_datetime(
                     df[date_column_to_use], errors="coerce"
@@ -2151,11 +2144,11 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
         st.session_state.filters = {}
     st.session_state.filters.update(filters)
 
-    # Assign period AFTER date filtering - using event_date
+    # Assign period AFTER date filtering - using enrollment_date
     try:
-        valid_date_rows = df["event_date"].notna().sum()
+        valid_date_rows = df["enrollment_date"].notna().sum()
         if valid_date_rows > 0:
-            df = assign_period(df, "event_date", filters["period_label"])
+            df = assign_period(df, "enrollment_date", filters["period_label"])
             logging.info(
                 f"   📊 Assigned {filters['period_label']} periods: {valid_date_rows} valid dates"
             )

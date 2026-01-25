@@ -653,7 +653,7 @@ def render_newborn_trend_chart_section(
     # Filter by date column
     if date_column in working_df.columns:
         # Convert to datetime
-        working_df["event_date"] = pd.to_datetime(
+        working_df["enrollment_date"] = pd.to_datetime(
             working_df[date_column], errors="coerce"
         )
 
@@ -667,12 +667,12 @@ def render_newborn_trend_chart_section(
                 end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
 
                 working_df = working_df[
-                    (working_df["event_date"] >= start_dt)
-                    & (working_df["event_date"] < end_dt)
+                    (working_df["enrollment_date"] >= start_dt)
+                    & (working_df["enrollment_date"] < end_dt)
                 ].copy()
 
         # Filter out rows without valid dates
-        working_df = working_df[working_df["event_date"].notna()].copy()
+        working_df = working_df[working_df["enrollment_date"].notna()].copy()
     else:
         st.warning(
             f"⚠️ Required date column '{date_column}' not found for {kpi_selection}"
@@ -688,7 +688,7 @@ def render_newborn_trend_chart_section(
     # Assign periods
     period_label = st.session_state.get("period_label", "Monthly")
     try:
-        working_df = assign_period(working_df, "event_date", period_label)
+        working_df = assign_period(working_df, "enrollment_date", period_label)
     except Exception as e:
         st.error(f"Error assigning periods: {str(e)}")
         return
@@ -1438,8 +1438,10 @@ def render_newborn_additional_analytics(
 
 
 def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure a single datetime column 'event_date' exists for newborn patient data"""
+    """Ensure a single datetime column 'enrollment_date' exists for newborn patient data"""
     if df.empty:
+        if "enrollment_date" not in df.columns:
+            df["enrollment_date"] = pd.Series(dtype="datetime64[ns]")
         return df
 
     df = df.copy()
@@ -1447,39 +1449,37 @@ def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     # Get current KPI to use the right date column
     current_kpi = st.session_state.get("selected_newborn_kpi", "Inborn Rate (%)")
 
-    # Get the SPECIFIC date column for this KPI
-    kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_all(current_kpi)
-
-    # Try KPI-specific date column first
-    if kpi_date_column and kpi_date_column in df.columns:
-        df["event_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
-    elif "combined_date" in df.columns:
-        df["event_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
+    # Try enrollment_date first if it exists
+    if "enrollment_date" in df.columns:
+        df["enrollment_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
     else:
-        # Look for program stage event dates
-        program_stage_date_columns = [
-            col
-            for col in df.columns
-            if col.startswith("event_date_") or col == "event_date"
-        ]
+        # Get the SPECIFIC date column for this KPI
+        kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_all(current_kpi)
 
-        for col in program_stage_date_columns:
-            try:
-                df["event_date"] = pd.to_datetime(df[col], errors="coerce")
-                if not df["event_date"].isna().all():
-                    break
-            except:
-                continue
+        # Try KPI-specific date column
+        if kpi_date_column and kpi_date_column in df.columns:
+            df["enrollment_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
+        elif "combined_date" in df.columns:
+            df["enrollment_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
+        else:
+            # Look for program stage event dates
+            program_stage_date_columns = [
+                col
+                for col in df.columns
+                if col.startswith("event_date_") or col == "event_date"
+            ]
 
-    # If no program stage date found, try enrollment_date
-    if (
-        "event_date" not in df.columns or df["event_date"].isna().all()
-    ) and "enrollment_date" in df.columns:
-        df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
+            for col in program_stage_date_columns:
+                try:
+                    df["enrollment_date"] = pd.to_datetime(df[col], errors="coerce")
+                    if not df["enrollment_date"].isna().all():
+                        break
+                except:
+                    continue
 
     # If still no date found, use current date
-    if "event_date" not in df.columns or df["event_date"].isna().all():
-        df["event_date"] = pd.Timestamp.now().normalize()
+    if "enrollment_date" not in df.columns or df["enrollment_date"].isna().all():
+        df["enrollment_date"] = pd.Timestamp.now().normalize()
 
     return df
 

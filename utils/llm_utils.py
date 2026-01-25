@@ -91,7 +91,10 @@ INSTRUCTIONS:
 3. Identify the CHART TYPE: "line", "bar", "area", or "table". Default to "line" unless specified.
 
 4. Identify FILTERS:
-   - "facility_names": List of facility names OR region names mentioned. EXTRACT NAMES EXACTLY AS TYPED if not found in context.
+   - "facility_names": List of facility names OR region names mentioned. 
+     CRITICAL: Extract the COMPLETE and SPECIFIC name. 
+     Example: If user says "Ambo University", extract "Ambo University" NOT just "Ambo". 
+     There are many overlapping names (e.g., Ambo General vs Ambo University). DO NOT truncate.
    - "date_range": Calculate start_date and end_date (YYYY-MM-DD) based on relative time to {today}.
 
 5. Identify COMPARISON MODE:
