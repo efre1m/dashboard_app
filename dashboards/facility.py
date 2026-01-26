@@ -756,7 +756,7 @@ def render_maternal_dashboard_shared(
 
     # Log sample dates to verify they're correct
     if valid_dates > 0:
-        sample_dates = working_df["event_date"].dropna().head(3).tolist()
+        sample_dates = working_df["enrollment_date"].dropna().head(3).tolist()
         logging.info(f"📅 FACILITY: Sample dates: {sample_dates}")
     # =========== END OF CRITICAL ADDITION ===========
 
