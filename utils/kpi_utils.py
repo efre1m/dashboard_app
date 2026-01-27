@@ -1910,7 +1910,7 @@ def render_region_comparison_chart(
         fig.update_layout(yaxis_tickformat=".2f")
 
     # Generate unique key for region comparison chart
-    chart_key = f"region_comp_{title.replace(' ', '_')}_{len(region_names) if region_names else 0}"
+    chart_key = f"region_comp_{title.replace(' ', '_')}_{len(region_names) if region_names else 0}_{key_suffix}"
     
     if not suppress_plot:
         st.plotly_chart(fig, use_container_width=True, key=chart_key)

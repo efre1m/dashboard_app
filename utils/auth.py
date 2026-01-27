@@ -89,9 +89,7 @@ def authenticate_user(username: str, password: str):
 
 def logout():
     """Clear session state and query parameters."""
-    for k in ["authenticated", "user", "page"]:
-        if k in st.session_state:
-            del st.session_state[k]
+    st.session_state.clear()
     st.query_params.clear()
     st.rerun()
 
