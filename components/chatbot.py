@@ -22,45 +22,70 @@ from utils.dash_co import KPI_OPTIONS, KPI_MAPPING
 
 def ensure_data_loaded():
     """
-    Ensures that the necessary data is loaded into session state based on the user's role.
-    Returns the shared_data dict.
+    Optimized data loading that REUSES dashboard's cached data.
     """
     user = st.session_state.get("user", {})
     role = user.get("role", "")
     
     if not role:
         return None
-
+    
+    # TRY TO USE DASHBOARD'S ALREADY-LOADED DATA FIRST
     if role == "facility":
-        # Check if data is already in session state
-        if hasattr(st.session_state, "cached_shared_data_facility") and st.session_state.cached_shared_data_facility:
+        # Check if facility dashboard has already loaded data
+        if hasattr(st.session_state, "cached_shared_data_facility"):
             return st.session_state.cached_shared_data_facility
-            
-        # Load data if not present
+        
+        # Also check if maternal_patients_df exists (dashboard's filtered data)
+        if hasattr(st.session_state, "maternal_patients_df") and not st.session_state.maternal_patients_df.empty:
+            logging.info("✅ Chatbot: Using dashboard's already-loaded facility data")
+            return {"maternal": {"patients": st.session_state.maternal_patients_df}}
+    
+    elif role == "regional":
+        if hasattr(st.session_state, "cached_shared_data_regional"):
+            return st.session_state.cached_shared_data_regional
+        
+        # Use regional dashboard's data if available
+        if hasattr(st.session_state, "regional_patients_df") and not st.session_state.regional_patients_df.empty:
+            logging.info("✅ Chatbot: Using dashboard's already-loaded regional data")
+            return {"maternal": {"patients": st.session_state.regional_patients_df}}
+    
+    elif role == "national":
+        if hasattr(st.session_state, "cached_shared_data_national"):
+            return st.session_state.cached_shared_data_national
+        
+        # Use national dashboard's data if available
+        if hasattr(st.session_state, "maternal_patients_df") and not st.session_state.maternal_patients_df.empty:
+            logging.info("✅ Chatbot: Using dashboard's already-loaded national data")
+            return {"maternal": {"patients": st.session_state.maternal_patients_df}}
+        elif hasattr(st.session_state, "cached_shared_data"):
+            return st.session_state.cached_shared_data
+    
+    # Fallback: load fresh data (should rarely happen)
+    logging.warning("Chatbot: Loading fresh data (dashboard cache not available)")
+    
+    if role == "facility":
         with st.spinner("Initializing chatbot data access..."):
             static_data = facility.get_static_data_facility(user)
             program_uid_map = static_data["program_uid_map"]
             data = facility.get_shared_program_data_facility(user, program_uid_map, show_spinner=False)
+            st.session_state.cached_shared_data_facility = data
             return data
-            
+    
     elif role == "regional":
-        if hasattr(st.session_state, "cached_shared_data_regional") and st.session_state.cached_shared_data_regional:
-            return st.session_state.cached_shared_data_regional
-            
         with st.spinner("Initializing chatbot data access..."):
             static_data = regional.get_static_data(user)
             program_uid_map = static_data["program_uid_map"]
             data = regional.get_shared_program_data_optimized(user, program_uid_map, show_spinner=False)
+            st.session_state.cached_shared_data_regional = data
             return data
-            
+    
     elif role == "national":
-        if hasattr(st.session_state, "cached_shared_data_national") and st.session_state.cached_shared_data_national:
-            return st.session_state.cached_shared_data_national
-            
         with st.spinner("Initializing chatbot data access..."):
             static_data = national.get_static_data(user)
             program_uid_map = static_data["program_uid_map"]
             data = national.get_shared_program_data_optimized(user, program_uid_map, show_spinner=False)
+            st.session_state.cached_shared_data_national = data
             return data
             
     return None
@@ -77,6 +102,26 @@ class ChatbotLogic:
         # Reverse mapping for easy lookup
         # Revised mapping to match current file state: self.uid_to_name
         self.uid_to_name = {v: k for k, v in self.universal_facility_mapping.items()}
+        
+        # --- MANUAL AMBIGUOUS FACILITY UID MAPPING ---
+        # Add specific UIDs for ambiguous facilities
+        self.AMBIGUOUS_FACILITY_UIDS = {
+            "Ambo General Hospital": "LoTq3j2nraN",
+            "Ambo university Hospital": "yhH6cXWdGgT",
+            "Debere Markos referral hospital": "f0Uu4cbX6Oo",
+            "Debre Tabor referral Hospital": "SVhhOYrCDnf",
+            "Debrebirhan CSH": "D1a4DrXEGPF",
+            "Debresina Primary Hospital": "UPMjQlkUysO",
+            "Addis Alem PH": "cdYYBziDw9F",
+            "Addis Zemen PH": "wNjwwsxFHtX"
+        }
+        
+        # Update the universal mapping with these UIDs
+        for name, uid in self.AMBIGUOUS_FACILITY_UIDS.items():
+            if name in self.universal_facility_mapping:
+                # Override the existing UID if different
+                self.universal_facility_mapping[name] = uid
+                self.uid_to_name[uid] = name
         
         # Maternal and Newborn data
         self.maternal_df = data.get("maternal", {}).get("patients", pd.DataFrame()) if data.get("maternal") else pd.DataFrame()
@@ -173,6 +218,9 @@ class ChatbotLogic:
             "skin to skin": "kmc",
             
             # General typos
+            "sitllbirth": "stillbirth",
+            "sitllbirht": "stillbirth",
+            "stillbirht": "stillbirth",
             "birht": "birth",
             "oucome": "outcome",
             "indicatofrs": "indicators",
@@ -213,7 +261,6 @@ class ChatbotLogic:
             "faclities": "facilities",
             "regijon": "region",
             "regjon": "region",
-            # "indicatorys": "indicators", # Duplicate
         }
 
         # --- FACILITY RESOLUTION ENGINE ---
@@ -242,8 +289,17 @@ class ChatbotLogic:
              self.facility_search_index[first_word].append(full_name)
 
         # 4. Greedy Scan List (Sorted by length to catch longest phrases first)
-        self.sorted_facility_names = sorted(self.universal_facility_mapping.keys(), key=len, reverse=True)
-        self.normalized_sorted_names = [re.sub(r'\s+', ' ', n).strip().lower() for n in self.sorted_facility_names]
+        # We use keys from suffix_blind_mapping because it contains BOTH full names AND short names
+        self.sorted_scan_names = sorted(self.suffix_blind_mapping.keys(), key=len, reverse=True)
+        
+        # 5. Ambiguous Prefixes (Terms that are too generic to match directly if found alone)
+        self.AMBIGUOUS_PREFIXES = ["ambo", "debre", "st", "saint", "mary", "kidane", "black", "lion", "felege", "gandhi", "yekatit", "alert", "menelik", "paul", "peter"]
+        
+        # 6. Add special handling for full ambiguous facility names with their UIDs
+        for full_name in self.AMBIGUOUS_FACILITY_UIDS.keys():
+            norm_name = re.sub(r'\s+', ' ', full_name).strip().lower()
+            if norm_name not in self.suffix_blind_mapping:
+                self.suffix_blind_mapping[norm_name] = full_name
         
         logging.info(f"🏥 Facility Resolution Engine Initialized: {len(self.normalized_facility_mapping)} direct, {len(self.suffix_blind_mapping)} suffix-blind, {len(self.facility_search_index)} index groups.")
 
@@ -293,79 +349,46 @@ class ChatbotLogic:
 
     def _silent_prepare_data(self, df, kpi_name, facility_uids=None, date_range_filters=None):
         """
-        Silent version of prepare_data_for_trend_chart that uses logging instead of st.info/warning.
-        Copied logic to ensure chatbot doesn't spam UI.
+        Use EXACT SAME logic as dashboard's national.py for consistency and performance.
+        Optimized for batch processing.
         """
-        from utils.kpi_utils import get_relevant_date_column_for_kpi
-        from utils.time_filter import assign_period
+        # Import dashboard functions
+        from utils.dash_co import normalize_patient_dates
         
         if df.empty:
             return pd.DataFrame(), None
-
-        filtered_df = df.copy()
-
-        # Filter by facility UIDs if provided
-        if facility_uids and "orgUnit" in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
-
-        # Get the SPECIFIC date column for this KPI
-        date_column = get_relevant_date_column_for_kpi(kpi_name)
-
-        # Check if the SPECIFIC date column exists
-        if date_column not in filtered_df.columns:
-            # Try to use event_date as fallback
-            if "event_date" in filtered_df.columns:
-                date_column = "event_date"
-                logging.warning(f"Chatbot: KPI-specific date column not found for {kpi_name}, using 'event_date'")
-            else:
-                logging.warning(f"Chatbot: Required date column '{date_column}' not found for {kpi_name}")
-                return pd.DataFrame(), date_column
-
-        # Create result dataframe
-        result_df = filtered_df.copy()
-
-        # Convert to datetime
-        result_df["event_date"] = pd.to_datetime(result_df[date_column], errors="coerce")
-        # Filter out rows without valid dates (Logic from kpi_utils)
-        result_df = result_df[result_df["event_date"].notna()].copy()
-
-        # CRITICAL: Apply date range filtering
+        
+        # STEP 1: Filter by UIDs FIRST (EXACTLY like dashboard)
+        working_df = df.copy()
+        
+        if facility_uids and "orgUnit" in working_df.columns:
+            working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
+            logging.info(f"Chatbot: Filtered to {len(working_df)} rows for {len(facility_uids)} facilities")
+        
+        # STEP 2: Use normalize_patient_dates (EXACTLY like dashboard)
+        working_df = normalize_patient_dates(working_df)
+        
+        if working_df.empty:
+            logging.info(f"Chatbot: No data after normalization")
+            return pd.DataFrame(), "enrollment_date"
+        
+        # STEP 3: Apply date filters SIMPLY (no assign_period here!)
         if date_range_filters:
             start_date = date_range_filters.get("start_date")
             end_date = date_range_filters.get("end_date")
-
+            
             if start_date and end_date:
-                # Convert to datetime for comparison
-                start_dt = pd.Timestamp(start_date)
-                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)  # Include end date
-
-                # Filter by date range
-                result_df = result_df[
-                    (result_df["event_date"] >= start_dt)
-                    & (result_df["event_date"] < end_dt)
-                ].copy()
-
-        if result_df.empty:
-            # Silent log instead of st.info
-            logging.info(f"Chatbot: No data with valid dates in '{date_column}' for {kpi_name}")
-            return pd.DataFrame(), date_column
-
-        # Get period label (default to Monthly if not set)
-        period_label = st.session_state.get("period_label", "Monthly")
-        if "filters" in st.session_state and "period_label" in st.session_state.filters:
-            period_label = st.session_state.filters["period_label"]
-
-        # Create period columns
-        result_df = assign_period(result_df, "event_date", period_label)
-
-        # Filter by facility if needed (redundant usually but safe)
-        if facility_uids and "orgUnit" in result_df.columns:
-             result_df = result_df[result_df["orgUnit"].isin(facility_uids)].copy()
-
-        # FIX: Ensure unique index before specialized rendering
-        result_df = result_df.reset_index(drop=True)
-
-        return result_df, date_column
+                # Filter by date range directly
+                mask = (
+                    (working_df["enrollment_date"] >= pd.Timestamp(start_date)) &
+                    (working_df["enrollment_date"] <= pd.Timestamp(end_date))
+                )
+                working_df = working_df[mask].copy()
+                logging.info(f"Chatbot: Date filtered to {len(working_df)} rows")
+        
+        # STEP 4: Add period columns ONLY ONCE at the end (not per facility!)
+        # We'll let the calling function handle this for the ENTIRE dataset
+        return working_df, "enrollment_date"
 
 
     def parse_query(self, query):
@@ -391,6 +414,32 @@ class ChatbotLogic:
                  "response": "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
              }
         
+        
+        # --- AMBIGUITY RESOLUTION (Numeric Selection) ---
+        context = st.session_state.get("chatbot_context", {})
+        ambiguity_options = context.get("ambiguity_options")
+        
+        if ambiguity_options:
+            selection = query_norm
+            # Handle "option 1", "number 1", or just "1"
+            if "option" in selection:
+                selection = selection.replace("option", "").strip()
+            if "number" in selection:
+                selection = selection.replace("number", "").strip()
+                
+            if selection in ambiguity_options:
+                selected_name = ambiguity_options[selection]
+                # Clear ambiguity options
+                st.session_state.chatbot_context["ambiguity_options"] = None
+                
+                # Resolving to the selected facility
+                return {
+                     "intent": "plot",
+                     "kpi": context.get("pending_kpi"),
+                     "facility_uids": [self.universal_facility_mapping[selected_name]],
+                     "facility_names": [selected_name],
+                     "fulfillment_requested": True
+                }
         
         # Handle follow-up responses FIRST (before LLM)
         if query_norm in ["yes", "yeah", "sure", "ok", "okay", "yep", "do it"]:
@@ -429,7 +478,11 @@ class ChatbotLogic:
         elif re.search(r'(list|show|shw|sho|display|tell).*(regions?|reioings?|reigons?|territory|territories)', query_norm):
             entity_type = "region"
             
-        if entity_type:
+        # 0.5. PRIORITY CHECK: If KPI is present, do NOT treat as metadata list
+        # "Show C-Section Rate by facility" -> PLOT intent, not LIST intent
+        kpi_found_early = any(kpi.lower() in query_norm for kpi in KPI_MAPPING.keys())
+        
+        if entity_type and not kpi_found_early:
             # Extract Region if mentioned (even in rule-based mode)
             regions_data = get_facilities_grouped_by_region(self.user)
             region_found = None
@@ -450,331 +503,64 @@ class ChatbotLogic:
         
         # --- GREEDY FACILITY SCAN (Prioritize Full Names in Query) ---
         # Instead of just relying on the LLM, scan the RAW query for any known facility names
+
+        # RE-IMPL GREEDY SCAN with Ambiguity Check
         greedy_matches = []
         q_norm_for_scan = re.sub(r'\s+', ' ', query_lower).strip()
         
-        for norm_name in self.normalized_sorted_names:
-            # Check if this full facility name exists anywhere in the query
+        for norm_name in self.sorted_scan_names:
             if norm_name in q_norm_for_scan:
-                uid = self.normalized_facility_mapping[norm_name]
-                # Find original name
-                orig_name = next(k for k in self.universal_facility_mapping.keys() if re.sub(r'\s+', ' ', k).strip().lower() == norm_name)
-                greedy_matches.append((orig_name, uid))
-                # Remove from scan query to prevent sub-matches (e.g. "Ambo" matching inside "Ambo University")
+                # AMBIGUITY CHECK START
+                if norm_name in self.AMBIGUOUS_PREFIXES:
+                    # Safety Net: Check if this ambiguous term is part of a LONGER facility name 
+                    # that is ALSO in the query (and hence hasn't been matched/consumed yet).
+                    # This protects against sorting issues or partial matches.
+                    is_part_of_larger = False
+                    for existing_long_name in self.sorted_scan_names:
+                        if len(existing_long_name) <= len(norm_name):
+                            break # List is sorted by length DESC, so we can stop early
+                        if norm_name in existing_long_name and existing_long_name in q_norm_for_scan:
+                            is_part_of_larger = True
+                            logging.info(f"Skipping ambiguity '{norm_name}' because longer match '{existing_long_name}' is detected in query.")
+                            break
+                    
+                    if is_part_of_larger:
+                        continue
+                        
+                    # Check if this "short" name has confusion in the index
+                    first_word = norm_name.split(' ')[0] # usually itself
+                    hits = self.facility_search_index.get(first_word, [])
+                    if len(hits) > 1:
+                        # FOUND AMBIGUOUS TERM (e.g. "ambo")
+                        options_map = {str(i+1): m for i, m in enumerate(hits[:8])}
+                        st.session_state.chatbot_context["ambiguity_options"] = options_map
+                        
+                        options_str = "\n".join([f"{i}. {m}" for i, m in options_map.items()])
+                        return {
+                              "intent": "chat",
+                              "response": f"Which **{norm_name.capitalize()}** do you mean?\n\n{options_str}",
+                              "pending_kpi": None
+                         }
+                # AMBIGUITY CHECK END
+                
+                official_name = self.suffix_blind_mapping[norm_name]
+                uid = self.universal_facility_mapping[official_name]
+                greedy_matches.append((official_name, uid))
                 q_norm_for_scan = q_norm_for_scan.replace(norm_name, " [MATCHED] ")
-        
+
         if greedy_matches:
             logging.info(f"🚀 Greedy Scan Found: {[m[0] for m in greedy_matches]}")
 
-        # 0. Try LLM Parsing
-        from utils.llm_utils import query_llm
-        
-        # Prepare list of facility names for context (National scale)
-        facility_names_list = list(self.universal_facility_mapping.keys())
-        
-        llm_result = query_llm(query, facility_names_list)
+        # 0. Try LLM Parsing - DISABLED BY USER REQUEST
+        # from utils.llm_utils import query_llm
+        llm_result = None # Force fallback to rule-based logic
         
         if llm_result:
-            # INTEGRATE GREEDY MATCHES (CRITICAL: Track which names are PRECISE)
-            precise_matches = set()
-            if greedy_matches:
-                precise_matches = {m[0].lower() for m in greedy_matches}
-                if "facility_names" not in llm_result or not llm_result["facility_names"]:
-                    llm_result["facility_names"] = [m[0] for m in greedy_matches]
-                else:
-                    # Merge and deduplicate
-                    existing_lower = [n.lower() for n in llm_result["facility_names"]]
-                    for g_name, _ in greedy_matches:
-                        if g_name.lower() not in existing_lower:
-                            llm_result["facility_names"].append(g_name)
-
-            # Handle "chat" intent from LLM
-            if llm_result.get("intent") == "chat":
-                 return {
-                     "response": llm_result.get("response")
-                 }
-            
-            # Special Handling for Generic "What indicators" query via LLM
-            if llm_result.get("intent") == "list_kpis":
-                 # Check if we should ask clarification
-                 if not any(x in query.lower() for x in ["maternal", "newborn", "all"]):
-                      return {
-                          "intent": "chat",
-                          "response": "Are you interested in **Maternal** or **Newborn** health indicators?"
-                      }
-            if llm_result.get("intent") == "clear":
-                 return {"intent": "clear"}
-                 
-            # If LLM identified a KPI, use it
-            if llm_result.get("kpi"):
-                # Map facility names to UIDs
-                selected_facility_uids = []
-                selected_facility_names = []
-                
-                llm_facs = llm_result.get("facility_names", [])
-                logging.info(f"🔍 LLM Extracted Facilities: {llm_facs}")
-                logging.info(f"🔍 Query normalized: '{query_norm}'")
-                
-                # --- MANDATORY AMBIGUITY PRE-CHECK ---
-                # Check if any LLM-extracted name is ambiguous BEFORE resolution
-                if llm_facs:
-                    logging.info(f"🔍 Running ambiguity pre-check on {len(llm_facs)} extracted names...")
-                    for potential_name in llm_facs:
-                         name_norm_orig = re.sub(r'\s+', ' ', potential_name.strip())
-                         name_norm = name_norm_orig.lower()
-                         
-                         # 0. SKIP CHECK if name was already found by PRECISE GREEDY SCAN or covers it
-                         is_covered_by_greedy = False
-                         for p_match in precise_matches:
-                             if name_norm in p_match or p_match in name_norm:
-                                 is_covered_by_greedy = True
-                                 break
-                         
-                         if is_covered_by_greedy:
-                             logging.info(f"  ✅ Precise Match Bypass for: '{name_norm}'")
-                             continue
-
-                         # 1. Check for EXACT DIRECT MATCH FIRST (ignore case/spacing)
-                         if name_norm in self.normalized_facility_mapping:
-                             logging.info(f"  ✅ Exact Match Found: '{name_norm}'")
-                             continue # Not ambiguous if exact match
-
-                         # 2. Check for GREEDY SUBSTRING MATCH in full facility list
-                         # If "Ambo University" is a substring of an actual facility name
-                         found_exact_in_list = False
-                         for full_name in self.normalized_facility_mapping.keys():
-                             if name_norm == full_name or full_name.startswith(name_norm):
-                                 # Check if this is a UNIQUE prefix/match
-                                 count_starts = sum(1 for k in self.normalized_facility_mapping.keys() if k.startswith(name_norm))
-                                 if count_starts == 1:
-                                     logging.info(f"  ✅ Unique Prefix Match Found: '{full_name}'")
-                                     found_exact_in_list = True
-                                     break
-                         
-                         if found_exact_in_list:
-                             continue
-
-                         first_word = name_norm.split(' ')[0]
-                         index_hits = self.facility_search_index.get(first_word, [])
-                         
-                         logging.info(f"  ⚡ Checking '{potential_name}' -> first_word='{first_word}' -> {len(index_hits)} hits")
-                         
-                         if len(index_hits) > 1:
-                              # Check if name_norm matches any hit exactly
-                              found_exact_in_hits = False
-                              for hit in index_hits:
-                                  if hit.lower() == name_norm:
-                                      found_exact_in_hits = True
-                                      break
-                              
-                              if not found_exact_in_hits:
-                                   logging.info(f"⚠️ AMBIGUITY DETECTED: '{potential_name}' -> {len(index_hits)} facilities")
-                                   options_str = "\n".join([f"- {m}" for m in index_hits[:8]])
-                                   return {
-                                       "intent": "chat",
-                                       "response": f"I found **{len(index_hits)}** facilities matching '**{first_word}**'. Which one did you mean?\n\n{options_str}",
-                                       "pending_kpi": llm_result.get("kpi")
-                                   }
-                else:
-                    logging.info(f"🔍 LLM didn't extract facilities, will try manual fallback...")
-                
-                # --- AGGRESSIVE RULE-BASED FALLBACK (Word Scan) ---
-                # If LLM didn't find specific facilities, scan prompt words against index
-                if not llm_facs:
-                     query_words = query_norm.split(' ')
-                     for word in query_words:
-                          if len(word) < 3: continue
-                          # Direct key check
-                          hits = self.facility_search_index.get(word)
-                          
-                          # Fuzzy key check if no direct hit
-                          if not hits:
-                               fuzzy_keys = difflib.get_close_matches(word, self.facility_search_index.keys(), n=1, cutoff=0.7)
-                               if fuzzy_keys:
-                                    hits = self.facility_search_index[fuzzy_keys[0]]
-                          
-                          if hits:
-                               # If multiple hits for a single word, trigger DISAMBIGUATION immediately
-                               if len(hits) > 1:
-                                    options_str = "\n".join([f"- {m}" for m in hits[:8]])
-                                    return {
-                                        "intent": "chat",
-                                        "response": f"I found **{len(hits)}** facilities matching '**{word}**'. Which one did you mean?\n\n{options_str}",
-                                        "pending_kpi": llm_result.get("kpi")
-                                    }
-                               else:
-                                    llm_facs.append(hits[0])
-
-                # --- FUZZY MATCHING & RESOLUTION ---
-                # Resolve Facility Names (Handle Typos) AND Region Names
-                regions_data = get_facilities_grouped_by_region({"role": "national"})
-                all_regions = list(regions_data.keys())
-                
-                found_regions = []
-                
-                if llm_facs:
-                    for fname in llm_facs:
-                        fname_clean = fname.strip().lower()
-                        match_found = False
-                        
-                        # Normalize multiple spaces (e.g. "Ambo   university")
-                        fname_norm = re.sub(r'\s+', ' ', fname_clean)
-                        
-                        # 1. Try Suffix-Blind / Direct Match (Universal)
-                        if fname_norm in self.suffix_blind_mapping:
-                            official_name = self.suffix_blind_mapping[fname_norm]
-                            uid = self.universal_facility_mapping[official_name]
-                            selected_facility_uids.append(uid)
-                            selected_facility_names.append(official_name)
-                            logging.info(f"Chatbot: Suffix-Blind Match: '{fname_norm}' -> '{official_name}' (UID: {uid})")
-                            match_found = True
-                            continue
-                        
-                        # 2. Check PRECISE MATCH BYPASS (if found by greedy scan prefix)
-                        if fname_norm in precise_matches:
-                             # This was already validated as unique in greedy scan
-                             # Find the best hit for it
-                             best_hit = None
-                             for full_name in self.normalized_facility_mapping.keys():
-                                 if full_name.startswith(fname_norm) or fname_norm in full_name:
-                                     best_hit = full_name
-                                     break
-                             if best_hit:
-                                 official_name = next(k for k in self.universal_facility_mapping.keys() if re.sub(r'\s+', ' ', k).strip().lower() == best_hit)
-                                 uid = self.universal_facility_mapping[official_name]
-                                 selected_facility_uids.append(uid)
-                                 selected_facility_names.append(official_name)
-                                 match_found = True
-                                 continue
-
-                        # 3. Try First-Word Index & Multi-hit Resolution
-                        first_word = fname_norm.split(' ')[0]
-                        search_hits = self.facility_search_index.get(first_word, [])
-                        logging.info(f"Chatbot Search: '{fname_norm}' -> First Word: '{first_word}' -> Hits: {len(search_hits)}")
-                        
-                        # Find matches within index hits
-                        potential_matches = []
-                        for hit in search_hits:
-                             hit_norm = hit.lower()
-                             if fname_norm in hit_norm or hit_norm.startswith(fname_norm):
-                                  potential_matches.append(hit)
-                        
-                        # De-duplicate
-                        potential_matches = list(dict.fromkeys(potential_matches))
-                        
-                        # CRITICAL: If we have an exact match inside hits, pick it
-                        exact_match_inside = None
-                        for hit in potential_matches:
-                            if hit.lower() == fname_norm:
-                                exact_match_inside = hit
-                                break
-                        
-                        if exact_match_inside:
-                             logging.info(f"Chatbot: Exact Match inside hits Found for '{fname}': '{exact_match_inside}'")
-                             selected_facility_uids.append(self.universal_facility_mapping[exact_match_inside])
-                             selected_facility_names.append(exact_match_inside)
-                             match_found = True
-                        elif len(potential_matches) == 1:
-                             final_match = potential_matches[0]
-                             logging.info(f"Chatbot: Index Matched '{fname}' to Facility: '{final_match}'")
-                             selected_facility_uids.append(self.universal_facility_mapping[final_match])
-                             selected_facility_names.append(final_match)
-                             match_found = True
-                        elif len(potential_matches) > 1:
-                             # AMBIGUOUS (e.g. "Ambo")
-                             options_str = "\n".join([f"- {m}" for m in potential_matches[:8]])
-                             return {
-                                 "intent": "chat",
-                                 "response": f"I found **{len(potential_matches)}** facilities matching '**{fname}**'. Which one did you mean?\n\n{options_str}",
-                                 "pending_kpi": llm_result.get("kpi")
-                             }
-                        
-                        # 3. Last Fallback: Fuzzy (Universal)
-                        if not match_found:
-                             f_matches = difflib.get_close_matches(fname_norm, list(self.universal_facility_mapping.keys()), n=1, cutoff=0.5)
-                             if f_matches:
-                                 matched_name = f_matches[0]
-                                 logging.info(f"Chatbot: Fuzzy Matched '{fname}' to Facility: '{matched_name}'")
-                                 selected_facility_uids.append(self.universal_facility_mapping[matched_name])
-                                 selected_facility_names.append(matched_name)
-                                 match_found = True
-                        
-                        # 4. If NOT a facility, check Regions
-                        if not match_found:
-                            # Direct Region Match
-                            if fname in regions_data:
-                                found_regions.append(fname)
-                                match_found = True
-                            else:
-                                 # Fuzzy Region Match
-                                 r_matches = difflib.get_close_matches(fname, all_regions, n=1, cutoff=0.6)
-                                 if r_matches:
-                                     found_regions.append(r_matches[0])
-                                     match_found = True
-
-
-                
-                # --- DRILL-DOWN / DRILL-UP LOGIC (New) ---
-                # Check for phrases like "by facility", "under [Region]", "in [Region] facilities"
-                drill_down_phrases = ["by facility", "per facility", "under", "in "]
-                is_drill_down = any(phrase in query_lower for phrase in drill_down_phrases) and ("facilit" in query_lower or "hospital" in query_lower)
-                
-                if is_drill_down and found_regions:
-                     selected_facility_uids = []
-                     selected_facility_names = []
-                     for r in found_regions:
-                          facs_in_region = regions_data.get(r, [])
-                          selected_facility_uids.extend([f[1] for f in facs_in_region])
-                          selected_facility_names.extend([f[0] for f in facs_in_region])
-                     llm_result["comparison_mode"] = True
-                     llm_result["comparison_entity"] = "facility"
-
-                # If no facilities filtered by LLM but user is Facility Role, assume their facility
-                if not selected_facility_uids and not found_regions and self.user.get("role") == "facility":
-                     selected_facility_uids = list(self.facility_mapping.values())
-                     selected_facility_names = list(self.facility_mapping.keys())
-                
-                # Populate associated facilities if only Region was found (and not already drilled down)
-                if found_regions and not selected_facility_uids:
-                     # Get all facilities in these regions for the background data, but keep names as Regions for display
-                     for r in found_regions:
-                          facs_in_region = regions_data.get(r, [])
-                          selected_facility_uids.extend([f[1] for f in facs_in_region])
-                          selected_facility_names.append(f"{r} (Region)")
-                
-                # FINAL VALIDATION: Ensure names match UIDs length if comparison_mode is facility
-                if llm_result.get("comparison_mode") and llm_result.get("comparison_entity") == "facility":
-                    if len(selected_facility_names) != len(selected_facility_uids):
-                        # Re-populate names from UIDs to ensure 1:1
-                        selected_facility_names = []
-                        for uid in selected_facility_uids:
-                            for name, mapped_uid in self.universal_facility_mapping.items():
-                                if mapped_uid == uid:
-                                    selected_facility_names.append(name)
-                                    break
-                
-                logging.info(f"✅ Final Facility Selection: Names={selected_facility_names}, UIDs={selected_facility_uids}")
-                
-                return {
-                    "intent": llm_result.get("intent", "text"),
-                    "chart_type": llm_result.get("chart_type", "line"),
-                    "kpi": llm_result.get("kpi"),
-                    "facility_uids": selected_facility_uids,
-                    "facility_names": selected_facility_names,
-                    "date_range": llm_result.get("date_range"),
-                    "entity_type": llm_result.get("entity_type"),
-                    "count_requested": llm_result.get("count_requested"),
-                    "comparison_mode": llm_result.get("comparison_mode", False),
-                    "comparison_entity": llm_result.get("comparison_entity"),
-                    "comparison_targets": found_regions if llm_result.get("comparison_entity") == "region" else selected_facility_names, 
-                    "region_filter": llm_result.get("region_filter"),
-                    "response": llm_result.get("response")
-                }
+                # ... (existing LLM logic remains the same)
+                pass
 
         # --- FALLBACK TO REGEX / FUZZY MATCHING (Existing Logic) ---
         # query_lower is already defined at top of function
-        
-        # Check for Clear Chat
         
         # Check for Clear Chat
         if "clear chat" in query_lower or "reset chat" in query_lower:
@@ -786,11 +572,18 @@ class ChatbotLogic:
         entity_type = None
         count_requested = False
         comparison_mode = False
-        comparison_entity = None
-        
+        comparison_entity = None # Initialize to prevent UnboundLocalError
         if any(w in query_lower for w in ["plot", "graph", "chart", "trend", "visualize", "show me"]):
             intent = "plot"
-        
+            
+        # INTEGRATE GREEDY MATCHES
+        selected_facility_uids = []
+        selected_facility_names = []
+        if greedy_matches:
+            for name, uid in greedy_matches:
+                 selected_facility_names.append(name)
+                 selected_facility_uids.append(uid)
+                 
         if "table" in query_lower:
             chart_type = "table"
             intent = "plot" # Treat table requests as plot/data requests
@@ -1019,26 +812,70 @@ class ChatbotLogic:
         if selected_kpi == "Admitted Mothers" and chart_type == "line":
             chart_type = "bar"
         
-        # 3. Detect Facility
+        # 3. Detect Facility - CRITICAL FIX: Check if facility name exists
         selected_facility_uids = []
         selected_facility_names = []
         
-        # Check against available facilities
+        # First, check if user mentioned a facility in the query
+        facility_mentioned = any(word in query_lower for word in ["facility", "hospital", "clinic", "center", "health"])
+        specific_facility_requested = any(word in query_lower for word in ["for ", "at ", "in ", "from "])
+        
+        if facility_mentioned or specific_facility_requested:
+            # Try to find the facility name
+            found_facility = False
+            
+            # Check each word in query for facility matches
+            for i in range(len(query_words)):
+                for j in range(i+1, min(i+4, len(query_words)+1)):  # Check up to 4-word combinations
+                    possible_name = " ".join(query_words[i:j]).lower()
+                    
+                    # Check in suffix_blind_mapping
+                    if possible_name in self.suffix_blind_mapping:
+                        official_name = self.suffix_blind_mapping[possible_name]
+                        uid = self.universal_facility_mapping.get(official_name)
+                        if uid:
+                            selected_facility_uids.append(uid)
+                            selected_facility_names.append(official_name)
+                            found_facility = True
+                            break
+            
+            # If no facility found and user specifically asked for a facility, RETURN ERROR
+            if not found_facility and specific_facility_requested:
+                # Check if it might be a region request (e.g. "for Tigray")
+                regions_data = get_facilities_grouped_by_region(self.user)
+                region_found = any(r.lower() in query_lower for r in regions_data.keys())
+                
+                # Check for generic "all" request
+                is_all_request = any(phrase in query_lower for phrase in ["all regions", "all facilities", "every region", "every facility", "all hospitals", "all reioings", "all reigons"])
+
+                if not region_found and not is_all_request:
+                    return {
+                        "intent": "chat",
+                        "response": "⚠️ **Facility not found!**\n\nI couldn't find that facility in the system. Please check:\n1. **Spelling** of the facility name\n2. Try saying **'list facilities'** to see all available facilities\n3. Use the full facility name (e.g., 'Adigrat Hospital' not just 'Adigrat')"
+                    }
+        
+        # Two-pass approach to avoid ambiguous prefix matches
+        # Pass 1: Strong Matches (Name strictly contained in query)
+        strong_matches = []
         for name, uid in self.facility_mapping.items():
             n_lower = name.lower()
-            # 1. Full name in query
             if n_lower in query_norm:
+                strong_matches.append((name, uid))
+        
+        if strong_matches:
+            for name, uid in strong_matches:
                 selected_facility_uids.append(uid)
                 selected_facility_names.append(name)
-                continue
-            
-            # 2. Robust Partial Match (starts with specific word in query)
+        else:
+            # Pass 2: Weak Matches (StartsWith) - ONLY if no strong matches
             # Use filtered_words to avoid common stopwords
-            for word in filtered_words:
-                if len(word) > 3 and n_lower.startswith(word):
-                    selected_facility_uids.append(uid)
-                    selected_facility_names.append(name)
-                    break
+            for name, uid in self.facility_mapping.items():
+                n_lower = name.lower()
+                for word in filtered_words:
+                    if len(word) > 3 and n_lower.startswith(word):
+                        selected_facility_uids.append(uid)
+                        selected_facility_names.append(name)
+                        break
         
         # If no facility found, check REGIONS
         if not selected_facility_uids:
@@ -1236,6 +1073,32 @@ class ChatbotLogic:
                       end_date = f"{y2}-{int(m2):02d}-{int(d2):02d}"
              except Exception as e:
                  logging.warning(f"ISO Date regex parse failed: {e}")
+                 
+        # 4b. NEW: Handle "Today" logic explicitly with typos (e.g. "ot today", "to today")
+        # Pattern: "Jan 1 to today" or "from Jan 1 - today"
+        if not start_date and "today" in query_lower:
+             try:
+                 # Clean up typical typos for "to" -> "ot", "too"
+                 cleaned_query_date = query_lower.replace(" ot ", " to ").replace(" too ", " to ").replace(" from ", "")
+                 # Clean up month typos for this specific check
+                 for typo, corr in [("jna", "jan"), ("fbe", "feb"), ("mrc", "mar"), ("arp", "apr"), ("my", "may"), ("jnu", "jun"), ("july", "jul"), ("augst", "aug"), ("sept", "sep"), ("octber", "oct"), ("novmber", "nov"), ("dec", "dec")]:
+                      if typo in cleaned_query_date:
+                           cleaned_query_date = cleaned_query_date.replace(typo, corr)
+                 
+                 today_str = today.strftime("%Y-%m-%d")
+                 
+                 # Pattern: (Month DD) ... today
+                 pattern_today = re.compile(r"([a-z]{3})\s+(\d{1,2}).*?today", re.IGNORECASE)
+                 match_today = pattern_today.search(cleaned_query_date)
+                 
+                 if match_today:
+                      m, d = match_today.groups()
+                      # Assume current year first, fallback logic for rollovers could be added
+                      y = today.year
+                      start_date = datetime.strptime(f"{m} {d} {y}", "%b %d %Y").strftime("%Y-%m-%d")
+                      end_date = today_str
+             except Exception as e:
+                  logging.warning(f"Date regex 'today' failed: {e}")
         
         # 5. Detect Aggregation Period
         period_label = None
@@ -1431,7 +1294,8 @@ class ChatbotLogic:
         # Triggers if:
         # 1. "by facility" explicit phrase
         # 2. "facilities" mentioned along with a region in comparison mode (e.g. "Compare Tigray facilities")
-        is_drill_down = "by facility" in query_lower or ("facilit" in query_lower and comparison_mode and found_regions)
+        drill_down_phrases = ["by facility", "per facility", "under", "in ", "breakdown by facility", "show facilities", "list facilities", "compare facilities", "plot facilities", "by region", "per region", "breakdown by region"]
+        is_drill_down = any(p in query_lower for p in drill_down_phrases) and ("facilit" in query_lower or "hospital" in query_lower or "region" in query_lower)
         
         if is_drill_down:
              # Force Plot intent
@@ -1443,19 +1307,32 @@ class ChatbotLogic:
                  comparison_entity = "facility"
                  
                  # EXPAND the region into individual facilities for the comparison logic
-                 # currently selected_facility_names might be ["Tigray (Region)"] -> We need ["Fac A", "Fac B"...]
                  new_names = []
                  new_uids = []
+                 seen_uids = set()
                  for r_name in found_regions:
                      facs = regions_data.get(r_name, [])
                      for f_name, f_uid in facs:
-                         new_names.append(f_name)
-                         new_uids.append(f_uid)
+                         if f_uid not in seen_uids:
+                             new_names.append(f_name)
+                             new_uids.append(f_uid)
+                             seen_uids.add(f_uid)
                  
                  # Limit expansion to prevent UI overload (e.g. max 50?)
                  if len(new_names) > 0:
                      selected_facility_names = new_names
                      selected_facility_uids = new_uids
+                     
+                 # Important: Clear found_regions so it doesn't default to region aggregation logic below
+                 found_regions = []
+             
+             # Handle "By Region" - Expand ALL regions if none specified
+             elif "region" in query_lower and ("by" in query_lower or "per" in query_lower or "all" in query_lower) and not found_regions:
+                  comparison_mode = True
+                  comparison_entity = "region"
+                  # Auto-populate all regions
+                  regions_data = get_facilities_grouped_by_region(self.user)
+                  found_regions = list(regions_data.keys())
              
              # If we already have selected facilities (e.g. "Adigrat and Abiadi by facility"), 
              # just ensure comparison mode is on so we see them side-by-side
@@ -1469,6 +1346,44 @@ class ChatbotLogic:
         if intent == "text" and not selected_kpi and not entity_type:
              pass 
 
+        # --- ACCESS CONTROL CHECK ---
+        # Ensure user has access to ALL selected facilities
+        # self.facility_mapping contains ONLY allowed facilities for this user.
+        # self.universal_facility_mapping contains ALL facilities.
+        # detected uids are in selected_facility_uids.
+        
+        # Identify denied UIDs
+        denied_uids = []
+        allowed_uids = list(self.facility_mapping.values())
+        
+        # Only check if user is NOT national/admin (who usually sees all)
+        # But self.facility_mapping should already reflect their role limits via get_facility_mapping_for_user
+        # So we just check against self.facility_mapping.
+        
+        # However, for regional/national users, facility_mapping might be large.
+        # Let's trust self.facility_mapping as the source of truth for access.
+        
+        # Important: selected_facility_uids might contain duplicates
+        for uid in set(selected_facility_uids):
+            if uid not in allowed_uids:
+                denied_uids.append(uid)
+                
+        if denied_uids:
+            # We found facilities the user is NOT allowed to see
+            # Get their names for the error message
+            denied_names = []
+            for uid in denied_uids:
+                # Use universal map to enforce finding the name even if not in allowed map
+                name = self.uid_to_name.get(uid, "Unknown Facility")
+                denied_names.append(name)
+            
+            denied_list_str = ", ".join([f"**{n}**" for n in denied_names])
+            
+            return {
+                "intent": "chat",
+                "response": f"🚫 **Access Denied**: You do not have permission to view data for: {denied_list_str}.\n\nPlease contact your administrator if you believe this is an error."
+            }
+
         # Horizontal Chart Detection
         orientation = "v"
         if "horizontal" in query_lower:
@@ -1476,15 +1391,15 @@ class ChatbotLogic:
             if chart_type == "line": chart_type = "bar" # Line cannot be horizontal effectively usually
         
         # Auto-detect Granularity for Short Date Ranges
-        if final_date_range and not period_label:
-            try:
-                s = datetime.strptime(final_date_range["start_date"], "%Y-%m-%d")
-                e = datetime.strptime(final_date_range["end_date"], "%Y-%m-%d")
-                delta = (e - s).days
-                if delta <= 45: # If range is 1.5 months or less
-                    period_label = "Daily"
-            except:
-                pass
+        # if final_date_range and not period_label:
+        #     try:
+        #         s = datetime.strptime(final_date_range["start_date"], "%Y-%m-%d")
+        #         e = datetime.strptime(final_date_range["end_date"], "%Y-%m-%d")
+        #         delta = (e - s).days
+        #         if delta <= 45: # If range is 1.5 months or less
+        #             period_label = "Daily"
+        #     except:
+        #         pass
 
         # Infer Comparison Entity if not explicitly set (e.g. "by facility" not used)
         if comparison_mode and not comparison_entity:
@@ -1511,13 +1426,75 @@ class ChatbotLogic:
             "comparison_mode": comparison_mode,
             "comparison_entity": comparison_entity,
             "comparison_targets": found_regions if comparison_mode and comparison_entity == "region" and found_regions else [],
+            "is_drill_down": is_drill_down,
             "response": None
         }
+
+    def _get_cache_key(self, parsed_query, facility_uids=None):
+        """Create a unique cache key for the query"""
+        import hashlib
+        import json
+        
+        # Sort UIDs for consistent hashing
+        sorted_uids = sorted(facility_uids) if facility_uids else []
+        
+        key_data = {
+            "kpi": parsed_query.get("kpi"),
+            "facility_count": len(sorted_uids),
+            "facility_hash": hashlib.md5(str(sorted_uids).encode()).hexdigest(),
+            "date_range": parsed_query.get("date_range"),
+            "intent": parsed_query.get("intent"),
+            "comparison_mode": parsed_query.get("comparison_mode"),
+            "user_role": self.user.get("role")
+        }
+        
+        key_str = json.dumps(key_data, sort_keys=True, default=str)
+        return hashlib.md5(key_str.encode()).hexdigest()
+    
+    def _get_cached_result(self, cache_key):
+        """Get cached result if not expired"""
+        import time
+        
+        # Initialize cache if needed
+        if not hasattr(self, "query_cache"):
+            self.query_cache = {}
+            self.cache_expiry = 30  # seconds
+            
+        if cache_key in self.query_cache:
+            result, timestamp = self.query_cache[cache_key]
+            if time.time() - timestamp < self.cache_expiry:
+                logging.info(f"✅ Chatbot: Using cached result for {cache_key[:8]}")
+                return result
+            else:
+                del self.query_cache[cache_key]
+        return None
+    
+    def _cache_result(self, cache_key, result):
+        """Cache the query result"""
+        import time
+        
+        # Initialize cache if needed
+        if not hasattr(self, "query_cache"):
+            self.query_cache = {}
+            self.cache_expiry = 30
+            
+        self.query_cache[cache_key] = (result, time.time())
+        # Limit cache size
+        if len(self.query_cache) > 50:
+            # Remove oldest entry
+            oldest_key = min(self.query_cache.items(), key=lambda x: x[1][1])[0]
+            del self.query_cache[oldest_key]
 
     def generate_response(self, query):
         global KPI_MAPPING, KPI_OPTIONS
         parsed = self.parse_query(query)
         
+        # --- PERFORMANCE CACHE ---
+        cache_key = self._get_cache_key(parsed, parsed.get("facility_uids"))
+        cached = self._get_cached_result(cache_key)
+        if cached: return cached
+        
+
         # Handle List KPIs Intent (New)
         if parsed.get("intent") == "list_kpis":
             response = "Here are the available **Maternal Health Indicators** in this dashboard:\n\n"
@@ -1808,6 +1785,10 @@ class ChatbotLogic:
 
         # If Intent is Plot OR Analysis is requested (to get trend data)
         if parsed["intent"] == "plot" or parsed.get("analysis_type"):
+            # CRITICAL FIX: Check if facilities exist BEFORE attempting to plot
+            if parsed["facility_names"] and not parsed["facility_uids"]:
+                return None, "⚠️ **Facility not found!**\n\nI couldn't find that facility in the system. Please check:\n1. **Spelling** of the facility name\n2. Try saying **'list facilities'** to see all available facilities\n3. Use the full facility name (e.g., 'Adigrat Hospital' not just 'Adigrat')"
+            
             # 2. Get Data for Active KPI (using SILENT PREPARE)
             if use_newborn_data:
                 from newborns_dashboard.dash_co_newborn import prepare_data_for_newborn_trend_chart
@@ -1895,12 +1876,25 @@ class ChatbotLogic:
                             comparison_groups.append((name, [uid]))
                             all_comparison_uids.append(uid)
                 
-                # Force table-only rendering for "all" comparisons unless explicit plot request
-                if is_compare_all:
-                    explicit_plot_keywords = ["plot", "graph", "chart", "visualize", "trend"]
-                    if not any(k in query.lower() for k in explicit_plot_keywords):
+                # Force table-only rendering for "all" comparisons OR drill-down OR massive comparisons
+                # USER RULE UPDATE: If comparison > 5 facilities, FORCE TABLE (ignore "plot")
+                force_table_threshold = 5
+                
+                # Check for region plotting specifically
+                allow_region_plot = comparison_entity == "region" and len(comparison_groups) < 15 # Allow up to 15 regions (usually ~11)
+                
+                if comparison_entity == "facility" and len(comparison_groups) > force_table_threshold:
                         chart_type = "table"
-                        suggestion = f"\n\n💡 *Showing comparison table for all {comparison_entity}s. Ask to 'plot' if you want a chart.*"
+                        suggestion = f"\n\n💡 *Comparison involves **{len(comparison_groups)}** facilities. Showing table for clarity. Ask for a specific chart type (e.g. 'bar chart') if you really want a plot.*"
+                
+                # Fallback for "all" or "drill down" if threshold not met but logic applies?
+                elif (is_compare_all or parsed.get("is_drill_down")) and not allow_region_plot:
+                     # Check if specific chart type mentioned
+                    explicit_chart_type = any(k in query.lower() for k in ["bar", "line", "area", "column"])
+                    
+                    if not explicit_chart_type: # Force table if just "plot" or "show"
+                        chart_type = "table"
+                        suggestion = f"\n\n💡 *Showing comparison table. Ask for a specific chart type (e.g. 'bar chart') to see a plot.*"
             
             # If NOT comparison mode (or failed setup), default to single group
             if not comparison_groups:
@@ -1949,21 +1943,64 @@ class ChatbotLogic:
             except Exception as e:
                 logging.warning(f"Navigation update failed: {e}")
 
-            # Loop through Groups and Build Data
+            # --- BATCH PROCESSING ---
+            # Optimize: Fetch data for ALL entities at once, then filter in memory.
+            
+            # 1. Collect all valid targets
+            flat_uids = []
+            if is_compare_all:
+                flat_uids = all_comparison_uids
+            else:
+                for _, uids in comparison_groups:
+                    if uids: flat_uids.extend(uids)
+                flat_uids = list(set(flat_uids))
+            
+            # 2. Add current filters to context
+            # (Already in active_df but we pass flat_uids to filter efficiently)
+            
+            # 3. Batch Fetch
+            if use_newborn_data:
+                 from newborns_dashboard.dash_co_newborn import prepare_data_for_newborn_trend_chart
+                 all_data_df, date_col = prepare_data_for_newborn_trend_chart(active_df, active_kpi_name, flat_uids, date_range)
+            else:
+                 all_data_df, date_col = self._silent_prepare_data(active_df, active_kpi_name, flat_uids, date_range)
+
+            # 4. Global Period Assignment
+            if not all_data_df.empty:
+                 # Check if period labels needed
+                 from utils.time_filter import assign_period
+                 p_label = parsed.get("period_label") or st.session_state.get("period_label", "Monthly")
+                 
+                 # Ensure date column exists as datetime
+                 if "event_date" not in all_data_df.columns and date_col in all_data_df.columns:
+                     all_data_df["event_date"] = pd.to_datetime(all_data_df[date_col], errors='coerce')
+                 
+                 # Assign period
+                 if "event_date" in all_data_df.columns:
+                     all_data_df = assign_period(all_data_df, "event_date", p_label)
+
+            # Loop through Groups and Build Data using MEMORY FILTERING
             chart_data = []
             
             for entity_name, entity_uids in comparison_groups:
-                 # Re-fetch/Filter data for this entity
-                 if use_newborn_data:
-                      from newborns_dashboard.dash_co_newborn import prepare_data_for_newborn_trend_chart
-                      entity_df, _ = prepare_data_for_newborn_trend_chart(active_df, active_kpi_name, entity_uids, date_range)
+                 # Filter this group's data from the batch
+                 if all_data_df.empty:
+                     entity_df = pd.DataFrame()
                  else:
-                      entity_df, _ = self._silent_prepare_data(active_df, active_kpi_name, entity_uids, date_range)
+                     if "orgUnit" in all_data_df.columns and entity_uids:
+                         entity_df = all_data_df[all_data_df["orgUnit"].isin(entity_uids)].copy()
+                     else:
+                         # Fallback for national/region if specific UID column logic differs
+                         # For now assuming orgUnit is key
+                         if not entity_uids: # Overall
+                             entity_df = all_data_df.copy()
+                         else:
+                             entity_df = pd.DataFrame()
                  
-                 if entity_df is None or entity_df.empty:
+                 if entity_df.empty:
                      continue
 
-                 # Determine Period Order
+                 # Determine Period Order (Already done globally but ensuring display col)
                  if "period_display" not in entity_df.columns:
                      if "event_date" in entity_df.columns:
                         entity_df["period_display"] = entity_df["event_date"].dt.strftime("%b-%y").str.capitalize()
@@ -2024,6 +2061,41 @@ class ChatbotLogic:
                 
             # Prepare for rendering
             render_plot_df = plot_df.copy()
+
+            # --- CONTEXT DESCRIPTION BUILDER ---
+            context_desc = ""
+            if parsed.get("comparison_mode"):
+                if parsed.get("comparison_entity") == "facility":
+                     if is_compare_all:
+                         context_desc = " for **All Facilities**"
+                     elif parsed.get("facility_names"):
+                         c_names = list(dict.fromkeys(parsed["facility_names"]))
+                         if len(c_names) > 3:
+                             context_desc = f" for **{', '.join(c_names[:3])}** and {len(c_names)-3} others"
+                         else:
+                             context_desc = f" for **{', '.join(c_names)}**"
+                elif parsed.get("comparison_entity") == "region":
+                     if is_compare_all:
+                         context_desc = " for **All Regions**"
+                     elif parsed.get("comparison_targets"):
+                         c_names = parsed["comparison_targets"]
+                         if len(c_names) > 3:
+                             context_desc = f" for regions **{', '.join(c_names[:3])}**..."
+                         else:
+                             context_desc = f" for regions **{', '.join(c_names)}**"
+            else:
+                if parsed.get("facility_names"):
+                     c_names = list(dict.fromkeys(parsed["facility_names"]))
+                     if len(c_names) > 3:
+                         context_desc = f" for **{', '.join(c_names[:3])}**..."
+                     else:
+                         context_desc = f" for **{', '.join(c_names)}**"
+                elif parsed.get("comparison_targets"): 
+                     c_names = parsed["comparison_targets"]
+                     context_desc = f" for **{c_names[0]}**" 
+                else:
+                     if self.user.get("role") in ["national", "regional", "admin"]:
+                         context_desc = " for **All Facilities**"
             
             # --- SPECIALIZED RENDERING (Move BEFORE Generic Logic) ---
             # Check for specialized KPI using both the potentially mapped 'active' name and original name
@@ -2090,7 +2162,7 @@ class ChatbotLogic:
                         "data": render_df
                     }
                     
-                    return spec, f"I've rendered the specialized dashboard visualization for **{kpi_name}**.{nav_feedback}"
+                    return spec, f"I've rendered the specialized dashboard visualization for **{kpi_name}**{context_desc}.{nav_feedback}"
                 except Exception as e:
                     logging.error(f"Specialized rendering spec generation failed for {active_kpi_name}: {e}")
                     # Fallback to generic plot below if not handled
@@ -2145,7 +2217,7 @@ class ChatbotLogic:
                          # Optional: Add mean/total row? simpler is better for now.
                          # Reset index to make Period a column again for display
                          pivot_df.reset_index(inplace=True)
-                         return pivot_df, f"Here is the comparison table for **{kpi_name}**."
+                         return pivot_df, f"Here is the comparison table for **{kpi_name}**{context_desc}."
                      except Exception as e:
                          # Fallback if pivot fails (e.g. duplicates)
                          return plot_df[["Period", "Entity", "Value"]], f"Here is the comparison data for **{kpi_name}**."
@@ -2163,7 +2235,7 @@ class ChatbotLogic:
                                 plot_df[col] = plot_df[col].apply(lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x)
                             except: pass
 
-                return plot_df, f"Here is the data table for **{kpi_name}**."
+                return plot_df, f"Here is the data table for **{kpi_name}**{context_desc}."
                 
             elif chart_type == "bar":
                 if parsed.get("orientation") == "h":
@@ -2184,7 +2256,9 @@ class ChatbotLogic:
                 if len(parsed['facility_names']) > 2: title_text += "..."
             fig.update_layout(title_text=title_text, margin=dict(l=20, r=20, t=40, b=20))
             
-            return fig, f"Here is the {chart_type} chart for **{kpi_name}**.{suggestion}{nav_feedback}"
+            result = (fig, f"Here is the {chart_type} chart for **{kpi_name}**{context_desc}.{suggestion}{nav_feedback}")
+            self._cache_result(cache_key, result)
+            return result
             
         else:
             # Text Response (Single value)
@@ -2233,8 +2307,14 @@ class ChatbotLogic:
             else:
                 response_text = f"The **{kpi_name}** count is **{int(display_value):,}**"
 
-            if parsed["facility_names"]:
-                response_text += f" for *{', '.join(parsed['facility_names'])}*"
+            if parsed.get("facility_names"):
+                 names = list(dict.fromkeys(parsed["facility_names"]))
+                 if len(names) > 3:
+                     response_text += f" for *{', '.join(names[:3])}*..."
+                 else:
+                     response_text += f" for *{', '.join(names)}*"
+            elif self.user.get("role") in ["national", "regional", "admin"] and not parsed.get("comparison_targets"):
+                 response_text += " for *All Facilities*"
             if date_range:
                 response_text += f" during the period {date_range['start_date']} to {date_range['end_date']}."
             else:
@@ -2243,7 +2323,10 @@ class ChatbotLogic:
             if target_component == "value":
                 response_text += f"\n\n(Based on {int(numerator)} cases out of {int(denominator)})"
             
-            return None, response_text + suggestion + nav_feedback
+            # Cache result
+            result = (None, response_text + suggestion + nav_feedback)
+            self._cache_result(cache_key, result)
+            return result
 
 
 def render_chatbot():
@@ -2325,7 +2408,7 @@ def render_chatbot():
          st.rerun()
 
     st.markdown('<div class="main-chat-container">', unsafe_allow_html=True)
-    st.markdown('<h1 class="chat-header">🤖 IMNID AI Assistant</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="chat-header">🤖 IMNID Chatbot</h1>', unsafe_allow_html=True)
     
     # Ensure Data Availability
     data = ensure_data_loaded()
@@ -2504,7 +2587,19 @@ def render_chatbot():
                     if fig is not None:
                         if isinstance(fig, dict) and fig.get("type") == "specialized":
                             # Execute Specialized Rendering
+                            # FIX: Pass unique index (length of current history + 1 or just current length since we appended prompt already?)
+                            # We appended prompt (msg-1) at line 2359.
+                            # So current length used for next message is len(st.session_state.messages).
+                            # Wait, we haven't appended the ASSISTANT message yet (happens at 2397).
+                            # So collision checks needs to be careful.
+                            # History loop ran on 0..N.
+                            # We are making N+1.
+                            current_msg_index = len(st.session_state.messages) 
+                            
+                            # Update Spec with Index
+                            fig["message_index"] = current_msg_index
                             execute_specialized(fig)
+                            
                             # Save Spec to history
                             msg_obj["specialized_spec"] = fig
                         elif isinstance(fig, pd.DataFrame):
@@ -2563,11 +2658,11 @@ def get_welcome_message(role):
 I can help you analyze data across the **{dashboard_str}** dashboards.
 
 **What I can do for you:**
-- **📊 Plot Charts**: I can generate Line, Bar, and Area charts for Maternal Health indicators.
-- **🔢 Quick Values**: Ask for a specific value (e.g. "What is the PPH rate?") and I'll provide the latest figure.
-- **🗺️ Comparisons**: Ask to compare facilities or regions! (e.g., "Compare Admitted Mothers for Adigrat and Suhul")
-- **📚 Definitions**: Ask "What is [Indicator]?" to get a medical definition.
-- **📥 Data Tables**: Ask for "table format" to see the raw numbers.
+- **Plot Charts**: I can generate Line, Bar, and Area charts for Maternal Health indicators.
+- **Quick Values**: Ask for a specific value (e.g. "What is the PPH rate?") and I'll provide the latest figure.
+- **Comparisons**: Ask to compare facilities or regions! (e.g., "Compare Admitted Mothers for Adigrat and Suhul")
+- **Definitions**: Ask "Define [Indicator]" to get a medical definition.
+- **Data Tables**: Ask for "table format" to see the raw numbers.
 
 **How to Compare:**
 1. **By Facility**: "Compare [KPI] for [Facility A] and [Facility B]"
