@@ -144,7 +144,7 @@ ENROLLMENT_DATE_COL = "enrollment_date"
 def compute_birth_counts(df, facility_uids=None):
     """
     Compute birth counts accounting for multiple births (twins, triplets, etc.)
-    Uses UID filtering
+    Uses UID filtering - VECTORIZED for performance
     Returns: total_births, live_births, stillbirths
     """
     cache_key = get_cache_key(df, facility_uids, "birth_counts")
@@ -159,86 +159,43 @@ def compute_birth_counts(df, facility_uids=None):
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        actual_events_df = filtered_df.copy()
-
         # Initialize columns with zeros if they don't exist
-        if NUMBER_OF_NEWBORNS_COL not in actual_events_df.columns:
-            actual_events_df[NUMBER_OF_NEWBORNS_COL] = 0
+        for col in [NUMBER_OF_NEWBORNS_COL, OTHER_NUMBER_OF_NEWBORNS_COL]:
+            if col not in filtered_df.columns:
+                filtered_df[col] = 0
+            filtered_df[col] = pd.to_numeric(filtered_df[col], errors="coerce").fillna(0)
 
-        if OTHER_NUMBER_OF_NEWBORNS_COL not in actual_events_df.columns:
-            actual_events_df[OTHER_NUMBER_OF_NEWBORNS_COL] = 0
-
-        if BIRTH_OUTCOME_COL not in actual_events_df.columns:
-            actual_events_df[BIRTH_OUTCOME_COL] = np.nan
-
-        # Convert to numeric and fill NaN
-        actual_events_df[NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-            actual_events_df[NUMBER_OF_NEWBORNS_COL], errors="coerce"
-        ).fillna(0)
-
-        actual_events_df[OTHER_NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-            actual_events_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce"
-        ).fillna(0)
-
-        actual_events_df[BIRTH_OUTCOME_COL] = pd.to_numeric(
-            actual_events_df[BIRTH_OUTCOME_COL], errors="coerce"
-        )
-
-        # Prioritized Logic for denominator:
-        # 1. Main count (n1)
-        # 2. Other count (n2) if n1 is 0
-        # 3. Default to 1 if both are 0
-        total_babies_per_row = actual_events_df[NUMBER_OF_NEWBORNS_COL].copy()
-        mask_n1_zero = total_babies_per_row == 0
-        total_babies_per_row[mask_n1_zero] = actual_events_df[OTHER_NUMBER_OF_NEWBORNS_COL][mask_n1_zero]
+        # PRIORITIZED LOGIC for baby count
+        n1 = filtered_df[NUMBER_OF_NEWBORNS_COL]
+        n2 = filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL]
         
-        # After taking n2, if still 0, default to 1
-        mask_still_zero = total_babies_per_row == 0
-        total_babies_per_row[mask_still_zero] = 1
+        # Determine total babies per row: n1 if > 0 else (n2 if > 0 else 1)
+        total_babies_per_row = n1.where(n1 > 0, n2.where(n2 > 0, 1)).astype(int)
+        total_births = total_babies_per_row.sum()
 
-        # Use the same logic as compute_stillbirth_count for multiple newborns
-        total_births = 0
         live_births = 0
         stillbirths = 0
+        
+        # Baby 1: Always use BIRTH_OUTCOME_COL
+        if BIRTH_OUTCOME_COL in filtered_df.columns:
+            outcomes = pd.to_numeric(filtered_df[BIRTH_OUTCOME_COL], errors="coerce")
+            live_births += (outcomes == 1).sum()
+            stillbirths += (outcomes == 2).sum()
 
-        # List of birth outcome columns to check
+        # Babies 2-4: Use specific outcome columns
         birth_outcome_cols = [
-            BIRTH_OUTCOME_NEWBORN_1_COL,
             BIRTH_OUTCOME_NEWBORN_2_COL,
             BIRTH_OUTCOME_NEWBORN_3_COL,
             BIRTH_OUTCOME_NEWBORN_4_COL,
         ]
-
-        # For each row, check the appropriate number of birth outcome columns
-        for idx, row in actual_events_df.iterrows():
-            num_newborns = int(total_babies_per_row[idx])
-            
-            total_births += num_newborns
-            
-            # Check up to num_newborns columns (max 4)
-            for i in range(min(num_newborns, 4)):
-                outcome_val = None
-                
-                if i == 0:
-                    # Baby 1: PER USER REQUEST - Always use the main General column
-                    gen_col = BIRTH_OUTCOME_COL
-                    if gen_col in row and pd.notna(row[gen_col]):
-                        outcome_val = str(row[gen_col])
-                else:
-                    # Babies 2-4: PER USER REQUEST - Use specific newborn columns 2, 3, or 4
-                    col = birth_outcome_cols[i]
-                    if col in row and pd.notna(row[col]):
-                        outcome_val = str(row[col])
-                    
-                if outcome_val and str(outcome_val).lower() != "nan":
-                    try:
-                        numeric_val = pd.to_numeric(str(outcome_val).split(".")[0], errors="coerce")
-                        if numeric_val == 1:  # Alive
-                            live_births += 1
-                        elif numeric_val == 2:  # Stillbirth
-                            stillbirths += 1
-                    except (ValueError, AttributeError):
-                        pass
+        
+        for i, col in enumerate(birth_outcome_cols):
+            if col in filtered_df.columns:
+                # Only count if the row actually has at least (i+2) babies
+                mask = total_babies_per_row >= (i + 2)
+                outcomes = pd.to_numeric(filtered_df.loc[mask, col], errors="coerce")
+                live_births += (outcomes == 1).sum()
+                stillbirths += (outcomes == 2).sum()
 
         result = (int(total_births), int(live_births), int(stillbirths))
 
@@ -353,7 +310,7 @@ def compute_maternal_death_count(df, facility_uids=None):
 
 
 def compute_stillbirth_count(df, facility_uids=None):
-    """Count stillbirth occurrences across all newborns with UID filtering"""
+    """Count stillbirth occurrences across all newborns - VECTORIZED for performance"""
     if df is None or df.empty:
         return 0
 
@@ -361,77 +318,32 @@ def compute_stillbirth_count(df, facility_uids=None):
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-    df_copy = filtered_df.copy()
+    # Initialize columns
+    for col in [NUMBER_OF_NEWBORNS_COL, OTHER_NUMBER_OF_NEWBORNS_COL]:
+        if col not in filtered_df.columns:
+            filtered_df[col] = 0
     
-    # Initialize columns if they don't exist
-    if NUMBER_OF_NEWBORNS_COL not in df_copy.columns:
-        df_copy[NUMBER_OF_NEWBORNS_COL] = 0
-    if OTHER_NUMBER_OF_NEWBORNS_COL not in df_copy.columns:
-        df_copy[OTHER_NUMBER_OF_NEWBORNS_COL] = 0
+    n1 = pd.to_numeric(filtered_df[NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+    n2 = pd.to_numeric(filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+    total_babies = n1.where(n1 > 0, n2.where(n2 > 0, 1)).astype(int)
     
-    # Convert number of newborns to numeric
-    df_copy[NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-        df_copy[NUMBER_OF_NEWBORNS_COL], errors="coerce"
-    ).fillna(0)
-    df_copy[OTHER_NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-        df_copy[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce"
-    ).fillna(0)
+    stillbirths = 0
     
-    # SIMPLIFIED LOGIC:
-    # Numerator: Count every '2' found in the 4 newborn columns (plus legacy fallback if newborn 1 is null)
-    total_stillbirths = 0
-    
-    # List of birth outcome columns to check
-    birth_outcome_cols = [
-        BIRTH_OUTCOME_NEWBORN_1_COL,
-        BIRTH_OUTCOME_NEWBORN_2_COL,
-        BIRTH_OUTCOME_NEWBORN_3_COL,
-        BIRTH_OUTCOME_NEWBORN_4_COL,
-    ]
-    
-    for idx, row in df_copy.iterrows():
-        # Get number of babies (Prioritized Logic)
-        n1 = pd.to_numeric(row[NUMBER_OF_NEWBORNS_COL], errors="coerce")
-        n2 = pd.to_numeric(row[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce")
+    # Baby 1: Always use BIRTH_OUTCOME_COL
+    if BIRTH_OUTCOME_COL in filtered_df.columns:
+        outcomes = pd.to_numeric(filtered_df[BIRTH_OUTCOME_COL], errors="coerce")
+        stillbirths += (outcomes == 2).sum()
         
-        n1_val = int(n1) if pd.notna(n1) and n1 > 0 else 0
-        n2_val = int(n2) if pd.notna(n2) and n2 > 0 else 0
-        
-        # Determine if count was missing (defaulted to 1)
-        count_was_missing = (n1_val == 0 and n2_val == 0)
-        
-        if n1_val > 0:
-            num_babies = n1_val
-        elif n2_val > 0:
-            num_babies = n2_val
-        else:
-            num_babies = 1
+    # Babies 2-4: Use specific outcome columns
+    birth_outcome_cols = [BIRTH_OUTCOME_NEWBORN_2_COL, BIRTH_OUTCOME_NEWBORN_3_COL, BIRTH_OUTCOME_NEWBORN_4_COL]
+    for i, col in enumerate(birth_outcome_cols):
+        if col in filtered_df.columns:
+            mask = total_babies >= (i + 2)
+            outcomes = pd.to_numeric(filtered_df.loc[mask, col], errors="coerce")
+            stillbirths += (outcomes == 2).sum()
+            
+    return int(stillbirths)
 
-        # Check each of the newborn columns up to num_babies
-        for i in range(min(num_babies, 4)):
-            outcome_val = None
-            
-            if i == 0:
-                # Baby 1: PER USER REQUEST - Always use the main General column
-                # This applies regardless of whether count was NA or explicitly 1
-                if BIRTH_OUTCOME_COL in row and pd.notna(row[BIRTH_OUTCOME_COL]):
-                    outcome_val = str(row[BIRTH_OUTCOME_COL])
-            else:
-                # Babies 2-4: PER USER REQUEST - Use specific newborn columns 2, 3, or 4
-                col = birth_outcome_cols[i]
-                if col in row and pd.notna(row[col]):
-                    outcome_val = str(row[col])
-            
-            if outcome_val and str(outcome_val).lower() != "nan":
-                try:
-                    # Clean the value (handle floats like '2.0')
-                    clean_val = str(outcome_val).split('.')[0].strip()
-                    if clean_val == "2":
-                        total_stillbirths += 1
-                except:
-                    continue
-    
-    return int(total_stillbirths)
 
 
 # ---------------- KPI Computation Functions ----------------
@@ -482,7 +394,7 @@ def compute_fp_acceptance(df, facility_uids=None):
 
 
 def compute_total_newborns(df, facility_uids=None):
-    """Count total newborns using number_of_newborns columns"""
+    """Count total newborns - VECTORIZED for performance"""
     if df is None or df.empty:
         return 0
     
@@ -490,33 +402,14 @@ def compute_total_newborns(df, facility_uids=None):
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
     
-    # Initialize columns if they don't exist
-    if NUMBER_OF_NEWBORNS_COL not in filtered_df.columns:
-        filtered_df[NUMBER_OF_NEWBORNS_COL] = 0
-    if OTHER_NUMBER_OF_NEWBORNS_COL not in filtered_df.columns:
-        filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL] = 0
-    
-    # Prioritized Logic:
-    # 1. Main column (n1)
-    # 2. Other column (n2) if n1 is missing/zero
-    # 3. Default to 1 if both are missing/zero
-    total_newborns = 0
-    for idx, row in filtered_df.iterrows():
-        n1 = pd.to_numeric(row[NUMBER_OF_NEWBORNS_COL], errors="coerce")
-        n2 = pd.to_numeric(row[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce")
-        
-        n1 = int(n1) if pd.notna(n1) and n1 > 0 else 0
-        n2 = int(n2) if pd.notna(n2) and n2 > 0 else 0
-        
-        if n1 > 0:
-            row_count = n1
-        elif n2 > 0:
-            row_count = n2
-        else:
-            row_count = 1
+    for col in [NUMBER_OF_NEWBORNS_COL, OTHER_NUMBER_OF_NEWBORNS_COL]:
+        if col not in filtered_df.columns:
+            filtered_df[col] = 0
             
-        total_newborns += row_count
-        
+    n1 = pd.to_numeric(filtered_df[NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+    n2 = pd.to_numeric(filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+    
+    total_newborns = n1.where(n1 > 0, n2.where(n2 > 0, 1)).astype(int).sum()
     return int(total_newborns)
 
 

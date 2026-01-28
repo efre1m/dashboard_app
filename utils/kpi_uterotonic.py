@@ -52,8 +52,7 @@ UTEROTONIC_DATE_COL = "enrollment_date"
 
 def compute_uterotonic_count(df, facility_uids=None):
     """
-    Count Uterotonic administration occurrences in patient-level data
-    Checks for uterotonic codes 1, 2, or 3 (comma-separated)
+    Count Uterotonic administration occurrences - VECTORIZED for performance
     """
     cache_key = get_uterotonic_cache_key(df, facility_uids, "uterotonic_count")
 
@@ -64,50 +63,29 @@ def compute_uterotonic_count(df, facility_uids=None):
         result = 0
     else:
         filtered_df = df.copy()
-
-        # Filter by facility if specified
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
         if UTEROTONIC_COL not in filtered_df.columns:
             result = 0
         else:
-            # Filter out rows without uterotonic date
+            # Check for codes 1, 2, or 3 in the string (standalone or in comma-separated list)
+            # Regex pattern matching any of 1, 2, 3 as whole words
+            pattern = r"(^|[,;\s])([123])([,;\s]|$)"
+            
+            mask = filtered_df[UTEROTONIC_COL].astype(str).str.contains(
+                pattern, regex=True, na=False
+            )
+            
+            # Additional check for enrollment date if required by this specific KPI logic
             if UTEROTONIC_DATE_COL in filtered_df.columns:
-                filtered_df = filtered_df[
-                    filtered_df[UTEROTONIC_DATE_COL].notna()
-                ].copy()
+                date_mask = filtered_df[UTEROTONIC_DATE_COL].notna()
+                mask = mask & date_mask
 
-            # Convert to string and handle NaN values
-            filtered_df["uterotonic_clean"] = filtered_df[UTEROTONIC_COL].astype(str)
+            result = int(mask.sum())
 
-            # Initialize count
-            count = 0
-
-            # Process each value
-            for value in filtered_df["uterotonic_clean"]:
-                if pd.isna(value) or value == "nan":
-                    continue
-
-                # Handle comma-separated values like "2,3" or "2"
-                value_str = str(value).strip()
-
-                # Skip empty values and "0" (none)
-                if (
-                    not value_str
-                    or value_str == "0"
-                    or value_str.lower() in ["n/a", "nan", "null", "none"]
-                ):
-                    continue
-
-                # Split by comma and check each code
-                codes = [code.strip() for code in value_str.split(",")]
-
-                # Check if any valid uterotonic code is present
-                if any(code in UTEROTONIC_CODES for code in codes):
-                    count += 1
-
-            result = count
+    st.session_state.uterotonic_cache[cache_key] = result
+    return result
 
     st.session_state.uterotonic_cache[cache_key] = result
     return result
@@ -115,16 +93,12 @@ def compute_uterotonic_count(df, facility_uids=None):
 
 def compute_uterotonic_by_type(df, facility_uids=None):
     """
-    Compute distribution of uterotonic types from patient-level data
-    Returns: Dictionary with counts for each uterotonic type
-    Handles comma-separated values like "2,3" - each code counts separately
+    Compute distribution of uterotonic types - VECTORIZED for performance
     """
     if df is None or df.empty:
         return {"Ergometrine": 0, "Oxytocin": 0, "Misoprostol": 0, "total": 0}
 
     filtered_df = df.copy()
-
-    # Filter by facility if specified
     if facility_uids and "orgUnit" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
@@ -138,37 +112,22 @@ def compute_uterotonic_by_type(df, facility_uids=None):
     # Initialize counts
     counts = {"Ergometrine": 0, "Oxytocin": 0, "Misoprostol": 0, "total": 0}
 
-    # Convert to string
-    filtered_df["uterotonic_clean"] = filtered_df[UTEROTONIC_COL].astype(str)
+    # Vectorized computation using pandas split and explode
+    s = filtered_df[UTEROTONIC_COL].astype(str).str.split(",")
+    exploded = s.explode().str.strip()
+    dist = exploded.value_counts()
 
-    # Process each value
-    for value in filtered_df["uterotonic_clean"]:
-        if pd.isna(value) or value == "nan":
-            continue
+    mapping = {"1": "Ergometrine", "2": "Oxytocin", "3": "Misoprostol"}
+    
+    total = 0
+    for code, count in dist.items():
+        if code in mapping:
+            name = mapping[code]
+            c_val = int(count)
+            counts[name] = c_val
+            total += c_val
 
-        value_str = str(value).strip()
-
-        # Skip empty values and "0" (none)
-        if (
-            not value_str
-            or value_str == "0"
-            or value_str.lower() in ["n/a", "nan", "null", "none"]
-        ):
-            continue
-
-        # Split by comma and count each code
-        codes = [code.strip() for code in value_str.split(",")]
-
-        for code in codes:
-            if code == "1":
-                counts["Ergometrine"] += 1
-            elif code == "2":
-                counts["Oxytocin"] += 1
-            elif code == "3":
-                counts["Misoprostol"] += 1
-            # Note: We don't count "0" (None)
-
-    counts["total"] = counts["Ergometrine"] + counts["Oxytocin"] + counts["Misoprostol"]
+    counts["total"] = total
     return counts
 
 

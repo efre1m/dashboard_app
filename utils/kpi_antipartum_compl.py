@@ -94,8 +94,7 @@ def compute_antipartum_compl_count(df, facility_uids=None):
 
 def compute_complication_distribution(df, facility_uids=None):
     """
-    Compute distribution of complications
-    Returns: Dictionary with counts for each complication type
+    Compute distribution of complications - VECTORIZED for performance
     """
     if df is None or df.empty:
         return {name: 0 for name in COMPLICATION_LABELS.values()}
@@ -110,30 +109,20 @@ def compute_complication_distribution(df, facility_uids=None):
     # Initialize counts
     named_counts = {name: 0 for name in COMPLICATION_LABELS.values()}
 
-    df_copy = filtered_df.copy()
-    df_copy["complication_clean"] = df_copy[COMPLICATION_COL].astype(str)
-
-    # Process each value
-    for value in df_copy["complication_clean"]:
-        if pd.isna(value) or value == "nan":
-            continue
-
-        value_str = str(value).strip()
-
-        # Skip empty values
-        if not value_str or value_str.lower() in ["n/a", "nan", "null"]:
-            continue
-
-        # Split by comma and count each code
-        codes = [code.strip() for code in value_str.split(",")]
-
-        for code in codes:
-            if code in COMPLICATION_LABELS:
-                condition_name = COMPLICATION_LABELS[code]
-                named_counts[condition_name] += 1
+    # Vectorized computation using pandas split and explode
+    s = filtered_df[COMPLICATION_COL].astype(str).str.split(",")
+    exploded = s.explode().str.strip()
+    dist = exploded.value_counts()
+    
+    total = 0
+    for code, count in dist.items():
+        if code in COMPLICATION_LABELS:
+            name = COMPLICATION_LABELS[code]
+            c_val = int(count)
+            named_counts[name] = c_val
+            total += c_val
 
     # Add total count
-    total = sum(named_counts.values())
     named_counts["Total Complications"] = total
 
     return named_counts

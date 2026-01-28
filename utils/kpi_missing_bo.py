@@ -64,8 +64,7 @@ EMPTY_INDICATORS = ["", "nan", "None", "null", "N/A", "n/a", "na", "NA", "undefi
 
 def compute_missing_bo_count(df, facility_uids=None):
     """
-    Count missing birth outcome documentation across all newborns
-    Checks appropriate number of birth outcome columns based on number_of_newborns
+    Count missing birth outcome documentation across all newborns - VECTORIZED for performance
     """
     cache_key = get_missing_bo_cache_key(df, facility_uids, "missing_count")
 
@@ -79,86 +78,42 @@ def compute_missing_bo_count(df, facility_uids=None):
         if facility_uids and "orgUnit" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
 
-        # Filter to only include deliveries with dates (denominator logic)
-        date_column = get_relevant_date_column_for_kpi(
-            "Missing Birth Outcome Documentation"
-        )
+        # Filter to only include deliveries with dates
+        date_column = get_relevant_date_column_for_kpi("Missing Birth Outcome Documentation")
         if date_column in filtered_df.columns:
-            filtered_df[date_column] = pd.to_datetime(
-                filtered_df[date_column], errors="coerce"
-            )
+            filtered_df[date_column] = pd.to_datetime(filtered_df[date_column], errors="coerce")
             filtered_df = filtered_df[filtered_df[date_column].notna()].copy()
 
         if filtered_df.empty:
             result = 0
         else:
-            df_copy = filtered_df.copy()
+            # Initialize baby count columns
+            for col in [NUMBER_OF_NEWBORNS_COL, OTHER_NUMBER_OF_NEWBORNS_COL]:
+                if col not in filtered_df.columns:
+                    filtered_df[col] = 0
             
-            # Initialize columns if they don't exist
-            if NUMBER_OF_NEWBORNS_COL not in df_copy.columns:
-                df_copy[NUMBER_OF_NEWBORNS_COL] = 0
-            if OTHER_NUMBER_OF_NEWBORNS_COL not in df_copy.columns:
-                df_copy[OTHER_NUMBER_OF_NEWBORNS_COL] = 0
+            n1 = pd.to_numeric(filtered_df[NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+            n2 = pd.to_numeric(filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+            total_babies = n1.where(n1 > 0, n2.where(n2 > 0, 1)).astype(int)
             
-            # Convert number of newborns to numeric
-            df_copy[NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-                df_copy[NUMBER_OF_NEWBORNS_COL], errors="coerce"
-            ).fillna(0)
-            df_copy[OTHER_NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-                df_copy[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce"
-            ).fillna(0)
-            
-            # Determine number of newborns (use OTHER if primary is empty)
-            df_copy["num_newborns"] = df_copy[NUMBER_OF_NEWBORNS_COL]
-            df_copy.loc[df_copy["num_newborns"] == 0, "num_newborns"] = df_copy[OTHER_NUMBER_OF_NEWBORNS_COL]
-            
-            # List of birth outcome columns to check
-            birth_outcome_cols = [
-                BIRTH_OUTCOME_NEWBORN_1_COL,
-                BIRTH_OUTCOME_NEWBORN_2_COL,
-                BIRTH_OUTCOME_NEWBORN_3_COL,
-                BIRTH_OUTCOME_NEWBORN_4_COL,
-            ]
-            
-            # SIMPLIFIED LOGIC:
             total_missing = 0
             
-            for idx, row in df_copy.iterrows():
-                # Get number of babies (Prioritized Logic)
-                n1 = pd.to_numeric(row[NUMBER_OF_NEWBORNS_COL], errors="coerce")
-                n2 = pd.to_numeric(row[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce")
+            # Baby 1: Always use BIRTH_OUTCOME_COL
+            if BIRTH_OUTCOME_COL in filtered_df.columns:
+                outcomes = filtered_df[BIRTH_OUTCOME_COL].astype(str).str.strip()
+                missing_mask = outcomes.isin(EMPTY_INDICATORS) | (outcomes == "") | (outcomes.str.upper() == "N/A")
+                total_missing += missing_mask.sum()
+            else:
+                total_missing += len(filtered_df) # All missing if column missing
                 
-                n1_val = int(n1) if pd.notna(n1) and n1 > 0 else 0
-                n2_val = int(n2) if pd.notna(n2) and n2 > 0 else 0
-                
-                count_was_missing = (n1_val == 0 and n2_val == 0)
-                
-                if n1_val > 0:
-                    num_newborns = n1_val
-                elif n2_val > 0:
-                    num_newborns = n2_val
-                else:
-                    num_newborns = 1
-                
-                # For each baby, check its outcome
-                for i in range(min(num_newborns, 4)):
-                    outcome_val = None
-                    
-                    if i == 0:
-                        # Baby 1: PER USER REQUEST - Always use the main General column
-                        gen_col = BIRTH_OUTCOME_COL
-                        if gen_col in row and pd.notna(row[gen_col]):
-                            outcome_val = str(row[gen_col])
-                    else:
-                        # Babies 2-4: PER USER REQUEST - Use specific newborn columns 2, 3, or 4
-                        col = birth_outcome_cols[i]
-                        if col in row and pd.notna(row[col]):
-                            outcome_val = str(row[col])
-                    
-                    # Check if missing
-                    cleaned_val = str(outcome_val).strip() if outcome_val else ""
-                    if cleaned_val in EMPTY_INDICATORS or cleaned_val == "" or cleaned_val.upper() == "N/A":
-                        total_missing += 1
+            # Babies 2-4: Use specific outcome columns
+            birth_outcome_cols = [BIRTH_OUTCOME_NEWBORN_2_COL, BIRTH_OUTCOME_NEWBORN_3_COL, BIRTH_OUTCOME_NEWBORN_4_COL]
+            for i, col in enumerate(birth_outcome_cols):
+                if col in filtered_df.columns:
+                    mask = total_babies >= (i + 2)
+                    outcomes = filtered_df.loc[mask, col].astype(str).str.strip()
+                    missing_mask = outcomes.isin(EMPTY_INDICATORS) | (outcomes == "") | (outcomes.str.upper() == "N/A")
+                    total_missing += missing_mask.sum()
             
             result = int(total_missing)
 
@@ -167,7 +122,7 @@ def compute_missing_bo_count(df, facility_uids=None):
 
 
 def compute_total_newborns_for_missing_bo(df, facility_uids=None):
-    """Count total newborns using number_of_newborns columns"""
+    """Count total newborns - VECTORIZED for performance"""
     if df is None or df.empty:
         return 0
     
@@ -179,42 +134,16 @@ def compute_total_newborns_for_missing_bo(df, facility_uids=None):
     if DELIVERY_DATE_COL in filtered_df.columns:
         filtered_df = filtered_df[filtered_df[DELIVERY_DATE_COL].notna()].copy()
     
-    # Initialize columns if they don't exist
-    if NUMBER_OF_NEWBORNS_COL not in filtered_df.columns:
-        filtered_df[NUMBER_OF_NEWBORNS_COL] = 0
-    if OTHER_NUMBER_OF_NEWBORNS_COL not in filtered_df.columns:
-        filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL] = 0
-    
-    # Convert to numeric
-    filtered_df[NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-        filtered_df[NUMBER_OF_NEWBORNS_COL], errors="coerce"
-    ).fillna(0)
-    filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-        filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce"
-    ).fillna(0)
-    
-    # Prioritized Logic:
-    # 1. Main column (n1)
-    # 2. Other column (n2) if n1 is missing/zero
-    # 3. Default to 1 if both are missing/zero
-    total = 0
-    for idx, row in filtered_df.iterrows():
-        n1 = pd.to_numeric(row[NUMBER_OF_NEWBORNS_COL], errors="coerce")
-        n2 = pd.to_numeric(row[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce")
-        
-        n1_val = int(n1) if pd.notna(n1) and n1 > 0 else 0
-        n2_val = int(n2) if pd.notna(n2) and n2 > 0 else 0
-        
-        if n1_val > 0:
-            row_count = n1_val
-        elif n2_val > 0:
-            row_count = n2_val
-        else:
-            row_count = 1
+    # Initialize baby count columns
+    for col in [NUMBER_OF_NEWBORNS_COL, OTHER_NUMBER_OF_NEWBORNS_COL]:
+        if col not in filtered_df.columns:
+            filtered_df[col] = 0
             
-        total += row_count
-        
-    return int(total)
+    n1 = pd.to_numeric(filtered_df[NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+    n2 = pd.to_numeric(filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+    
+    total_newborns = n1.where(n1 > 0, n2.where(n2 > 0, 1)).astype(int).sum()
+    return int(total_newborns)
 
 
 def compute_missing_bo_rate(df, facility_uids=None):
@@ -315,79 +244,37 @@ def get_numerator_denominator_for_missing_bo(
         return (0, 0, 0.0)
 
     # CRITICAL: Use the SAME logic as compute_missing_bo_count
-    # Check all birth outcome columns based on number of newborns
-    df_copy = filtered_df.copy()
-    
-    # Initialize columns if they don't exist
-    if NUMBER_OF_NEWBORNS_COL not in df_copy.columns:
-        df_copy[NUMBER_OF_NEWBORNS_COL] = 0
-    if OTHER_NUMBER_OF_NEWBORNS_COL not in df_copy.columns:
-        df_copy[OTHER_NUMBER_OF_NEWBORNS_COL] = 0
-    
-    # Convert number of newborns to numeric
-    df_copy[NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-        df_copy[NUMBER_OF_NEWBORNS_COL], errors="coerce"
-    ).fillna(0)
-    df_copy[OTHER_NUMBER_OF_NEWBORNS_COL] = pd.to_numeric(
-        df_copy[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce"
-    ).fillna(0)
-    
-    # Determine number of newborns (use OTHER if primary is empty)
-    df_copy["num_newborns"] = df_copy[NUMBER_OF_NEWBORNS_COL]
-    df_copy.loc[df_copy["num_newborns"] == 0, "num_newborns"] = df_copy[OTHER_NUMBER_OF_NEWBORNS_COL]
-    
-    # List of birth outcome columns to check
-    birth_outcome_cols = [
-        BIRTH_OUTCOME_NEWBORN_1_COL,
-        BIRTH_OUTCOME_NEWBORN_2_COL,
-        BIRTH_OUTCOME_NEWBORN_3_COL,
-        BIRTH_OUTCOME_NEWBORN_4_COL,
-    ]
-    
-    total_missing = 0
-    total_newborns = 0
-    
-    # For each row, check the appropriate number of birth outcome columns
-    for idx, row in df_copy.iterrows():
-        # Get number of babies (Prioritized Logic)
-        n1 = pd.to_numeric(row[NUMBER_OF_NEWBORNS_COL], errors="coerce")
-        n2 = pd.to_numeric(row[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce")
-        
-        n1_val = int(n1) if pd.notna(n1) and n1 > 0 else 0
-        n2_val = int(n2) if pd.notna(n2) and n2 > 0 else 0
-        
-        count_was_missing = (n1_val == 0 and n2_val == 0)
-        
-        if n1_val > 0:
-            num_babies = n1_val
-        elif n2_val > 0:
-            num_babies = n2_val
-        else:
-            num_babies = 1
-        
-        total_newborns += num_babies
-        
-        # Check outcomes for each baby
-        for i in range(min(num_babies, 4)):
-            outcome_val = None
+    # VECTORIZED implementation
+    for col in [NUMBER_OF_NEWBORNS_COL, OTHER_NUMBER_OF_NEWBORNS_COL]:
+        if col not in filtered_df.columns:
+            filtered_df[col] = 0
             
-            if i == 0:
-                # Baby 1: PER USER REQUEST - Always use the main General column
-                if BIRTH_OUTCOME_COL in row and pd.notna(row[BIRTH_OUTCOME_COL]):
-                    outcome_val = str(row[BIRTH_OUTCOME_COL])
-            else:
-                # Babies 2-4: PER USER REQUEST - Use specific newborn columns 2, 3, or 4
-                col = birth_outcome_cols[i]
-                if col in row and pd.notna(row[col]):
-                    outcome_val = str(row[col])
-            
-            # Check if missing (ensure outcome_val is cleaned)
-            cleaned_val = str(outcome_val).strip() if outcome_val else ""
-            if cleaned_val in EMPTY_INDICATORS or cleaned_val == "" or cleaned_val.upper() == "N/A":
-                total_missing += 1
+    n1 = pd.to_numeric(filtered_df[NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+    n2 = pd.to_numeric(filtered_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+    total_babies = n1.where(n1 > 0, n2.where(n2 > 0, 1)).astype(int)
     
-    numerator = int(total_missing)
-    denominator = int(total_newborns)
+    denominator = total_babies.sum()
+    numerator = 0
+    
+    # Baby 1
+    if BIRTH_OUTCOME_COL in filtered_df.columns:
+        outcomes = filtered_df[BIRTH_OUTCOME_COL].astype(str).str.strip()
+        missing_mask = outcomes.isin(EMPTY_INDICATORS) | (outcomes == "") | (outcomes.str.upper() == "N/A")
+        numerator += missing_mask.sum()
+    else:
+        numerator += len(filtered_df)
+        
+    # Babies 2-4
+    birth_outcome_cols = [BIRTH_OUTCOME_NEWBORN_2_COL, BIRTH_OUTCOME_NEWBORN_3_COL, BIRTH_OUTCOME_NEWBORN_4_COL]
+    for i, col in enumerate(birth_outcome_cols):
+        if col in filtered_df.columns:
+            mask = total_babies >= (i + 2)
+            outcomes = filtered_df.loc[mask, col].astype(str).str.strip()
+            missing_mask = outcomes.isin(EMPTY_INDICATORS) | (outcomes == "") | (outcomes.str.upper() == "N/A")
+            numerator += missing_mask.sum()
+            
+    numerator = int(numerator)
+    denominator = int(denominator)
 
     # Calculate rate
     rate = (numerator / denominator * 100) if denominator > 0 else 0.0

@@ -120,53 +120,19 @@ def compute_hiv_exposed_infants(df, facility_uids=None):
             hiv_positive_count = len(hiv_positive_df)
 
             if hiv_positive_count == 0:
-                # Try to see what HIV values we actually have
-                unique_hiv_vals = df_copy["hiv_str"].dropna().unique()[:20]
-                print(f"⚠️ No HIV+ mothers found. Total rows: {total_rows}")
-                print(f"   Sample HIV values: {list(unique_hiv_vals)}")
                 result = 0
             else:
-                print(
-                    f"✅ Found {hiv_positive_count} HIV+ mothers out of {total_rows} total"
-                )
-
-                # Step 3: Count infants - SIMPLIFIED LOGIC
-                total_infants = 0
-
-                for idx, row in hiv_positive_df.iterrows():
-                    # Count newborns with error handling
-                    try:
-                        newborns = 0
-
-                        # Primary newborn count
-                        if NUMBER_OF_NEWBORNS_COL in row and pd.notna(
-                            row[NUMBER_OF_NEWBORNS_COL]
-                        ):
-                            val = row[NUMBER_OF_NEWBORNS_COL]
-                            if pd.notna(val):
-                                newborns += int(float(val))
-
-                        # Other newborn count
-                        if OTHER_NUMBER_OF_NEWBORNS_COL in row and pd.notna(
-                            row[OTHER_NUMBER_OF_NEWBORNS_COL]
-                        ):
-                            val = row[OTHER_NUMBER_OF_NEWBORNS_COL]
-                            if pd.notna(val):
-                                newborns += int(float(val))
-
-                        # If still 0, assume at least 1 infant for HIV+ mother
-                        if newborns == 0:
-                            newborns = 1
-
-                        total_infants += newborns
-
-                    except Exception as e:
-                        # If error, assume 1 infant
-                        total_infants += 1
-                        print(f"   Row {idx}: Error counting newborns, assuming 1: {e}")
-
-                result = total_infants
-                print(f"✅ Total HIV-exposed infants: {result}")
+                # Vectorized infant counting
+                for col in [NUMBER_OF_NEWBORNS_COL, OTHER_NUMBER_OF_NEWBORNS_COL]:
+                    if col not in hiv_positive_df.columns:
+                        hiv_positive_df[col] = 0
+                
+                n1 = pd.to_numeric(hiv_positive_df[NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+                n2 = pd.to_numeric(hiv_positive_df[OTHER_NUMBER_OF_NEWBORNS_COL], errors="coerce").fillna(0)
+                
+                # Priority logic: n1 if > 0, else n2 if > 0, else 1
+                newborn_counts = n1.where(n1 > 0, n2.where(n2 > 0, 1)).astype(int)
+                result = int(newborn_counts.sum())
 
     st.session_state.arv_cache[cache_key] = result
     return result

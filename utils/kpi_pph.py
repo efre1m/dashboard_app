@@ -112,34 +112,21 @@ def compute_obstetric_condition_distribution(df, facility_uids=None):
         return {name: 0 for name in OBSTETRIC_CONDITION_CODES.values()}
 
     # Initialize counts
-    counts = {code: 0 for code in OBSTETRIC_CONDITION_CODES.keys()}
     named_counts = {name: 0 for name in OBSTETRIC_CONDITION_CODES.values()}
 
-    df_copy = filtered_df.copy()
-    df_copy["obstetric_condition_clean"] = df_copy[PPH_CONDITION_COL].astype(str)
+    # Vectorized computation using pandas split and explode
+    s = filtered_df[PPH_CONDITION_COL].astype(str).str.split(",")
+    exploded = s.explode().str.strip()
+    counts = exploded.value_counts()
 
-    # Process each value
-    for value in df_copy["obstetric_condition_clean"]:
-        if pd.isna(value) or value == "nan":
-            continue
+    total = 0
+    for code, count in counts.items():
+        if code in OBSTETRIC_CONDITION_CODES:
+            condition_name = OBSTETRIC_CONDITION_CODES[code]
+            c_val = int(count)
+            named_counts[condition_name] = c_val
+            total += c_val
 
-        value_str = str(value).strip()
-
-        # Skip empty values
-        if not value_str or value_str.lower() in ["n/a", "nan", "null"]:
-            continue
-
-        # Split by comma and count each code
-        codes = [code.strip() for code in value_str.split(",")]
-
-        for code in codes:
-            if code in OBSTETRIC_CONDITION_CODES:
-                counts[code] += 1
-                condition_name = OBSTETRIC_CONDITION_CODES[code]
-                named_counts[condition_name] += 1
-
-    # Add total count
-    total = sum(counts.values())
     named_counts["Total Complications"] = total
 
     return named_counts
