@@ -392,7 +392,7 @@ def render_obstetric_condition_pie_chart(
                 '<div class="pie-chart-title">Distribution of Obstetric Conditions</div>',
                 unsafe_allow_html=True,
             )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"pph_chart_{kwargs.get('key_suffix', '')}")
 
     # Show summary table
     st.subheader("📋 Obstetric Condition Summary")

@@ -274,7 +274,7 @@ def render_admitted_mothers_trend_chart(
         ),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"admitted_mothers_chart_{kwargs.get('key_suffix', '')}")
 
     # Table below graph
     st.markdown("---")
@@ -310,7 +310,7 @@ def render_admitted_mothers_trend_chart(
         data=csv,
         file_name="admitted_mothers_trend_data.csv",
         mime="text/csv",
-        key=unique_key,
+        key=f"{unique_key}_{kwargs.get('key_suffix', '')}",
     )
 
 
@@ -381,7 +381,7 @@ def render_admitted_mothers_facility_comparison_chart(
     )
 
     if not suppress_plot:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"admitted_mothers_chart_{kwargs.get('key_suffix', '')}")
     else:
         st.info(f"💡 Showing comparison table only for **{title}**.")
 
@@ -478,7 +478,7 @@ def render_admitted_mothers_region_comparison_chart(
     )
 
     if not suppress_plot:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"admitted_mothers_chart_{kwargs.get('key_suffix', '')}")
     else:
         st.info(f"💡 Showing comparison table only for **{title}**.")
 

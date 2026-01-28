@@ -2,6 +2,7 @@
 from typing import List, Tuple, Optional, Dict
 from utils.db import get_db_connection
 import logging
+import streamlit as st
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -285,6 +286,7 @@ def get_country_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
     return country_name
 
 
+@st.cache_data(ttl=600)
 def get_facilities_for_user(user: dict) -> List[Tuple[str, str]]:
     """
     Get facilities for the current user from database.
@@ -339,6 +341,7 @@ def get_facility_mapping_for_user(user: dict) -> Dict[str, str]:
     return {facility[0]: facility[1] for facility in facilities}
 
 
+@st.cache_data(ttl=600)
 def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, str]]]:
     """
     Get facilities grouped by region for the current user.

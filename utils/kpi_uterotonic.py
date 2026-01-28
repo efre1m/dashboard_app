@@ -426,7 +426,7 @@ def render_uterotonic_type_pie_chart(
             '<div class="pie-chart-title">Distribution of Uterotonic Types</div>',
             unsafe_allow_html=True,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"uterotonic_chart_{kwargs.get('key_suffix', '')}")
 
     # Show summary table
     st.subheader("📋 Uterotonic Type Summary")

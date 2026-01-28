@@ -257,10 +257,25 @@ class ChatbotLogic:
             "reigons": "regions",
             "reginos": "regions",
             "faciltiy": "facility",
+            "faciliteis": "facilities",
+            "facilites": "facilities",
             "faciltiyies": "facilities",
             "faclities": "facilities",
+            "fac": "facility",
+            "facs": "facilities",
             "regijon": "region",
             "regjon": "region",
+            
+            # Shorthand & Comparison Triggers
+            "all fac": "all facilities",
+            "all reg": "all regions",
+            "per fac": "per facility",
+            "per reg": "per region",
+            "all facs": "all facilities",
+            "all regs": "all regions",
+            "compair": "compare",
+            "compr": "compare",
+            "vs": " vs ",
         }
 
         # --- FACILITY RESOLUTION ENGINE ---
@@ -405,15 +420,6 @@ class ChatbotLogic:
             query_norm = query_norm.replace(typo, correct)
         query_norm = re.sub(r'\s+', ' ', query_norm).strip()
         
-        # --- HARD-REJECT NEWBORN KEYWORDS (PREVENT CONTRADICTIONS) ---
-        # Detect any mention of newborn-related terms including plurals and variations
-        newborn_regex = r'\b(newborns?|cpap|kmc|nmr|neonatal|birth\s?weights?|inborns?|outborns?)\b'
-        if re.search(newborn_regex, query_norm, re.IGNORECASE):
-             return {
-                 "intent": "chat",
-                 "response": "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
-             }
-        
         
         # --- AMBIGUITY RESOLUTION (Numeric Selection) ---
         context = st.session_state.get("chatbot_context", {})
@@ -455,6 +461,12 @@ class ChatbotLogic:
                 return {"intent": "metadata_query", "entity_type": "facility", "count_requested": False, "region_filter": target_reg, "fulfillment_requested": True}
             elif "indicator" in last_question:
                 return {"intent": "list_kpis"}
+            elif last_question == "plot_kpi" and context.get("pending_kpi"):
+                 return {
+                     "intent": "plot",
+                     "kpi": context.get("pending_kpi"),
+                     "fulfillment_requested": True
+                 }
             elif "mean" in last_question and "facility" in last_question:
                 # Handle facility disambiguation pick
                 picked_fac = query.strip()
@@ -575,6 +587,8 @@ class ChatbotLogic:
         comparison_entity = None # Initialize to prevent UnboundLocalError
         if any(w in query_lower for w in ["plot", "graph", "chart", "trend", "visualize", "show me"]):
             intent = "plot"
+        elif any(w in query_lower for w in ["define", "meaning", "definition", "how is", "computed", "calculation", "formula"]):
+            intent = "definition"
             
         # INTEGRATE GREEDY MATCHES
         selected_facility_uids = []
@@ -699,6 +713,7 @@ class ChatbotLogic:
             
             # Episiotomy (with typos)
             "episiotomy": "Episiotomy Rate (%)",
+            "episitomy": "Episiotomy Rate (%)",
             "episotomy": "Episiotomy Rate (%)",
             "episotomi": "Episiotomy Rate (%)",
             "episiotmoy": "Episiotomy Rate (%)",
@@ -793,7 +808,14 @@ class ChatbotLogic:
             keys = list(kpi_map.keys())
             matches = difflib.get_close_matches(filtered_query, keys, n=1, cutoff=0.6) # Increased cutoff
             if matches:
-                 selected_kpi = kpi_map[matches[0]]
+                 # Check if this match might be a false positive for a facility list
+                 # e.g. "failiteis" -> "episiotomy" 
+                 # If "list" or "show" is in query, we are very skeptical of fuzzy clinical matches
+                 is_list_query = any(w in query_lower for w in ["list", "show", "all"])
+                 if is_list_query and any(w in query_lower for w in ["fac", "hosp", "reg", "fail"]):
+                      pass # Don't set selected_kpi, let metadata_query catch it
+                 else:
+                      selected_kpi = kpi_map[matches[0]]
             
             # Sliding window backup
             if not selected_kpi:
@@ -818,8 +840,23 @@ class ChatbotLogic:
         
         # First, check if user mentioned a facility in the query
         facility_mentioned = any(word in query_lower for word in ["facility", "hospital", "clinic", "center", "health"])
-        specific_facility_requested = any(word in query_lower for word in ["for ", "at ", "in ", "from "])
         
+        # Refined guard: check for "for ", "at ", "in ", "from " 
+        # Refined guard: check for "for ", "at ", "in ", "from ", "i "
+        # but EXCLUDE common time-based phrases to avoid "For this year" being caught as a facility request
+        time_triggers = ["year", "month", "week", "today", "yesterday", "overall", "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "202", "201"]
+        is_time_query = any(t in query_lower for t in time_triggers)
+        
+        # Use regex with word boundaries to avoid matching substrings like "at" in "what"
+        specific_location_regex = r'\b(at|from)\b'
+        specific_facility_requested = bool(re.search(specific_location_regex, query_lower))
+        
+        # "for", "in", "i " are common, only treat as facility trigger if NO time word present
+        if not is_time_query:
+            flexible_location_regex = r'\b(for|in|i)\b'
+            if re.search(flexible_location_regex, query_lower):
+                specific_facility_requested = True
+
         if facility_mentioned or specific_facility_requested:
             # Try to find the facility name
             found_facility = False
@@ -844,15 +881,21 @@ class ChatbotLogic:
                 # Check if it might be a region request (e.g. "for Tigray")
                 regions_data = get_facilities_grouped_by_region(self.user)
                 region_found = any(r.lower() in query_lower for r in regions_data.keys())
-                
-                # Check for generic "all" request
-                is_all_request = any(phrase in query_lower for phrase in ["all regions", "all facilities", "every region", "every facility", "all hospitals", "all reioings", "all reigons"])
+
+                # Check for generic "all" request (Expanded with Robust Regex)
+                # Matches: all fac, all reg, all hospitals, all reioings, every facility, etc.
+                all_regex = r'\b(all|every|each)\s+(fac|reg|hosp|unit|reio|reig|territory|faic|faict|faiciliti)'
+                is_all_request = bool(re.search(all_regex, query_lower))
 
                 if not region_found and not is_all_request:
-                    return {
-                        "intent": "chat",
-                        "response": "⚠️ **Facility not found!**\n\nI couldn't find that facility in the system. Please check:\n1. **Spelling** of the facility name\n2. Try saying **'list facilities'** to see all available facilities\n3. Use the full facility name (e.g., 'Adigrat Hospital' not just 'Adigrat')"
-                    }
+                    # Final check: Is this a general value query without a specific location trigger?
+                    # If the user just said "What is PPH rate", specific_facility_requested should be False.
+                    # If specific_facility_requested is False, we don't return an error.
+                    if specific_facility_requested:
+                         return {
+                             "intent": "chat",
+                             "response": "⚠️ **Facility not found!**\n\nI couldn't find that facility in the system. Please check:\n1. **Spelling** of the facility name\n2. Try saying **'list facilities'** to see all available facilities\n3. Use the full facility name (e.g., 'Adigrat Hospital' not just 'Adigrat')"
+                         }
         
         # Two-pass approach to avoid ambiguous prefix matches
         # Pass 1: Strong Matches (Name strictly contained in query)
@@ -999,67 +1042,52 @@ class ChatbotLogic:
             start_date_dt = end_date_dt - timedelta(days=6)
             start_date = start_date_dt.strftime("%Y-%m-%d")
             end_date = end_date_dt.strftime("%Y-%m-%d")
-
-        # Fallback Strict Regex Date Parsing
+        
+        # --- NEW: Robust Multi-Format Date Extraction ---
         if not start_date:
             try:
-                # 1. "Month DD, YYYY" or "Month DD YYYY" ranges (Explicit 2 years)
-                month_pattern = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
-                range_pattern = re.compile(f"({month_pattern})[\s,]+(\d{{1,2}})[\s,]+(\d{{4}})\s*(?:to|-)?\s*({month_pattern})[\s,]+(\d{{1,2}})[\s,]+(\d{{4}})", re.IGNORECASE)
-                matches = range_pattern.search(query)
+                # 1. Extract ALL date fragments (Day Month Year, Month Day Year, Month Year)
+                # First, extract any "Day Month Year" or "Month Day Year"
+                full_date_pattern = re.compile(r'(\d{1,2}\s+[a-z]{3,}\s+\d{4})|([a-z]{3,}\s+\d{1,2},?\s+\d{4})|([a-z]{3,}\s+\d{4})', re.IGNORECASE)
+                date_strings = [m.group(0) for m in full_date_pattern.finditer(query)]
                 
-                if matches:
-                    m1, d1, y1, m2, d2, y2 = matches.groups()
-                    start_date = datetime.strptime(f"{m1[:3]} {d1} {y1}", "%b %d %Y").strftime("%Y-%m-%d")
-                    end_date = datetime.strptime(f"{m2[:3]} {d2} {y2}", "%b %d %Y").strftime("%Y-%m-%d")
+                def parse_any_date(ds):
+                    # Try various formats
+                    formats = ["%d %b %Y", "%b %d %Y", "%b %d, %Y", "%b %Y"]
+                    for fmt in formats:
+                        try:
+                            # Pre-clean the string to 3-char month
+                            parts = ds.split()
+                            cleaned_parts = []
+                            for p in parts:
+                                if p.lower()[:3] in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]:
+                                    cleaned_parts.append(p[:3])
+                                else:
+                                    cleaned_parts.append(p.rstrip(','))
+                            
+                            cleaned_ds = " ".join(cleaned_parts)
+                            dt_obj = datetime.strptime(cleaned_ds, fmt)
+                            if fmt == "%b %Y":
+                                # If only month/year, return (start_of_month, end_of_month)
+                                return dt_obj, (dt_obj.replace(month=dt_obj.month % 12 + 1, day=1) - timedelta(days=1)) if dt_obj.month < 12 else dt_obj.replace(day=31)
+                            return dt_obj, dt_obj
+                        except:
+                            continue
+                    return None, None
+
+                if len(date_strings) >= 2:
+                    d1_start, _ = parse_any_date(date_strings[0])
+                    _, d2_end = parse_any_date(date_strings[1])
+                    if d1_start and d2_end:
+                        start_date = d1_start.strftime("%Y-%m-%d")
+                        end_date = d2_end.strftime("%Y-%m-%d")
+                elif len(date_strings) == 1:
+                    d1_start, d1_end = parse_any_date(date_strings[0])
+                    if d1_start:
+                        start_date = d1_start.strftime("%Y-%m-%d")
+                        end_date = d1_end.strftime("%Y-%m-%d")
             except Exception as e:
-                logging.warning(f"Date regex 1 failed: {e}")
-
-        # 2. Check for "Jan 1 - Jan 7 2026" (Year only at end)
-        if not start_date:
-             try:
-                 month_pattern = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
-                 range_pattern_end_year = re.compile(f"({month_pattern})[\s,]+(\d{{1,2}})\s*(?:to|-)?\s*({month_pattern})[\s,]+(\d{{1,2}})[\s,]+(\d{{4}})", re.IGNORECASE)
-                 range_match = range_pattern_end_year.search(query)
-                 
-                 if range_match:
-                     m1, d1, m2, d2, y = range_match.groups()
-                     start_date = datetime.strptime(f"{m1[:3]} {d1} {y}", "%b %d %Y").strftime("%Y-%m-%d")
-                     end_date = datetime.strptime(f"{m2[:3]} {d2} {y}", "%b %d %Y").strftime("%Y-%m-%d")
-             except Exception as e:
-                 logging.warning(f"Date regex range pattern 2 failed: {e}")
-        
-        # 2b. NEW: Check for "Jan 1-5" (no year, assume current year)
-        if not start_date:
-             try:
-                 month_pattern = r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
-                 range_pattern_no_year = re.compile(f"({month_pattern})[\s,]+(\d{{1,2}})\s*-\s*(\d{{1,2}})", re.IGNORECASE)
-                 range_match = range_pattern_no_year.search(query)
-                 
-                 if range_match:
-                     m1, d1, d2 = range_match.groups()
-                     current_year = today.year
-                     start_date = datetime.strptime(f"{m1[:3]} {d1} {current_year}", "%b %d %Y").strftime("%Y-%m-%d")
-                     end_date = datetime.strptime(f"{m1[:3]} {d2} {current_year}", "%b %d %Y").strftime("%Y-%m-%d")
-             except Exception as e:
-                 logging.warning(f"Date regex range pattern no year failed: {e}")
-
-        # 3. Fallback to extracting ANY single dates with years
-        if not start_date:
-             try:
-                single_date_pattern = re.compile(f"({month_pattern})[\s,]+(\d{{1,2}})[\s,]+(\d{{4}})", re.IGNORECASE)
-                all_dates = single_date_pattern.findall(query)
-                if len(all_dates) >= 2:
-                    m1, d1, y1 = all_dates[0]
-                    m2, d2, y2 = all_dates[1]
-                    start_date = datetime.strptime(f"{m1[:3]} {d1} {y1}", "%b %d %Y").strftime("%Y-%m-%d")
-                    end_date = datetime.strptime(f"{m2[:3]} {d2} {y2}", "%b %d %Y").strftime("%Y-%m-%d")
-                elif len(all_dates) == 1:
-                    m1, d1, y1 = all_dates[0]
-                    start_date = datetime.strptime(f"{m1[:3]} {d1} {y1}", "%b %d %Y").strftime("%Y-%m-%d")
-                    end_date = start_date 
-             except Exception as e:
-                logging.warning(f"Date regex 3 failed: {e}")
+                logging.warning(f"Hyper-flexible date parsing failed: {e}")
 
         # Fallback for "YYYY/MM/DD - YYYY/MM/DD"
         if not start_date:
@@ -1147,7 +1175,7 @@ class ChatbotLogic:
              # Check if ANY KPI from our mapping is in the query
              kpi_found = any(kpi.lower() in query_lower for kpi in KPI_MAPPING.keys())
              
-             if any(x in query_lower for x in data_keywords) or kpi_found:
+             if (any(x in query_lower for x in data_keywords) or kpi_found) and not any(d in query_lower for d in ["define", "meaning", "definition", "list", "show", "available"]):
                  # It's likely a data query like "What is the total admitted mothers..."
                  # FORCE override even if LLM said metadata_query (common error for "how many")
                  if intent == "metadata_query" and kpi_found:
@@ -1157,34 +1185,27 @@ class ChatbotLogic:
                  else: 
                       intent = "text"
              
-             elif "define" in query_lower or "meaning" in query_lower:
+             elif any(d in query_lower for d in ["define", "meaning", "definition"]):
                  intent = "definition"
 
         # Robust List Detection
-        if "indicator" in query_lower or "kpi" in query_lower:
+        if "indicator" in query_lower or "kpi" in query_lower or "all indicators" in query_lower:
             if any(x in query_lower for x in ["what", "list", "show", "available", "options", "help", "how many", "total"]):
-                 # Clarification Check
-                scope_keywords = ["maternal", "newborn", "all", "matenal", "materanl"] # added typos
-                if not any(x in query_lower for x in scope_keywords):
-                     return {
-                         "intent": "chat",
-                         "response": "Are you interested in **Maternal** or **Newborn** health indicators? (Currently I specialize in Maternal health!)"
-                     }
                 intent = "list_kpis"
         
         # Explicit handling for "maternal" answer to clarification
         if query_lower in ["maternal", "maternal indicators", "maternal health", "mothers", "matenal"]:
-             intent = "list_kpis"
+            intent = "list_kpis"
         if "options" in query_lower or "capabilities" in query_lower:
-             intent = "list_kpis"
-             
+            intent = "list_kpis"
+            
         # Newborn Scope Detection
         if "newborn" in query_lower:
             intent = "scope_error_newborn"
 
         # Robust Scope Error Detection
         if any(x in query_lower for x in ["color", "style", "background", "theme", "dark mode", "appearance"]):
-             intent = "scope_error"
+            intent = "scope_error"
              
         # Hallucination Guard: Check for specific out-of-scope terms that fuzzily match KPIs
         # e.g. "temperature" -> "Antepartum" or "Outborn" (incorrectly)
@@ -1226,15 +1247,15 @@ class ChatbotLogic:
              
         # Metadata / Counts Detection Fallback (Regex)
         # ONLY if no KPI selected, otherwise assume data query
-        if not selected_kpi and ("how many" in query_lower or "list" in query_lower or "show me" in query_lower):
-             if "region" in query_lower:
-                 intent = "metadata_query"
-                 entity_type = "region"
-                 count_requested = "how many" in query_lower
-             elif "facilit" in query_lower or "hospital" in query_lower:
-                  intent = "metadata_query"
-                  entity_type = "facility"
-                  count_requested = "how many" in query_lower
+        if not selected_kpi and ("how many" in query_lower or "list" in query_lower or "show me" in query_lower or "show all" in query_lower):
+            if "region" in query_lower or "reigon" in query_lower or " reg " in query_lower:
+                intent = "metadata_query"
+                entity_type = "region"
+                count_requested = "how many" in query_lower
+            elif any(x in query_lower for x in ["facilit", "hospital", " fac ", " failit"]):
+                intent = "metadata_query"
+                entity_type = "facility"
+                count_requested = "how many" in query_lower
 
         # --- CONTEXT MERGING ---
         # If we have a stored context and current query is missing KPI or Facility, use context.
@@ -1286,20 +1307,34 @@ class ChatbotLogic:
         comparison_keywords = ["compare", "comparison", "comparisoin", "compariosn", " vs ", "versus", "difference", "benchmark"]
         if any(x in query_lower for x in comparison_keywords):
              comparison_mode = True
-             # Force plot intent if we are comparing, unless user explicitly asks for "table" (which generate_response handles inside plot logic)
-             if intent != "list_kpis" and intent != "scope_error":
+             # Force plot intent if we are comparing, unless it's a list or definition or scope error
+             if intent not in ["list_kpis", "definition", "scope_error"]:
                   intent = "plot"
 
         # Detect "By Facility" intent (Drill-down / Disaggregation)
         # Triggers if:
         # 1. "by facility" explicit phrase
         # 2. "facilities" mentioned along with a region in comparison mode (e.g. "Compare Tigray facilities")
-        drill_down_phrases = ["by facility", "per facility", "under", "in ", "breakdown by facility", "show facilities", "list facilities", "compare facilities", "plot facilities", "by region", "per region", "breakdown by region"]
+                # NEW: Implicit Comparison Triggers (Handle "by facility" at top level)
+        if not comparison_mode:
+            if any(x in query_lower for x in ["by facility", "per facility", "by fac", "per fac"]):
+                comparison_mode = True
+                comparison_entity = "facility"
+                if not selected_facility_uids and not found_regions:
+                     # Check context for previous region
+                     prev_context = st.session_state.get("chatbot_context", {})
+                     if prev_context.get("facility_names") and "(Region)" in prev_context.get("facility_names")[0]:
+                          found_regions = [n.replace(" (Region)", "") for n in prev_context.get("facility_names")]
+            elif any(x in query_lower for x in ["by region", "per region", "by reg", "per reg"]):
+                comparison_mode = True
+                comparison_entity = "region"
+        drill_down_phrases = ["by facility", "per facility", "under", "in ", "i ", "breakdown by facility", "compare facilities", "by region", "per region", "breakdown by region"]
         is_drill_down = any(p in query_lower for p in drill_down_phrases) and ("facilit" in query_lower or "hospital" in query_lower or "region" in query_lower)
         
         if is_drill_down:
-             # Force Plot intent
-             intent = "plot"
+             # Force Plot intent unless it's a definition
+             if intent != "definition":
+                 intent = "plot"
              
              # If we have found regions (e.g. "Tigray by facility"), we want to compare facilities within that region
              if found_regions:
@@ -1326,14 +1361,23 @@ class ChatbotLogic:
                  # Important: Clear found_regions so it doesn't default to region aggregation logic below
                  found_regions = []
              
-             # Handle "By Region" - Expand ALL regions if none specified
+              # Handle "By Region" - Expand ALL regions if none specified
              elif "region" in query_lower and ("by" in query_lower or "per" in query_lower or "all" in query_lower) and not found_regions:
                   comparison_mode = True
                   comparison_entity = "region"
                   # Auto-populate all regions
                   regions_data = get_facilities_grouped_by_region(self.user)
                   found_regions = list(regions_data.keys())
-             
+              
+             # Handle "By Facility" - Expand ALL facilities if none specified
+             elif ("facilit" in query_lower or "hospital" in query_lower or "fac " in query_lower) and ("by" in query_lower or "per" in query_lower) and not selected_facility_uids:
+                  comparison_mode = True
+                  comparison_entity = "facility"
+                  # Auto-populate all facilities
+                  all_facs = get_all_facilities_flat(self.user)
+                  selected_facility_names = [f[0] for f in all_facs]
+                  selected_facility_uids = [f[1] for f in all_facs]
+
              # If we already have selected facilities (e.g. "Adigrat and Abiadi by facility"), 
              # just ensure comparison mode is on so we see them side-by-side
              elif selected_facility_uids:
@@ -1488,6 +1532,7 @@ class ChatbotLogic:
     def generate_response(self, query):
         global KPI_MAPPING, KPI_OPTIONS
         parsed = self.parse_query(query)
+        query_lower = query.lower()
         
         # --- PERFORMANCE CACHE ---
         cache_key = self._get_cache_key(parsed, parsed.get("facility_uids"))
@@ -1495,24 +1540,46 @@ class ChatbotLogic:
         if cached: return cached
         
 
-        # Handle List KPIs Intent (New)
-        if parsed.get("intent") == "list_kpis":
-            response = "Here are the available **Maternal Health Indicators** in this dashboard:\n\n"
-            for k in KPI_MAPPING.keys():
-                response += f"- {k}\n"
+        # Handle List KPIs Intent (Consolidated below)
+
+
+        # Handle KPI Definition intent
+        if parsed.get("intent") == "definition":
+            kpi_name = parsed.get("kpi")
+            if not kpi_name:
+                return None, "I understand you're asking for a definition, but I couldn't identify which indicator you're referring to. Could you please specify a name like 'PPH rate' or 'C-Section'?"
             
-            response += "\nYou can ask me to **plot** any of these or show their **stats**!"
-            return None, response
+            # Fetch config from dash_co (logic imported in generate_response)
+            kpi_config = KPI_MAPPING.get(kpi_name, {})
+            num = kpi_config.get("numerator_name")
+            den = kpi_config.get("denominator_name")
+            
+            if num and den:
+                calculation_logic = f"**{kpi_name}** is computed as:\n\n**Numerator**: {num}\n**Denominator**: {den}"
+                
+                # Store context for follow-up
+                st.session_state.chatbot_context["last_question"] = "plot_kpi"
+                st.session_state.chatbot_context["pending_kpi"] = kpi_name
+                
+                return None, f"{calculation_logic}"
+            else:
+                # Fallback for volume indicators (e.g. Admitted Mothers)
+                val_name = kpi_config.get("value_name")
+                if val_name:
+                    msg = f"**{kpi_name}** is a volume indicator based on: **{val_name}**."
+                else:
+                    msg = f"I found the indicator **{kpi_name}**, but I don't have a specific calculation formula on file for it yet."
+                
+                # Store context for follow-up
+                st.session_state.chatbot_context["last_question"] = "plot_kpi"
+                st.session_state.chatbot_context["pending_kpi"] = kpi_name
+                
+                return None, f"{msg}"
 
 
         # Handle General Chat
         if parsed.get("intent") == "chat":
             response = parsed.get("response")
-            
-            # --- SAFETY SCRUB (REDUNDANT) ---
-            # If the response mentions Newborn data, overwrite with guidance
-            if response and re.search(r'\bnewborn\b', response, re.IGNORECASE):
-                response = "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
             
             if response:
                 return None, response
@@ -1544,7 +1611,7 @@ class ChatbotLogic:
         if parsed.get("intent") == "scope_error_hallucination":
              return None, "I detected a term (like 'temperature') that I don't track directly. I specialize in **Maternal** and **Newborn** health indicators.\n\nTry asking about 'Hypothermia' or 'KMC' if you are interested in thermal care, or say 'list indicators' to see what I can do."
              
-        # Handle List KPIs
+        # List KPIs handler at top (Consolidated)
         if parsed.get("intent") == "list_kpis":
              # Check if asking for count only
              if "how many" in query_lower or "count" in query_lower:
@@ -1676,12 +1743,8 @@ class ChatbotLogic:
         ]
         
         if any(x in kpi_lower for x in newborn_indicators):
-             use_newborn_data = True
-        
-        # If user wants to PLOT or EXPLAIN a newborn indicator, intercept with specialization message
-        if use_newborn_data and parsed["intent"] in ["plot", "explain"]:
-             return None, "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
-             
+              use_newborn_data = True
+              
         active_df = self.newborn_df if use_newborn_data else self.maternal_df
         
         # Update session state with correct collection
@@ -1729,44 +1792,6 @@ class ChatbotLogic:
         logging.info(f"DEBUG: Parsed Facility Names: {parsed['facility_names']}")
         logging.info(f"DEBUG: Parsed Facility UIDs: {parsed['facility_uids']}")
         logging.info(f"DEBUG: Active KPI: {active_kpi_name}")
-
-        # --- HANDLE EXPLAIN INTENT ---
-        if parsed["intent"] == "explain":
-            # Use KB_DEFINITIONS for explanation
-            kpi_info = KPI_MAPPING.get(active_kpi_name, {})
-            numerator_desc = kpi_info.get("numerator_name", "the numerator")
-            denominator_desc = kpi_info.get("denominator_name", "the denominator")
-            
-            # Check if we have a detailed definition
-            definition = getattr(self, "KB_DEFINITIONS", {}).get(active_kpi_name)
-            
-            if definition:
-                explanation = f"**{kpi_name}** explanation:\n\n{definition}\n\n**Calculation**:\n- **Numerator**: {numerator_desc}\n- **Denominator**: {denominator_desc}"
-            else:
-                explanation = f"**{kpi_name}** explanation:\n- **Numerator**: {numerator_desc}\n- **Denominator**: {denominator_desc}"
-            
-            if target_component != "value":
-                explanation += f"\n\n*Note: Since you asked for **{kpi_name}**, I'm extracting the **{target_component}** from this indicator.*"
-                
-            return None, explanation
-
-        # --- HANDLE DEFINITION INTENT ---
-        if parsed["intent"] == "definition":
-            # Use KB_DEFINITIONS
-            definition = getattr(self, "KB_DEFINITIONS", {}).get(active_kpi_name)
-            
-            if not definition:
-                # Basic fuzzy search in KB keys
-                for k, v in getattr(self, "KB_DEFINITIONS", {}).items():
-                    if kpi_name.lower() in k.lower():
-                        definition = v
-                        break
-            
-            if definition:
-                return None, f"**Definition of {active_kpi_name}**:\n\n{definition}"
-            else:
-                 # Suggest available indicators
-                 return None, f"I don't have a definition for **{kpi_name}** yet. Try asking about indicators like 'PPH', 'C-Section', 'NMR', 'Episiotomy', or 'Admitted Mothers'."
 
         # Proactive Suggestion
         suggestion = ""
@@ -1862,7 +1887,7 @@ class ChatbotLogic:
                          r_uids = [f[1] for f in facilities]
                          comparison_groups.append((r_name, r_uids))
                          # For region comparison, targets are the region names
-                         all_comparison_uids.append(r_name) 
+                         all_comparison_uids.extend(r_uids) 
                          
                 elif comparison_entity == "facility":
                     # If "all facilities", populate all
@@ -2156,6 +2181,7 @@ class ChatbotLogic:
                             "facility_names": parsed.get("facility_names"),
                             "facility_uids": facility_uids,
                             "all_comparison_uids": all_comparison_uids,
+                            "comparison_targets": parsed.get("comparison_targets"),
                             "num_label": num_label,
                             "den_label": den_label
                         },
@@ -2424,7 +2450,16 @@ def render_chatbot():
         st.error("Unable to load data. Please ensure you are logged in correctly.")
         return
 
-    chatbot_logic = ChatbotLogic(data)
+    # CACHE CHATBOT LOGIC INSTANCE (To avoid slow __init__ on every rerun)
+    if "chatbot_instance" not in st.session_state:
+        st.session_state.chatbot_instance = ChatbotLogic(data)
+    
+    chatbot_logic = st.session_state.chatbot_instance
+    
+    # Update data if it changed (pointer update is fast)
+    chatbot_logic.data = data
+    chatbot_logic.maternal_df = data.get("maternal", {}).get("patients", pd.DataFrame()) if data.get("maternal") else pd.DataFrame()
+    chatbot_logic.newborn_df = data.get("newborn", {}).get("patients", pd.DataFrame()) if data.get("newborn") else pd.DataFrame()
     
     # Inject KB_DEFINITIONS for Definition Intent
     chatbot_logic.KB_DEFINITIONS = {
@@ -2509,20 +2544,26 @@ def render_chatbot():
                     if suffix == "utils":
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        # FIX: Pass region names (comparison_targets) instead of UIDs
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     elif suffix == "newborn":
-                        regions_mapping = {} # Fallback
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, params["all_comparison_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        from utils.queries import get_facilities_grouped_by_region
+                        regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
+                        # FIX: Pass region names (comparison_targets) instead of UIDs
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     elif suffix == "newborn_simplified":
-                        render_func(render_df, region_names=params["all_comparison_uids"])
+                        # FIX: Use region names
+                        render_func(render_df, region_names=params["comparison_targets"])
                     elif suffix == "admitted_mothers":
                         # admitted_mothers has a different signature
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        # FIX: Use region names
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     else:
                         # All other specialized maternal modules use the same signature as utils
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["all_comparison_uids"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        # FIX: Pass region names (comparison_targets) instead of UIDs
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
             else:
                 render_func = getattr(module, f"{func_prefix}_trend_chart")
                 if suffix == "utils" or suffix == "newborn":
