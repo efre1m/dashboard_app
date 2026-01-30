@@ -27,7 +27,7 @@ from utils.dash_co import (
 )
 from utils.kpi_utils import clear_cache, compute_kpis
 from utils.odk_dashboard import display_odk_dashboard
-from dashboards.data_quality_tracking import render_data_quality_tracking
+#from dashboards.data_quality_tracking import render_data_quality_tracking
 
 
 logging.basicConfig(level=logging.INFO)
@@ -1032,7 +1032,7 @@ def render_maternal_dashboard_shared(
 
     # Get current KPI selection to know which date column we need
     current_kpi = st.session_state.get(
-        "selected_kpi", "Institutional Maternal Death Rate (%)"
+        "selected_kpi", "Maternal Death Rate (per 100,000)"
     )
     from utils.kpi_utils import get_relevant_date_column_for_kpi
 
@@ -1381,14 +1381,13 @@ def render():
         )
 
     # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             "🤰 **Maternal**",
             "👶 **Newborn**",
             "📊 **Summary**",
             "📋 **Mentorship**",
             "📚 **Resources**",
-            "🔍 **Data Quality**",
         ]
     )
 
@@ -1509,14 +1508,6 @@ def render():
             logging.info("Switched to Resources tab")
     
         render_resources_tab()
-
-    with tab6:
-        if st.session_state.active_tab != "data_quality":
-            st.session_state.active_tab = "data_quality"
-            logging.info("Switched to Data Quality tab")
-
-        # Show maintenance message for data quality dashboard
-        render_data_quality_maintenance_message()
 
     # Log current active tab state
     logging.info(f"Current active tab: {st.session_state.active_tab}")

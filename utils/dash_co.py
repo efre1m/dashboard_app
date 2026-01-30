@@ -98,7 +98,14 @@ from utils.kpi_antipartum_compl import (
     render_complication_type_pie_chart,
     get_numerator_denominator_for_antipartum_compl,
 )
-
+from utils.kpi_postpartum_compl import (
+    compute_postpartum_compl_kpi,
+    render_postpartum_compl_trend_chart,
+    render_postpartum_compl_facility_comparison_chart,
+    render_postpartum_compl_region_comparison_chart,
+    render_postpartum_complication_type_pie_chart,
+    get_numerator_denominator_for_postpartum_compl,
+)
 
 # KPI mapping for comparison charts - UPDATED NAMES
 KPI_MAPPING = {
@@ -117,8 +124,8 @@ KPI_MAPPING = {
         "numerator_name": "Early PNC (≤48 hrs)",
         "denominator_name": "Total Deliveries",
     },
-    "Institutional Maternal Death Rate (%)": {
-        "title": "Maternal Death Rate (%)",
+    "Maternal Death Rate (per 100,000)": {
+        "title": "Maternal Death Rate (per 100,000)",
         "numerator_name": "Maternal Deaths",
         "denominator_name": "Total Deliveries",
     },
@@ -181,6 +188,11 @@ KPI_MAPPING = {
         "numerator_name": "Complication Cases",
         "denominator_name": "Total Deliveries",
     },
+    "Postpartum Complications Rate (%)": {
+        "title": "Postpartum Complications Rate (%)",
+        "numerator_name": "Complication Cases",
+        "denominator_name": "Total Deliveries",
+    },
 }
 
 # KPI Column Requirements - What each KPI actually needs
@@ -209,7 +221,7 @@ KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "date_stay_pp_postpartum_care",
     ],
-    "Institutional Maternal Death Rate (%)": [
+    "Maternal Death Rate (per 100,000)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
@@ -301,6 +313,12 @@ KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "obstetric_complications_diagnosis",
     ],
+    "Postpartum Complications Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "obstetric_condition_at_delivery_delivery_summary",
+    ],
 }
 
 
@@ -365,7 +383,7 @@ KPI_OPTIONS = [
     "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
     "Stillbirth Rate (%)",
     "Early Postnatal Care (PNC) Coverage (%)",
-    "Institutional Maternal Death Rate (%)",
+    "Maternal Death Rate (per 100,000)",
     "C-Section Rate (%)",
     "Postpartum Hemorrhage (PPH) Rate (%)",
     "Delivered women who received uterotonic (%)",
@@ -378,6 +396,7 @@ KPI_OPTIONS = [
     "Admitted Mothers",
     "Episiotomy Rate (%)",
     "Antepartum Complications Rate (%)",
+    "Postpartum Complications Rate (%)",
 ]
 
 
@@ -434,264 +453,198 @@ def render_kpi_tab_navigation():
     )
 
     # KPI Grouping for Tab Navigation - UPDATED NAMES
-    KPI_GROUPS = {
-        "📉 Mortality": [
-            "Institutional Maternal Death Rate (%)",
-            "Stillbirth Rate (%)",
-        ],
-        "🚨 Complications": [
-            "Postpartum Hemorrhage (PPH) Rate (%)",
-            "Antepartum Complications Rate (%)",
-        ],
-        "🏥 Care": [
-            "C-Section Rate (%)",
-            "Delivered women who received uterotonic (%)",
-            "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-            "Early Postnatal Care (PNC) Coverage (%)",
-            "ARV Prophylaxis Rate (%)",
-            "Assisted Delivery Rate (%)",
-            "Normal Vaginal Delivery (SVD) Rate (%)",
-            "Episiotomy Rate (%)",
-        ],
-        "❓ Missing": [
-            "Missing Mode of Delivery",
-            "Missing Birth Outcome",
-            "Missing Condition of Discharge",
-        ],
-        # In KPI_GROUPS dictionary, add:
-        "📊 enrollment": [
-            "Admitted Mothers",
-        ],
-    }
-
+    # KPI Grouping for Tab Navigation - UPDATED NAMES
+    # Tabs: Enrollment, Care, Data Quality, Complication, Mortality
+    
     # Initialize session state for KPI selection
     if "selected_kpi" not in st.session_state:
-        st.session_state.selected_kpi = "Institutional Maternal Death Rate (%)"
+        st.session_state.selected_kpi = "Maternal Death Rate (per 100,000)"
 
     # Create main KPI group tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    tab_enroll, tab_care, tab_dq, tab_compl, tab_mort = st.tabs(
         [
-            "📉 **Mortality**",
-            "🚨 **Complications**",
-            "🏥 **Care**",
-            "❓ **Missing**",
             "📊 **Enrollment**",
+            "🏥 **Care**",
+            "❓ **Data Quality**",
+            "🚨 **Complication**",
+            "📉 **Mortality**",
         ]
     )
 
     selected_kpi = st.session_state.selected_kpi
 
-    with tab1:
-        cols = st.columns(5)
+    # 1. Enrollment Tab
+    with tab_enroll:
+        if st.button(
+            "Admitted Mothers",
+            key="admitted_mothers_btn",
+            use_container_width=True,
+            type=("primary" if selected_kpi == "Admitted Mothers" else "secondary"),
+        ):
+            selected_kpi = "Admitted Mothers"
 
+    # 2. Care Tab
+    # Order: SVD, Assisted, Episiotomy, C-Section, Postpartum Comp, Uterotonic, FP, PNC, ARV
+    with tab_care:
+        # First Row
+        cols1 = st.columns(4)
+        with cols1[0]:
+            if st.button(
+                "SVD",
+                key="svd_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Normal Vaginal Delivery (SVD) Rate (%)" else "secondary"),
+            ):
+                selected_kpi = "Normal Vaginal Delivery (SVD) Rate (%)"
+        
+        with cols1[1]:
+            if st.button(
+                "Assisted Delivery",
+                key="assisted_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Assisted Delivery Rate (%)" else "secondary"),
+            ):
+                selected_kpi = "Assisted Delivery Rate (%)"
+
+        with cols1[2]:
+            if st.button(
+                "Episiotomy Rate",
+                key="episiotomy_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Episiotomy Rate (%)" else "secondary"),
+            ):
+                selected_kpi = "Episiotomy Rate (%)"
+
+        with cols1[3]:
+            if st.button(
+                "C-Section Rate",
+                key="csection_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "C-Section Rate (%)" else "secondary"),
+            ):
+                selected_kpi = "C-Section Rate (%)"
+
+        # Second Row
+        cols2 = st.columns(3)
+        with cols2[0]:
+            if st.button(
+                "Delivered women who received uterotonic",
+                key="uterotonic_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Delivered women who received uterotonic (%)" else "secondary"),
+            ):
+                selected_kpi = "Delivered women who received uterotonic (%)"
+        
+        with cols2[1]:
+            if st.button(
+                "FP Counseling and Acceptance",
+                key="contraceptive_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)" else "secondary"),
+            ):
+                selected_kpi = "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
+
+        with cols2[2]:
+            if st.button(
+                "Early Postnatal Care (PNC) Coverage",
+                key="pnc_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Early Postnatal Care (PNC) Coverage (%)" else "secondary"),
+            ):
+                selected_kpi = "Early Postnatal Care (PNC) Coverage (%)"
+        
+        # Third Row
+        cols3 = st.columns(1)
+        with cols3[0]:
+            if st.button(
+                "ARV Prophylaxis Rate",
+                key="arv_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "ARV Prophylaxis Rate (%)" else "secondary"),
+            ):
+                selected_kpi = "ARV Prophylaxis Rate (%)"
+
+    # 3. Data Quality Tab
+    with tab_dq:
+        cols = st.columns(3)
         with cols[0]:
             if st.button(
-                "Maternal Death",
+                "Missing Mode of Delivery",
+                key="missing_md_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Mode of Delivery" else "secondary"),
+            ):
+                selected_kpi = "Missing Mode of Delivery"
+        
+        with cols[1]:
+            if st.button(
+                "Missing Birth Outcome",
+                key="missing_bo_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Birth Outcome" else "secondary"),
+            ):
+                selected_kpi = "Missing Birth Outcome"
+        
+        with cols[2]:
+            if st.button(
+                "Missing Condition of Discharge",
+                key="missing_cod_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Condition of Discharge" else "secondary"),
+            ):
+                selected_kpi = "Missing Condition of Discharge"
+
+    # 4. Complication Tab
+    # Antepartum Complication -> Postpartum Complication -> PPH
+    with tab_compl:
+        cols = st.columns(3)
+        with cols[0]:
+            if st.button(
+                "Antepartum Complication",
+                key="antipartum_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Antepartum Complications Rate (%)" else "secondary"),
+            ):
+                selected_kpi = "Antepartum Complications Rate (%)"
+        
+        with cols[1]:
+            if st.button(
+                "Postpartum Complication",
+                key="postpartum_compl_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Postpartum Complications Rate (%)" else "secondary"),
+            ):
+                selected_kpi = "Postpartum Complications Rate (%)"
+
+        with cols[2]:
+            if st.button(
+                "Postpartum Hemorrhage (PPH) Rate",
+                key="pph_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Postpartum Hemorrhage (PPH) Rate (%)" else "secondary"),
+            ):
+                selected_kpi = "Postpartum Hemorrhage (PPH) Rate (%)"
+
+    # 5. Mortality Tab
+    with tab_mort:
+        cols = st.columns(2)
+        with cols[0]:
+            if st.button(
+                "Mortality Rate per 100,000",
                 key="maternal_death_btn",
                 use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Institutional Maternal Death Rate (%)"
-                    else "secondary"
-                ),
+                type=("primary" if selected_kpi == "Maternal Death Rate (per 100,000)" else "secondary"),
             ):
-                selected_kpi = "Institutional Maternal Death Rate (%)"
-
+                selected_kpi = "Maternal Death Rate (per 100,000)"
+        
         with cols[1]:
             if st.button(
                 "Stillbirth Rate",
                 key="stillbirth_btn",
                 use_container_width=True,
-                type=(
-                    "primary" if selected_kpi == "Stillbirth Rate (%)" else "secondary"
-                ),
+                type=("primary" if selected_kpi == "Stillbirth Rate (%)" else "secondary"),
             ):
                 selected_kpi = "Stillbirth Rate (%)"
-
-    with tab2:
-        cols = st.columns(5)
-        with cols[0]:
-            if st.button(
-                "PPH Rate",
-                key="pph_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Postpartum Hemorrhage (PPH) Rate (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Postpartum Hemorrhage (PPH) Rate (%)"
-
-        with cols[1]:
-            if st.button(
-                "Antepartum Rate",
-                key="antipartum_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Antepartum Complications Rate (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Antepartum Complications Rate (%)"
-
-    with tab3:
-        cols = st.columns(5)
-        with cols[0]:
-            if st.button(
-                "C-Section",
-                key="csection_btn",
-                use_container_width=True,
-                type="primary" if selected_kpi == "C-Section Rate (%)" else "secondary",
-            ):
-                selected_kpi = "C-Section Rate (%)"
-
-        with cols[1]:
-            if st.button(
-                "Uterotonic",
-                key="uterotonic_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Delivered women who received uterotonic (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Delivered women who received uterotonic (%)"
-
-        with cols[2]:
-            if st.button(
-                "FP Acceptance",
-                key="contraceptive_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi
-                    == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = (
-                    "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
-                )
-
-        with cols[3]:
-            if st.button(
-                "PNC Coverage",
-                key="pnc_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Early Postnatal Care (PNC) Coverage (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Early Postnatal Care (PNC) Coverage (%)"
-
-        with cols[4]:
-            if st.button(
-                "ARV Prophylaxis",
-                key="arv_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "ARV Prophylaxis Rate (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "ARV Prophylaxis Rate (%)"
-
-        cols2 = st.columns(5)
-        with cols2[0]:
-            if st.button(
-                "Assisted Deliv.",
-                key="assisted_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Assisted Delivery Rate (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Assisted Delivery Rate (%)"
-
-        with cols2[1]:
-            if st.button(
-                "Normal Vaginal (SVD)",
-                key="svd_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Normal Vaginal Delivery (SVD) Rate (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Normal Vaginal Delivery (SVD) Rate (%)"
-
-        with cols2[2]:
-            if st.button(
-                "Episiotomy",
-                key="episiotomy_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Episiotomy Rate (%)"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Episiotomy Rate (%)"
-
-    with tab4:
-        cols = st.columns(5)
-
-        with cols[0]:
-            if st.button(
-                "Missing Mode Deliv.",
-                key="missing_md_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Missing Mode of Delivery"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Missing Mode of Delivery"
-
-        with cols[1]:
-            if st.button(
-                "Missing Birth Out.",
-                key="missing_bo_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Missing Birth Outcome"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Missing Birth Outcome"
-        with cols[2]:
-            if st.button(
-                "Missing Disch. Status",
-                key="missing_cod_btn",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if selected_kpi == "Missing Condition of Discharge"
-                    else "secondary"
-                ),
-            ):
-                selected_kpi = "Missing Condition of Discharge"
-    with tab5:
-        cols = st.columns(5)
-        with cols[0]:
-            if st.button(
-                "Admitted Mothers",
-                key="admitted_mothers_btn",
-                use_container_width=True,
-                type=("primary" if selected_kpi == "Admitted Mothers" else "secondary"),
-            ):
-                selected_kpi = "Admitted Mothers"
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_kpi:
@@ -991,11 +944,19 @@ def render_trend_chart_section(
                 denominator_label,
                 facility_uids,
             )
-            render_complication_type_pie_chart(
-                patient_df,
-                facility_uids,
+        elif kpi_selection == "Postpartum Complications Rate (%)":
+            from utils.kpi_postpartum_compl import render_postpartum_compl_trend_chart
+            render_postpartum_compl_trend_chart(
+                group,
+                "period_display",
+                "value",
+                chart_title,
                 bg_color,
                 text_color,
+                display_names,
+                numerator_label,
+                denominator_label,
+                facility_uids,
             )
         # ADD MISSING MD HERE - IT'S JUST ANOTHER KPI!
         elif kpi_selection == "Missing Mode of Delivery":
@@ -1435,6 +1396,20 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
+        # NEW: Postpartum Complications Rate
+        elif kpi_selection == "Postpartum Complications Rate (%)":
+            render_postpartum_compl_facility_comparison_chart(
+                df=comparison_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
         # ADD MISSING MD HERE!
         elif kpi_selection == "Missing Mode of Delivery":
             render_missing_md_facility_comparison_chart(
@@ -1697,6 +1672,20 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
+        elif kpi_selection == "Postpartum Complications Rate (%)":
+            render_postpartum_compl_region_comparison_chart(
+                df=region_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=region_names,
+                region_mapping=facilities_by_region,
+                facilities_by_region=facilities_by_region,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
 
         elif kpi_selection == "Missing Mode of Delivery":
             render_missing_md_region_comparison_chart(
@@ -1785,11 +1774,39 @@ def render_additional_analytics(
     kpi_df = get_kpi_filtered_dataframe(patient_df, kpi_selection)
 
     if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
-        render_obstetric_condition_pie_chart(
-            kpi_df, facility_uids, bg_color, text_color
-        )
+        # REMOVED PIE CHART FOR PPH AS REQUESTED
+        pass
     elif kpi_selection == "Delivered women who received uterotonic (%)":
         render_uterotonic_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
+    elif kpi_selection == "Antepartum Complications Rate (%)":
+        render_complication_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
+    elif kpi_selection == "Postpartum Complications Rate (%)":
+        render_postpartum_complication_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
+    elif kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
+        # Render FP Distribution Pie Chart
+        st.session_state.kpi_cache = st.session_state.get("kpi_cache", {})
+        # We need to manually compute distribution if not already available in cache or re-compute it here
+        # Actually, let's just use the data frame
+        from utils.kpi_utils import compute_fp_distribution
+        dist = compute_fp_distribution(patient_df, facility_uids)
+        
+        if dist:
+            # Create a simple pie chart logic here for FP
+            pie_data = [{"Method": k, "Count": v} for k, v in dist.items()]
+            pie_df = pd.DataFrame(pie_data)
+            
+            if not pie_df.empty:
+                import plotly.express as px
+                st.markdown('<div style="text-align: center; font-weight: bold;">Distribution of FP Methods</div>', unsafe_allow_html=True)
+                fig = px.pie(
+                    pie_df, values="Count", names="Method", height=400,
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig.update_layout(
+                    paper_bgcolor=bg_color, plot_bgcolor=bg_color, font_color=text_color,
+                    margin=dict(l=20, r=20, t=20, b=20),
+                )
+                st.plotly_chart(fig, use_container_width=True, key="fp_viz")
 
 
 def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:

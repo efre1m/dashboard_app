@@ -762,7 +762,7 @@ def render_maternal_dashboard_shared(
 
     # Get current KPI selection
     current_kpi = st.session_state.get(
-        "selected_kpi", "Institutional Maternal Death Rate (%)"
+        "selected_kpi", "Maternal Death Rate (per 100,000)"
     )
     from utils.kpi_utils import get_relevant_date_column_for_kpi
 

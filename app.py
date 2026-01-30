@@ -20,6 +20,7 @@ ALL_CACHES = [
     "kpi_cache",
     "episiotomy_cache",
     "antipartum_compl_cache",
+    "postpartum_compl_cache",
     "vaccine_coverage_cache",
     "status_cache",
     # Newborn caches

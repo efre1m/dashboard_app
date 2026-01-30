@@ -34,13 +34,22 @@ INDICATOR_DEFINITIONS = {
         "data_source": "mode_of_delivery_maternal_delivery_summary field"
     },
     
-    "Institutional Maternal Death Rate (%)": {
+    "Maternal Death Rate (per 100,000)": {
         "definition": "Maternal death is defined as the death of a woman while pregnant or within 42 days of termination of pregnancy, from any cause related to or aggravated by the pregnancy or its management.",
-        "computation": "Number of maternal deaths / Total deliveries × 100",
+        "computation": "Number of maternal deaths / Total live births × 100,000",
         "numerator": "Women with condition of discharge code '2' (Death)",
-        "denominator": "Total deliveries in the period",
-        "clinical_note": "This measures facility-based maternal mortality. The global target is to reduce maternal mortality ratio to less than 70 per 100,000 live births by 2030 (SDG 3.1).",
+        "denominator": "Total live births in the period",
+        "clinical_note": "The global target is to reduce maternal mortality ratio to less than 70 per 100,000 live births by 2030 (SDG 3.1). This indicator follows that standard scale.",
         "data_source": "condition_of_discharge_discharge_summary field"
+    },
+    
+    "Postpartum Complications Rate (%)": {
+        "definition": "Postpartum complications are medical conditions that occur during or after delivery. These include hemorrhage, sepsis, eclampsia, and other life-threatening conditions.",
+        "computation": "Number of women with postpartum complications / Total deliveries × 100",
+        "numerator": "Women with any documented postpartum complication code (1-10)",
+        "denominator": "Total deliveries in the period",
+        "clinical_note": "Most maternal deaths occur during the postpartum period. Prompt identification and management of these complications are essential for maternal survival.",
+        "data_source": "obstetric_condition_at_delivery_delivery_summary field"
     },
     
     "Stillbirth Rate (%)": {

@@ -79,7 +79,7 @@ INSTRUCTIONS:
    - "uterotonic"/"oxytocin"/"uterotoncic"/"uterotonc"/"utertonic" → "Delivered women who received uterotonic (%)"
    - "episiotomy"/"episotomy"/"episotomi"/"episiotmoy"/"episo" → "Episiotomy Rate (%)"
    - "antepartum"/"antenatal complications"/"ante partum"/"antipartum" → "Antepartum Complications Rate (%)"
-   - "maternal death"/"mortality"/"materna death" → "Institutional Maternal Death Rate (%)"
+    - "maternal death"/"mortality"/"materna death" → "Maternal Death Rate (per 100,000)"
    - "stillbirth"/"still birth"/"stil birth"/"stillbrith" → "Stillbirth Rate (%)"
    - "missing mode"/"missing delivery"/"mode of delivery" → "Missing Mode of Delivery"
    - "missing birth outcome"/"missing birth"/"missing oucome" → "Missing Birth Outcome"

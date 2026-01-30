@@ -195,7 +195,7 @@ NEWBORN_KPI_GROUPS = {
         "Neonatal Mortality Rate (%)",
         "Admitted Newborns",
     ],
-    "Missing": [
+    "Data Quality": [
         "Missing Temperature (%)",
         "Missing Birth Weight (%)",
         "Missing Discharge Status (%)",
@@ -466,7 +466,7 @@ def render_newborn_kpi_tab_navigation():
             "👶 **Birth & Hypothermia**",
             "🏥 **Interventions**",
             "📊 **Outcomes & Enrollment**",
-            "❓ **Missing**",
+            "❓ **Data Quality**",
         ]
     )
 

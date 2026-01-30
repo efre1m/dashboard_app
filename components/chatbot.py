@@ -356,7 +356,7 @@ class ChatbotLogic:
 
             # Standard KPIs that use kpi_utils
             "C-Section Rate (%)": "utils",
-            "Institutional Maternal Death Rate (%)": "utils",
+            "Maternal Death Rate (per 100,000)": "utils",
             "Stillbirth Rate (%)": "utils",
             "Early Postnatal Care (PNC) Coverage (%)": "utils",
             "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": "utils"

@@ -457,7 +457,7 @@ def compute_early_pnc_coverage(df, facility_uids=None):
 
 
 def compute_maternal_death_rate(df, facility_uids=None):
-    """Compute maternal death rate (now as percentage, not per 100,000)"""
+    """Compute maternal death rate (per 100,000 live births)"""
     cache_key = get_cache_key(df, facility_uids, "maternal_death_rate")
 
     if cache_key in st.session_state.kpi_cache:
@@ -472,7 +472,7 @@ def compute_maternal_death_rate(df, facility_uids=None):
         maternal_deaths = compute_maternal_death_count(df, facility_uids)
         total_deliveries = compute_total_deliveries(df, facility_uids)
         rate = (
-            (maternal_deaths / total_deliveries * 100) if total_deliveries > 0 else 0.0
+            (maternal_deaths / total_deliveries * 100000) if total_deliveries > 0 else 0.0
         )
         result = (rate, maternal_deaths, total_deliveries)
 
@@ -502,10 +502,49 @@ def compute_csection_rate(df, facility_uids=None):
     return result
 
 
+def compute_fp_distribution(df, facility_uids=None):
+    """Compute distribution of FP methods/counseling with Human Readable Labels"""
+    if df is None or df.empty:
+        return {}
+    
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+        
+    if FP_ACCEPTANCE_COL not in filtered_df.columns:
+        return {}
+        
+    # Count values
+    dist = filtered_df[FP_ACCEPTANCE_COL].dropna().astype(str).value_counts().to_dict()
+    
+    # Mapping for Human Readable Labels
+    FP_LABELS = {
+        "1": "Pills",
+        "2": "Injectables",
+        "3": "Implants",
+        "4": "IUCD",
+        "5": "Condom",
+        "6": "Counseled only",
+    }
+    
+    # Clean up keys and map to labels
+    cleaned_dist = {}
+    for k, v in dist.items():
+        key = k.split('.')[0] if '.' in k else k
+        
+        # Use label if available, otherwise ignore or use key?
+        # User implies only these should be shown ("human readable text not code")
+        if key in FP_LABELS:
+            label = FP_LABELS[key]
+            cleaned_dist[label] = cleaned_dist.get(label, 0) + int(v)
+        
+    return cleaned_dist
+
+
 # ---------------- Master KPI Function ----------------
 def compute_kpis(df, facility_uids=None):
     """Compute all KPIs with optional date filtering"""
-    cache_key = get_cache_key(df, facility_uids, "main_kpis")
+    cache_key = get_cache_key(df, facility_uids, "main_kpis_v4")
 
     if cache_key in st.session_state.kpi_cache:
         return st.session_state.kpi_cache[cache_key]
@@ -522,6 +561,9 @@ def compute_kpis(df, facility_uids=None):
     total_deliveries = compute_total_deliveries(filtered_df, facility_uids, date_column)
     fp_acceptance = compute_fp_acceptance(filtered_df, facility_uids)
     ippcar = (fp_acceptance / total_deliveries * 100) if total_deliveries > 0 else 0.0
+    
+    # FP Distribution
+    fp_distribution = compute_fp_distribution(filtered_df, facility_uids)
 
     stillbirth_rate, stillbirths, total_deliveries_sb = compute_stillbirth_rate(
         filtered_df, facility_uids
@@ -561,10 +603,18 @@ def compute_kpis(df, facility_uids=None):
         filtered_df, facility_uids
     )
 
+    # NEW: Postpartum Complications Rate
+    from utils.kpi_postpartum_compl import compute_postpartum_compl_rate, compute_postpartum_distribution
+    postpartum_rate, postpartum_cases, _ = compute_postpartum_compl_rate(
+        filtered_df, facility_uids
+    )
+    postpartum_distribution = compute_postpartum_distribution(filtered_df, facility_uids)
+
     result = {
         "total_deliveries": int(total_deliveries),
         "fp_acceptance": int(fp_acceptance),
         "ippcar": float(ippcar),
+        "fp_distribution": fp_distribution,
         "stillbirth_rate": float(stillbirth_rate),
         "stillbirths": int(stillbirths),
         "total_deliveries_sb": int(total_deliveries_sb),
@@ -589,6 +639,9 @@ def compute_kpis(df, facility_uids=None):
         "assisted_rate": float(assisted_rate),
         "antipartum_rate": float(antipartum_rate),
         "antipartum_cases": int(antipartum_cases),
+        "postpartum_rate": float(postpartum_rate),
+        "postpartum_cases": int(postpartum_cases),
+        "postpartum_distribution": postpartum_distribution,
     }
 
     st.session_state.kpi_cache[cache_key] = result
@@ -764,6 +817,20 @@ def get_numerator_denominator_for_kpi(
             df, facility_uids, date_range_filters
         )
 
+    elif kpi_name == "Antepartum Complications Rate (%)":
+        from utils.kpi_antipartum_compl import get_numerator_denominator_for_antipartum_compl
+
+        return get_numerator_denominator_for_antipartum_compl(
+            df, facility_uids, date_range_filters
+        )
+
+    elif kpi_name == "Postpartum Complications Rate (%)":
+        from utils.kpi_postpartum_compl import get_numerator_denominator_for_postpartum_compl
+
+        return get_numerator_denominator_for_postpartum_compl(
+            df, facility_uids, date_range_filters
+        )
+
     """
     Get numerator and denominator for a specific KPI with UID filtering
     AND filtered by KPI-specific program stage dates AND date range
@@ -823,7 +890,7 @@ def get_numerator_denominator_for_kpi(
             "denominator": "total_deliveries",
             "value": "pnc_coverage",
         },
-        "Institutional Maternal Death Rate (%)": {
+        "Maternal Death Rate (per 100,000)": {
             "numerator": "maternal_deaths",
             "denominator": "total_deliveries_md",
             "value": "maternal_death_rate",
@@ -852,6 +919,11 @@ def get_numerator_denominator_for_kpi(
             "numerator": "antipartum_cases",
             "denominator": "total_deliveries",
             "value": "antipartum_rate",
+        },
+        "Postpartum Complications Rate (%)": {
+            "numerator": "postpartum_cases",
+            "denominator": "total_deliveries",
+            "value": "postpartum_rate",
         },
     }
 

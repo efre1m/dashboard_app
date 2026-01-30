@@ -75,17 +75,17 @@ def compute_antipartum_compl_count(df, facility_uids=None):
         else:
             df_copy = filtered_df.copy()
 
-            # Convert to string and handle multiple codes
-            df_copy["complication_clean"] = df_copy[COMPLICATION_COL].astype(str)
+            # Convert to string and handle multiple codes row by row for robustness
+            def has_antipartum_compl(val):
+                if pd.isna(val):
+                    return False
+                # Normalize: string, remove .0, split, strip
+                codes = str(val).replace(".0", "").split(",")
+                codes = [c.strip() for c in codes]
+                # Check if any valid antipartum code (1-6) is present
+                return any(c in COMPLICATION_CODES for c in codes)
 
-            # Check for codes 1-6 in the string (standalone or in comma-separated list)
-            # Regex pattern matching any digit from 1-6 as whole words
-            pattern = r"(^|[,;\s])([1-6])([,;\s]|$)"
-            
-            mask = df_copy["complication_clean"].str.contains(
-                pattern, regex=True, na=False
-            )
-
+            mask = filtered_df[COMPLICATION_COL].apply(has_antipartum_compl)
             result = int(mask.sum())
 
     st.session_state.antipartum_compl_cache[cache_key] = result
@@ -109,9 +109,17 @@ def compute_complication_distribution(df, facility_uids=None):
     # Initialize counts
     named_counts = {name: 0 for name in COMPLICATION_LABELS.values()}
 
-    # Vectorized computation using pandas split and explode
-    s = filtered_df[COMPLICATION_COL].astype(str).str.split(",")
+    # ROBUST Instance-Based Vectorized computation:
+    # 1. Convert to string and remove .0 decimals
+    # 2. Split by comma and strip
+    # 3. Explode to count EVERY instance of EVERY complication code
+    # This provides clinical detail on all reported complications.
+    
+    s = filtered_df[COMPLICATION_COL].astype(str).str.replace(".0", "", regex=False).str.split(",")
     exploded = s.explode().str.strip()
+    
+    # Filter for valid codes 1-6
+    exploded = exploded[exploded.isin(COMPLICATION_CODES)]
     dist = exploded.value_counts()
     
     total = 0
@@ -122,8 +130,8 @@ def compute_complication_distribution(df, facility_uids=None):
             named_counts[name] = c_val
             total += c_val
 
-    # Add total count
-    named_counts["Total Complications"] = total
+    # Label as "Instances" to distinguish from the case-based numerator in trend charts
+    named_counts["Total Complication Instances"] = total
 
     return named_counts
 
@@ -229,7 +237,7 @@ def render_antipartum_compl_region_comparison_chart(*args, **kwargs):
 
 
 def render_complication_type_pie_chart(
-    df, facility_uids=None, bg_color="#FFFFFF", text_color=None
+    df, facility_uids=None, bg_color="#FFFFFF", text_color=None, **kwargs
 ):
     """
     Render a pie chart showing distribution of complication types
@@ -239,13 +247,13 @@ def render_complication_type_pie_chart(
 
     distribution = compute_complication_distribution(df, facility_uids)
 
-    if distribution["Total Complications"] == 0:
+    if distribution["Total Complication Instances"] == 0:
         st.info("⚠️ No complication data available for distribution.")
         return
 
     pie_data = []
     for name, count in distribution.items():
-        if name != "Total Complications" and count > 0:
+        if name != "Total Complication Instances" and count > 0:
             pie_data.append({"Complication": name, "Count": count})
 
     if not pie_data:
@@ -274,4 +282,9 @@ def render_complication_type_pie_chart(
         margin=dict(l=20, r=20, t=20, b=20),
     )
     
-    st.plotly_chart(fig, use_container_width=True, key=f"antipartum_compl_chart_{kwargs.get('key_suffix', '')}")
+    
+    # Use robust hash key
+    uids_str = str(sorted(facility_uids)) if facility_uids else "all"
+    key_hash = hashlib.md5(uids_str.encode()).hexdigest()[:8]
+    unique_key = f"antipartum_compl_chart_{key_hash}_{kwargs.get('key_suffix', '')}"
+    st.plotly_chart(fig, use_container_width=True, key=unique_key)
