@@ -57,6 +57,7 @@ CONTEXT:
 INSTRUCTIONS:
 1. Identify the user's INTENT:
    - "plot": for graphs, charts, trends, or specific data values over time.
+   - "distribution": for pie charts, breakdowns by category, proportions, or composition (e.g., "what is the breakdown of complications").
    - "text": for single values, summaries, or specific numbers without a chart.
    - "metadata_query": for questions about the *structure* or *entities* of the system (e.g., "how many regions?", "list all facilities", "what hospitals are in [Region]").
    - "list_kpis": for questions asking what health indicators are available.
@@ -124,7 +125,7 @@ INSTRUCTIONS:
 
 OUTPUT FORMAT (JSON ONLY):
 {{
-  "intent": "plot" | "text" | "clear" | "metadata_query" | "chat" | "list_kpis",
+  "intent": "plot" | "distribution" | "text" | "clear" | "metadata_query" | "chat" | "list_kpis",
   "kpi": "Exact KPI Name from list" | null,
   "chart_type": "line" | "bar" | "area" | "table",
   "facility_names": ["Abiadi", "Adigrat"] | [],

@@ -239,6 +239,15 @@ class ChatbotLogic:
             "matenal": "maternal",
             "changi": "chagni",
             "dangla": "dangela",
+            "plainnig": "planning",
+            "postpar": "postpartum",
+            "postpart": "postpartum",
+            "postpra": "postpartum",
+            "antepar": "antepartum",
+            "antepart": "antepartum",
+            "complicaiton": "complication",
+            "complicaiotns": "complications",
+            "dist": "distribution",
             
             # Intent/Action Variations
             "inidcatorys": "indicators",
@@ -336,6 +345,7 @@ class ChatbotLogic:
             "Missing Mode of Delivery": "missing_md",
             "Episiotomy Rate (%)": "episiotomy",
             "Antepartum Complications Rate (%)": "antipartum_compl",
+            "Postpartum Complications Rate (%)": "postpartum_compl",
             
             # Newborn Indicators
             "Inborn Rate (%)": "newborn",
@@ -585,7 +595,9 @@ class ChatbotLogic:
         count_requested = False
         comparison_mode = False
         comparison_entity = None # Initialize to prevent UnboundLocalError
-        if any(w in query_lower for w in ["plot", "graph", "chart", "trend", "visualize", "show me"]):
+        if any(w in query_lower for x in ["distribution", "breakdown", "pie", "proportion", "dist", "by category", "by group"] for w in [x]):
+            intent = "distribution"
+        elif any(w in query_lower for w in ["plot", "graph", "chart", "trend", "visualize", "show me"]):
             intent = "plot"
         elif any(w in query_lower for w in ["define", "meaning", "definition", "how is", "computed", "calculation", "formula"]):
             intent = "definition"
@@ -658,9 +670,9 @@ class ChatbotLogic:
             "ceasarean": "C-Section Rate (%)",
             
             # Maternal Death
-            "maternal death": "Institutional Maternal Death Rate (%)",
-            "death": "Institutional Maternal Death Rate (%)",
-            "mortality": "Institutional Maternal Death Rate (%)",
+            "maternal death": "Maternal Death Rate (per 100,000)",
+            "death": "Maternal Death Rate (per 100,000)",
+            "mortality": "Maternal Death Rate (per 100,000)",
             
             # Stillbirth (with typos)
             "stillbirth": "Stillbirth Rate (%)",
@@ -685,7 +697,9 @@ class ChatbotLogic:
             "ippcar": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
             "contraceptive": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
             "family planning": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+            "family plainnig": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
             "fp": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+            "contraception": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
             
             # PNC
             "pnc": "Early Postnatal Care (PNC) Coverage (%)",
@@ -719,12 +733,25 @@ class ChatbotLogic:
             "episiotmoy": "Episiotomy Rate (%)",
             "episo": "Episiotomy Rate (%)",
             
-            # Antepartum (with typos)
             "antepartum": "Antepartum Complications Rate (%)",
             "ante partum": "Antepartum Complications Rate (%)",
             "antipartum": "Antepartum Complications Rate (%)",
             "antenatal complications": "Antepartum Complications Rate (%)",
             "antenatal": "Antepartum Complications Rate (%)",
+            "ante": "Antepartum Complications Rate (%)",
+            "anit": "Antepartum Complications Rate (%)",
+            "antepartum complication": "Antepartum Complications Rate (%)",
+            "antepart": "Antepartum Complications Rate (%)",
+            "antepar": "Antepartum Complications Rate (%)",
+            "postpartum": "Postpartum Complications Rate (%)",
+            "post partum": "Postpartum Complications Rate (%)",
+            "postpartum complications": "Postpartum Complications Rate (%)",
+            "postpar": "Postpartum Complications Rate (%)",
+            "postpart": "Postpartum Complications Rate (%)",
+            "postpra": "Postpartum Complications Rate (%)",
+            "postpartum complicaiton": "Postpartum Complications Rate (%)",
+            "postpartum complicaiotns": "Postpartum Complications Rate (%)",
+            "postpartum complication": "Postpartum Complications Rate (%)",
             
             # Data Quality / Counts
             "missing mode": "Missing Mode of Delivery",
@@ -1808,6 +1835,101 @@ class ChatbotLogic:
         # Initialize navigation feedback
         nav_feedback = ""
 
+        # --- CONTEXT DESCRIPTION BUILDER ---
+        context_desc = ""
+        if parsed.get("comparison_mode"):
+            if parsed.get("comparison_entity") == "facility":
+                 if any(x in query_lower for x in ["all facilities", "all facility", "every facility", "all hospitals"]):
+                     context_desc = " for **All Facilities**"
+                 elif parsed.get("facility_names"):
+                     c_names = list(dict.fromkeys(parsed["facility_names"]))
+                     if len(c_names) > 3:
+                         context_desc = f" for **{', '.join(c_names[:3])}** and {len(c_names)-3} others"
+                     else:
+                         context_desc = f" for **{', '.join(c_names)}**"
+            elif parsed.get("comparison_entity") == "region":
+                 if any(x in query_lower for x in ["all regions", "all region", "every region"]):
+                     context_desc = " for **All Regions**"
+                 elif parsed.get("comparison_targets"):
+                     c_names = parsed["comparison_targets"]
+                     if len(c_names) > 3:
+                         context_desc = f" for regions **{', '.join(c_names[:3])}**..."
+                     else:
+                         context_desc = f" for regions **{', '.join(c_names)}**"
+        else:
+            if parsed.get("facility_names"):
+                 c_names = list(dict.fromkeys(parsed["facility_names"]))
+                 if len(c_names) > 3:
+                     context_desc = f" for **{', '.join(c_names[:3])}**..."
+                 else:
+                     context_desc = f" for **{', '.join(c_names)}**"
+            elif parsed.get("comparison_targets"): 
+                 c_names = parsed["comparison_targets"]
+                 context_desc = f" for **{c_names[0]}**" 
+            else:
+                 if self.user.get("role") in ["national", "regional", "admin"]:
+                     context_desc = " for **All Facilities**"
+
+        # Handle Distribution Intent
+        if parsed["intent"] == "distribution":
+            kpi_name = parsed["kpi"]
+            facility_uids = parsed["facility_uids"]
+            date_range = parsed["date_range"]
+            
+            # Prepare data
+            if use_newborn_data:
+                # Newborn distribution not handled specifically yet, fallback to plot or text
+                return None, "Distribution views for Newborn indicators are coming soon! Try asking for a trend plot instead."
+            
+            prepared_df, _ = self._silent_prepare_data(active_df, kpi_name, facility_uids, date_range)
+            
+            if prepared_df is None or prepared_df.empty:
+                return None, f"No data found to show the distribution for **{kpi_name}**."
+
+            fig = None
+            title = f"Distribution of {kpi_name}"
+            
+            try:
+                if kpi_name == "Postpartum Hemorrhage (PPH) Rate (%)":
+                    from utils.kpi_pph import compute_obstetric_condition_distribution
+                    dist = compute_obstetric_condition_distribution(prepared_df, facility_uids)
+                    data = [{"Category": k, "Count": v} for k, v in dist.items() if k != "Total Complications" and v > 0]
+                    title = "Distribution of Obstetric Conditions (PPH)"
+                elif kpi_name == "Postpartum Complications Rate (%)":
+                    from utils.kpi_postpartum_compl import compute_postpartum_distribution
+                    dist = compute_postpartum_distribution(prepared_df, facility_uids)
+                    data = [{"Category": k, "Count": v} for k, v in dist.items() if k != "Total Complication Instances" and v > 0]
+                    title = "Distribution of Postpartum Complication Types"
+                elif kpi_name == "Antepartum Complications Rate (%)":
+                    from utils.kpi_antipartum_compl import compute_complication_distribution
+                    dist = compute_complication_distribution(prepared_df, facility_uids)
+                    data = [{"Category": k, "Count": v} for k, v in dist.items() if k != "Total Complication Instances" and v > 0]
+                    title = "Distribution of Antepartum Complication Types"
+                elif kpi_name == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
+                    from utils.kpi_utils import compute_fp_distribution
+                    dist = compute_fp_distribution(prepared_df, facility_uids)
+                    data = [{"Category": k, "Count": v} for k, v in dist.items() if v > 0]
+                    title = "Distribution of Family Planning Methods"
+                else:
+                    return None, f"I don't have a categorical distribution view for **{kpi_name}** yet. I can show you the trend plot instead!"
+
+                if not data:
+                    return None, f"I searched the data for **{kpi_name}**, but no categorical breakdowns were found for this period."
+
+                import plotly.express as px
+                df_pie = pd.DataFrame(data)
+                fig = px.pie(
+                    df_pie, values="Count", names="Category", 
+                    title=title, height=450,
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
+                
+                return fig, f"Here is the categorical breakdown for **{kpi_name}**{context_desc}."
+            except Exception as e:
+                logging.error(f"Distribution rendering failed: {e}")
+                return None, f"Sorry, I encountered an error while generating the distribution chart: {str(e)}"
+
         # If Intent is Plot OR Analysis is requested (to get trend data)
         if parsed["intent"] == "plot" or parsed.get("analysis_type"):
             # CRITICAL FIX: Check if facilities exist BEFORE attempting to plot
@@ -1861,10 +1983,10 @@ class ChatbotLogic:
             if comparison_mode:
                 # Check if "all" comparison was requested in the query
                 query_lower_check = query.lower()
-                if any(x in query_lower_check for x in ["all facilities", "all facility", "every facility", "all hospitals"]):
+                if any(x in query_lower_check for x in ["all facilities", "all facility", "every facility", "all hospitals"]) and not parsed.get("facility_uids") and not parsed.get("comparison_targets"):
                     is_compare_all = True
                     comparison_entity = "facility"
-                elif any(x in query_lower_check for x in ["all regions", "all region", "every region", "all reioings", "all reigons", "all reginos"]):
+                elif any(x in query_lower_check for x in ["all regions", "all region", "every region", "all reioings", "all reigons", "all reginos"]) and not parsed.get("comparison_targets"):
                     is_compare_all = True
                     comparison_entity = "region"
                 
@@ -2087,41 +2209,6 @@ class ChatbotLogic:
             # Prepare for rendering
             render_plot_df = plot_df.copy()
 
-            # --- CONTEXT DESCRIPTION BUILDER ---
-            context_desc = ""
-            if parsed.get("comparison_mode"):
-                if parsed.get("comparison_entity") == "facility":
-                     if is_compare_all:
-                         context_desc = " for **All Facilities**"
-                     elif parsed.get("facility_names"):
-                         c_names = list(dict.fromkeys(parsed["facility_names"]))
-                         if len(c_names) > 3:
-                             context_desc = f" for **{', '.join(c_names[:3])}** and {len(c_names)-3} others"
-                         else:
-                             context_desc = f" for **{', '.join(c_names)}**"
-                elif parsed.get("comparison_entity") == "region":
-                     if is_compare_all:
-                         context_desc = " for **All Regions**"
-                     elif parsed.get("comparison_targets"):
-                         c_names = parsed["comparison_targets"]
-                         if len(c_names) > 3:
-                             context_desc = f" for regions **{', '.join(c_names[:3])}**..."
-                         else:
-                             context_desc = f" for regions **{', '.join(c_names)}**"
-            else:
-                if parsed.get("facility_names"):
-                     c_names = list(dict.fromkeys(parsed["facility_names"]))
-                     if len(c_names) > 3:
-                         context_desc = f" for **{', '.join(c_names[:3])}**..."
-                     else:
-                         context_desc = f" for **{', '.join(c_names)}**"
-                elif parsed.get("comparison_targets"): 
-                     c_names = parsed["comparison_targets"]
-                     context_desc = f" for **{c_names[0]}**" 
-                else:
-                     if self.user.get("role") in ["national", "regional", "admin"]:
-                         context_desc = " for **All Facilities**"
-            
             # --- SPECIALIZED RENDERING (Move BEFORE Generic Logic) ---
             # Check for specialized KPI using both the potentially mapped 'active' name and original name
             kpi_suffix = self.SPECIALIZED_KPI_MAP.get(active_kpi_name) or self.SPECIALIZED_KPI_MAP.get(kpi_name)
@@ -2465,7 +2552,7 @@ def render_chatbot():
     chatbot_logic.KB_DEFINITIONS = {
         "C-Section Rate (%)": "A Caesarean section (C-section) is a surgical procedure used to deliver a baby through incisions in the abdomen and uterus. The rate is the percentage of deliveries performed via C-section out of total deliveries.",
         "Postpartum Hemorrhage (PPH) Rate (%)": "Postpartum Hemorrhage (PPH) is defined as excessive bleeding after childbirth (usually >500ml for vaginal, >1000ml for C-section). It is a leading cause of maternal mortality.",
-        "Institutional Maternal Death Rate (%)": "Maternal death refers to the death of a woman while pregnant or within 42 days of termination of pregnancy, irrespective of the duration and site of the pregnancy, from any cause related to or aggravated by the pregnancy or its management but not from accidental or incidental causes.",
+        "Maternal Death Rate (per 100,000)": "Maternal death refers to the death of a woman while pregnant or within 42 days of termination of pregnancy, from any cause related to or aggravated by the pregnancy or its management but not from accidental or incidental causes. The rate is calculated per 100,000 live births.",
         "Stillbirth Rate (%)": "A stillbirth is the death or loss of a baby before or during delivery. The rate typically measures stillbirths per 1,000 total births, but here it is presented as a percentage.",
         "Early Postnatal Care (PNC) Coverage (%)": "Early Postnatal Care refers to the medical care given to the mother and newborn within the first 24-48 hours after delivery, crucial for detecting complications.",
         "Admitted Mothers": "The total count of mothers admitted to the facility for delivery or pregnancy-related care.",
@@ -2481,6 +2568,7 @@ def render_chatbot():
         "Missing Condition of Discharge": "Data Quality Metric: The percentage of maternal discharge records where the mother's condition (e.g., Discharged Healthy, Referred, Death) was not recorded.",
         "Episiotomy Rate (%)": "An episiotomy is a surgical cut made in the muscle between the vagina and the anus during childbirth to assist delivery. The rate measures how often this procedure is performed.",
         "Antepartum Complications Rate (%)": "Antepartum complications refer to medical conditions that arise during pregnancy before labor, such as hypertension or hemorrhage.",
+        "Postpartum Complications Rate (%)": "Postpartum complications refer to medical conditions that arise after delivery, such as infections, hemorrhage (non-PPH specific), or other maternal distress issues.",
         # Newborn Definitions
         "Inborn Rate (%)": "The percentage of babies born within the current facility out of total newborn admissions.",
         "Outborn Rate (%)": "The percentage of babies born outside (e.g., at home or another facility) and then admitted to this facility.",
@@ -2700,6 +2788,7 @@ I can help you analyze data across the **{dashboard_str}** dashboards.
 
 **What I can do for you:**
 - **Plot Charts**: I can generate Line, Bar, and Area charts for Maternal Health indicators.
+- **Distributions**: Ask for a **breakdown** or **distribution** (e.g., "show distribution of complications") to see categorical pie charts.
 - **Quick Values**: Ask for a specific value (e.g. "What is the PPH rate?") and I'll provide the latest figure.
 - **Comparisons**: Ask to compare facilities or regions! (e.g., "Compare Admitted Mothers for Adigrat and Suhul")
 - **Definitions**: Ask "Define [Indicator]" to get a medical definition.
