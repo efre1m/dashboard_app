@@ -930,6 +930,69 @@ class CSVIntegration:
             return []
 
     @staticmethod
+    def is_date_invalid(date_str: str, threshold: int = 2025) -> bool:
+        """
+        Check if a date is considered 'invalid' (likely Ethiopian Calendar).
+        Criteria: Year < threshold. Handles dates with time (T00:00:00).
+        """
+        if not date_str or not isinstance(date_str, str):
+            return False 
+        
+        try:
+            # Strip time part if present (e.g., 2018-01-01T00:00:00.000)
+            clean_date = date_str.split("T")[0].split(" ")[0]
+            parts = clean_date.split("-")
+            if len(parts) != 3:
+                return False
+            year = int(parts[0])
+            return year < threshold
+        except:
+            return False
+
+    @staticmethod
+    def convert_ec_to_gc_safe(date_str: str) -> str:
+        """
+        Convert EC to GC, but return original if result is in the future.
+        Handles dates with time (T00:00:00).
+        """
+        if not date_str or not isinstance(date_str, str):
+            return ""
+
+        try:
+            # Strip time part if present
+            clean_date = date_str.split("T")[0].split(" ")[0]
+            parts = clean_date.split("-")
+            if len(parts) != 3:
+                return date_str
+            
+            year = int(parts[0])
+            month = int(parts[1])
+            day = int(parts[2])
+
+            # Ethiopian Year Y starts in Gregorian Year Y+7 (Sep 11 or 12)
+            gy_start = year + 7
+            if (year - 1) % 4 == 3:
+                start_day = 12
+            else:
+                start_day = 11
+            
+            start_date_gc = date(gy_start, 9, start_day)
+            days_to_add = (month - 1) * 30 + (day - 1)
+            
+            gc_date = start_date_gc + timedelta(days=days_to_add)
+            
+            # Future Date Check
+            if gc_date > date.today():
+                logger.warning(f"   [WARN] Converted date {gc_date} is in future (Today: {date.today()}). Keeping original {date_str}.")
+                return date_str
+                
+            return gc_date.strftime("%Y-%m-%dT00:00:00.000")
+
+        except Exception as e:
+            logger.error(f"Error converting {date_str}: {e}")
+            return date_str
+
+    @staticmethod
     def create_events_dataframe(
         tei_data: Dict, program_uid: str, orgunit_names: Dict[str, str]
     ) -> pd.DataFrame:
@@ -2049,6 +2112,79 @@ class CSVIntegration:
         return cleaned_df
 
     @staticmethod
+    def correct_enrollment_dates(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Correct enrollment dates based on the logic:
+        1. Identify invalid enrollment dates (Year < 2025).
+        2. Check ALL event_date_* columns for a valid Gregorian date (Year >= 2025).
+        3. If a valid event date is found, use it for the enrollment date.
+        4. If no valid event date exists AND year is 2015-2018, convert EC to GC.
+        """
+        if df.empty or "enrollment_date" not in df.columns:
+            return df
+
+        logger.info(f"📅 Correcting Enrollment Dates (Post-Processing) for {len(df)} rows...")
+
+        VALID_THRESHOLD = 2025
+        CONVERT_RANGE = range(2015, 2019)  # 2015, 2016, 2017, 2018
+        
+        event_cols = [col for col in df.columns if col.startswith("event_date_")]
+        
+        corrected_count = 0
+        replaced_with_event = 0
+        converted_ec_to_gc = 0
+        
+        for idx in df.index:
+            enr_date = str(df.at[idx, "enrollment_date"])
+            if not enr_date or enr_date.lower() in ["nan", "n/a", "", "none"]:
+                continue
+
+            try:
+                # Is the enrollment date invalid?
+                if CSVIntegration.is_date_invalid(enr_date, threshold=VALID_THRESHOLD):
+                    # Step 1: Search for a valid event date in any stage
+                    valid_event_date = None
+                    for col in event_cols:
+                        evt_date = str(df.at[idx, col])
+                        if not CSVIntegration.is_date_invalid(evt_date, threshold=VALID_THRESHOLD) and \
+                           evt_date and evt_date.lower() not in ["nan", "n/a", "", "none"]:
+                            
+                            # Found a valid event date!
+                            # Strip time if present for the final enrollment_date
+                            clean_evt_date = evt_date.split("T")[0].split(" ")[0]
+                            if valid_event_date is None or clean_evt_date < valid_event_date:
+                                valid_event_date = clean_evt_date
+                    
+                    if valid_event_date:
+                        # Success: Use the valid event date (Standardize to DHIS2 format)
+                        final_date = f"{valid_event_date}T00:00:00.000" if "T" not in valid_event_date else valid_event_date
+                        df.at[idx, "enrollment_date"] = final_date
+                        replaced_with_event += 1
+                        corrected_count += 1
+                    else:
+                        # Step 2: Fallback - Convert EC date to GC if in range 2015-2018
+                        # Parse year to check range
+                        clean_enr = enr_date.split("T")[0].split(" ")[0]
+                        enr_year = int(clean_enr.split("-")[0])
+                        
+                        if enr_year in CONVERT_RANGE:
+                            new_date = CSVIntegration.convert_ec_to_gc_safe(enr_date)
+                            if new_date != enr_date:
+                                df.at[idx, "enrollment_date"] = new_date
+                                converted_ec_to_gc += 1
+                                corrected_count += 1
+                            
+            except Exception as e:
+                logger.error(f"Error correcting date for row {idx}: {e}")
+                
+        if corrected_count > 0:
+            logger.info(f"   ✅ Corrected {corrected_count} enrollment dates:")
+            logger.info(f"      - Replaced with valid event date: {replaced_with_event}")
+            logger.info(f"      - Converted EC->GC (2015-2018): {converted_ec_to_gc}")
+        
+        return df
+
+    @staticmethod
     def post_process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         """
         Post-process the DataFrame AFTER transformation, BEFORE saving to CSV
@@ -2059,8 +2195,11 @@ class CSVIntegration:
 
         logger.info("📦 POST-PROCESSING TRANSFORMED DATA")
 
+        # Step 0: Correct Enrollment Dates
+        processed_df = CSVIntegration.correct_enrollment_dates(df)
+
         # Step 1: Filter out excluded facilities
-        processed_df = CSVIntegration.filter_excluded_facilities(df)
+        processed_df = CSVIntegration.filter_excluded_facilities(processed_df)
 
         if processed_df.empty:
             logger.warning("⚠️ No data remaining after facility filtering")
