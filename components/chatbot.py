@@ -1224,35 +1224,37 @@ class ChatbotLogic:
 
         # --- REFINE INTENT ---
         # If user asks "what is" or "value", assume text.
-        # If user asks "plot", "show", "trend", assume plot.
+        # If user asks "what is" or "plot", "show", "trend", assume plot.
         # If ambiguous, prefer text if specific date/value requested, plot if trend.
         if "what is" in query_lower or "value of" in query_lower:
              intent = "text"
         
-        if "how is" in query_lower or "explain" in query_lower or "computation" in query_lower:
-             intent = "explain"
-             
+        # Use already detected selected_kpi for intent refinement
+        kpi_detected = selected_kpi is not None
+
         # Definition Detection
-        if "what is" in query_lower or "define" in query_lower or "meaning of" in query_lower or "how many" in query_lower:
+        definition_keywords = ["define", "meaning", "definition", "how is", "computed", "formula", "calculation"]
+        is_definition_request = any(d in query_lower for d in definition_keywords)
+
+        if "what is" in query_lower or "how many" in query_lower or is_definition_request:
              # If user asks for "value", "rate", "count", "number", they want DATA, not definition.
              # Strict check: If KPI name is present, assume DATA intent not definition
              # Also exclude "total"
              data_keywords = ["value", "rate", "count", "number", "score", "percentage", "trend", "plot", "total"]
              
-             # Check if ANY KPI from our mapping is in the query
-             kpi_found = any(kpi.lower() in query_lower for kpi in KPI_MAPPING.keys())
-             
-             if (any(x in query_lower for x in data_keywords) or kpi_found) and not any(d in query_lower for d in ["define", "meaning", "definition", "list", "show", "available"]):
+             # Check if this is a data query vs a definition query
+             # A query is "data" if it has data keywords or a KPI name AND doesn't have definition keywords
+             if (any(x in query_lower for x in data_keywords) or kpi_detected) and not is_definition_request:
                  # It's likely a data query like "What is the total admitted mothers..."
                  # FORCE override even if LLM said metadata_query (common error for "how many")
-                 if intent == "metadata_query" and kpi_found:
+                 if intent == "metadata_query" and kpi_detected:
                       intent = "text"
-                 elif intent == "metadata_query" and not kpi_found:
+                 elif intent == "metadata_query" and not kpi_detected:
                       pass # Valid metadata query like "how many facilities"
                  else: 
                       intent = "text"
              
-             elif any(d in query_lower for d in ["define", "meaning", "definition"]):
+             elif is_definition_request:
                  intent = "definition"
 
         # Robust List Detection

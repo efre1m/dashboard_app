@@ -7,8 +7,7 @@ KPI_DEFINITIONS = {
     "C-Section Rate (%)": {
         "description": "A Caesarean section (C-section) is a surgical procedure used to deliver a baby through incisions in the abdomen and uterus.",
         "numerator": "C-Sections",
-        "denominator": "Total Deliveries",
-        "interpretation": "The percentage of deliveries performed via C-section. WHO recommends C-section rates between 10-15% at population level."
+        "denominator": "Total Deliveries"
     },
     
     "Postpartum Hemorrhage (PPH) Rate (%)": {
