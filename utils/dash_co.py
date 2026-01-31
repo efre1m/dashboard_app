@@ -106,6 +106,27 @@ from utils.kpi_postpartum_compl import (
     render_postpartum_complication_type_pie_chart,
     get_numerator_denominator_for_postpartum_compl,
 )
+from utils.kpi_missing_postpartum import (
+    compute_missing_postpartum_kpi,
+    render_missing_postpartum_trend_chart,
+    render_missing_postpartum_facility_comparison_chart,
+    render_missing_postpartum_region_comparison_chart,
+    get_numerator_denominator_for_missing_postpartum,
+)
+from utils.kpi_missing_antepartum import (
+    compute_missing_antepartum_kpi,
+    render_missing_antepartum_trend_chart,
+    render_missing_antepartum_facility_comparison_chart,
+    render_missing_antepartum_region_comparison_chart,
+    get_numerator_denominator_for_missing_antepartum,
+)
+from utils.kpi_missing_uterotonic import (
+    compute_missing_uterotonic_kpi,
+    render_missing_uterotonic_trend_chart,
+    render_missing_uterotonic_facility_comparison_chart,
+    render_missing_uterotonic_region_comparison_chart,
+    get_numerator_denominator_for_missing_uterotonic,
+)
 
 # KPI mapping for comparison charts - UPDATED NAMES
 KPI_MAPPING = {
@@ -191,6 +212,21 @@ KPI_MAPPING = {
     "Postpartum Complications Rate (%)": {
         "title": "Postpartum Complications Rate (%)",
         "numerator_name": "Complication Cases",
+        "denominator_name": "Total Deliveries",
+    },
+    "Missing Obstetric Condition at Delivery": {
+        "title": "Missing Obstetric Condition at Delivery Documentation Rate (%)",
+        "numerator_name": "Missing Obstetric Condition at Delivery",
+        "denominator_name": "Total Deliveries",
+    },
+    "Missing Obstetric Complications Diagnosis": {
+        "title": "Missing Obstetric Complications Diagnosis Documentation Rate (%)",
+        "numerator_name": "Missing Obstetric Complications Diagnosis",
+        "denominator_name": "Total Deliveries",
+    },
+    "Missing Uterotonics Given at Delivery": {
+        "title": "Missing Uterotonics Given at Delivery Documentation Rate (%)",
+        "numerator_name": "Missing Uterotonics Given at Delivery",
         "denominator_name": "Total Deliveries",
     },
 }
@@ -319,6 +355,24 @@ KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "obstetric_condition_at_delivery_delivery_summary",
     ],
+    "Missing Obstetric Condition at Delivery": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "obstetric_condition_at_delivery_delivery_summary",
+    ],
+    "Missing Obstetric Complications Diagnosis": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "obstetric_complications_diagnosis",
+    ],
+    "Missing Uterotonics Given at Delivery": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "uterotonics_given_delivery_summary",
+    ],
 }
 
 
@@ -397,6 +451,9 @@ KPI_OPTIONS = [
     "Episiotomy Rate (%)",
     "Antepartum Complications Rate (%)",
     "Postpartum Complications Rate (%)",
+    "Missing Obstetric Condition at Delivery",
+    "Missing Obstetric Complications Diagnosis",
+    "Missing Uterotonics Given at Delivery",
 ]
 
 
@@ -593,6 +650,35 @@ def render_kpi_tab_navigation():
                 type=("primary" if selected_kpi == "Missing Condition of Discharge" else "secondary"),
             ):
                 selected_kpi = "Missing Condition of Discharge"
+
+        # Second Row for Data Quality
+        cols_dq2 = st.columns(3)
+        with cols_dq2[0]:
+            if st.button(
+                "Missing Obstetric Condition at Delivery",
+                key="missing_postpartum_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Obstetric Condition at Delivery" else "secondary"),
+            ):
+                selected_kpi = "Missing Obstetric Condition at Delivery"
+        
+        with cols_dq2[1]:
+            if st.button(
+                "Missing Obstetric Complications Diagnosis",
+                key="missing_antepartum_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Obstetric Complications Diagnosis" else "secondary"),
+            ):
+                selected_kpi = "Missing Obstetric Complications Diagnosis"
+
+        with cols_dq2[2]:
+            if st.button(
+                "Missing Uterotonics Given at Delivery",
+                key="missing_uterotonic_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Missing Uterotonics Given at Delivery" else "secondary"),
+            ):
+                selected_kpi = "Missing Uterotonics Given at Delivery"
 
     # 4. Complication Tab
     # Antepartum Complication -> Postpartum Complication -> PPH

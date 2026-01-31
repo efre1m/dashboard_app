@@ -162,6 +162,33 @@ INDICATOR_DEFINITIONS = {
         "data_source": "condition_of_discharge_discharge_summary field"
     },
     
+    "Missing Obstetric Condition at Delivery": {
+        "definition": "Percentage of delivery records where the obstetric condition at delivery was not documented. This is a data quality indicator.",
+        "computation": "Number of deliveries with missing obstetric condition at delivery / Total deliveries × 100",
+        "numerator": "Delivery records with no obstetric condition at delivery documented",
+        "denominator": "Total deliveries in the period",
+        "clinical_note": "Postpartum condition documentation is critical for tracking maternal complications like PPH and sepsis. Missing data indicates gaps in postpartum care monitoring.",
+        "data_source": "obstetric_condition_at_delivery_delivery_summary field"
+    },
+    
+    "Missing Obstetric Complications Diagnosis": {
+        "definition": "Percentage of delivery records where the obstetric complications diagnosis was not documented. This is a data quality indicator.",
+        "computation": "Number of deliveries with missing obstetric complications diagnosis / Total deliveries × 100",
+        "numerator": "Delivery records with no obstetric complications diagnosis documented",
+        "denominator": "Total deliveries in the period",
+        "clinical_note": "Antepartum documentation is essential for understanding pre-existing conditions and complications during pregnancy. High missing rates compromise maternal risk assessment.",
+        "data_source": "obstetric_complications_diagnosis field"
+    },
+    
+    "Missing Uterotonics Given at Delivery": {
+        "definition": "Percentage of delivery records where the administration of uterotonics was not documented. This is a data quality indicator.",
+        "computation": "Number of deliveries with missing uterotonics documentation / Total deliveries × 100",
+        "numerator": "Delivery records with no uterotonics administration documented",
+        "denominator": "Total deliveries in the period",
+        "clinical_note": "Uterotonics administration is a key intervention for preventing PPH. Missing documentation makes it impossible to verify if this life-saving protocol was followed.",
+        "data_source": "uterotonics_given_delivery_summary field"
+    },
+    
     # ==================== NEWBORN HEALTH INDICATORS ====================
     
     "Neonatal Mortality Rate (%)": {

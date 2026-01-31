@@ -802,6 +802,30 @@ def get_numerator_denominator_for_kpi(
         return get_numerator_denominator_for_missing_bo(
             df, facility_uids, date_range_filters
         )
+    elif kpi_name == "Missing Obstetric Condition at Delivery":
+        from utils.kpi_missing_postpartum import (
+            get_numerator_denominator_for_missing_postpartum,
+        )
+
+        return get_numerator_denominator_for_missing_postpartum(
+            df, facility_uids, date_range_filters
+        )
+    elif kpi_name == "Missing Obstetric Complications Diagnosis":
+        from utils.kpi_missing_antepartum import (
+            get_numerator_denominator_for_missing_antepartum,
+        )
+
+        return get_numerator_denominator_for_missing_antepartum(
+            df, facility_uids, date_range_filters
+        )
+    elif kpi_name == "Missing Uterotonics Given at Delivery":
+        from utils.kpi_missing_uterotonic import (
+            get_numerator_denominator_for_missing_uterotonic,
+        )
+
+        return get_numerator_denominator_for_missing_uterotonic(
+            df, facility_uids, date_range_filters
+        )
     elif kpi_name == "Missing Condition of Discharge":
         from utils.kpi_missing_cod import get_numerator_denominator_for_missing_cod
 
