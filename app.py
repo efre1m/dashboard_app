@@ -23,6 +23,9 @@ ALL_CACHES = [
     "postpartum_compl_cache",
     "vaccine_coverage_cache",
     "status_cache",
+    "missing_antepartum_cache",
+    "missing_postpartum_cache",
+    "missing_uterotonic_cache",
     # Newborn caches
     "kpi_cache_newborn",
     "kpi_cache_newborn_simplified",
