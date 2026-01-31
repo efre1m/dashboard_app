@@ -124,8 +124,8 @@ class ChatbotLogic:
                 self.uid_to_name[uid] = name
         
         # Maternal and Newborn data
-        self.maternal_df = data.get("maternal", {}).get("patients", pd.DataFrame()) if data.get("maternal") else pd.DataFrame()
-        self.newborn_df = data.get("newborn", {}).get("patients", pd.DataFrame()) if data.get("newborn") else pd.DataFrame()
+        self.maternal_df = data.get("maternal", {}).get("patients", pd.DataFrame()).copy().reset_index(drop=True) if data.get("maternal") else pd.DataFrame()
+        self.newborn_df = data.get("newborn", {}).get("patients", pd.DataFrame()).copy().reset_index(drop=True) if data.get("newborn") else pd.DataFrame()
         
         # Default to maternal for backward compatibility or if not specified
         self.df = self.maternal_df
@@ -202,6 +202,13 @@ class ChatbotLogic:
             "hypo thermia": "hypothermia",
             "hipothermia": "hypothermia",
             "hypothrmia": "hypothermia",
+            
+            # Missing variations
+            "misssing": "missing",
+            "missin": "missing",
+            "mising": "missing",
+            "mssing": "missing",
+            "misingg": "missing",
             
             # Neonatal variations
             "neo natal": "neonatal",
@@ -343,6 +350,9 @@ class ChatbotLogic:
             "Missing Birth Outcome": "missing_bo",
             "Missing Condition of Discharge": "missing_cod",
             "Missing Mode of Delivery": "missing_md",
+            "Missing Obstetric Condition at Delivery": "missing_postpartum",
+            "Missing Obstetric Complications Diagnosis": "missing_antepartum",
+            "Missing Uterotonics Given at Delivery": "missing_uterotonic",
             "Episiotomy Rate (%)": "episiotomy",
             "Antepartum Complications Rate (%)": "antipartum_compl",
             "Postpartum Complications Rate (%)": "postpartum_compl",
@@ -430,6 +440,10 @@ class ChatbotLogic:
             query_norm = query_norm.replace(typo, correct)
         query_norm = re.sub(r'\s+', ' ', query_norm).strip()
         
+        # Initialize variables for parsing
+        selected_facility_uids = []
+        selected_facility_names = []
+        found_regions = []
         
         # --- AMBIGUITY RESOLUTION (Numeric Selection) ---
         context = st.session_state.get("chatbot_context", {})
@@ -602,9 +616,7 @@ class ChatbotLogic:
         elif any(w in query_lower for w in ["define", "meaning", "definition", "how is", "computed", "calculation", "formula"]):
             intent = "definition"
             
-        # INTEGRATE GREEDY MATCHES
-        selected_facility_uids = []
-        selected_facility_names = []
+        # INTEGRATE GREEDY MATCHES (No wipe!)
         if greedy_matches:
             for name, uid in greedy_matches:
                  selected_facility_names.append(name)
@@ -694,6 +706,28 @@ class ChatbotLogic:
             "oxytocin": "Delivered women who received uterotonic (%)",
             
             # IPPCAR
+            # Data Quality / Counts (Move to top to prioritize over general rates)
+            "missing obstetric condition": "Missing Obstetric Condition at Delivery",
+            "missing condition at delivery": "Missing Obstetric Condition at Delivery",
+            "missing postpartum": "Missing Obstetric Condition at Delivery",
+            "missing post": "Missing Obstetric Condition at Delivery",
+            "missing complications diagnosis": "Missing Obstetric Complications Diagnosis",
+            "missing obstetric complications": "Missing Obstetric Complications Diagnosis",
+            "missing antepartum": "Missing Obstetric Complications Diagnosis",
+            "missing ante": "Missing Obstetric Complications Diagnosis",
+            "missing uterotonics given": "Missing Uterotonics Given at Delivery",
+            "missing oxytocin given": "Missing Uterotonics Given at Delivery",
+            "missing uterotonic at delivery": "Missing Uterotonics Given at Delivery",
+            "missing uterotonic": "Missing Uterotonics Given at Delivery",
+            "missing utertonic": "Missing Uterotonics Given at Delivery",
+            
+            "missing mode": "Missing Mode of Delivery",
+            "missing birth": "Missing Birth Outcome",
+            "missing outcome": "Missing Birth Outcome",
+            "missing condition": "Missing Condition of Discharge",
+            "missing discharge": "Missing Condition of Discharge",
+            
+            # Form Rates
             "ippcar": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
             "contraceptive": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
             "family planning": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
@@ -738,8 +772,6 @@ class ChatbotLogic:
             "antipartum": "Antepartum Complications Rate (%)",
             "antenatal complications": "Antepartum Complications Rate (%)",
             "antenatal": "Antepartum Complications Rate (%)",
-            "ante": "Antepartum Complications Rate (%)",
-            "anit": "Antepartum Complications Rate (%)",
             "antepartum complication": "Antepartum Complications Rate (%)",
             "antepart": "Antepartum Complications Rate (%)",
             "antepar": "Antepartum Complications Rate (%)",
@@ -753,13 +785,7 @@ class ChatbotLogic:
             "postpartum complicaiotns": "Postpartum Complications Rate (%)",
             "postpartum complication": "Postpartum Complications Rate (%)",
             
-            # Data Quality / Counts
-            "missing mode": "Missing Mode of Delivery",
-            "missing birth": "Missing Birth Outcome",
-            "birth outcome": "Missing Birth Outcome",
-            "missing outcome": "Missing Birth Outcome",
-            "missing condition": "Missing Condition of Discharge",
-            "missing discharge": "Missing Condition of Discharge",
+
             
             # Admitted Mothers
             "admitted mothers": "Admitted Mothers",
@@ -825,9 +851,24 @@ class ChatbotLogic:
 
         # Check for direct containment first (using filtered query for better precision)
         # But we must check against 'query_norm' too because some maps have multiple words
-        for key, val in kpi_map.items():
+        # CRITICAL FIX: If query contains "missing", only match against "missing" KPIs
+        # This ensures "missing antepartum" doesn't match "antepartum"
+        
+        has_missing_keyword = "missing" in query_norm
+        
+        if has_missing_keyword:
+            # Filter to only "missing" KPIs
+            filtered_kpi_map = {k: v for k, v in kpi_map.items() if "missing" in k}
+        else:
+            # Exclude "missing" KPIs to avoid false matches
+            filtered_kpi_map = {k: v for k, v in kpi_map.items() if "missing" not in k}
+        
+        # Sort keys by length (longest first) to prioritize specific matches
+        sorted_keys = sorted(filtered_kpi_map.keys(), key=len, reverse=True)
+        
+        for key in sorted_keys:
             if key in query_norm:
-                selected_kpi = val
+                selected_kpi = filtered_kpi_map[key]
                 break
         
         # If not found, try fuzzy matching on filtered words
@@ -860,10 +901,6 @@ class ChatbotLogic:
         # Force Bar Chart for Counts
         if selected_kpi == "Admitted Mothers" and chart_type == "line":
             chart_type = "bar"
-        
-        # 3. Detect Facility - CRITICAL FIX: Check if facility name exists
-        selected_facility_uids = []
-        selected_facility_names = []
         
         # First, check if user mentioned a facility in the query
         facility_mentioned = any(word in query_lower for word in ["facility", "hospital", "clinic", "center", "health"])
@@ -926,25 +963,28 @@ class ChatbotLogic:
         
         # Two-pass approach to avoid ambiguous prefix matches
         # Pass 1: Strong Matches (Name strictly contained in query)
+        # CRITICAL: Use universal mapping for detection, access check happens later
         strong_matches = []
-        for name, uid in self.facility_mapping.items():
+        for name, uid in self.universal_facility_mapping.items():
             n_lower = name.lower()
             if n_lower in query_norm:
                 strong_matches.append((name, uid))
         
         if strong_matches:
             for name, uid in strong_matches:
-                selected_facility_uids.append(uid)
-                selected_facility_names.append(name)
+                if uid not in selected_facility_uids:
+                    selected_facility_uids.append(uid)
+                    selected_facility_names.append(name)
         else:
             # Pass 2: Weak Matches (StartsWith) - ONLY if no strong matches
             # Use filtered_words to avoid common stopwords
-            for name, uid in self.facility_mapping.items():
+            for name, uid in self.universal_facility_mapping.items():
                 n_lower = name.lower()
                 for word in filtered_words:
-                    if len(word) > 3 and n_lower.startswith(word):
-                        selected_facility_uids.append(uid)
-                        selected_facility_names.append(name)
+                    if len(word) > 3 and (n_lower.startswith(word) or (word in n_lower and len(word) > 5)):
+                        if uid not in selected_facility_uids:
+                             selected_facility_uids.append(uid)
+                             selected_facility_names.append(name)
                         break
         
         # If no facility found, check REGIONS
@@ -984,23 +1024,23 @@ class ChatbotLogic:
             
             if found_regions:
                 # If Comparison Mode (explicit or implicit), store these regions
-                if comparison_mode and comparison_entity == "region":
-                     # We will use 'comparison_targets' to store the list
-                     pass 
-                else:
-                     # Standard mode - treat as aggregation filter (only if NOT comparison)
-                     pass
-
+                if comparison_mode:
+                     comparison_entity = "region"
+                     
                 # Collect UIDs from ALL found regions (ALWAYS collect for data fetching)
                 all_uids = []
                 all_names = []
+                comparison_targets = []
                 for r_name in found_regions:
                     f_list = regions_data[r_name]
                     all_uids.extend([f[1] for f in f_list])
                     all_names.append(f"{r_name} (Region)")
+                    comparison_targets.append(r_name)
                 
                 selected_facility_uids = all_uids
                 selected_facility_names = all_names
+                if comparison_mode:
+                     selected_comparison_targets = comparison_targets
 
                 # Collect UIDs from ALL found regions
                 all_uids = []
@@ -1344,7 +1384,7 @@ class ChatbotLogic:
         # 2. "facilities" mentioned along with a region in comparison mode (e.g. "Compare Tigray facilities")
                 # NEW: Implicit Comparison Triggers (Handle "by facility" at top level)
         if not comparison_mode:
-            if any(x in query_lower for x in ["by facility", "per facility", "by fac", "per fac"]):
+            if any(x in query_lower for x in ["by facility", "per facility", "by local", "per local", "by fac", "per fac"]):
                 comparison_mode = True
                 comparison_entity = "facility"
                 if not selected_facility_uids and not found_regions:
@@ -1355,16 +1395,22 @@ class ChatbotLogic:
             elif any(x in query_lower for x in ["by region", "per region", "by reg", "per reg"]):
                 comparison_mode = True
                 comparison_entity = "region"
-        drill_down_phrases = ["by facility", "per facility", "under", "in ", "i ", "breakdown by facility", "compare facilities", "by region", "per region", "breakdown by region"]
-        is_drill_down = any(p in query_lower for p in drill_down_phrases) and ("facilit" in query_lower or "hospital" in query_lower or "region" in query_lower)
+        drill_down_phrases = ["by facility", "per facility", "under", "breakdown by facility", "compare facilities", "by region", "per region", "breakdown by region", "by fac", "per fac", "by reg", "per reg"]
+        is_drill_down = any(p in query_lower for p in drill_down_phrases) or comparison_mode
         
         if is_drill_down:
              # Force Plot intent unless it's a definition
              if intent != "definition":
                  intent = "plot"
              
+             # NEW: If multiple regions are found, we likely want to compare REGIONS, not facilities within them
+             # UNLESS user explicitly said "by facility"
+             if len(found_regions) > 1 and not any(x in query_lower for x in ["by facility", "per facility", "by fac", "per fac"]):
+                 comparison_mode = True
+                 comparison_entity = "region"
+                 # selected_comparison_targets = found_regions # This is handled by the return statement
              # If we have found regions (e.g. "Tigray by facility"), we want to compare facilities within that region
-             if found_regions:
+             elif found_regions:
                  comparison_mode = True
                  comparison_entity = "facility"
                  
@@ -1388,22 +1434,22 @@ class ChatbotLogic:
                  # Important: Clear found_regions so it doesn't default to region aggregation logic below
                  found_regions = []
              
-              # Handle "By Region" - Expand ALL regions if none specified
+             # Handle "By Region" - Expand ALL regions if none specified
              elif "region" in query_lower and ("by" in query_lower or "per" in query_lower or "all" in query_lower) and not found_regions:
-                  comparison_mode = True
-                  comparison_entity = "region"
-                  # Auto-populate all regions
-                  regions_data = get_facilities_grouped_by_region(self.user)
-                  found_regions = list(regions_data.keys())
+                 comparison_mode = True
+                 comparison_entity = "region"
+                 # Auto-populate all regions
+                 regions_data = get_facilities_grouped_by_region(self.user)
+                 found_regions = list(regions_data.keys())
               
              # Handle "By Facility" - Expand ALL facilities if none specified
              elif ("facilit" in query_lower or "hospital" in query_lower or "fac " in query_lower) and ("by" in query_lower or "per" in query_lower) and not selected_facility_uids:
-                  comparison_mode = True
-                  comparison_entity = "facility"
-                  # Auto-populate all facilities
-                  all_facs = get_all_facilities_flat(self.user)
-                  selected_facility_names = [f[0] for f in all_facs]
-                  selected_facility_uids = [f[1] for f in all_facs]
+                 comparison_mode = True
+                 comparison_entity = "facility"
+                 # Auto-populate all facilities
+                 all_facs = get_all_facilities_flat(self.user)
+                 selected_facility_names = [f[0] for f in all_facs]
+                 selected_facility_uids = [f[1] for f in all_facs]
 
              # If we already have selected facilities (e.g. "Adigrat and Abiadi by facility"), 
              # just ensure comparison mode is on so we see them side-by-side
@@ -1576,32 +1622,59 @@ class ChatbotLogic:
             if not kpi_name:
                 return None, "I understand you're asking for a definition, but I couldn't identify which indicator you're referring to. Could you please specify a name like 'PPH rate' or 'C-Section'?"
             
-            # Fetch config from dash_co (logic imported in generate_response)
-            kpi_config = KPI_MAPPING.get(kpi_name, {})
-            num = kpi_config.get("numerator_name")
-            den = kpi_config.get("denominator_name")
+            # Import comprehensive definitions
+            from utils.indicator_definitions import KPI_DEFINITIONS
             
-            if num and den:
-                calculation_logic = f"**{kpi_name}** is computed as:\n\n**Numerator**: {num}\n**Denominator**: {den}"
+            # Try to get comprehensive definition first
+            kpi_def = KPI_DEFINITIONS.get(kpi_name)
+            
+            if kpi_def:
+                # Build comprehensive response
+                response = f"**{kpi_name}**\n\n"
+                response += f"📋 **Definition**: {kpi_def.get('description', 'No description available.')}\n\n"
+                
+                if 'numerator' in kpi_def and 'denominator' in kpi_def:
+                    response += f"🔢 **Calculation**:\n"
+                    response += f"- **Numerator**: {kpi_def['numerator']}\n"
+                    response += f"- **Denominator**: {kpi_def['denominator']}\n\n"
+                elif 'value_name' in kpi_def:
+                    response += f"📊 **Measure**: {kpi_def['value_name']}\n\n"
+                
+                if 'interpretation' in kpi_def:
+                    response += f"💡 **Interpretation**: {kpi_def['interpretation']}"
                 
                 # Store context for follow-up
                 st.session_state.chatbot_context["last_question"] = "plot_kpi"
                 st.session_state.chatbot_context["pending_kpi"] = kpi_name
                 
-                return None, f"{calculation_logic}"
+                return None, response
             else:
-                # Fallback for volume indicators (e.g. Admitted Mothers)
-                val_name = kpi_config.get("value_name")
-                if val_name:
-                    msg = f"**{kpi_name}** is a volume indicator based on: **{val_name}**."
+                # Fallback to basic config from dash_co
+                kpi_config = KPI_MAPPING.get(kpi_name, {})
+                num = kpi_config.get("numerator_name")
+                den = kpi_config.get("denominator_name")
+                
+                if num and den:
+                    calculation_logic = f"**{kpi_name}** is computed as:\n\n**Numerator**: {num}\n**Denominator**: {den}"
+                    
+                    # Store context for follow-up
+                    st.session_state.chatbot_context["last_question"] = "plot_kpi"
+                    st.session_state.chatbot_context["pending_kpi"] = kpi_name
+                    
+                    return None, f"{calculation_logic}"
                 else:
-                    msg = f"I found the indicator **{kpi_name}**, but I don't have a specific calculation formula on file for it yet."
-                
-                # Store context for follow-up
-                st.session_state.chatbot_context["last_question"] = "plot_kpi"
-                st.session_state.chatbot_context["pending_kpi"] = kpi_name
-                
-                return None, f"{msg}"
+                    # Fallback for volume indicators (e.g. Admitted Mothers)
+                    val_name = kpi_config.get("value_name")
+                    if val_name:
+                        msg = f"**{kpi_name}** is a volume indicator based on: **{val_name}**."
+                    else:
+                        msg = f"I found the indicator **{kpi_name}**, but I don't have a specific calculation formula on file for it yet."
+                    
+                    # Store context for follow-up
+                    st.session_state.chatbot_context["last_question"] = "plot_kpi"
+                    st.session_state.chatbot_context["pending_kpi"] = kpi_name
+                    
+                    return None, f"{msg}"
 
 
         # Handle General Chat
@@ -2200,8 +2273,11 @@ class ChatbotLogic:
                      })
             
             plot_df = pd.DataFrame(chart_data)
-            if not plot_df.empty and "SortDate" in plot_df.columns:
-                plot_df.sort_values("SortDate", inplace=True)
+            if not plot_df.empty:
+                plot_df = plot_df.reset_index(drop=True) # Ensure unique index
+                if "SortDate" in plot_df.columns:
+                    plot_df.sort_values("SortDate", inplace=True)
+                    plot_df = plot_df.reset_index(drop=True) # Final clean index
             
             if plot_df.empty:
                 return None, "Data processing resulted in empty dataset."
@@ -2237,7 +2313,7 @@ class ChatbotLogic:
                         func_prefix = f"render_{kpi_suffix}"
                     
                     # Prepare DF for specialized scripts (without Overall row)
-                    render_df = render_plot_df.copy()
+                    render_df = render_plot_df.copy().reset_index(drop=True)
                     render_df = render_df.rename(columns={
                         "Period": "period_display",
                         "Value": "value",
@@ -2249,6 +2325,9 @@ class ChatbotLogic:
                     # Add name column based on entity type
                     name_col = "Facility" if comparison_entity == "facility" else "Region"
                     render_df[name_col] = render_df["Entity"]
+                    
+                    # Final reset_index to ensure absolutely clean index before passing to rendering functions
+                    render_df = render_df.reset_index(drop=True)
                     
                     # Get labels for kpi_utils functions
                     kpi_info = KPI_MAPPING.get(active_kpi_name, {})
@@ -2350,17 +2429,49 @@ class ChatbotLogic:
 
                 return plot_df, f"Here is the data table for **{kpi_name}**{context_desc}."
                 
+            # Step 10b: Render Plot (Multi-trace / Drill-down aware)
+            if chart_type == "line":
+                fig = px.line(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, custom_data=["Numerator", "Denominator"])
             elif chart_type == "bar":
                 if parsed.get("orientation") == "h":
-                    fig = px.bar(plot_df, x="Value", y="Period", color=color_col,  title=f"{kpi_name}", height=400, orientation='h', barmode='group', hover_data=["Numerator", "Denominator"])
+                    fig = px.bar(plot_df, x="Value", y="Period", color=color_col,  title=f"{kpi_name}", height=400, orientation='h', barmode='group', custom_data=["Numerator", "Denominator"])
                 else:
-                    fig = px.bar(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", height=400, barmode='group', hover_data=["Numerator", "Denominator"])
+                    fig = px.bar(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", height=400, barmode='group', custom_data=["Numerator", "Denominator"])
             elif chart_type == "area":
-                fig = px.area(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, hover_data=["Numerator", "Denominator"])
+                fig = px.area(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, custom_data=["Numerator", "Denominator"])
             else: # Default to line
-                fig = px.line(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, hover_data=["Numerator", "Denominator"])
+                fig = px.line(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, custom_data=["Numerator", "Denominator"])
                 
             fig.update_traces(marker=dict(size=8)) if chart_type != "bar" else None
+            
+            # Add custom hover template to show numerator and denominator
+            # Treat "Missing" indicators as rates if they have a denominator
+            is_rate = "Rate" in kpi_name or "%" in kpi_name or "Missing" in kpi_name or "missing" in kpi_name.lower()
+            
+            kpi_info = KPI_MAPPING.get(kpi_name, {})
+            # Formulate title for hover (use mapped title if possible)
+            hover_title = kpi_info.get("title", kpi_name)
+            
+            num_label = kpi_info.get("numerator_name", "Numerator")
+            den_label = kpi_config.get("numerator_name", "Numerator") if 'kpi_config' in locals() else num_label # Safer fallback
+            den_label = kpi_info.get("denominator_name", "Denominator")
+            
+            if is_rate:
+                hover_template = (
+                    f"<b>%{{x}}</b><br>"
+                    f"{hover_title}: <b>%{{y:.2f}}%</b><br>"
+                    f"{num_label}: %{{customdata[0]:,.0f}}<br>"
+                    f"{den_label}: %{{customdata[1]:,.0f}}<extra></extra>"
+                )
+            else:
+                hover_template = (
+                    f"<b>%{{x}}</b><br>"
+                    f"{hover_title}: <b>%{{y:,.0f}}</b><br>"
+                    f"{num_label}: %{{customdata[0]:,.0f}}<br>"
+                    f"{den_label}: %{{customdata[1]:,.0f}}<extra></extra>"
+                )
+            
+            fig.update_traces(hovertemplate=hover_template)
             
             # Refine title
             title_text = f"{kpi_name}"
@@ -2547,6 +2658,12 @@ def render_chatbot():
     chatbot_logic.data = data
     chatbot_logic.maternal_df = data.get("maternal", {}).get("patients", pd.DataFrame()) if data.get("maternal") else pd.DataFrame()
     chatbot_logic.newborn_df = data.get("newborn", {}).get("patients", pd.DataFrame()) if data.get("newborn") else pd.DataFrame()
+    
+    # Defensive fix: Ensure unique index from the start
+    if not chatbot_logic.maternal_df.empty:
+        chatbot_logic.maternal_df = chatbot_logic.maternal_df.reset_index(drop=True)
+    if not chatbot_logic.newborn_df.empty:
+        chatbot_logic.newborn_df = chatbot_logic.newborn_df.reset_index(drop=True)
     
     # Inject KB_DEFINITIONS for Definition Intent
     chatbot_logic.KB_DEFINITIONS = {

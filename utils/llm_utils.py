@@ -83,9 +83,12 @@ INSTRUCTIONS:
     - "maternal death"/"mortality"/"materna death" → "Maternal Death Rate (per 100,000)"
    - "stillbirth"/"still birth"/"stil birth"/"stillbrith" → "Stillbirth Rate (%)"
    - "missing mode"/"missing delivery"/"mode of delivery" → "Missing Mode of Delivery"
-   - "missing birth outcome"/"missing birth"/"missing oucome" → "Missing Birth Outcome"
-   - "missing discharge"/"missing condition"/"mode of discharge"/"discharge condition" → "Missing Condition of Discharge"
-   - "pnc"/"postnatal"/"post natal" → "Early Postnatal Care (PNC) Coverage (%)"
+    - "missing birth outcome"/"missing birth"/"missing oucome" → "Missing Birth Outcome"
+    - "missing discharge"/"missing condition"/"mode of discharge"/"discharge condition" → "Missing Condition of Discharge"
+    - "missing obstetric condition"/"missing condition at delivery"/"missing postpartum" → "Missing Obstetric Condition at Delivery"
+    - "missing complications diagnosis"/"missing antepartum"/"missing diagnosis"/"missing ante" → "Missing Obstetric Complications Diagnosis"
+    - "missing uterotonics given"/"missing oxytocin given"/"missing uterotonic at delivery"/"missing utertonic"/"missing uterotonic" → "Missing Uterotonics Given at Delivery"
+    - "pnc"/"postnatal"/"post natal" → "Early Postnatal Care (PNC) Coverage (%)"
    - "ippcar"/"contraceptive"/"family planning"/"fp" → "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)"
 
 

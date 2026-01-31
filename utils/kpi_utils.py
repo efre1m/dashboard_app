@@ -1134,27 +1134,7 @@ def render_trend_chart(
                 y=value_col,
                 title=title,
                 height=400,
-                custom_data=[numerator_name, denominator_name] if use_hover_data else None,
-            )
-        elif chart_type == "area":
-            fig = px.area(
-                df,
-                x=x_axis_col,
-                y=value_col,
-                title=title,
-                height=400,
-                custom_data=[numerator_name, denominator_name] if use_hover_data else None,
-            )
-        else:
-            fig = px.line(
-                df,
-                x=x_axis_col,
-                y=value_col,
-                markers=True,
-                line_shape="linear",
-                title=title,
-                height=400,
-                custom_data=[numerator_name, denominator_name] if use_hover_data else None,
+                custom_data=["numerator", "denominator"] if use_hover_data else None,
             )
             fig.update_traces(
                 line=dict(width=3),
@@ -1163,10 +1143,10 @@ def render_trend_chart(
 
         # Apply standardized hover template
         if use_hover_data:
-            is_count = not ("Rate" in title or "%" in title)
+            is_rate = "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
             fig.update_traces(
                 hovertemplate=get_attractive_hover_template(
-                    title, numerator_name, denominator_name, is_count=is_count
+                    title, numerator_name, denominator_name, is_count=not is_rate
                 )
             )
         else:
@@ -1293,7 +1273,7 @@ def render_trend_chart(
             overall_row[denominator_name] = f"{total_denominator:,.0f}"
 
         # Convert to DataFrame and append
-        overall_df = pd.DataFrame([overall_row])
+        overall_df = pd.DataFrame([overall_row]).reset_index(drop=True)
         display_df = pd.concat([display_df, overall_df], ignore_index=True)
 
         # Display the table
@@ -1336,7 +1316,7 @@ def render_trend_chart(
                 denominator_name: [total_denominator],
                 title: [overall_value],
             }
-        )
+        ).reset_index(drop=True)
 
         summary_table = pd.concat([summary_df, overall_row], ignore_index=True)
     else:
@@ -1470,8 +1450,15 @@ def render_facility_comparison_chart(
                 formatted_period = format_period_month_year(period_display)
 
                 # Skip if both numerator and denominator are 0
-                numerator_val = row.get("numerator", 0)
-                denominator_val = row.get("denominator", 1)
+                # Ensure numeric types to prevent 'int + str' errors
+                numerator_val = pd.to_numeric(row.get("numerator", 0), errors='coerce')
+                denominator_val = pd.to_numeric(row.get("denominator", 1), errors='coerce')
+                value_val = pd.to_numeric(row.get(value_col, 0) if value_col in row else 0, errors='coerce')
+                
+                # Replace NaN with 0
+                numerator_val = 0 if pd.isna(numerator_val) else numerator_val
+                denominator_val = 1 if pd.isna(denominator_val) or denominator_val == 0 else denominator_val
+                value_val = 0 if pd.isna(value_val) else value_val
 
                 if numerator_val == 0 and denominator_val == 0:
                     continue  # Skip this period for this facility
@@ -1480,9 +1467,9 @@ def render_facility_comparison_chart(
                     {
                         "period_display": formatted_period,
                         "Facility": facility_name,
-                        "value": row.get(value_col, 0) if value_col in row else 0,
-                        "numerator": numerator_val,
-                        "denominator": denominator_val,
+                        "value": float(value_val),
+                        "numerator": int(numerator_val),
+                        "denominator": int(denominator_val),
                     }
                 )
 
@@ -1532,7 +1519,7 @@ def render_facility_comparison_chart(
         grand_overall = (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
         
         # Determine if this is a rate KPI based on title
-        is_rate_kpi = "Rate" in title or "%" in title
+        is_rate_kpi = "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1763,15 +1750,17 @@ def render_region_comparison_chart(
         for period_display, period_group in region_df.groupby("period_display"):
             if not period_group.empty:
                 # Get aggregated values for this region/period
+                # Ensure numeric types to prevent 'int + str' errors
                 avg_value = (
-                    period_group[value_col].mean()
+                    pd.to_numeric(period_group[value_col], errors='coerce').mean()
                     if value_col in period_group.columns
                     else 0
                 )
-                total_numerator = period_group["numerator"].sum()
+                total_numerator = pd.to_numeric(period_group["numerator"], errors='coerce').sum()
+                total_denominator_sum = pd.to_numeric(period_group["denominator"], errors='coerce').sum()
                 total_denominator = (
-                    period_group["denominator"].sum()
-                    if period_group["denominator"].sum() > 0
+                    total_denominator_sum
+                    if total_denominator_sum > 0
                     else 1
                 )
 
@@ -1784,9 +1773,9 @@ def render_region_comparison_chart(
                     {
                         "period_display": formatted_period,
                         "Region": region_name,
-                        "value": avg_value,
-                        "numerator": total_numerator,
-                        "denominator": total_denominator,
+                        "value": float(avg_value),
+                        "numerator": int(total_numerator),
+                        "denominator": int(total_denominator),
                     }
                 )
 
@@ -1794,14 +1783,14 @@ def render_region_comparison_chart(
         st.info("⚠️ No comparison data available for regions.")
         return
 
-    comparison_df = pd.DataFrame(comparison_data)
+    comparison_df = pd.DataFrame(comparison_data).reset_index(drop=True)
 
     # Sort periods properly for display
     try:
         comparison_df["period_sort"] = comparison_df["period_display"].apply(
             lambda x: dt.datetime.strptime(x, "%b-%y")
         )
-        comparison_df = comparison_df.sort_values("period_sort")
+        comparison_df = comparison_df.sort_values("period_sort").reset_index(drop=True)
         period_order = sorted(
             comparison_df["period_display"].unique().tolist(),
             key=lambda x: dt.datetime.strptime(x, "%b-%y"),
@@ -1823,7 +1812,7 @@ def render_region_comparison_chart(
     # Filter comparison_df to only include regions with data
     comparison_df = comparison_df[
         comparison_df["Region"].isin(regions_with_data)
-    ].copy()
+    ].copy().reset_index(drop=True)
 
     if comparison_df.empty:
         st.info("⚠️ No valid comparison data available (all regions have zero data).")
@@ -1836,7 +1825,7 @@ def render_region_comparison_chart(
         grand_overall = (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
         
         # Determine if this is a rate KPI based on title
-        is_rate_kpi = "Rate" in title or "%" in title
+        is_rate_kpi = "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1934,7 +1923,7 @@ def render_region_comparison_chart(
                 "Overall Value": f"{grand_overall:.2f}%" if is_rate_kpi else f"{grand_overall:,.0f}",
             })
 
-            pivot_df = pd.DataFrame(pivot_data)
+            pivot_df = pd.DataFrame(pivot_data).reset_index(drop=True)
             st.dataframe(pivot_df, use_container_width=True)
 
     # Keep download functionality
@@ -1974,7 +1963,7 @@ def render_region_comparison_chart(
             }
         )
 
-        csv_df = pd.DataFrame(csv_data)
+        csv_df = pd.DataFrame(csv_data).reset_index(drop=True)
         csv = csv_df.to_csv(index=False)
         st.download_button(
             label="📥 Download Overall Comparison Data",
