@@ -26,17 +26,17 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     render_birth_weight_region_comparison,
     render_kmc_coverage_trend_chart,
     # Individual CPAP chart functions with single tables
-    render_cpap_general_trend_chart,
+    # render_cpap_general_trend_chart,
     render_cpap_rds_trend_chart,
     render_cpap_by_weight_trend_chart,
-    render_cpap_general_facility_comparison,
+    # render_cpap_general_facility_comparison,
     render_cpap_rds_facility_comparison,
-    render_cpap_general_region_comparison,
+    # render_cpap_general_region_comparison,
     render_cpap_rds_region_comparison,
     # Rate comparison aliases (call the above functions)
     render_kmc_facility_comparison,
     render_kmc_region_comparison,
-    render_cpap_facility_comparison,
+    # render_cpap_facility_comparison,
     render_cpap_region_comparison,
 )
 
@@ -109,14 +109,14 @@ NEWBORN_KPI_MAPPING = {
         "comparison_type": "rates",  # Shows rates in comparison charts
     },
     # CPAP KPIs WITH SINGLE TABLE DISPLAY
-    "General CPAP Coverage": {
-        "title": "General CPAP Coverage",
-        "numerator_name": "CPAP Cases",
-        "denominator_name": "Total Admitted Newborns",
-        "type": "simplified",
-        "category": "cpap_general",
-        "comparison_type": "rates",  # Shows rates in comparison charts
-    },
+    # "General CPAP Coverage": {
+    #     "title": "General CPAP Coverage",
+    #     "numerator_name": "CPAP Cases",
+    #     "denominator_name": "Total Admitted Newborns",
+    #     "type": "simplified",
+    #     "category": "cpap_general",
+    #     "comparison_type": "rates",  # Shows rates in comparison charts
+    # },
     "CPAP for RDS": {
         "title": "CPAP for Respiratory Distress Syndrome (RDS)",
         "numerator_name": "CPAP Cases",
@@ -149,6 +149,16 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Patients with Missing Status",
         "denominator_name": "Total Admitted Newborns",
     },
+    "Missing Discharge Status (%)": {
+        "title": "Missing Newborn Status at Discharge (%)",
+        "numerator_name": "Patients with Missing Status",
+        "denominator_name": "Total Admitted Newborns",
+    },
+    "Missing Discharge Status (%)": {
+        "title": "Missing Newborn Status at Discharge (%)",
+        "numerator_name": "Patients with Missing Status",
+        "denominator_name": "Total Admitted Newborns",
+    },
 }
 
 # KPI options for newborn dashboard (REMOVED CULTURE KPIs)
@@ -165,40 +175,47 @@ NEWBORN_KPI_OPTIONS = [
     "Birth Weight Rate",
     "KMC Coverage by Birth Weight",
     # CPAP KPIs WITH SINGLE TABLE DISPLAY
-    "General CPAP Coverage",
+    # "General CPAP Coverage",
     "CPAP for RDS",
     "CPAP Coverage by Birth Weight",
     # DATA QUALITY
     "Missing Temperature (%)",
     "Missing Birth Weight (%)",
+    "Missing Birth Weight (%)",
+    "Missing Discharge Status (%)",
     "Missing Discharge Status (%)",
 ]
 
-# KPI Groups for Tab Navigation (UPDATED - REMOVED HYPOTHERMIA AFTER ADMISSION)
+# KPI Groups for Tab Navigation (UPDATED - REGROUPED AS REQUESTED)
 NEWBORN_KPI_GROUPS = {
-    "👶 Birth & Hypothermia": [
+    "📝 Enrollment": [
+         "Admitted Newborns",
+    ],
+    "👶 Birth": [
         "Inborn Rate (%)",
         "Outborn Rate (%)",
+        "Birth Weight Rate",
+    ],
+    "⚠️ Complication": [
         "Hypothermia on Admission Rate (%)",
         "Inborn Hypothermia Rate (%)",
         "Outborn Hypothermia Rate (%)",
-        "Birth Weight Rate",
     ],
-    "🏥 Interventions": [
+    "🏥 Intervention": [
         "KMC Coverage by Birth Weight",
-        "General CPAP Coverage",
+        # "General CPAP Coverage", # Commented out
         "CPAP for RDS",
         "CPAP Coverage by Birth Weight",
-        # "Antibiotics for Clinical Sepsis (%)",  # Moved here from Sepsis Management
     ],
-    "📊 Outcomes & Enrollment": [
+    "📉 Mortality": [
         "Neonatal Mortality Rate (%)",
-        "Admitted Newborns",
     ],
-    "Data Quality": [
-        "Missing Temperature (%)",
-        "Missing Birth Weight (%)",
-        "Missing Discharge Status (%)",
+    "❓ Data Quality": [
+         "Missing Temperature (%)",
+         "Missing Birth Weight (%)",
+         "Missing Birth Weight (%)",
+         "Missing Discharge Status (%)",
+         "Missing Discharge Status (%)",
     ],
 }
 
@@ -283,13 +300,13 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "event_date_nurse_followup_sheet",
     ],
     # CPAP REQUIREMENTS - UPDATED WITH DATASET COLUMN NAMES
-    "General CPAP Coverage": [
-        "orgUnit",
-        "tei_id",
-        "enrollment_date",
-        "baby_placed_on_cpap_neonatal_referral_form",
-        "event_date_neonatal_referral_form",
-    ],
+    # "General CPAP Coverage": [
+    #     "orgUnit",
+    #     "tei_id",
+    #     "enrollment_date",
+    #     "baby_placed_on_cpap_neonatal_referral_form",
+    #     "event_date_neonatal_referral_form",
+    # ],
     "CPAP for RDS": [
         "orgUnit",
         "tei_id",
@@ -324,6 +341,12 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "newborn_status_at_discharge_n_discharge_care_form",
     ],
+    "Missing Discharge Status (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "newborn_status_at_discharge_n_discharge_care_form",
+    ],
 }
 
 # SIMPLIFIED KPI DATE COLUMN MAPPING - UPDATED WITH DATASET NAMES
@@ -331,7 +354,7 @@ SIMPLIFIED_KPI_DATE_COLUMNS = {
     "Birth Weight Rate": "enrollment_date",
     "KMC Coverage by Birth Weight": "enrollment_date",
     # CPAP DATE COLUMNS - UPDATED WITH DATASET NAMES
-    "General CPAP Coverage": "enrollment_date",
+    # "General CPAP Coverage": "enrollment_date",
     "CPAP for RDS": "enrollment_date",
     "CPAP Coverage by Birth Weight": "enrollment_date",
 }
@@ -451,6 +474,20 @@ def render_newborn_kpi_tab_navigation():
         color: #495057 !important;
         border-color: #ced4da !important;
     }
+
+    /* Target the container for the newborn dashboard content */
+    /* Note: This might be broad, targeting the main area if not specific enough. */
+    /* Since we want just the newborn dashboard area, and we are in a function in that context */
+    /* We can try to target the main block or specific elements. */
+    /* User requested "background of the newborn dashboard to be peach color" */
+    
+    .stApp > header {
+        background-color: transparent !important;
+    }
+    
+    .stApp > header {
+        background-color: transparent !important;
+    }
     </style>
     """,
         unsafe_allow_html=True,
@@ -458,97 +495,108 @@ def render_newborn_kpi_tab_navigation():
 
     # Initialize session state for newborn KPI selection
     if "selected_newborn_kpi" not in st.session_state:
-        st.session_state.selected_newborn_kpi = "Inborn Rate (%)"
+        st.session_state.selected_newborn_kpi = "Admitted Newborns" # Default to first tab item if appropriate
 
-    # Create main KPI group tabs - UPDATED TO 4 TABS
-    tab1, tab2, tab3, tab4 = st.tabs(
+    # Create main KPI group tabs - UPDATED TO 6 TABS & REORDERED
+    # Enrollment -> Birth -> Data Quality -> Complication -> Intervention -> Mortality
+    tab_enrollment, tab_birth, tab_dq, tab_complication, tab_intervention, tab_mortality = st.tabs(
         [
-            "👶 **Birth & Hypothermia**",
-            "🏥 **Interventions**",
-            "📊 **Outcomes & Enrollment**",
-            "❓ **Data Quality**",
+            "Enrollment",
+            "Birth",
+            "Data Quality",
+            "Complication",
+            "Intervention",
+            "Mortality",
         ]
     )
 
     selected_kpi = st.session_state.selected_newborn_kpi
 
-    with tab1:
-        # Birth & Hypothermia - 6 buttons
-        cols_row1 = st.columns(5)
-        cols_row2 = st.columns(5)
-
-        with cols_row1[0]:
-            if st.button("📊 Inborn Rate", key="inborn_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Inborn Rate (%)" else "secondary")):
-                selected_kpi = "Inborn Rate (%)"
-        with cols_row1[1]:
-            if st.button("📊 Outborn Rate", key="outborn_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Outborn Rate (%)" else "secondary")):
-                selected_kpi = "Outborn Rate (%)"
-        with cols_row1[2]:
-            if st.button("🌡️ Hypo Admission", key="hypo_admission_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Hypothermia on Admission Rate (%)" else "secondary")):
-                selected_kpi = "Hypothermia on Admission Rate (%)"
-        with cols_row1[3]:
-            if st.button("⚖️ Birth Weight", key="birth_weight_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Birth Weight Rate" else "secondary")):
-                selected_kpi = "Birth Weight Rate"
-        with cols_row1[4]:
-            if st.button("👶 Inborn Hypo", key="inborn_hypo_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Inborn Hypothermia Rate (%)" else "secondary")):
-                selected_kpi = "Inborn Hypothermia Rate (%)"
-        with cols_row2[0]:
-            if st.button("👶 Outborn Hypo", key="outborn_hypo_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Outborn Hypothermia Rate (%)" else "secondary")):
-                selected_kpi = "Outborn Hypothermia Rate (%)"
-
-    with tab2:
-        # Interventions - 4 buttons
+    with tab_enrollment:
+        # Enrollment - 1 button
         cols = st.columns(5)
         with cols[0]:
-            if st.button("🤱 KMC Coverage", key="kmc_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "KMC Coverage by Birth Weight" else "secondary")):
-                selected_kpi = "KMC Coverage by Birth Weight"
-        with cols[1]:
-            if st.button("🌀 General CPAP", key="cpap_general_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "General CPAP Coverage" else "secondary")):
-                selected_kpi = "General CPAP Coverage"
-        with cols[2]:
-            if st.button("🌀 CPAP for RDS", key="cpap_rds_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "CPAP for RDS" else "secondary")):
-                selected_kpi = "CPAP for RDS"
-        with cols[3]:
-            if st.button("🌀 CPAP by Weight", key="cpap_by_weight_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "CPAP Coverage by Birth Weight" else "secondary")):
-                selected_kpi = "CPAP Coverage by Birth Weight"
-
-    with tab3:
-        # Outcomes & Enrollment - 2 buttons
-        cols = st.columns(5)
-        with cols[0]:
-            if st.button("📊 Neonatal Mortality", key="nmr_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Neonatal Mortality Rate (%)" else "secondary")):
-                selected_kpi = "Neonatal Mortality Rate (%)"
-        with cols[1]:
-            if st.button("📈 Admitted Newborns", key="admitted_newborns_btn", use_container_width=True,
+             if st.button("Admitted Newborns", key="admitted_newborns_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "Admitted Newborns" else "secondary")):
                 selected_kpi = "Admitted Newborns"
 
-    with tab4:
-        # Missing - 3 buttons
+    with tab_birth:
         cols = st.columns(5)
         with cols[0]:
-            if st.button("🌡️ Missing Temp", key="missing_temp_btn", use_container_width=True,
+            if st.button("Inborn Rate", key="inborn_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Inborn Rate (%)" else "secondary")):
+                selected_kpi = "Inborn Rate (%)"
+        with cols[1]:
+            if st.button("Outborn Rate", key="outborn_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Outborn Rate (%)" else "secondary")):
+                selected_kpi = "Outborn Rate (%)"
+        with cols[2]:
+            if st.button("Birth Weight", key="birth_weight_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Birth Weight Rate" else "secondary")):
+                selected_kpi = "Birth Weight Rate"
+
+    with tab_dq:
+        # Data Quality - 3 buttons (MOVED HERE NEXT TO BIRTH)
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("Missing Temperature", key="missing_temp_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "Missing Temperature (%)" else "secondary")):
                 selected_kpi = "Missing Temperature (%)"
         with cols[1]:
-            if st.button("⚖️ Missing BW", key="missing_bw_btn", use_container_width=True,
+            if st.button("Missing Birth Weight", key="missing_bw_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "Missing Birth Weight (%)" else "secondary")):
                 selected_kpi = "Missing Birth Weight (%)"
         with cols[2]:
-            if st.button("📊 Missing Discharge", key="missing_status_btn", use_container_width=True,
+            if st.button("Missing Discharge", key="missing_status_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "Missing Discharge Status (%)" else "secondary")):
                 selected_kpi = "Missing Discharge Status (%)"
+
+
+    with tab_complication:
+        # Complication - 3 buttons
+        # UPDATED: Use columns(3) instead of (5) to give more space for text
+        cols_row1 = st.columns(3)
+        with cols_row1[0]:
+            # Full name requested: "Hypothermia on Admission"
+            if st.button("Hypothermia on Admission", key="hypo_admission_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Hypothermia on Admission Rate (%)" else "secondary")):
+                selected_kpi = "Hypothermia on Admission Rate (%)"
+        with cols_row1[1]:
+            if st.button("Inborn Hypothermia Rate", key="inborn_hypo_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Inborn Hypothermia Rate (%)" else "secondary")):
+                selected_kpi = "Inborn Hypothermia Rate (%)"
+        with cols_row1[2]:
+            if st.button("Outborn Hypothermia Rate", key="outborn_hypo_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Outborn Hypothermia Rate (%)" else "secondary")):
+                selected_kpi = "Outborn Hypothermia Rate (%)"
+
+    with tab_intervention:
+        # Intervention - 3 buttons (General CPAP removed)
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("KMC Coverage", key="kmc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "KMC Coverage by Birth Weight" else "secondary")):
+                selected_kpi = "KMC Coverage by Birth Weight"
+        # with cols[1]:
+        #     if st.button("General CPAP", key="cpap_general_btn", use_container_width=True,
+        #                  type=("primary" if selected_kpi == "General CPAP Coverage" else "secondary")):
+        #         selected_kpi = "General CPAP Coverage"
+        with cols[1]:
+            if st.button("CPAP for RDS", key="cpap_rds_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "CPAP for RDS" else "secondary")):
+                selected_kpi = "CPAP for RDS"
+        with cols[2]:
+            if st.button("CPAP by Weight", key="cpap_by_weight_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "CPAP Coverage by Birth Weight" else "secondary")):
+                selected_kpi = "CPAP Coverage by Birth Weight"
+
+    with tab_mortality:
+        # Mortality - 1 button
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("Neonatal Mortality", key="nmr_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Neonatal Mortality Rate (%)" else "secondary")):
+                selected_kpi = "Neonatal Mortality Rate (%)"
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_newborn_kpi:

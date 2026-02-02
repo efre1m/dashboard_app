@@ -709,6 +709,10 @@ def compute_missing_discharge_status(df, facility_uids=None):
     return result
 
 
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
 # ---------------- Master KPI Function ----------------
 def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     """Compute all newborn KPIs with optional date filtering"""
@@ -758,6 +762,7 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     missing_temp_rate, missing_temp_count, _ = compute_missing_temperature(filtered_df, facility_uids)
     missing_bw_rate, missing_bw_count, _ = compute_missing_birth_weight(filtered_df, facility_uids)
     missing_status_rate, missing_status_count, _ = compute_missing_discharge_status(filtered_df, facility_uids)
+    missing_status_rate, missing_status_count, _ = compute_missing_discharge_status(filtered_df, facility_uids)
 
     result = {
         "total_admitted": int(total_admitted),
@@ -794,7 +799,6 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         "missing_temperature_count": int(missing_temp_count),
         "missing_birth_weight_rate": float(missing_bw_rate),
         "missing_birth_weight_count": int(missing_bw_count),
-        "missing_discharge_status_rate": float(missing_status_rate),
         "missing_discharge_status_count": int(missing_status_count),
     }
 

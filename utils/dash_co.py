@@ -504,6 +504,13 @@ def render_kpi_tab_navigation():
         color: #495057 !important;
         border-color: #ced4da !important;
     }
+    
+    div.stButton > button[kind="secondary"]:hover {
+        background-color: #e9ecef !important;
+        color: #495057 !important;
+        border-color: #ced4da !important;
+    }
+    
     </style>
     """,
         unsafe_allow_html=True,
@@ -520,11 +527,11 @@ def render_kpi_tab_navigation():
     # Create main KPI group tabs
     tab_enroll, tab_care, tab_dq, tab_compl, tab_mort = st.tabs(
         [
-            "📊 **Enrollment**",
-            "🏥 **Care**",
-            "❓ **Data Quality**",
-            "🚨 **Complication**",
-            "📉 **Mortality**",
+            "Enrollment",
+            "Care",
+            "Data Quality",
+            "Complication",
+            "Mortality",
         ]
     )
 
@@ -532,13 +539,16 @@ def render_kpi_tab_navigation():
 
     # 1. Enrollment Tab
     with tab_enroll:
-        if st.button(
-            "Admitted Mothers",
-            key="admitted_mothers_btn",
-            use_container_width=True,
-            type=("primary" if selected_kpi == "Admitted Mothers" else "secondary"),
-        ):
-            selected_kpi = "Admitted Mothers"
+        # Match "Admitted Newborns" style - use columns(5) to make button smaller
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button(
+                "Admitted Mothers",
+                key="admitted_mothers_btn",
+                use_container_width=True,
+                type=("primary" if selected_kpi == "Admitted Mothers" else "secondary"),
+            ):
+                selected_kpi = "Admitted Mothers"
 
     # 2. Care Tab
     # Order: SVD, Assisted, Episiotomy, C-Section, Postpartum Comp, Uterotonic, FP, PNC, ARV
