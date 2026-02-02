@@ -159,6 +159,11 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Patients with Missing Status",
         "denominator_name": "Total Admitted Newborns",
     },
+    "Missing Birth Location (%)": {
+        "title": "Missing Birth Location (%)",
+        "numerator_name": "Patients with Missing Birth Location",
+        "denominator_name": "Total Admitted Newborns",
+    },
 }
 
 # KPI options for newborn dashboard (REMOVED CULTURE KPIs)
@@ -183,6 +188,7 @@ NEWBORN_KPI_OPTIONS = [
     "Missing Birth Weight (%)",
     "Missing Birth Weight (%)",
     "Missing Status of Discharge (%)",
+    "Missing Birth Location (%)",
 ]
 
 # KPI Groups for Tab Navigation (UPDATED - REGROUPED AS REQUESTED)
@@ -214,6 +220,7 @@ NEWBORN_KPI_GROUPS = {
          "Missing Birth Weight (%)",
          "Missing Birth Weight (%)",
          "Missing Status of Discharge (%)",
+         "Missing Birth Location (%)",
     ],
 }
 
@@ -338,6 +345,12 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "newborn_status_at_discharge_n_discharge_care_form",
+    ],
+    "Missing Birth Location (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "place_of_delivery_nicu_admission_careform",
     ],
 }
 
@@ -528,8 +541,8 @@ def render_newborn_kpi_tab_navigation():
                 selected_kpi = "Birth Weight Rate"
 
     with tab_dq:
-        # Data Quality - 3 buttons (MOVED HERE NEXT TO BIRTH)
-        # UPDATED: Use columns(3) instead of (5) to give more space for text
+        # Data Quality - 4 buttons
+        # Row 1
         cols = st.columns(3)
         with cols[0]:
             if st.button("Missing Temperature", key="missing_temp_btn", use_container_width=True,
@@ -543,6 +556,13 @@ def render_newborn_kpi_tab_navigation():
             if st.button("Missing Status of Discharge", key="missing_status_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "Missing Status of Discharge (%)" else "secondary")):
                 selected_kpi = "Missing Status of Discharge (%)"
+        
+        # Row 2
+        cols2 = st.columns(3)
+        with cols2[0]:
+            if st.button("Missing Birth Location", key="missing_loc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Missing Birth Location (%)" else "secondary")):
+                selected_kpi = "Missing Birth Location (%)"
 
 
     with tab_complication:

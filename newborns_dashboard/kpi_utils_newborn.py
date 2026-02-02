@@ -709,6 +709,30 @@ def compute_missing_discharge_status(df, facility_uids=None):
     return result
 
 
+def compute_missing_birth_location(df, facility_uids=None):
+    """Compute rate of missing birth location"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "missing_birth_location")
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+        
+        total_admitted = len(filtered_df)
+        if total_admitted == 0:
+            result = (0.0, 0, 0)
+        elif BIRTH_LOCATION_COL not in filtered_df.columns:
+            # If column is missing from this filtered slice, we can't compute it
+            result = (0.0, 0, total_admitted)
+        else:
+            missing_count = filtered_df[BIRTH_LOCATION_COL].isna().sum()
+            rate = (missing_count / total_admitted * 100)
+            result = (rate, int(missing_count), int(total_admitted))
+
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
 
@@ -762,7 +786,7 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     missing_temp_rate, missing_temp_count, _ = compute_missing_temperature(filtered_df, facility_uids)
     missing_bw_rate, missing_bw_count, _ = compute_missing_birth_weight(filtered_df, facility_uids)
     missing_status_rate, missing_status_count, _ = compute_missing_discharge_status(filtered_df, facility_uids)
-    missing_status_rate, missing_status_count, _ = compute_missing_discharge_status(filtered_df, facility_uids)
+    missing_loc_rate, missing_loc_count, _ = compute_missing_birth_location(filtered_df, facility_uids)
 
     result = {
         "total_admitted": int(total_admitted),
@@ -799,7 +823,11 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         "missing_temperature_count": int(missing_temp_count),
         "missing_birth_weight_rate": float(missing_bw_rate),
         "missing_birth_weight_count": int(missing_bw_count),
+        "missing_birth_weight_count": int(missing_bw_count),
+        "missing_discharge_status_rate": float(missing_status_rate),
         "missing_discharge_status_count": int(missing_status_count),
+        "missing_birth_location_rate": float(missing_loc_rate),
+        "missing_birth_location_count": int(missing_loc_count),
     }
 
     st.session_state.kpi_cache_newborn[cache_key] = result
@@ -987,6 +1015,11 @@ def get_numerator_denominator_for_newborn_kpi(
             "numerator": "missing_discharge_status_count",
             "denominator": "total_admitted",
             "value": "missing_discharge_status_rate",
+        },
+        "Missing Birth Location (%)": {
+            "numerator": "missing_birth_location_count",
+            "denominator": "total_admitted",
+            "value": "missing_birth_location_rate",
         },
         # ============== ANTIBIOTICS MAPPING - COMMENTED OUT ==============
         # "Antibiotics for Clinical Sepsis (%)": {
