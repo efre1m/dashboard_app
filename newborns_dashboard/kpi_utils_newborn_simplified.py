@@ -4054,6 +4054,7 @@ def render_kmc_coverage_comparison_chart(
     # Compute overall aggregated data for table
     table_data = []
     for entity in comparison_data.keys():
+        label = get_label(entity)
         # Get entity dataframe
         if comparison_mode == "facility":
             entity_df = df[df["orgUnit"] == entity].copy()
@@ -4134,7 +4135,7 @@ def render_kmc_coverage_comparison_chart(
 
     if table_data:
         comparison_df = pd.DataFrame(table_data)
-        st.dataframe(comparison_df, use_container_width=True, height=400)
+        st.dataframe(comparison_df, use_container_width=True, height=(len(comparison_df) + 1) * 35)
     
 
 
@@ -4452,7 +4453,7 @@ def render_cpap_by_weight_comparison_chart(
 
     if table_data:
         comparison_df = pd.DataFrame(table_data)
-        st.dataframe(comparison_df, use_container_width=True, height=400)
+        st.dataframe(comparison_df, use_container_width=True, height=(len(comparison_df) + 1) * 35)
     
 
 
@@ -4716,4 +4717,5 @@ def render_cpap_rds_comparison_line_chart(
             "Denominator (RDS)": "Total RDS Cases"
         })
         
-        st.dataframe(comparison_df, use_container_width=True, height=400)
+        # Dynamic height based on rows
+        st.dataframe(comparison_df, use_container_width=True, height=(len(comparison_df) + 1) * 35)
