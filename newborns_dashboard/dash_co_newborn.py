@@ -149,8 +149,8 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Patients with Missing Status",
         "denominator_name": "Total Admitted Newborns",
     },
-    "Missing Discharge Status (%)": {
-        "title": "Missing Newborn Status at Discharge (%)",
+    "Missing Status of Discharge (%)": {
+        "title": "Missing Status of Discharge (%)",
         "numerator_name": "Patients with Missing Status",
         "denominator_name": "Total Admitted Newborns",
     },
@@ -182,8 +182,7 @@ NEWBORN_KPI_OPTIONS = [
     "Missing Temperature (%)",
     "Missing Birth Weight (%)",
     "Missing Birth Weight (%)",
-    "Missing Discharge Status (%)",
-    "Missing Discharge Status (%)",
+    "Missing Status of Discharge (%)",
 ]
 
 # KPI Groups for Tab Navigation (UPDATED - REGROUPED AS REQUESTED)
@@ -214,8 +213,7 @@ NEWBORN_KPI_GROUPS = {
          "Missing Temperature (%)",
          "Missing Birth Weight (%)",
          "Missing Birth Weight (%)",
-         "Missing Discharge Status (%)",
-         "Missing Discharge Status (%)",
+         "Missing Status of Discharge (%)",
     ],
 }
 
@@ -335,13 +333,7 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "enrollment_date",
         "birth_weight_n_nicu_admission_careform",
     ],
-    "Missing Discharge Status (%)": [
-        "orgUnit",
-        "tei_id",
-        "enrollment_date",
-        "newborn_status_at_discharge_n_discharge_care_form",
-    ],
-    "Missing Discharge Status (%)": [
+    "Missing Status of Discharge (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
@@ -537,7 +529,8 @@ def render_newborn_kpi_tab_navigation():
 
     with tab_dq:
         # Data Quality - 3 buttons (MOVED HERE NEXT TO BIRTH)
-        cols = st.columns(5)
+        # UPDATED: Use columns(3) instead of (5) to give more space for text
+        cols = st.columns(3)
         with cols[0]:
             if st.button("Missing Temperature", key="missing_temp_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "Missing Temperature (%)" else "secondary")):
@@ -547,9 +540,9 @@ def render_newborn_kpi_tab_navigation():
                          type=("primary" if selected_kpi == "Missing Birth Weight (%)" else "secondary")):
                 selected_kpi = "Missing Birth Weight (%)"
         with cols[2]:
-            if st.button("Missing Discharge", key="missing_status_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Missing Discharge Status (%)" else "secondary")):
-                selected_kpi = "Missing Discharge Status (%)"
+            if st.button("Missing Status of Discharge", key="missing_status_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Missing Status of Discharge (%)" else "secondary")):
+                selected_kpi = "Missing Status of Discharge (%)"
 
 
     with tab_complication:

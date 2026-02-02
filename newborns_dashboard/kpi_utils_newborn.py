@@ -983,7 +983,7 @@ def get_numerator_denominator_for_newborn_kpi(
             "denominator": "total_admitted",
             "value": "missing_birth_weight_rate",
         },
-        "Missing Discharge Status (%)": {
+        "Missing Status of Discharge (%)": {
             "numerator": "missing_discharge_status_count",
             "denominator": "total_admitted",
             "value": "missing_discharge_status_rate",
