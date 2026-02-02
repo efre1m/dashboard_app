@@ -1749,3 +1749,5 @@ def render():
 
     # Log current active tab state
     logging.info(f"Current active tab: {st.session_state.active_tab}")
+
+

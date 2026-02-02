@@ -294,7 +294,25 @@ def update_facility_selection(
         facility_uids = [
             facility_mapping[f] for f in selected_facilities if f in facility_mapping
         ]
-        display_names = selected_facilities
+        
+        # Helper to find region for a facility
+        fac_region_map = {}
+        if facilities_by_region:
+            for region, facilities in facilities_by_region.items():
+                for fac in facilities:
+                    # fac can be tuple (name, uid) or just name
+                    f_name = fac[0] if isinstance(fac, (list, tuple)) else fac
+                    fac_region_map[f_name] = region
+        
+        # enhance display names with region
+        display_names = []
+        for f in selected_facilities:
+            region = fac_region_map.get(f)
+            if region:
+                display_names.append(f"{f} ({region})")
+            else:
+                display_names.append(f)
+                
         comparison_mode = "facility"
     else:
         facility_uids = list(facility_mapping.values())

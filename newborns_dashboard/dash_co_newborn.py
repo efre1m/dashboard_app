@@ -37,7 +37,7 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     render_kmc_facility_comparison,
     render_kmc_region_comparison,
     # render_cpap_facility_comparison,
-    render_cpap_region_comparison,
+
 )
 
 # KPI mapping for newborn comparison charts
@@ -849,6 +849,7 @@ def render_newborn_comparison_chart(
     text_color=None,
     is_national=False,
     filtered_patients=None,
+    show_chart=True,  # New argument
 ):
     """Render comparison charts for both national and regional views WITH SINGLE TABLES"""
 
@@ -871,6 +872,7 @@ def render_newborn_comparison_chart(
             bg_color,
             text_color,
             is_national,
+            show_chart=show_chart,
         )
         return
 
@@ -1004,6 +1006,31 @@ def render_newborn_comparison_chart(
 
         if "orgUnit_name" in comparison_df.columns:
             comparison_df = comparison_df.rename(columns={"orgUnit_name": "Facility"})
+
+        # RENDER TABLE IF CHART IS HIDDEN
+        if not show_chart:
+            st.markdown(f"### {chart_title} - Comparison Table")
+            
+            # Simplified dataframe for display
+            cols_to_show = ["period_display", "Facility", "value", "numerator", "denominator"]
+            
+            # Ensure columns exist
+            cols_to_use = [c for c in cols_to_show if c in comparison_df.columns]
+            
+            display_df = comparison_df[cols_to_use].copy()
+            
+            # Rename for display
+            display_df = display_df.rename(columns={
+                "period_display": "Period",
+                "value": value_name if kpi_selection == "Admitted Newborns" else (
+                    "Value (%)" if "Rate" in kpi_selection or "%" in kpi_selection else "Value"
+                ),
+                "numerator": numerator_label,
+                "denominator": denominator_label
+            })
+            
+            st.dataframe(display_df, use_container_width=True)
+            return
 
         # Call the appropriate chart function
         if kpi_selection == "Admitted Newborns":
@@ -1312,6 +1339,7 @@ def _render_simplified_kpi_comparison_chart(
     bg_color,
     text_color,
     is_national,
+    show_chart=True,  # New argument
 ):
     """Render comparison chart for simplified KPIs WITH SINGLE TABLE DISPLAY - UPDATED WITH GROUP BARS"""
     kpi_config = get_newborn_kpi_config(kpi_selection)
@@ -1366,8 +1394,18 @@ def _render_simplified_kpi_comparison_chart(
         st.error("Error assigning periods")
         return
 
-    # Determine whether to use case counts or rates based on comparison_type
     if comparison_type == "stacked_cases":
+        # RENDER TABLE IF CHART IS HIDDEN
+        if not show_chart:
+            st.markdown(f"### {chart_title} - Comparison Table")
+            if comparison_mode == "facility":
+                # Create simple table for facility
+                st.dataframe(df_to_use[["period_display", "orgUnit", "value"]], use_container_width=True)
+            elif comparison_mode == "region":
+                 st.dataframe(df_to_use[["period_display", "Region", "value"]], use_container_width=True)
+            return
+
+        # Use case counts for birth weight rate (with stacked bars)
         # Use case counts for birth weight rate (with stacked bars)
         if comparison_mode == "facility" and category == "birth_weight":
             render_birth_weight_facility_comparison(
@@ -1391,100 +1429,137 @@ def _render_simplified_kpi_comparison_chart(
                 facilities_by_region,
             )
     elif comparison_type == "rates":
-        # Use rate comparison functions for KMC and CPAP (with group bars)
+        # RENDER TABLE IF CHART IS HIDDEN
+        if not show_chart:
+            st.markdown(f"### {chart_title} - Comparison Table")
+             # Simplified dataframe for display - depends on structure, but generally just show relevant cols
+            cols_to_show = ["period_display", "orgUnit", "Facility", "Region"] + [c for c in df_to_use.columns if "rate" in c or "value" in c]
+            cols_to_use = [c for c in cols_to_show if c in df_to_use.columns]
+            st.dataframe(df_to_use[cols_to_use], use_container_width=True)
+            return
+
+        # Use rate comparison functions for KMC and CPAP
         if comparison_mode == "facility":
             if category == "kmc":
-                # UPDATED: Call the function with GROUP bars showing rates
-                render_kmc_facility_comparison(
+                # UPDATED: Call the NEW 3x2 grid comparison function
+                from newborns_dashboard.kpi_utils_newborn_simplified import render_kmc_coverage_comparison_chart
+                render_kmc_coverage_comparison_chart(
                     df_to_use,
-                    "period_display",
-                    f"{chart_title} - Facility Comparison",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    facility_uids,
+                    comparison_mode="facility",
+                    display_names=display_names,
+                    facility_uids=facility_uids,
+                    facilities_by_region=facilities_by_region,
+                    region_names=region_names,
+                    period_col="period_display",
+                    title=f"{chart_title} - Facility Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
                 )
             elif category == "cpap_general":
-                # Use the specific function for General CPAP facility comparison
-                render_cpap_general_facility_comparison(
+                # UPDATED: Call the NEW 3x2 grid comparison function for CPAP
+                from newborns_dashboard.kpi_utils_newborn_simplified import render_cpap_by_weight_comparison_chart
+                render_cpap_by_weight_comparison_chart(
                     df_to_use,
-                    "period_display",
-                    f"{chart_title} - Facility Comparison",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    facility_uids,
+                    comparison_mode="facility",
+                    display_names=display_names,
+                    facility_uids=facility_uids,
+                    facilities_by_region=facilities_by_region,
+                    region_names=region_names,
+                    period_col="period_display",
+                    title=f"{chart_title} - Facility Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
                 )
             elif category == "cpap_rds":
-                # Use the specific function for CPAP for RDS facility comparison
-                render_cpap_rds_facility_comparison(
+                # UPDATED: Call the NEW line chart comparison function for CPAP RDS
+                from newborns_dashboard.kpi_utils_newborn_simplified import render_cpap_rds_comparison_line_chart
+                render_cpap_rds_comparison_line_chart(
                     df_to_use,
-                    "period_display",
-                    f"{chart_title} - Facility Comparison",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    facility_uids,
+                    comparison_mode="facility",
+                    display_names=display_names,
+                    facility_uids=facility_uids,
+                    facilities_by_region=facilities_by_region,
+                    region_names=region_names,
+                    period_col="period_display",
+                    title=f"{chart_title} - Facility Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
                 )
             elif category == "cpap_by_weight":
-                # UPDATED: Call the function with GROUP bars showing rates
-                render_cpap_facility_comparison(
+                # UPDATED: Call the NEW 3x2 grid comparison function for CPAP
+                from newborns_dashboard.kpi_utils_newborn_simplified import render_cpap_by_weight_comparison_chart
+                render_cpap_by_weight_comparison_chart(
                     df_to_use,
-                    "period_display",
-                    f"{chart_title} - Facility Comparison",
-                    bg_color,
-                    text_color,
-                    display_names,
-                    facility_uids,
+                    comparison_mode="facility",
+                    display_names=display_names,
+                    facility_uids=facility_uids,
+                    facilities_by_region=facilities_by_region,
+                    region_names=region_names,
+                    period_col="period_display",
+                    title=f"{chart_title} - Facility Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
                 )
         elif comparison_mode == "region" and is_national:
             if category == "kmc":
-                # UPDATED: Call the function with GROUP bars showing rates
-                render_kmc_region_comparison(
+                # UPDATED: Call the NEW 3x2 grid comparison function for regions
+                from newborns_dashboard.kpi_utils_newborn_simplified import render_kmc_coverage_comparison_chart
+                render_kmc_coverage_comparison_chart(
                     df_to_use,
-                    "period_display",
-                    f"{chart_title} - Region Comparison",
-                    bg_color,
-                    text_color,
-                    region_names,
-                    facilities_by_region,
-                    facilities_by_region,
+                    comparison_mode="region",
+                    display_names=display_names,
+                    facility_uids=facility_uids,
+                    facilities_by_region=facilities_by_region,
+                    region_names=region_names,
+                    period_col="period_display",
+                    title=f"{chart_title} - Region Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
                 )
             elif category == "cpap_general":
-                # Use the specific function for General CPAP region comparison
-                render_cpap_general_region_comparison(
+                # UPDATED: Call the NEW 3x2 grid comparison function for CPAP regions
+                from newborns_dashboard.kpi_utils_newborn_simplified import render_cpap_by_weight_comparison_chart
+                render_cpap_by_weight_comparison_chart(
                     df_to_use,
-                    "period_display",
-                    f"{chart_title} - Region Comparison",
-                    bg_color,
-                    text_color,
-                    region_names,
-                    facilities_by_region,
-                    facilities_by_region,
+                    comparison_mode="region",
+                    display_names=display_names,
+                    facility_uids=facility_uids,
+                    facilities_by_region=facilities_by_region,
+                    region_names=region_names,
+                    period_col="period_display",
+                    title=f"{chart_title} - Region Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
                 )
             elif category == "cpap_rds":
-                # Use the specific function for CPAP for RDS region comparison
-                render_cpap_rds_region_comparison(
+                # UPDATED: Call the NEW line chart comparison function for CPAP RDS regions
+                from newborns_dashboard.kpi_utils_newborn_simplified import render_cpap_rds_comparison_line_chart
+                render_cpap_rds_comparison_line_chart(
                     df_to_use,
-                    "period_display",
-                    f"{chart_title} - Region Comparison",
-                    bg_color,
-                    text_color,
-                    region_names,
-                    facilities_by_region,
-                    facilities_by_region,
+                    comparison_mode="region",
+                    display_names=display_names,
+                    facility_uids=facility_uids,
+                    facilities_by_region=facilities_by_region,
+                    region_names=region_names,
+                    period_col="period_display",
+                    title=f"{chart_title} - Region Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
                 )
             elif category == "cpap_by_weight":
-                # UPDATED: Call the function with GROUP bars showing rates
-                render_cpap_region_comparison(
+                # UPDATED: Call the NEW 3x2 grid comparison function for CPAP regions
+                from newborns_dashboard.kpi_utils_newborn_simplified import render_cpap_by_weight_comparison_chart
+                render_cpap_by_weight_comparison_chart(
                     df_to_use,
-                    "period_display",
-                    f"{chart_title} - Region Comparison",
-                    bg_color,
-                    text_color,
-                    region_names,
-                    facilities_by_region,
-                    facilities_by_region,
+                    comparison_mode="region",
+                    display_names=display_names,
+                    facility_uids=facility_uids,
+                    facilities_by_region=facilities_by_region,
+                    region_names=region_names,
+                    period_col="period_display",
+                    title=f"{chart_title} - Region Comparison",
+                    bg_color=bg_color,
+                    text_color=text_color,
                 )
     else:
         st.warning(f"⚠️ Unsupported comparison type: {comparison_type}")

@@ -522,7 +522,7 @@ def render_kpi_tab_navigation():
     
     # Initialize session state for KPI selection
     if "selected_kpi" not in st.session_state:
-        st.session_state.selected_kpi = "Maternal Death Rate (per 100,000)"
+        st.session_state.selected_kpi = "Admitted Mothers"
 
     # Create main KPI group tabs
     tab_enroll, tab_care, tab_dq, tab_compl, tab_mort = st.tabs(
@@ -1239,6 +1239,7 @@ def render_comparison_chart(
     text_color=None,
     is_national=False,
     filtered_patients=None,
+    show_chart=True,  # New argument
 ):
     # Get date range filters
     date_range_filters = {}
@@ -1400,6 +1401,27 @@ def render_comparison_chart(
         if "orgUnit_name" in comparison_df.columns:
             comparison_df = comparison_df.rename(columns={"orgUnit_name": "Facility"})
 
+        # RENDER TABLE IF CHART IS HIDDEN
+        if not show_chart:
+            st.markdown(f"### {chart_title} - Comparison Table")
+            
+            # Format value separation depending on KPI
+            cols_to_show = ["period_display", "Facility", "value", "numerator", "denominator"]
+            
+            # Simplified dataframe for display
+            display_df = comparison_df[cols_to_show].copy()
+            
+            # Rename for display
+            display_df = display_df.rename(columns={
+                "period_display": "Period",
+                "value": "Value (%)" if "Rate" in kpi_selection or "%" in kpi_selection else "Value",
+                "numerator": numerator_label,
+                "denominator": denominator_label
+            })
+            
+            st.dataframe(display_df, use_container_width=True)
+            return
+
         # Call the appropriate chart function - ADD MISSING MD HERE!
         if kpi_selection == "Postpartum Hemorrhage (PPH) Rate (%)":
             render_pph_facility_comparison_chart(
@@ -1453,124 +1475,122 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
-        elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
-            render_svd_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
-        elif kpi_selection == "Episiotomy Rate (%)":
-            render_episiotomy_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
-        elif kpi_selection == "Antepartum Complications Rate (%)":
-            render_antipartum_compl_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
-        # NEW: Postpartum Complications Rate
-        elif kpi_selection == "Postpartum Complications Rate (%)":
-            render_postpartum_compl_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
-        # ADD MISSING MD HERE!
-        elif kpi_selection == "Missing Mode of Delivery":
-            render_missing_md_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
-        elif kpi_selection == "Missing Birth Outcome":
-            render_missing_bo_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
-        elif kpi_selection == "Missing Condition of Discharge":
-            render_missing_cod_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
-        elif kpi_selection == "Admitted Mothers":
-            render_admitted_mothers_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name="Admitted Mothers",
-            )
         else:
-            render_facility_comparison_chart(
-                df=comparison_df,
-                period_col="period_display",
-                value_col="value",
-                title=chart_title,
-                bg_color=bg_color,
-                text_color=text_color,
-                facility_names=display_names,
-                facility_uids=facility_uids,
-                numerator_name=numerator_label,
-                denominator_name=denominator_label,
-            )
+            # For general KPIs using generic chart function (e.g. Missing Data)
+            # Check if specialized function exists, else use generic
+            if kpi_selection == "Missing Mode of Delivery":
+                 render_missing_md_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                )
+            elif kpi_selection == "Missing Birth Outcome":
+                 render_missing_bo_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                )
+            elif kpi_selection == "Missing Condition of Discharge":
+                 # Use generic for now or implement specific
+                 pass
+            elif kpi_selection == "Admitted Mothers":
+                 render_admitted_mothers_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                )
+            elif kpi_selection == "Episiotomy Rate (%)":
+                render_episiotomy_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
+            elif kpi_selection == "Antepartum Complications Rate (%)":
+                render_antipartum_compl_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
+            elif kpi_selection == "Postpartum Complications Rate (%)":
+                render_postpartum_compl_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
+            elif kpi_selection == "Missing Obstetric Condition at Delivery":
+                render_missing_postpartum_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                )
+            elif kpi_selection == "Missing Obstetric Complications Diagnosis":
+                render_missing_antepartum_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                )
+            elif kpi_selection == "Missing Uterotonics Given at Delivery":
+                render_missing_uterotonic_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                )
+
+    elif comparison_mode == "region" and facilities_by_region:
+        # REGIONAL LOGIC - placeholder for now
+        pass
+
 
     elif comparison_mode == "region" and is_national:
         # Region comparison - similar fix needed
