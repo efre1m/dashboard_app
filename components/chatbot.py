@@ -587,6 +587,17 @@ class ChatbotLogic:
         if greedy_matches:
             logging.info(f"🚀 Greedy Scan Found: {[m[0] for m in greedy_matches]}")
 
+        # --- EXPLICIT FACILITY DETECTION (Use for Scope Protection) ---
+        # Strong direct matches (name fully contained in query_norm)
+        strong_matches = []
+        for name, uid in self.universal_facility_mapping.items():
+            n_lower = name.lower()
+            if n_lower in query_norm:
+                strong_matches.append((name, uid))
+
+        # Facility explicitly mentioned ONLY if a facility name is found
+        facility_explicitly_mentioned = bool(greedy_matches or strong_matches)
+
         # 0. Try LLM Parsing - DISABLED BY USER REQUEST
         # from utils.llm_utils import query_llm
         llm_result = None # Force fallback to rule-based logic
@@ -621,7 +632,14 @@ class ChatbotLogic:
             for name, uid in greedy_matches:
                  selected_facility_names.append(name)
                  selected_facility_uids.append(uid)
-                 
+
+        # INTEGRATE STRONG MATCHES (No wipe!)
+        if strong_matches:
+            for name, uid in strong_matches:
+                if uid not in selected_facility_uids:
+                    selected_facility_uids.append(uid)
+                    selected_facility_names.append(name)
+                  
         if "table" in query_lower:
             chart_type = "table"
             intent = "plot" # Treat table requests as plot/data requests
@@ -901,6 +919,28 @@ class ChatbotLogic:
         # Force Bar Chart for Counts
         if selected_kpi == "Admitted Mothers" and chart_type == "line":
             chart_type = "bar"
+
+        # --- REGION-ONLY CONTEXT (Manual GUI Behavior) ---
+        # Applies ONLY when the user is asking to group/compare by region AND no facility name is explicitly mentioned.
+        region_grouping_requested = any(
+            x in query_norm
+            for x in [
+                "by region",
+                "per region",
+                "by reg",
+                "per reg",
+                "compare regions",
+                "compare region",
+                "all regions",
+                "all region",
+                "every region",
+            ]
+        )
+        region_only_context = region_grouping_requested and not facility_explicitly_mentioned
+        force_region_comparison = region_only_context
+        if region_only_context:
+            comparison_mode = True
+            comparison_entity = "region"
         
         # First, check if user mentioned a facility in the query
         facility_mentioned = any(word in query_lower for word in ["facility", "hospital", "clinic", "center", "health"])
@@ -912,7 +952,8 @@ class ChatbotLogic:
         is_time_query = any(t in query_lower for t in time_triggers)
         
         # Use regex with word boundaries to avoid matching substrings like "at" in "what"
-        specific_location_regex = r'\b(at|from)\b'
+        # NOTE: "from" is commonly used in date ranges ("from Jan 16 to Jan 31"), not just locations.
+        specific_location_regex = r'\b(at)\b'
         specific_facility_requested = bool(re.search(specific_location_regex, query_lower))
         
         # "for", "in", "i " are common, only treat as facility trigger if NO time word present
@@ -921,7 +962,7 @@ class ChatbotLogic:
             if re.search(flexible_location_regex, query_lower):
                 specific_facility_requested = True
 
-        if facility_mentioned or specific_facility_requested:
+        if (facility_mentioned or specific_facility_requested) and not region_only_context:
             # Try to find the facility name
             found_facility = False
             
@@ -962,20 +1003,8 @@ class ChatbotLogic:
                          }
         
         # Two-pass approach to avoid ambiguous prefix matches
-        # Pass 1: Strong Matches (Name strictly contained in query)
-        # CRITICAL: Use universal mapping for detection, access check happens later
-        strong_matches = []
-        for name, uid in self.universal_facility_mapping.items():
-            n_lower = name.lower()
-            if n_lower in query_norm:
-                strong_matches.append((name, uid))
-        
-        if strong_matches:
-            for name, uid in strong_matches:
-                if uid not in selected_facility_uids:
-                    selected_facility_uids.append(uid)
-                    selected_facility_names.append(name)
-        else:
+        # Pass 1 already handled above (strong_matches).
+        if not strong_matches and not region_only_context:
             # Pass 2: Weak Matches (StartsWith) - ONLY if no strong matches
             # Use filtered_words to avoid common stopwords
             for name, uid in self.universal_facility_mapping.items():
@@ -1003,9 +1032,15 @@ class ChatbotLogic:
             for region_name in regions_data.keys():
                 if region_name.lower() in query_norm:
                     found_regions.append(region_name)
+
+            # REGION-ONLY CONTEXT: If no regions are explicitly mentioned, select ALL available regions.
+            if region_only_context and not found_regions:
+                found_regions = list(regions_data.keys())
+                comparison_mode = True
+                comparison_entity = "region"
             
             # Fuzzy match if none found (only try to find one primary if none explicit)
-            if not found_regions:
+            if not found_regions and not region_only_context:
                   r_matches = difflib.get_close_matches(query_lower, [r.lower() for r in regions_data.keys()], n=1, cutoff=0.6)
                   if r_matches:
                        for r in regions_data.keys():
@@ -1078,37 +1113,119 @@ class ChatbotLogic:
                  start_date = None
                  end_date = None
 
-        # NEW: Handle "this year" and "last year" FIRST (before month/week)
-        if "this year" in query_lower:
-            start_date = f"{today.year}-01-01"
-            end_date = today.strftime("%Y-%m-%d")
-        elif "last year" in query_lower:
-            # Use Calendar Year logic
-            last_year = today.year - 1
-            start_date = f"{last_year}-01-01"
-            end_date = f"{last_year}-12-31"
-        elif "this month" in query_lower:
-            start_date = today.replace(day=1).strftime("%Y-%m-%d")
-            end_date = today.strftime("%Y-%m-%d")
-        elif "last month" in query_lower:
-            formatted_today = today.replace(day=1)
-            last_month_end = formatted_today - timedelta(days=1)
-            last_month_start = last_month_end.replace(day=1)
-            start_date = last_month_start.strftime("%Y-%m-%d")
-            end_date = last_month_end.strftime("%Y-%m-%d")
-        elif "this week" in query_lower:
-            # Monday of current week
-            weekday = today.weekday()
-            start_date_dt = today - timedelta(days=weekday)
-            start_date = start_date_dt.strftime("%Y-%m-%d")
-            end_date = today.strftime("%Y-%m-%d")
-        elif "last week" in query_lower:
-            # Previous week Monday-Sunday
-            weekday = today.weekday()
-            end_date_dt = today - timedelta(days=weekday + 1)
-            start_date_dt = end_date_dt - timedelta(days=6)
-            start_date = start_date_dt.strftime("%Y-%m-%d")
-            end_date = end_date_dt.strftime("%Y-%m-%d")
+        # --- Custom Date Range Detection (Must run BEFORE quick ranges) ---
+        # If the user doesn't specify a year, assume 2026 (per requirements).
+        DEFAULT_YEAR_IF_MISSING = 2026
+
+        def _parse_day_month_token(token: str):
+            t = token.strip().lower().replace(",", " ")
+            t = re.sub(r"\s+", " ", t)
+            month_map = {
+                "jan": 1,
+                "feb": 2,
+                "mar": 3,
+                "apr": 4,
+                "may": 5,
+                "jun": 6,
+                "jul": 7,
+                "aug": 8,
+                "sep": 9,
+                "oct": 10,
+                "nov": 11,
+                "dec": 12,
+            }
+
+            # "12 dec 2025"
+            m = re.match(
+                r"^(?P<day>\d{1,2})\s+(?P<month>[a-z]{3,})(?:\s+(?P<year>\d{4}))?$",
+                t,
+            )
+            if not m:
+                # "dec 12 2025"
+                m = re.match(
+                    r"^(?P<month>[a-z]{3,})\s+(?P<day>\d{1,2})(?:\s+(?P<year>\d{4}))?$",
+                    t,
+                )
+            if not m:
+                return None
+
+            month_key = m.group("month")[:3]
+            if month_key not in month_map:
+                return None
+
+            day = int(m.group("day"))
+            month = month_map[month_key]
+            year = int(m.group("year")) if m.group("year") else None
+            return day, month, year
+
+        if not start_date:
+            try:
+                date_token = r"(?:\d{1,2}\s+[a-z]{3,}|[a-z]{3,}\s+\d{1,2})(?:\s+\d{4})?"
+                range_pattern = re.compile(
+                    rf"(?:from\s+)?(?P<d1>{date_token})\s*(?:to|[\-\u2013\u2014])\s*(?P<d2>{date_token})",
+                    re.IGNORECASE,
+                )
+                m = range_pattern.search(query_lower)
+                if m:
+                    t1 = _parse_day_month_token(m.group("d1"))
+                    t2 = _parse_day_month_token(m.group("d2"))
+                    if t1 and t2:
+                        d1, mo1, y1 = t1
+                        d2, mo2, y2 = t2
+
+                        if y1 and y2:
+                            pass
+                        elif y1 and not y2:
+                            y2 = y1 + 1 if mo1 > mo2 else y1
+                        elif y2 and not y1:
+                            y1 = y2 - 1 if mo1 > mo2 else y2
+                        else:
+                            # No years specified
+                            if mo1 > mo2:
+                                # Example: "Dec 12 to Jan 14" -> Dec 2025 to Jan 2026
+                                y1 = DEFAULT_YEAR_IF_MISSING - 1
+                                y2 = DEFAULT_YEAR_IF_MISSING
+                            else:
+                                y1 = DEFAULT_YEAR_IF_MISSING
+                                y2 = DEFAULT_YEAR_IF_MISSING
+
+                        start_date = datetime(y1, mo1, d1).strftime("%Y-%m-%d")
+                        end_date = datetime(y2, mo2, d2).strftime("%Y-%m-%d")
+            except Exception as e:
+                logging.warning(f"Custom date range parsing failed: {e}")
+
+        # Quick ranges (ONLY if no custom range detected)
+        if not start_date:
+            if "this year" in query_lower:
+                start_date = f"{today.year}-01-01"
+                end_date = today.strftime("%Y-%m-%d")
+            elif "last year" in query_lower:
+                # Use Calendar Year logic
+                last_year = today.year - 1
+                start_date = f"{last_year}-01-01"
+                end_date = f"{last_year}-12-31"
+            elif "this month" in query_lower:
+                start_date = today.replace(day=1).strftime("%Y-%m-%d")
+                end_date = today.strftime("%Y-%m-%d")
+            elif "last month" in query_lower:
+                formatted_today = today.replace(day=1)
+                last_month_end = formatted_today - timedelta(days=1)
+                last_month_start = last_month_end.replace(day=1)
+                start_date = last_month_start.strftime("%Y-%m-%d")
+                end_date = last_month_end.strftime("%Y-%m-%d")
+            elif "this week" in query_lower:
+                # Monday of current week
+                weekday = today.weekday()
+                start_date_dt = today - timedelta(days=weekday)
+                start_date = start_date_dt.strftime("%Y-%m-%d")
+                end_date = today.strftime("%Y-%m-%d")
+            elif "last week" in query_lower:
+                # Previous week Monday-Sunday
+                weekday = today.weekday()
+                end_date_dt = today - timedelta(days=weekday + 1)
+                start_date_dt = end_date_dt - timedelta(days=6)
+                start_date = start_date_dt.strftime("%Y-%m-%d")
+                end_date = end_date_dt.strftime("%Y-%m-%d")
         
         # --- NEW: Robust Multi-Format Date Extraction ---
         if not start_date:
@@ -1337,7 +1454,7 @@ class ChatbotLogic:
                 selected_kpi = context.get("kpi")
                 
         # Merge Facilities
-        if not selected_facility_uids:
+        if not selected_facility_uids and not region_only_context:
              # Only inherit facilities if the user didn't specify any NEW ones.
              if context.get("facility_uids"):
                  selected_facility_uids = context.get("facility_uids")
@@ -1408,11 +1525,11 @@ class ChatbotLogic:
              # NEW: If multiple regions are found, we likely want to compare REGIONS, not facilities within them
              # UNLESS user explicitly said "by facility"
              if len(found_regions) > 1 and not any(x in query_lower for x in ["by facility", "per facility", "by fac", "per fac"]):
-                 comparison_mode = True
-                 comparison_entity = "region"
-                 # selected_comparison_targets = found_regions # This is handled by the return statement
+                  comparison_mode = True
+                  comparison_entity = "region"
+                  # selected_comparison_targets = found_regions # This is handled by the return statement
              # If we have found regions (e.g. "Tigray by facility"), we want to compare facilities within that region
-             elif found_regions:
+             elif found_regions and not force_region_comparison:
                  comparison_mode = True
                  comparison_entity = "facility"
                  
