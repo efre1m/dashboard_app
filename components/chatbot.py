@@ -972,13 +972,19 @@ class ChatbotLogic:
             if re.search(flexible_location_regex, query_lower):
                 specific_facility_requested = True
 
-        if (facility_mentioned or specific_facility_requested) and not region_only_context:
+        facility_requested_but_unresolved = False
+        if (
+            (facility_mentioned or specific_facility_requested)
+            and not region_only_context
+            and not selected_facility_uids
+        ):
             # Try to find the facility name
             found_facility = False
             
             # Check each word in query for facility matches
             for i in range(len(query_words)):
-                for j in range(i+1, min(i+4, len(query_words)+1)):  # Check up to 4-word combinations
+                # Check up to 4-word combinations (prefer longest match first)
+                for j in range(min(i+4, len(query_words)+1), i, -1):
                     possible_name = " ".join(query_words[i:j]).lower()
                     
                     # Check in suffix_blind_mapping
@@ -1006,25 +1012,53 @@ class ChatbotLogic:
                     # Final check: Is this a general value query without a specific location trigger?
                     # If the user just said "What is PPH rate", specific_facility_requested should be False.
                     # If specific_facility_requested is False, we don't return an error.
-                    if specific_facility_requested:
-                         return {
-                             "intent": "chat",
-                             "response": "⚠️ **Facility not found!**\n\nI couldn't find that facility in the system. Please check:\n1. **Spelling** of the facility name\n2. Try saying **'list facilities'** to see all available facilities\n3. Use the full facility name (e.g., 'Adigrat Hospital' not just 'Adigrat')"
-                         }
+                    # Defer the error until after we attempt disambiguation / fuzzy matching.
+                    facility_requested_but_unresolved = True
         
-        # Two-pass approach to avoid ambiguous prefix matches
-        # Pass 1 already handled above (strong_matches).
-        if not strong_matches and not region_only_context:
-            # Pass 2: Weak Matches (StartsWith) - ONLY if no strong matches
-            # Use filtered_words to avoid common stopwords
+        # Weak facility fallback: never auto-select multiple facilities from partial words like
+        # "addis", "university", etc. If ambiguous, ask the user to choose.
+        if (
+            facility_requested_but_unresolved
+            and not selected_facility_uids
+            and not region_only_context
+        ):
+            weak_candidates = []
             for name, uid in self.universal_facility_mapping.items():
                 n_lower = name.lower()
                 for word in filtered_words:
-                    if len(word) > 3 and (n_lower.startswith(word) or (word in n_lower and len(word) > 5)):
-                        if uid not in selected_facility_uids:
-                             selected_facility_uids.append(uid)
-                             selected_facility_names.append(name)
+                    if len(word) > 3 and (
+                        n_lower.startswith(word) or (word in n_lower and len(word) > 5)
+                    ):
+                        weak_candidates.append((name, uid))
                         break
+
+            # Deduplicate by UID while preserving order
+            unique_candidates = []
+            seen_uids = set()
+            for name, uid in weak_candidates:
+                if uid in seen_uids:
+                    continue
+                seen_uids.add(uid)
+                unique_candidates.append((name, uid))
+
+            if len(unique_candidates) == 1:
+                name, uid = unique_candidates[0]
+                selected_facility_uids.append(uid)
+                selected_facility_names.append(name)
+                facility_requested_but_unresolved = False
+            elif len(unique_candidates) > 1:
+                options_map = {
+                    str(i + 1): n for i, (n, _) in enumerate(unique_candidates[:8])
+                }
+                st.session_state.chatbot_context["ambiguity_options"] = options_map
+                st.session_state.chatbot_context["pending_kpi"] = selected_kpi
+
+                options_str = "\n".join([f"{i}. {n}" for i, n in options_map.items()])
+                return {
+                    "intent": "chat",
+                    "response": f"Which **facility** do you mean?\n\n{options_str}",
+                    "pending_kpi": selected_kpi,
+                }
         
         # If no facility found, check REGIONS
         if not selected_facility_uids:
@@ -1100,12 +1134,19 @@ class ChatbotLogic:
 
             # If still no facility/region found but user says "all facilities" or doesn't specify, 
             # for Facility user it's always their facility.
-            if not selected_facility_uids:
+            if not selected_facility_uids and not facility_requested_but_unresolved:
                 if self.user.get("role") == "facility":
                     # Default to user's facility
                     selected_facility_uids = list(self.facility_mapping.values())
                     selected_facility_names = list(self.facility_mapping.keys())
                 # For regional/national, if no specific facility, we might mean "overall" or "all"
+
+            # If the user explicitly tried to specify a facility but we couldn't resolve it, return an error.
+            if facility_requested_but_unresolved and not selected_facility_uids:
+                return {
+                    "intent": "chat",
+                    "response": "⚠️ **Facility not found!**\n\nI couldn't find that facility in the system. Please check:\n1. **Spelling** of the facility name\n2. Try saying **'list facilities'** to see all available facilities\n3. Use the full facility name (e.g., 'Adigrat Hospital' not just 'Adigrat')",
+                }
         
         # 4. Detect Time Period
         start_date = None
@@ -1464,7 +1505,11 @@ class ChatbotLogic:
                 selected_kpi = context.get("kpi")
                 
         # Merge Facilities
-        if not selected_facility_uids and not region_only_context:
+        if (
+            not selected_facility_uids
+            and not region_only_context
+            and not facility_requested_but_unresolved
+        ):
              # Only inherit facilities if the user didn't specify any NEW ones.
              if context.get("facility_uids"):
                  selected_facility_uids = context.get("facility_uids")
@@ -2280,7 +2325,7 @@ class ChatbotLogic:
                          nav_feedback = f"\n*(Dashboard updated to show regions: {', '.join(parsed['comparison_targets'][:3])})*"
                 
                 # 3. Overall / Reset
-                elif not parsed.get("facility_names") and not parsed.get("comparison_targets") and "all facilities" in prompt.lower():
+                elif not parsed.get("facility_names") and not parsed.get("comparison_targets") and "all facilities" in query_lower:
                      if self.user.get("role") in ["national", "regional", "admin"]:
                          st.session_state["filter_mode"] = "All Facilities"
                          st.session_state["selected_facilities"] = ["All Facilities"]
@@ -3034,10 +3079,11 @@ I can help you analyze data across the **{dashboard_str}** dashboards.
 
 **What I can do for you:**
 - **Plot Charts**: I can generate Line, Bar, and Area charts for Maternal Health indicators.
-- **Distributions**: Ask for a **breakdown** or **distribution** (e.g., "show distribution of complications") to see categorical pie charts.
 - **Quick Values**: Ask for a specific value (e.g. "What is the PPH rate?") and I'll provide the overall value.
 - **Comparisons**: Ask to compare facilities or regions! (e.g., "Compare Admitted Mothers for Adigrat and Suhul")
 - **Definitions**: Ask "Define [Indicator]" to get a medical definition.
+- **List Indicators**: Ask "list all indicators" to see all available health indicators.
+- **List Facilities**: Ask "list all facilities" to see all available health facilities.
 
 **How to Compare:**
 1. **By Facility**: "Compare [KPI] for [Facility A] and [Facility B]"
