@@ -1475,6 +1475,19 @@ def render_comparison_chart(
                 numerator_name=numerator_label,
                 denominator_name=denominator_label,
             )
+        elif kpi_selection == "Normal Vaginal Delivery (SVD) Rate (%)":
+            render_svd_facility_comparison_chart(
+                df=comparison_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
         else:
             # For general KPIs using generic chart function (e.g. Missing Data)
             # Check if specialized function exists, else use generic
@@ -1488,6 +1501,8 @@ def render_comparison_chart(
                     text_color=text_color,
                     facility_names=display_names,
                     facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
                 )
             elif kpi_selection == "Missing Birth Outcome":
                  render_missing_bo_facility_comparison_chart(
@@ -1499,10 +1514,22 @@ def render_comparison_chart(
                     text_color=text_color,
                     facility_names=display_names,
                     facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
                 )
             elif kpi_selection == "Missing Condition of Discharge":
-                 # Use generic for now or implement specific
-                 pass
+                 render_missing_cod_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
             elif kpi_selection == "Admitted Mothers":
                  render_admitted_mothers_facility_comparison_chart(
                     df=comparison_df,
@@ -1563,6 +1590,8 @@ def render_comparison_chart(
                     text_color=text_color,
                     facility_names=display_names,
                     facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
                 )
             elif kpi_selection == "Missing Obstetric Complications Diagnosis":
                 render_missing_antepartum_facility_comparison_chart(
@@ -1574,6 +1603,8 @@ def render_comparison_chart(
                     text_color=text_color,
                     facility_names=display_names,
                     facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
                 )
             elif kpi_selection == "Missing Uterotonics Given at Delivery":
                 render_missing_uterotonic_facility_comparison_chart(
@@ -1585,12 +1616,24 @@ def render_comparison_chart(
                     text_color=text_color,
                     facility_names=display_names,
                     facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
                 )
-
-    elif comparison_mode == "region" and facilities_by_region:
-        # REGIONAL LOGIC - placeholder for now
-        pass
-
+            else:
+                # For any other KPIs without specific comparison chart functions
+                # Use the generic render_facility_comparison_chart
+                render_facility_comparison_chart(
+                    df=comparison_df,
+                    period_col="period_display",
+                    value_col="value",
+                    title=chart_title,
+                    bg_color=bg_color,
+                    text_color=text_color,
+                    facility_names=display_names,
+                    facility_uids=facility_uids,
+                    numerator_name=numerator_label,
+                    denominator_name=denominator_label,
+                )
 
     elif comparison_mode == "region" and is_national:
         # Region comparison - similar fix needed
