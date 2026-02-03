@@ -439,6 +439,12 @@ class ChatbotLogic:
         for typo, correct in self.COMMON_TYPOS.items():
             query_norm = query_norm.replace(typo, correct)
         query_norm = re.sub(r'\s+', ' ', query_norm).strip()
+
+        # --- MISSING BIRTH OUTCOME (ISOLATED FIX ONLY) ---
+        # If the query contains BOTH "birth" and a variation of "outcome/out come",
+        # always lock the metric to "Missing Birth Outcome" (never substitute, never reuse context).
+        _compact_query = query_norm.replace(" ", "")
+        missing_birth_outcome_lock = ("birth" in _compact_query and "outcome" in _compact_query)
         
         # Initialize variables for parsing
         selected_facility_uids = []
@@ -516,7 +522,7 @@ class ChatbotLogic:
             
         # 0.5. PRIORITY CHECK: If KPI is present, do NOT treat as metadata list
         # "Show C-Section Rate by facility" -> PLOT intent, not LIST intent
-        kpi_found_early = any(kpi.lower() in query_norm for kpi in KPI_MAPPING.keys())
+        kpi_found_early = any(kpi.lower() in query_norm for kpi in KPI_MAPPING.keys()) or missing_birth_outcome_lock
         
         if entity_type and not kpi_found_early:
             # Extract Region if mentioned (even in rule-based mode)
@@ -915,7 +921,11 @@ class ChatbotLogic:
                 if kpi.lower() in query_lower:
                     selected_kpi = kpi
                     break
-                    
+
+        # MISSING BIRTH OUTCOME LOCK (ISOLATED FIX ONLY)
+        if missing_birth_outcome_lock:
+            selected_kpi = "Missing Birth Outcome"
+                     
         # Force Bar Chart for Counts
         if selected_kpi == "Admitted Mothers" and chart_type == "line":
             chart_type = "bar"
@@ -1806,7 +1816,7 @@ class ChatbotLogic:
             # Fallback for local detection (e.g. password)
             q_low = query.lower()
             if any(x in q_low for x in ["password", "login", "admin", "credential"]):
-                return None, "I'm your Data Analytics Assistant. I don't handle system passwords or administrative access. Please contact your system administrator if you're having login issues! 🔒"
+                return None, "I'm your dashboard assistant. I don't handle system passwords or administrative access. Please contact your system administrator if you're having login issues! 🔒"
                 
             role = self.user.get("role", "facility") # Default to facility if unknown
             return None, get_welcome_message(role)
@@ -1855,7 +1865,7 @@ class ChatbotLogic:
              st.session_state.chatbot_context = {} 
              st.session_state.messages.append({
                 "role": "assistant",
-                "content": "Hello! I'm your AI health assistant. You can ask me to plot trends like 'Plot C-Section Rate this month' or ask for specific values."
+                "content": "Hello! I'm your dashboard assistant. You can ask me to plot trends like 'Plot C-Section Rate this month' or ask for specific values."
              })
              # Reset period filter to default
              if "filters" in st.session_state:
@@ -3018,17 +3028,16 @@ def get_welcome_message(role):
         
     dashboard_str = ", ".join(dashboards)
     
-    msg = f"""**Hello! I'm your IMNID AI Assistant.** 🤖
+    msg = f"""**Hello! I'm your IMNID dashboard assistant.** 🤖
     
 I can help you analyze data across the **{dashboard_str}** dashboards.
 
 **What I can do for you:**
 - **Plot Charts**: I can generate Line, Bar, and Area charts for Maternal Health indicators.
 - **Distributions**: Ask for a **breakdown** or **distribution** (e.g., "show distribution of complications") to see categorical pie charts.
-- **Quick Values**: Ask for a specific value (e.g. "What is the PPH rate?") and I'll provide the latest figure.
+- **Quick Values**: Ask for a specific value (e.g. "What is the PPH rate?") and I'll provide the overall value.
 - **Comparisons**: Ask to compare facilities or regions! (e.g., "Compare Admitted Mothers for Adigrat and Suhul")
 - **Definitions**: Ask "Define [Indicator]" to get a medical definition.
-- **Data Tables**: Ask for "table format" to see the raw numbers.
 
 **How to Compare:**
 1. **By Facility**: "Compare [KPI] for [Facility A] and [Facility B]"
