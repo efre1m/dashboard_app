@@ -603,12 +603,12 @@ def compute_kpis(df, facility_uids=None):
         filtered_df, facility_uids
     )
 
-    # NEW: Postpartum Complications Rate
-    from utils.kpi_postpartum_compl import compute_postpartum_compl_rate, compute_postpartum_distribution
+#    from utils.kpi_postpartum_compl import compute_postpartum_compl_rate, compute_postpartum_distribution
+    from utils.kpi_postpartum_compl import compute_postpartum_compl_rate
     postpartum_rate, postpartum_cases, _ = compute_postpartum_compl_rate(
         filtered_df, facility_uids
     )
-    postpartum_distribution = compute_postpartum_distribution(filtered_df, facility_uids)
+#    postpartum_distribution = compute_postpartum_distribution(filtered_df, facility_uids)
 
     result = {
         "total_deliveries": int(total_deliveries),
@@ -641,7 +641,7 @@ def compute_kpis(df, facility_uids=None):
         "antipartum_cases": int(antipartum_cases),
         "postpartum_rate": float(postpartum_rate),
         "postpartum_cases": int(postpartum_cases),
-        "postpartum_distribution": postpartum_distribution,
+#        "postpartum_distribution": postpartum_distribution,
     }
 
     st.session_state.kpi_cache[cache_key] = result

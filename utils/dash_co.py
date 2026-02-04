@@ -1939,8 +1939,8 @@ def render_additional_analytics(
         render_uterotonic_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
     elif kpi_selection == "Antepartum Complications Rate (%)":
         render_complication_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
-    elif kpi_selection == "Postpartum Complications Rate (%)":
-        render_postpartum_complication_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
+#    elif kpi_selection == "Postpartum Complications Rate (%)":
+#        render_postpartum_complication_type_pie_chart(kpi_df, facility_uids, bg_color, text_color)
     elif kpi_selection == "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)":
         # Render FP Distribution Pie Chart
         st.session_state.kpi_cache = st.session_state.get("kpi_cache", {})

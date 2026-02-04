@@ -189,7 +189,7 @@ def compute_postpartum_compl_kpi(df, facility_uids=None):
         "postpartum_compl_rate": float(rate),
         "postpartum_compl_cases": int(cases),
         "total_deliveries": int(total),
-        "postpartum_compl_distribution": distribution,
+#        "postpartum_compl_distribution": distribution,
     }
 
 
