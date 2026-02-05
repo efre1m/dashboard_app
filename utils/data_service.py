@@ -698,7 +698,12 @@ def fetch_odk_data_for_user(
     """
     try:
         # Import here to avoid circular imports
-        from utils.odk_api import fetch_all_forms_as_dataframes
+        from utils.odk_api import (
+            AFAR_MENTORSHIP_SECTION_LABEL,
+            AFAR_REGION_ID,
+            fetch_afar_mentorship_forms,
+            fetch_all_forms_as_dataframes,
+        )
 
         logging.info(f"📡 Fetching ODK data for user: {user.get('username')}")
 
@@ -715,12 +720,25 @@ def fetch_odk_data_for_user(
                     if isinstance(facility, (list, tuple)) and len(facility) > 0:
                         facility_names.append(facility[0])
 
-        # Fetch all forms
+        # Fetch all forms (Project 14 via ODK_PROJECT_ID)
         odk_forms = fetch_all_forms_as_dataframes(user, facility_names)
+
+        result: Dict[str, Dict[str, pd.DataFrame]] = {"odk_forms": odk_forms}
+
+        # STRICT access control: Only Afar regional users can load Project 17 data.
+        if user.get("role") == "regional":
+            try:
+                if int(user.get("region_id")) == AFAR_REGION_ID:
+                    # IMPORTANT: fetch_afar_mentorship_forms() makes NO API calls unless the condition is met.
+                    result[AFAR_MENTORSHIP_SECTION_LABEL] = fetch_afar_mentorship_forms(
+                        user
+                    )
+            except (TypeError, ValueError):
+                pass
 
         logging.info(f"✅ Loaded {len(odk_forms)} ODK forms for {user.get('username')}")
 
-        return {"odk_forms": odk_forms}
+        return result
 
     except Exception as e:
         logging.error(f"❌ Error fetching ODK data: {e}")

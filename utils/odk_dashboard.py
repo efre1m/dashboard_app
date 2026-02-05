@@ -4,7 +4,12 @@ import pandas as pd
 import logging
 import time
 from typing import Dict
-from utils.odk_api import list_forms
+from utils.odk_api import (
+    AFAR_MENTORSHIP_ODK_PROJECT_ID,
+    AFAR_MENTORSHIP_SECTION_LABEL,
+    AFAR_REGION_ID,
+    list_forms,
+)
 from utils.data_service import fetch_odk_data_for_user
 from utils.region_mapping import (
     get_odk_region_codes,
@@ -17,9 +22,11 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 # 🔥 OPTIMIZATION: Cache forms listing for 1 hour
 @st.cache_data(ttl=3600, show_spinner=False)
-def list_forms_cached():
+def list_forms_cached(odk_project_id: str | int | None = None):
     """Cached version of forms listing"""
-    return list_forms()
+    if odk_project_id is None:
+        return list_forms()
+    return list_forms(odk_project_id=odk_project_id)
 
 
 def display_odk_dashboard(user: dict = None):
@@ -95,8 +102,16 @@ def display_odk_dashboard(user: dict = None):
     current_region_id = current_user.get("region_id")
     current_role = current_user.get("role", "anonymous")
 
+    is_afar_user = False
+    if current_role == "regional":
+        try:
+            is_afar_user = int(current_region_id) == AFAR_REGION_ID
+        except (TypeError, ValueError):
+            is_afar_user = False
+
     # 🔥 OPTIMIZATION: Create session state keys
     odk_data_key = f"odk_forms_data_{current_user_id}"
+    afar_odk_data_key = f"odk_forms_data_afar_{current_user_id}"
     last_refresh_key = f"last_odk_refresh_{current_user_id}"
     user_tracker_key = "current_odk_user"
 
@@ -128,6 +143,9 @@ def display_odk_dashboard(user: dict = None):
     if odk_data_key not in st.session_state:
         st.session_state[odk_data_key] = {}
 
+    if afar_odk_data_key not in st.session_state:
+        st.session_state[afar_odk_data_key] = {}
+
     # Header with action buttons
     col1, col2 = st.columns([3, 1])
 
@@ -143,6 +161,7 @@ def display_odk_dashboard(user: dict = None):
 
         if st.button("🔄 Refresh Data", use_container_width=True, type="primary"):
             st.session_state[odk_data_key] = {}
+            st.session_state[afar_odk_data_key] = {}
             st.session_state[last_refresh_key] = pd.Timestamp.now()
             st.rerun()
 
@@ -160,14 +179,18 @@ def display_odk_dashboard(user: dict = None):
         st.markdown("</div>", unsafe_allow_html=True)
 
     # 🔥 OPTIMIZATION: Load data only if needed
-    if not st.session_state[odk_data_key]:
+    if (not st.session_state[odk_data_key]) or (
+        is_afar_user and not st.session_state[afar_odk_data_key]
+    ):
         with st.spinner("🔄 Loading forms data..."):
             try:
                 # Fetch data once
                 odk_data = fetch_odk_data_for_user(current_user)
                 forms_data = odk_data.get("odk_forms", {})
+                afar_forms_data = odk_data.get(AFAR_MENTORSHIP_SECTION_LABEL, {})
 
                 st.session_state[odk_data_key] = forms_data
+                st.session_state[afar_odk_data_key] = afar_forms_data
                 st.session_state[last_refresh_key] = pd.Timestamp.now()
 
                 st.success(f"✅ Loaded {len(forms_data)} forms")
@@ -185,12 +208,32 @@ def display_odk_dashboard(user: dict = None):
 
     # Display forms
     if st.session_state.get(odk_data_key) and len(st.session_state[odk_data_key]) > 0:
-        display_forms_grid(st.session_state[odk_data_key])
+        display_forms_grid(st.session_state[odk_data_key], key_prefix="mentorship")
     else:
         st.info("📭 No forms data available. Click 'Refresh Data' to try again.")
 
 
-def display_forms_grid(forms_data: Dict[str, pd.DataFrame]):
+    # Afar mentorship section (Project 17) - STRICTLY for Afar regional users only
+    if is_afar_user:
+        st.markdown("## IMNID Blended Mentorship Afar HC")
+
+        afar_forms = st.session_state.get(afar_odk_data_key, {})
+        if afar_forms and len(afar_forms) > 0:
+            display_forms_grid(
+                afar_forms,
+                odk_project_id=AFAR_MENTORSHIP_ODK_PROJECT_ID,
+                key_prefix="afar_mentorship",
+            )
+        else:
+            st.info("No Afar mentorship forms data available.")
+
+
+def display_forms_grid(
+    forms_data: Dict[str, pd.DataFrame],
+    *,
+    odk_project_id: str | int | None = None,
+    key_prefix: str = "odk",
+):
     """Display all loaded forms in an attractive grid layout"""
     st.markdown(f"### 📁 Available Forms ({len(forms_data)})")
 
@@ -199,18 +242,31 @@ def display_forms_grid(forms_data: Dict[str, pd.DataFrame]):
 
     for i, (form_id, df) in enumerate(forms_data.items()):
         # 🔥 OPTIMIZATION: Get display name from cached forms
-        forms = list_forms_cached()
+        forms = list_forms_cached(odk_project_id)
         form_metadata = next((f for f in forms if f.get("xmlFormId") == form_id), {})
         display_name = form_metadata.get("name", form_id)
 
         col = cols[i % 2]
 
         with col:
-            display_form_card(form_id, df, consistent_color, i, display_name)
+            display_form_card(
+                form_id,
+                df,
+                consistent_color,
+                i,
+                display_name,
+                key_prefix=key_prefix,
+            )
 
 
 def display_form_card(
-    form_id: str, df: pd.DataFrame, color: str, index: int, display_name: str
+    form_id: str,
+    df: pd.DataFrame,
+    color: str,
+    index: int,
+    display_name: str,
+    *,
+    key_prefix: str = "odk",
 ):
     """Display an individual form card with download button"""
 
@@ -235,7 +291,7 @@ def display_form_card(
             data=csv_data,
             file_name=f"{form_id}.csv",
             mime="text/csv",
-            key=f"download_{index}",
+            key=f"{key_prefix}_download_{index}",
             use_container_width=True,
             type="primary",
         )

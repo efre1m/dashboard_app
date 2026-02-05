@@ -17,7 +17,21 @@ ODK_USERNAME = os.getenv("ODK_USERNAME", "")
 ODK_PASSWORD = os.getenv("ODK_PASSWORD", "")
 ODK_TIMEOUT = int(os.getenv("ODK_TIMEOUT", "60"))
 
+# Hard-coded access control for Afar mentorship project (do not move to .env)
+AFAR_REGION_ID = 8
+AFAR_MENTORSHIP_ODK_PROJECT_ID = 17
+AFAR_MENTORSHIP_SECTION_LABEL = "IMNID Blended Mentorship Afar HC"
+
 _session: requests.Session | None = None
+
+
+def _is_afar_regional_user(user: dict | None) -> bool:
+    if not user or user.get("role") != "regional":
+        return False
+    try:
+        return int(user.get("region_id")) == AFAR_REGION_ID
+    except (TypeError, ValueError):
+        return False
 
 
 def _get_session() -> requests.Session:
@@ -43,26 +57,28 @@ def _get_session() -> requests.Session:
     return _session
 
 
-def list_forms() -> list[dict]:
+def list_forms(odk_project_id: str | int = ODK_PROJECT_ID) -> list[dict]:
     """Return all forms in the given ODK project."""
-    url = f"{ODK_BASE_URL}{ODK_API_ROOT}/projects/{ODK_PROJECT_ID}/forms"
+    url = f"{ODK_BASE_URL}{ODK_API_ROOT}/projects/{odk_project_id}/forms"
     try:
         resp = _get_session().get(url, timeout=ODK_TIMEOUT)
         resp.raise_for_status()
         forms = resp.json()
-        logging.info(f"Retrieved {len(forms)} forms from project {ODK_PROJECT_ID}.")
+        logging.info(f"Retrieved {len(forms)} forms from project {odk_project_id}.")
         return forms
     except Exception as e:
-        logging.error(f"Failed to list ODK forms: {e}")
+        logging.error(f"Failed to list ODK forms for project {odk_project_id}: {e}")
         return []
 
 
-def fetch_form_csv(form_id: str) -> pd.DataFrame:
+def fetch_form_csv(
+    form_id: str, odk_project_id: str | int = ODK_PROJECT_ID
+) -> pd.DataFrame:
     """
     Fetch a form's submissions as a live DataFrame (no file saved).
     Preserves all columns exactly as they are from ODK.
     """
-    url = f"{ODK_BASE_URL}{ODK_API_ROOT}/projects/{ODK_PROJECT_ID}/forms/{form_id}/submissions.csv"
+    url = f"{ODK_BASE_URL}{ODK_API_ROOT}/projects/{odk_project_id}/forms/{form_id}/submissions.csv"
     try:
         resp = _get_session().get(url, timeout=ODK_TIMEOUT)
         resp.raise_for_status()
@@ -71,11 +87,13 @@ def fetch_form_csv(form_id: str) -> pd.DataFrame:
         df = pd.read_csv(io.BytesIO(resp.content))
 
         logging.info(
-            f"Retrieved {len(df)} records from form '{form_id}' with {len(df.columns)} columns."
+            f"Retrieved {len(df)} records from form '{form_id}' (project {odk_project_id}) with {len(df.columns)} columns."
         )
         return df
     except Exception as e:
-        logging.error(f"Failed to fetch CSV for form {form_id}: {e}")
+        logging.error(
+            f"Failed to fetch CSV for form {form_id} (project {odk_project_id}): {e}"
+        )
         return pd.DataFrame()
 
 
@@ -170,7 +188,10 @@ def filter_by_facility(df: pd.DataFrame, facility_names: list[str]) -> pd.DataFr
 
 
 def fetch_all_forms_as_dataframes(
-    user: dict = None, facility_names: list[str] = None
+    user: dict = None,
+    facility_names: list[str] = None,
+    *,
+    odk_project_id: str | int = ODK_PROJECT_ID,
 ) -> dict[str, pd.DataFrame]:
     """
     Fetch all form submissions as DataFrames with user-based filtering.
@@ -183,7 +204,7 @@ def fetch_all_forms_as_dataframes(
     Returns:
         Dictionary of form_id to DataFrame mappings
     """
-    forms = list_forms()
+    forms = list_forms(odk_project_id=odk_project_id)
     form_dfs: dict[str, pd.DataFrame] = {}
 
     for form in forms:
@@ -191,7 +212,7 @@ def fetch_all_forms_as_dataframes(
         if not form_id:
             continue
 
-        df = fetch_form_csv(form_id)
+        df = fetch_form_csv(form_id, odk_project_id=odk_project_id)
 
         # Apply user-based filtering
         if user and not df.empty:
@@ -220,6 +241,40 @@ def fetch_all_forms_as_dataframes(
             form_dfs[form_id] = df
 
     logging.info(
-        f"Fetched {len(form_dfs)} DataFrames from ODK Central for user role: {user.get('role', 'unknown') if user else 'none'}"
+        f"Fetched {len(form_dfs)} DataFrames from ODK Central project {odk_project_id} for user role: {user.get('role', 'unknown') if user else 'none'}"
+    )
+    return form_dfs
+
+
+def fetch_afar_mentorship_forms(user: dict | None) -> dict[str, pd.DataFrame]:
+    """
+    Fetch all ODK submissions from the Afar mentorship project (Project 17).
+
+    Access is STRICTLY limited to Afar regional users:
+      user["role"] == "regional" and user["region_id"] == AFAR_REGION_ID
+
+    IMPORTANT: No API calls to Project 17 are made unless the access condition is met.
+    """
+    if not _is_afar_regional_user(user):
+        return {}
+
+    form_dfs: dict[str, pd.DataFrame] = {}
+
+    forms = list_forms(odk_project_id=AFAR_MENTORSHIP_ODK_PROJECT_ID)
+    for form in forms:
+        form_id = form.get("xmlFormId")
+        if not form_id:
+            continue
+
+        df = fetch_form_csv(form_id, odk_project_id=AFAR_MENTORSHIP_ODK_PROJECT_ID)
+
+        # Always apply regional filtering (required), even though this project is Afar-specific.
+        df = filter_by_region(df, AFAR_REGION_ID)
+
+        if not df.empty:
+            form_dfs[form_id] = df
+
+    logging.info(
+        f"Fetched {len(form_dfs)} DataFrames from Afar mentorship project {AFAR_MENTORSHIP_ODK_PROJECT_ID}."
     )
     return form_dfs
