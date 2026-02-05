@@ -60,6 +60,10 @@ from components.login import login_component
 from dashboards import facility, regional, national, admin
 from utils.auth import logout
 from components.chatbot import render_chatbot
+from utils.db import init_db
+
+# Initialize database schema
+init_db()
 
 # ====================== STREAMLIT PAGE CONFIG ======================
 st.set_page_config(
