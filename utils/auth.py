@@ -9,6 +9,19 @@ def _is_bcrypt_hash(value: str) -> bool:
     return isinstance(value, str) and value.startswith("$2")
 
 
+def log_user_login(user_id):
+    """Log a successful user login."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO login_logs (user_id) VALUES (%s)", (user_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"❌ Error logging login: {e}")
+
+
 def authenticate_user(username: str, password: str):
     """
     Authenticate user against the database.
@@ -69,6 +82,9 @@ def authenticate_user(username: str, password: str):
 
     if not valid:
         return None
+
+    # Log the successful login
+    log_user_login(user_id)
 
     return {
         "user_id": user_id,

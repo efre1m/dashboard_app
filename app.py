@@ -173,11 +173,13 @@ with st.sidebar:
 
     # Check authentication
     if st.session_state.get("authenticated", False):
+        role = st.session_state["user"].get("role", "")
         st.write("---")
-        # Chat Bot Mode Toggle
-        st.toggle("🤖 Chat Bot Mode", key="chatbot_mode")
+        # Chat Bot Mode Toggle - HIDE FOR ADMIN
+        if role != "admin":
+            st.toggle("🤖 Chat Bot Mode", key="chatbot_mode")
+            st.write("---")
         
-        st.write("---")
         # Logout button
         if st.button("Logout"):
             logout()
@@ -189,11 +191,12 @@ with st.sidebar:
 if not st.session_state.get("authenticated", False):
     login_component()  # Render login page if not authenticated
 else:
-    # Check if Chat Bot Mode is active
-    if st.session_state.get("chatbot_mode", False):
+    role = st.session_state["user"].get("role", "")
+    
+    # Check if Chat Bot Mode is active (and NOT admin)
+    if st.session_state.get("chatbot_mode", False) and role != "admin":
         render_chatbot()
     else:
-        role = st.session_state["user"].get("role", "")
 
         if role == "facility":
             facility.render()
