@@ -27,6 +27,7 @@ from utils.dash_co import (
 )
 from utils.kpi_utils import clear_cache, compute_kpis
 from utils.odk_dashboard import display_odk_dashboard
+from utils.usage_tracking import render_usage_tracking_shared
 #from dashboards.data_quality_tracking import render_data_quality_tracking
 
 
@@ -282,6 +283,7 @@ def initialize_session_state():
             "summary": False,
             "mentorship": False,
             "data_quality": False,
+            "tracking": False,
         },
         "tab_data_loaded": {
             "maternal": True,
@@ -289,6 +291,7 @@ def initialize_session_state():
             "summary": False,
             "mentorship": False,
             "data_quality": True,
+            "tracking": True,
         },
         "tab_loading": {
             "summary": False,
@@ -1175,7 +1178,22 @@ def render():
     st.markdown(
         """
     <style>
-    .main-header { font-size: 1.5rem !important; font-weight: 700 !important; margin-bottom: 0.2rem !important; }
+    /* Premium Professional Background */
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    }
+
+    /* Card-based layout for better depth */
+    .form-container, [data-testid="stExpander"], .stDataFrame, .stPlotlyChart {
+        background-color: white !important;
+        padding: 1.2rem !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05) !important;
+        border: 1px solid #e2e8f0 !important;
+        margin-bottom: 1rem !important;
+    }
+
+    .main-header { font-size: 1.5rem !important; font-weight: 700 !important; margin-bottom: 0.2rem !important; color: #0f172a !important; }
     .section-header { font-size: 1.2rem !important; margin: 0.2rem 0 !important; padding: 0.3rem 0 !important; }
     .stMarkdown { margin-bottom: 0.1rem !important; }
     .element-container { margin-bottom: 0.2rem !important; }
@@ -1381,13 +1399,14 @@ def render():
         )
 
     # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
         [
             "🤰 **Maternal**",
             "👶 **Newborn**",
             "📊 **Summary**",
             "📋 **Mentorship**",
             "📚 **Resources**",
+            "**Usage Tracking**",
         ]
     )
 
@@ -1508,6 +1527,15 @@ def render():
             logging.info("Switched to Resources tab")
     
         render_resources_tab()
+
+    with tab6:
+        if st.session_state.active_tab != "tracking":
+            st.session_state.active_tab = "tracking"
+            logging.info("Switched to Tracking tab")
+        
+        # Regional user tracks Facility users in their region
+        user_region_id = user.get('region_id')
+        render_usage_tracking_shared('regional', user_region_id=user_region_id)
 
     # Log current active tab state
     logging.info(f"Current active tab: {st.session_state.active_tab}")

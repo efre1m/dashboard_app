@@ -5,6 +5,7 @@ import bcrypt
 import time
 import plotly.express as px
 from utils.db import get_db_connection
+from utils.usage_tracking import render_usage_tracking_shared
 
 # ---------------- Styling ----------------
 def apply_css():
@@ -126,22 +127,7 @@ def fetch_countries():
     conn.close()
     return df
 
-@st.cache_data(ttl=60)
-def fetch_usage_logs():
-    conn = get_db_connection()
-    df = pd.read_sql("""
-        SELECT u.username, u.first_name, u.last_name, u.role,
-               f.facility_name, r.region_name, c.country_name,
-               l.login_time
-        FROM login_logs l
-        JOIN users u ON l.user_id = u.user_id
-        LEFT JOIN facilities f ON u.facility_id = f.facility_id
-        LEFT JOIN regions r ON u.region_id = r.region_id
-        LEFT JOIN countries c ON u.country_id = c.country_id
-        ORDER BY l.login_time DESC
-    """, conn)
-    conn.close()
-    return df
+# fetch_usage_logs moved to utils/usage_tracking.py
 
 # ---------------- Generic CRUD Helpers ----------------
 def run_query(query, params=()):
@@ -386,11 +372,11 @@ def manage_usage_tracking():
     # Clear logs button
     col1, col2 = st.columns([8, 2])
     with col2:
-        if st.button("🗑️ Clear All Tracking Logs", type="secondary", use_container_width=True):
+        if st.button("Clear All Tracking Logs", type="secondary", use_container_width=True):
             st.session_state.confirm_clear_logs = True
     
     if st.session_state.get('confirm_clear_logs', False):
-        st.warning("⚠️ Are you sure you want to delete all login logs? This cannot be undone.")
+        st.warning("Are you sure you want to delete all login logs? This cannot be undone.")
         c1, c2 = st.columns(2)
         if c1.button("Yes, Clear Everything", type="primary", use_container_width=True):
             ok, msg = run_query("DELETE FROM login_logs")
@@ -403,64 +389,13 @@ def manage_usage_tracking():
             st.session_state.confirm_clear_logs = False
             st.rerun()
 
-    logs = fetch_usage_logs()
-    
-    if logs.empty:
-        st.info("No login logs found yet.")
-        return
-
-    t1, t2, t3 = st.tabs(["🌍 Country", "📍 Region", "🏥 Facility"])
-    
-    with t1:
-        st.markdown("### Country Level Usage")
-        df1 = logs[logs['role'].str.lower().isin(['admin', 'national'])].copy()
-        if not df1.empty:
-            df1['login_time'] = pd.to_datetime(df1['login_time'])
-            df1['login_date'] = df1['login_time'].dt.date
-            chart_df = df1.groupby('login_date').size().reset_index(name='Logins')
-            fig = px.line(chart_df, x='login_date', y='Logins', title="Daily Admin/National Logins",
-                         markers=True, line_shape="spline", template="plotly_white")
-            fig.update_traces(line_color='#3b82f6')
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.dataframe(df1[['username', 'first_name', 'last_name', 'login_time']], use_container_width=True)
-        else:
-            st.info("No logins recorded for country level users.")
-    
-    with t2:
-        st.markdown("### Regional Level Usage")
-        df2 = logs[logs['role'].str.lower() == 'regional'].copy()
-        if not df2.empty:
-            chart_df = df2['region_name'].value_counts().reset_index()
-            chart_df.columns = ['Region', 'Logins']
-            fig = px.bar(chart_df, x='Region', y='Logins', color='Region', 
-                        title="Logins by Region", template="plotly_white")
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.dataframe(df2[['username', 'first_name', 'last_name', 'region_name', 'login_time']], use_container_width=True)
-        else:
-            st.info("No logins recorded for regional users.")
-        
-    with t3:
-        st.markdown("### Facility Level Usage")
-        df3 = logs[logs['role'].str.lower() == 'facility'].copy()
-        if not df3.empty:
-            chart_df = df3['facility_name'].value_counts().nlargest(10).reset_index()
-            chart_df.columns = ['Facility', 'Logins']
-            fig = px.pie(chart_df, values='Logins', names='Facility', 
-                        title="Activity Distribution (Top 10 Facilities)", 
-                        hole=0.4, template="plotly_white")
-            fig.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig, use_container_width=True)
-
-            st.dataframe(df3[['username', 'first_name', 'last_name', 'region_name', 'facility_name', 'login_time']], use_container_width=True)
-        else:
-            st.info("No logins recorded for facility users.")
+    # Shared Tracking Component
+    render_usage_tracking_shared('admin')
 
 # ---------------- Main Render ----------------
 def render():
     apply_css()
-    st.title("🛡️ Admin Control Center")
+    st.title("Admin Control Center")
     
     menu = st.tabs(["Users", "Facilities", "Regions", "Countries", "Tracking"])
     
