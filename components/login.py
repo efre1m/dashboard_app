@@ -28,7 +28,12 @@ def login_component():
     with col_l:
         with st.container(border=True):
             if logo_path.exists():
-                st.image(str(logo_path), use_container_width=True)
+                img_base64 = get_base64_of_bin_file(str(logo_path))
+                st.markdown(f"""
+                    <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
+                        <img src="data:image/png;base64,{img_base64}" class="login-logo-img">
+                    </div>
+                """, unsafe_allow_html=True)
             else:
                 st.info("Logo not found")
         

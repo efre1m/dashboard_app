@@ -123,6 +123,17 @@ div[data-baseweb="input"]:focus-within {
     max-width: 320px !important;
 }
 
+/* === Logo Scaling Fix for Server === */
+.login-logo-img {
+    width: 100% !important;
+    max-width: 320px !important;
+    height: auto !important;
+    object-fit: contain !important;
+    padding: 1rem !important;
+    display: block !important;
+    margin: 0 auto !important;
+}
+
 /* Hide Boilerplate */
 header,
 footer {
