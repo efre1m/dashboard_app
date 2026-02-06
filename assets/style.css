@@ -1,75 +1,130 @@
-/* === Page Background === */
+/* === Premium Design System === */
+:root {
+    --primary: #1877f2;
+    --bg-gradient: linear-gradient(135deg, #e9efff, #f5f7fa);
+    --card-bg: #ffffff;
+    --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
 .stApp {
-    background: linear-gradient(135deg, #e9efff, #f5f7fa);
-    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    background: var(--bg-gradient);
 }
 
-/* === Login Container === */
-.login-container {
-    max-width: 360px;
-    margin: 80px auto;
-    text-align: center;
+/* === Vertical Centering Fix === */
+.main .block-container {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    min-height: 90vh !important;
 }
 
-/* === Title === */
+/* === Native Container Styling (The Cards) === */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--card-bg) !important;
+    border-radius: 20px !important;
+    box-shadow: var(--shadow) !important;
+    border: 1px solid #e2e8f0 !important;
+    padding: 2.5rem !important;
+    min-height: 480px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+}
+
+/* Ensure contents are centered inside the cards */
+[data-testid="stVerticalBlockBorderWrapper"]>div {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: center !important;
+}
+
 .login-title {
-    font-size: 1.6rem !important;
-    font-weight: bold !important;
-    color: #1877f2 !important;
-    margin-bottom: 1.2rem !important;
+    font-size: 1.85rem !important;
+    font-weight: 800 !important;
+    color: var(--primary) !important;
+    margin-bottom: 0.5rem !important;
+    text-align: center !important;
 }
 
-/* === Force Slim Inputs === */
-div[data-testid="stTextInput"],
-div[data-testid="stPassword"] {
-    margin-bottom: 12px !important;       /* 👈 extra gap */
+.login-subtitle {
+    font-size: 0.95rem !important;
+    color: #64748b !important;
+    margin-bottom: 2rem !important;
+    text-align: center !important;
+}
+
+/* === Refined Inputs (Bold & Compact) === */
+[data-testid="stTextInput"],
+[data-testid="stTextInput"] div[data-baseweb="input"] {
+    max-width: 320px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
 }
 
 div[data-baseweb="input"] {
+    border: 2.5px solid #000000 !important;
+    /* Bold Black Border */
+    border-radius: 10px !important;
+    height: 52px !important;
+    background-color: #ffffff !important;
+}
+
+div[data-baseweb="input"]:focus-within {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 4px rgba(24, 119, 242, 0.1) !important;
+}
+
+/* === High-End Login Button === */
+.stButton {
+    text-align: center !important;
     display: flex !important;
-    align-items: center !important;       /* centers text vertically */
-    min-height: 20px !important;          /* 👈 smaller wrapper */
-    height: 24px !important;
-    border: 1.5px solid #000 !important;  /* black border */
-    border-radius: 5px !important;
-    padding: 0 !important;
-    box-sizing: border-box !important;
+    justify-content: center !important;
 }
 
-/* Input text field */
-div[data-baseweb="input"] input {
-    min-height: 20px !important;
-    height: 20px !important;
-    padding: 2px 6px !important;          /* tighter padding */
-    font-size: 0.8rem !important;
-    line-height: 18px !important;
-    border: none !important;
-    outline: none !important;
-}
-
-/* === Slim Sign In Button === */
-.stButton > button {
-    width: 100% !important;
-    min-height: 26px !important;
-    height: 26px !important;
-    padding: 0 !important;
-    line-height: 24px !important;
-    background-color: #1877f2 !important;
+.stButton button {
+    background-color: var(--primary) !important;
     color: #fff !important;
-    border: 1.5px solid #000 !important;  /* black border */
-    border-radius: 6px !important;
-    font-size: 0.9rem !important;
-    font-weight: 600 !important;
-    cursor: pointer !important;
+    height: 52px !important;
+    border-radius: 12px !important;
+    font-weight: 800 !important;
+    /* Bold */
+    font-size: 1.3rem !important;
+    /* Increased font size */
+    border: none !important;
+    margin-top: 1.5rem !important;
+    max-width: 320px !important;
+    /* Compact Standard Size */
+    width: 320px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    box-shadow: 0 4px 6px rgba(24, 119, 242, 0.2) !important;
+    transition: all 0.2s ease !important;
 }
 
-.stButton > button:hover {
+.stButton button:hover {
     background-color: #166fe5 !important;
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(24, 119, 242, 0.3) !important;
 }
 
-/* === Error Message === */
+/* === Error Messages === */
 .login-error {
-    margin-top: 1rem !important;
-    color: red !important;
-    font-size: 0.9rem !important;
+    color: #f02849 !important;
+    background: #fef2f2 !important;
+    padding: 0.75rem !important;
+    border-radius: 8px !important;
+    border: 1px solid #fee2e2 !important;
+    font-size: 0.85rem !important;
+    margin: 1.25rem auto 0 auto !important;
+    text-align: center !important;
+    max-width: 320px !important;
+}
+
+/* Hide Boilerplate */
+header,
+footer {
+    display: none !important;
 }

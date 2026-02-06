@@ -189,7 +189,7 @@ with st.sidebar:
             logout()
             st.rerun()  # Refresh app after logout
     else:
-        st.info("🔑 Please log in")
+        pass
 
 # ====================== ROUTING BASED ON ROLE ======================
 if not st.session_state.get("authenticated", False):

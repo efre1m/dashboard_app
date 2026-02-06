@@ -10,35 +10,42 @@ def load_css():
     else:
         st.warning("⚠️ CSS file not found, check path!")
 
+import base64
+
+def get_base64_of_bin_file(bin_file):
+    with open(bin_file, 'rb') as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
 def login_component():
     load_css()
 
-    st.markdown('<div class="login-container">', unsafe_allow_html=True)
-    st.markdown("<h2 class='login-title'>Login to IMNID Dashboard</h2>", unsafe_allow_html=True)
+    logo_path = Path(__file__).parent.parent / "assets" / "logo.png"
 
-    # collapsed labels → only placeholders show (no white label box)
-    username = st.text_input(
-        "Username",
-        placeholder="Enter your username",
-        key="login_user",
-        label_visibility="collapsed"
-    )
-    password = st.text_input(
-        "Password",
-        type="password",
-        placeholder="Enter your password",
-        key="login_pass",
-        label_visibility="collapsed"
-    )
+    # Perfect side-by-side split using native columns and containers
+    col_l, col_r = st.columns([1, 1], gap="large")
+    
+    with col_l:
+        with st.container(border=True):
+            if logo_path.exists():
+                st.image(str(logo_path), use_container_width=True)
+            else:
+                st.info("Logo not found")
+        
+    with col_r:
+        with st.container(border=True):
+            st.markdown("<h2 class='login-title'>IMNID Dashboard</h2>", unsafe_allow_html=True)
+            st.markdown("<p class='login-subtitle'>Enter your credentials to access the platform</p>", unsafe_allow_html=True)
 
-    if st.button("Sign In", use_container_width=True):
-        user = authenticate_user(username, password)
-        if user:
-            st.session_state["authenticated"] = True
-            st.session_state["user"] = user
-            st.success(f"✅ Welcome {user['username']} ({user['role']})")
-            st.rerun()
-        else:
-            st.markdown('<div class="login-error">❌ Invalid username or password</div>', unsafe_allow_html=True)
+            username = st.text_input("Username", placeholder="Username", key="login_user", label_visibility="collapsed")
+            password = st.text_input("Password", type="password", placeholder="Password", key="login_pass", label_visibility="collapsed")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+            if st.button("Login", use_container_width=True):
+                user = authenticate_user(username, password)
+                if user:
+                    st.session_state["authenticated"] = True
+                    st.session_state["user"] = user
+                    st.success(f"Welcome back, {user['username']}")
+                    st.rerun()
+                else:
+                    st.markdown('<div class="login-error">Invalid username or password</div>', unsafe_allow_html=True)
