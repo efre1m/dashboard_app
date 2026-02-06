@@ -36,6 +36,8 @@ def authenticate_user(username: str, password: str):
             u.user_id,
             u.username,
             u.password_hash,
+            u.first_name,
+            u.last_name,
             u.role,
             u.facility_id,
             u.region_id,
@@ -59,7 +61,7 @@ def authenticate_user(username: str, password: str):
         conn.close()
         return None
 
-    (user_id, uname, stored_pw, role, facility_id, region_id, country_id,
+    (user_id, uname, stored_pw, first_name, last_name, role, facility_id, region_id, country_id,
      facility_name, facility_dhis_uid, region_name, region_dhis_uid,
      country_name, country_dhis_uid) = row
 
@@ -89,6 +91,8 @@ def authenticate_user(username: str, password: str):
     return {
         "user_id": user_id,
         "username": uname,
+        "first_name": first_name,
+        "last_name": last_name,
         "role": role,
         "facility_id": facility_id,
         "region_id": region_id,
@@ -123,3 +127,102 @@ def get_user_display_info(user: dict) -> str:
     elif role == "admin":
         return f"{user['username']} (admin)"
     return user.get("username", "Unknown User")
+
+
+def get_user_profile(user_id: int):
+    """Fetch editable profile fields for a user."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT username, first_name, last_name FROM users WHERE user_id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return None
+        return {
+            "username": row[0],
+            "first_name": row[1],
+            "last_name": row[2],
+        }
+    except Exception as e:
+        print(f"Error fetching user profile: {e}")
+        return None
+
+
+def update_user_profile(user_id: int, username: str, first_name: str, last_name: str):
+    """Update username/first/last name with basic uniqueness check."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT user_id FROM users WHERE username = %s AND user_id <> %s",
+            (username, user_id),
+        )
+        existing = cur.fetchone()
+        if existing:
+            cur.close()
+            conn.close()
+            return False, "Username is already in use."
+
+        cur.execute(
+            """
+            UPDATE users
+            SET username = %s, first_name = %s, last_name = %s
+            WHERE user_id = %s
+            """,
+            (username, first_name, last_name, user_id),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True, "Profile updated successfully."
+    except Exception as e:
+        return False, f"Update failed: {e}"
+
+
+def change_user_password(user_id: int, current_password: str, new_password: str):
+    """Verify current password and update to a new bcrypt password."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT password_hash FROM users WHERE user_id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            conn.close()
+            return False, "User not found."
+
+        stored_pw = row[0]
+        valid = False
+        if _is_bcrypt_hash(stored_pw):
+            valid = bcrypt.checkpw(
+                current_password.encode("utf-8"), stored_pw.encode("utf-8")
+            )
+        else:
+            valid = current_password == stored_pw
+
+        if not valid:
+            cur.close()
+            conn.close()
+            return False, "Existing password is incorrect."
+
+        new_hash = bcrypt.hashpw(
+            new_password.encode("utf-8"), bcrypt.gensalt()
+        ).decode("utf-8")
+        cur.execute(
+            "UPDATE users SET password_hash = %s WHERE user_id = %s",
+            (new_hash, user_id),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True, "Password updated successfully."
+    except Exception as e:
+        return False, f"Password update failed: {e}"

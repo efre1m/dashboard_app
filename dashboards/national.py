@@ -27,6 +27,7 @@ from utils.dash_co import (
 )
 from utils.kpi_utils import clear_cache, compute_kpis
 from utils.odk_dashboard import display_odk_dashboard
+from components.edit_profile import render_edit_profile
 from utils.usage_tracking import render_usage_tracking_shared
 #from dashboards.data_quality_tracking import render_data_quality_tracking
 
@@ -1255,6 +1256,14 @@ def render():
     # Re-initialize session state for safety
     initialize_session_state()
 
+    if "edit_profile_mode" not in st.session_state:
+        st.session_state.edit_profile_mode = False
+
+    user = st.session_state.get("user", {})
+    if st.session_state.edit_profile_mode:
+        render_edit_profile(user, view_state_key="edit_profile_mode", key_prefix="national")
+        return
+
     # Show user change notification if needed
     if st.session_state.get("user_changed", False):
         st.sidebar.info("User changed - loading fresh data...")
@@ -1368,6 +1377,10 @@ def render():
     """,
         unsafe_allow_html=True,
     )
+
+    if st.sidebar.button("Edit Profile", use_container_width=True):
+        st.session_state.edit_profile_mode = True
+        st.rerun()
 
     # Refresh Data Button
     if st.sidebar.button("Refresh Data", use_container_width=True):

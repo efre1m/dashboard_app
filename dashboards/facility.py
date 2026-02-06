@@ -29,6 +29,7 @@ from utils.dash_co import (
 )
 from utils.kpi_utils import compute_kpis
 from utils.odk_dashboard import display_odk_dashboard
+from components.edit_profile import render_edit_profile
 
 logging.basicConfig(level=logging.INFO)
 CACHE_TTL = 1800  # 30 minutes
@@ -857,6 +858,14 @@ def render():
     # Re-initialize session state for safety
     initialize_session_state_facility()
 
+    if "edit_profile_mode" not in st.session_state:
+        st.session_state.edit_profile_mode = False
+
+    user = st.session_state.get("user", {})
+    if st.session_state.edit_profile_mode:
+        render_edit_profile(user, view_state_key="edit_profile_mode", key_prefix="facility")
+        return
+
     # Show user change notification if needed
     if st.session_state.get("user_changed_facility", False):
         st.sidebar.info("User changed - loading fresh data...")
@@ -912,6 +921,10 @@ def render():
     """,
         unsafe_allow_html=True,
     )
+
+    if st.sidebar.button("Edit Profile", use_container_width=True):
+        st.session_state.edit_profile_mode = True
+        st.rerun()
 
     # Refresh Data Button
     if st.sidebar.button("Refresh Data", use_container_width=True):
