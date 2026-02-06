@@ -1320,6 +1320,37 @@ def render():
     except Exception:
         pass
 
+    # Fix facility selector readability in the sidebar (scoped to this view only).
+    # The sidebar theme forces white text, while the facility/region expanders use a light background.
+    st.markdown(
+        """
+        <style>
+        /* Sidebar facility expander: dark background with readable text */
+        section[data-testid="stSidebar"] [data-testid="stExpander"] {
+            background-color: #0b0f14 !important;
+            border-color: #1f2937 !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stExpander"] .streamlit-expanderHeader,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] .streamlit-expanderContent,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderContent"] {
+            background-color: #0b0f14 !important;
+            border-color: #1f2937 !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stExpander"] .streamlit-expanderHeader,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] .streamlit-expanderHeader *,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] .streamlit-expanderContent,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] .streamlit-expanderContent *,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderContent"] *,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stCheckbox"] label,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stCheckbox"] span,
+        section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stCheckbox"] p {
+            color: #f8fafc !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # Get user info
     user = st.session_state.get("user", {})
     username = user.get("username", "Unknown User")
