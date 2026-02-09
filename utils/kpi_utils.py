@@ -1092,15 +1092,8 @@ def render_trend_chart(
     df = df.reset_index(drop=True)
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
-    chart_options = ["Line", "Bar", "Area"]
+    # Chart type selection removed - enforcing Line chart only
 
-    chart_type = st.radio(
-        f"📊 Chart type for {title}",
-        options=chart_options,
-        index=0,
-        horizontal=True,
-        key=f"chart_type_{title}_{str(facility_uids)}_{key_suffix}",
-    ).lower()
 
     if "numerator" in df.columns and "denominator" in df.columns:
         df[numerator_name] = df["numerator"]
@@ -1112,34 +1105,20 @@ def render_trend_chart(
         use_hover_data = False
 
     try:
-        if chart_type == "line":
-            fig = px.line(
-                df,
-                x=x_axis_col,
-                y=value_col,
-                markers=True,
-                line_shape="linear",
-                title=title,
-                height=400,
-                custom_data=[numerator_name, denominator_name] if use_hover_data else None,
-            )
-            fig.update_traces(
-                line=dict(width=3),
-                marker=dict(size=7),
-            )
-        elif chart_type == "bar":
-            fig = px.bar(
-                df,
-                x=x_axis_col,
-                y=value_col,
-                title=title,
-                height=400,
-                custom_data=["numerator", "denominator"] if use_hover_data else None,
-            )
-            fig.update_traces(
-                line=dict(width=3),
-                marker=dict(size=7),
-            )
+        fig = px.line(
+            df,
+            x=x_axis_col,
+            y=value_col,
+            markers=True,
+            line_shape="linear",
+            title=title,
+            height=400,
+            custom_data=[numerator_name, denominator_name] if use_hover_data else None,
+        )
+        fig.update_traces(
+            line=dict(width=3),
+            marker=dict(size=7),
+        )
 
         # Apply standardized hover template
         if use_hover_data:
