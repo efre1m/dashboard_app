@@ -14,10 +14,8 @@
 .main .block-container {
     padding-top: 0 !important;
     padding-bottom: 0 !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    min-height: 90vh !important;
+    display: block !important;
+    min-height: auto !important;
 }
 
 /* === Native Container Styling (The Cards) === */
@@ -27,18 +25,12 @@
     box-shadow: var(--shadow) !important;
     border: 1px solid #e2e8f0 !important;
     padding: 2.5rem !important;
-    min-height: 480px !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
+    min-height: auto !important;
 }
 
 /* Ensure contents are centered inside the cards */
 [data-testid="stVerticalBlockBorderWrapper"]>div {
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    align-items: center !important;
+    align-items: stretch !important;
 }
 
 .login-title {

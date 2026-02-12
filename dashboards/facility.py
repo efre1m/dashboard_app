@@ -1008,13 +1008,21 @@ def render():
     current_tab_label = reverse_tab_options.get(
         st.session_state.active_tab, "Maternal"
     )
+    selector_key = "facility_active_tab_selector"
+    if selector_key not in st.session_state:
+        st.session_state[selector_key] = current_tab_label
 
     st.markdown(
         """
         <style>
-        .main .block-container { padding-top: 0.6rem !important; }
+        .main .block-container {
+            padding-top: 0rem !important;
+            margin-top: 0rem !important;
+            min-height: auto !important;
+            justify-content: flex-start !important;
+        }
         .dashboard-tab-header {
-            margin: 0 0 0.35rem 0;
+            margin: -2.25rem 0 0 0;
             padding: 0.75rem 1rem;
             border: 1px solid #c7d2fe;
             border-radius: 12px;
@@ -1025,7 +1033,7 @@ def render():
         }
         .st-key-facility_active_tab_selector [data-testid="stRadio"] {
             padding: 0.55rem 0.7rem;
-            margin-top: 0 !important;
+            margin: 0 !important;
             border: 1px solid #cbd5e1;
             border-radius: 12px;
             background: #f8fafc;
@@ -1049,6 +1057,20 @@ def render():
             background: linear-gradient(135deg, #2563eb, #1d4ed8);
             box-shadow: 0 2px 8px rgba(29, 78, 216, 0.25);
         }
+        /* Newborn tab (2nd option) custom peach theme - robust selectors */
+        .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2),
+        .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] [data-baseweb="radio"]:nth-of-type(2) label {
+            background: #fff7ed !important;
+            border-color: #fed7aa !important;
+            color: #9a3412 !important;
+        }
+        .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2):has(input:checked),
+        .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] [data-baseweb="radio"]:nth-of-type(2) label:has(input:checked) {
+            background: linear-gradient(135deg, #fed7aa, #fdba74) !important;
+            border-color: #fb923c !important;
+            color: #7c2d12 !important;
+            box-shadow: 0 2px 8px rgba(249, 115, 22, 0.28) !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1058,8 +1080,7 @@ def render():
     selected_tab_label = st.radio(
         "Dashboard Tab",
         options=list(tab_options.keys()),
-        index=list(tab_options.keys()).index(current_tab_label),
-        key="facility_active_tab_selector",
+        key=selector_key,
         horizontal=True,
         label_visibility="collapsed",
     )

@@ -196,6 +196,36 @@ if not st.session_state.get("authenticated", False):
     login_component()  # Render login page if not authenticated
 else:
     role = st.session_state["user"].get("role", "")
+
+    # Force dashboard content to top for authenticated pages, overriding any centering CSS.
+    st.markdown(
+        """
+        <style>
+        [data-testid="stAppViewContainer"] .main .block-container {
+            display: block !important;
+            justify-content: flex-start !important;
+            align-content: flex-start !important;
+            min-height: auto !important;
+            height: auto !important;
+            padding-top: 0 !important;
+            margin-top: 0 !important;
+        }
+        [data-testid="stAppViewContainer"] [data-testid="stVerticalBlock"],
+        [data-testid="stAppViewContainer"] [data-testid="stVerticalBlockBorderWrapper"],
+        [data-testid="stAppViewContainer"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+            justify-content: flex-start !important;
+            align-items: stretch !important;
+            min-height: auto !important;
+            height: auto !important;
+        }
+        [data-testid="stAppViewContainer"] .main .block-container > div:first-child {
+            margin-top: 0 !important;
+            padding-top: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     
     # Check if Chat Bot Mode is active (and NOT admin)
     if st.session_state.get("chatbot_mode", False) and role != "admin":

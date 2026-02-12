@@ -483,6 +483,40 @@ def render_newborn_kpi_tab_navigation():
     .newborn-tab-scope { display: none; }
     div[data-baseweb="tab-panel"]:has(.newborn-tab-scope) { background-color: #FFE5D0 !important; }
 
+    /* Force peach background at top-most app containers for newborn tab */
+    html, body,
+    .stApp,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stAppViewContainer"] > .main,
+    [data-testid="stAppViewContainer"] .main .block-container {
+        background: #FFDAB9 !important;
+        background-color: #FFDAB9 !important;
+    }
+
+    /* Force peach styling for the "Newborn" (2nd) dashboard section radio option */
+    .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2),
+    .st-key-regional_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2),
+    .st-key-national_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2),
+    .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] [data-baseweb="radio"]:nth-of-type(2) label,
+    .st-key-regional_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] [data-baseweb="radio"]:nth-of-type(2) label,
+    .st-key-national_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] [data-baseweb="radio"]:nth-of-type(2) label {
+        background: #fff2e6 !important;
+        border-color: #fdba74 !important;
+        color: #9a3412 !important;
+    }
+
+    .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] [data-baseweb="radio"]:nth-of-type(2)[aria-checked="true"] label,
+    .st-key-regional_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] [data-baseweb="radio"]:nth-of-type(2)[aria-checked="true"] label,
+    .st-key-national_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] [data-baseweb="radio"]:nth-of-type(2)[aria-checked="true"] label,
+    .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2):has(input:checked),
+    .st-key-regional_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2):has(input:checked),
+    .st-key-national_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2):has(input:checked) {
+        background: linear-gradient(135deg, #fed7aa, #fdba74) !important;
+        border-color: #f97316 !important;
+        color: #7c2d12 !important;
+        box-shadow: 0 2px 8px rgba(249, 115, 22, 0.28) !important;
+    }
+
     /* Target the container for the newborn dashboard content */
     /* Note: This might be broad, targeting the main area if not specific enough. */
     /* Since we want just the newborn dashboard area, and we are in a function in that context */
@@ -1296,7 +1330,8 @@ def _render_simplified_kpi_trend_chart(
             denominator_name=kpi_config.get("denominator_name", "Total Newborns"),
         )
     elif category == "cpap_general":
-        render_cpap_general_trend_chart(
+        # "General CPAP Coverage" is retired; route to by-weight visualization if encountered.
+        render_cpap_by_weight_trend_chart(
             working_df,
             "period_display",
             chart_title,
@@ -1304,7 +1339,7 @@ def _render_simplified_kpi_trend_chart(
             text_color,
             facility_uids,
             numerator_name=kpi_config.get("numerator_name", "CPAP Cases"),
-            denominator_name=kpi_config.get("denominator_name", "Total Admitted"),
+            denominator_name=kpi_config.get("denominator_name", "Total Newborns"),
         )
     elif category == "cpap_rds":
         render_cpap_rds_trend_chart(
@@ -2000,16 +2035,11 @@ __all__ = [
     "_get_newborn_default_kpi_data",
     "get_date_column_from_newborn_df",
     # CPAP KPI names
-    "General CPAP Coverage",
     "CPAP for RDS",
     "CPAP Coverage by Birth Weight",
     # NEW CPAP comparison functions for import
-    "render_cpap_general_facility_comparison",
     "render_cpap_rds_facility_comparison",
-    "render_cpap_general_region_comparison",
     "render_cpap_rds_region_comparison",
     "render_kmc_facility_comparison",
     "render_kmc_region_comparison",
-    "render_cpap_facility_comparison",
-    "render_cpap_region_comparison",
 ]
