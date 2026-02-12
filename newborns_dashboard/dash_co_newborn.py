@@ -504,14 +504,14 @@ def render_newborn_kpi_tab_navigation():
 
     # Create main KPI group tabs - UPDATED TO 6 TABS & REORDERED
     # Enrollment -> Birth -> Data Quality -> Complication -> Intervention -> Mortality
-    tab_enrollment, tab_birth, tab_dq, tab_complication, tab_intervention, tab_mortality = st.tabs(
+    tab_enrollment, tab_birth, tab_complication, tab_intervention, tab_mortality, tab_dq = st.tabs(
         [
             "Enrollment",
             "Birth",
-            "Data Quality",
             "Complication",
             "Intervention",
             "Mortality",
+            "Data Quality",
         ]
     )
 

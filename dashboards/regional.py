@@ -615,7 +615,7 @@ def render_summary_dashboard_shared(
                 from newborns_dashboard.kpi_utils_newborn import (
                     compute_admitted_newborns_count,  # For Total Admitted Newborns
                     compute_neonatal_mortality_rate,  # For NMR
-                    compute_hypothermia_on_admission_rate,  # For Hypothermia on Admission
+                    # compute_hypothermia_on_admission_rate,  # For Hypothermia on Admission
                 )
 
                 # Compute only the 3 required newborn indicators:
@@ -630,20 +630,20 @@ def render_summary_dashboard_shared(
                 )
 
                 # 3. Hypothermia After Admission Rate
-                hypothermia_rate, hypo_count, total_hypo = (
-                    compute_hypothermia_on_admission_rate(
-                        filtered_newborn, facility_uids
-                    )
-                )
+                # hypothermia_rate, hypo_count, total_hypo = (
+                #     compute_hypothermia_on_admission_rate(
+                #         filtered_newborn, facility_uids
+                #     )
+                # )
 
                 newborn_kpis = {
                     "admitted_newborns_count": admitted_newborns_count,
                     "neonatal_mortality_rate": nmr_rate,
-                    "hypothermia_rate": hypothermia_rate,
+                    # "hypothermia_rate": hypothermia_rate,
                     "death_count": death_count,
                     "total_deaths": total_deaths,
-                    "hypothermia_count": hypo_count,
-                    "total_hypo": total_hypo,
+                    # "hypothermia_count": hypo_count,
+                    # "total_hypo": total_hypo,
                 }
 
             # =========== NEW: FACILITY COMPARISON DATA ===========
@@ -736,9 +736,9 @@ def render_summary_dashboard_shared(
                 "neonatal_mortality_rate": newborn_kpis.get(
                     "neonatal_mortality_rate", 0.0
                 ),  # 2. NMR
-                "hypothermia_rate": newborn_kpis.get(
-                    "hypothermia_rate", 0.0
-                ),  # 3. Hypothermia After Admission
+                # "hypothermia_rate": newborn_kpis.get(
+                #     "hypothermia_rate", 0.0
+                # ),  # 3. Hypothermia After Admission
                 "newborn_start_date": newborn_start_date,
                 # NEW: Facility comparison data
                 "facility_comparison_data": facility_comparison_data,
@@ -760,7 +760,7 @@ def render_summary_dashboard_shared(
 
     newborn_tei_count = summary_data["newborn_tei_count"]
     neonatal_mortality_rate = summary_data["neonatal_mortality_rate"]
-    hypothermia_rate = summary_data["hypothermia_rate"]
+    # hypothermia_rate = summary_data["hypothermia_rate"]
     newborn_start_date = summary_data["newborn_start_date"]
 
     facility_comparison_data = summary_data["facility_comparison_data"]
@@ -856,13 +856,13 @@ def render_summary_dashboard_shared(
             "Newborn mortality rate (NMR)",
             "#d62728",
         ),
-        (
-            col3,
-            "Hypothermia on Admission",
-            f"{hypothermia_rate:.2f}%",
-            "Newborns with temp < 36.5°C on admission",
-            "#2ca02c",
-        ),
+        # (
+        #     col3,
+        #     "Hypothermia on Admission",
+        #     f"{hypothermia_rate:.2f}%",
+        #     "Newborns with temp < 36.5°C on admission",
+        #     "#2ca02c",
+        # ),
     ]
 
     for col, label, value, help_text, color in newborn_metrics:

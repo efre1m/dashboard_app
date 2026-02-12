@@ -525,13 +525,13 @@ def render_kpi_tab_navigation():
         st.session_state.selected_kpi = "Admitted Mothers"
 
     # Create main KPI group tabs
-    tab_enroll, tab_care, tab_dq, tab_compl, tab_mort = st.tabs(
+    tab_enroll, tab_care, tab_compl, tab_mort, tab_dq = st.tabs(
         [
             "Enrollment",
             "Care",
-            "Data Quality",
             "Complication",
             "Mortality",
+            "Data Quality",
         ]
     )
 
