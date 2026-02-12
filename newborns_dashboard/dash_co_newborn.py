@@ -480,6 +480,9 @@ def render_newborn_kpi_tab_navigation():
         border-color: #ced4da !important;
     }
 
+    .newborn-tab-scope { display: none; }
+    div[data-baseweb="tab-panel"]:has(.newborn-tab-scope) { background-color: #FFE5D0 !important; }
+
     /* Target the container for the newborn dashboard content */
     /* Note: This might be broad, targeting the main area if not specific enough. */
     /* Since we want just the newborn dashboard area, and we are in a function in that context */
@@ -494,6 +497,7 @@ def render_newborn_kpi_tab_navigation():
         background-color: transparent !important;
     }
     </style>
+    <div class="newborn-tab-scope"></div>
     """,
         unsafe_allow_html=True,
     )
