@@ -1009,6 +1009,52 @@ def render():
         st.session_state.active_tab, "Maternal"
     )
 
+    st.markdown(
+        """
+        <style>
+        .main .block-container { padding-top: 0.6rem !important; }
+        .dashboard-tab-header {
+            margin: 0 0 0.35rem 0;
+            padding: 0.75rem 1rem;
+            border: 1px solid #c7d2fe;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #eff6ff, #e0e7ff);
+            color: #1e3a8a;
+            font-size: 1.08rem;
+            font-weight: 800;
+        }
+        .st-key-facility_active_tab_selector [data-testid="stRadio"] {
+            padding: 0.55rem 0.7rem;
+            margin-top: 0 !important;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #f8fafc;
+        }
+        .st-key-facility_active_tab_selector [data-testid="stRadio"] div[role="radiogroup"][aria-orientation="horizontal"] {
+            gap: 0.45rem;
+            margin-top: 0 !important;
+        }
+        .st-key-facility_active_tab_selector [data-testid="stRadio"] label {
+            margin: 0 !important;
+            padding: 0.55rem 1rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            background: #ffffff;
+            font-size: 1.03rem !important;
+            font-weight: 800 !important;
+        }
+        .st-key-facility_active_tab_selector [data-testid="stRadio"] label:has(input:checked) {
+            border-color: #1d4ed8;
+            color: #ffffff !important;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            box-shadow: 0 2px 8px rgba(29, 78, 216, 0.25);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="dashboard-tab-header">Dashboard Sections</div>', unsafe_allow_html=True)
+
     selected_tab_label = st.radio(
         "Dashboard Tab",
         options=list(tab_options.keys()),
