@@ -996,23 +996,34 @@ def render():
             time_elapsed = time.time() - st.session_state[timestamp_key]
             # Sidebar info removed per user request
 
-    # ================ OPTIMIZED TABS WITH PROPER ISOLATION ================
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        [
-            "🤰 **Maternal**",
-            "👶 **Newborn**",
-            "📊 **Summary**",
-            "📋 **Mentorship**",
-            "📚 **Resources**",
-        ]
+    # ================ STRICT TAB BRANCHING (HARD LAZY LOADING) ================
+    tab_options = {
+        "Maternal": "maternal",
+        "Newborn": "newborn",
+        "Summary": "summary",
+        "Mentorship": "mentorship",
+        "Resources": "resources",
+    }
+    reverse_tab_options = {v: k for k, v in tab_options.items()}
+    current_tab_label = reverse_tab_options.get(
+        st.session_state.active_tab, "Maternal"
     )
 
-    with tab1:
-        # Update active tab only if this tab is clicked
-        if st.session_state.active_tab != "maternal":
-            st.session_state.active_tab = "maternal"
-            logging.info("Switched to Maternal tab")
+    selected_tab_label = st.radio(
+        "Dashboard Tab",
+        options=list(tab_options.keys()),
+        index=list(tab_options.keys()).index(current_tab_label),
+        key="facility_active_tab_selector",
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    selected_tab = tab_options[selected_tab_label]
 
+    if st.session_state.active_tab != selected_tab:
+        st.session_state.active_tab = selected_tab
+        logging.info(f"Switched to {selected_tab.capitalize()} tab")
+
+    if selected_tab == "maternal":
         maternal_data = shared_data["maternal"]
         if maternal_data:
             # Create dummy facilities_by_region for compatibility
@@ -1031,11 +1042,7 @@ def render():
         else:
             st.error("Maternal data not available")
 
-    with tab2:
-        if st.session_state.active_tab != "newborn":
-            st.session_state.active_tab = "newborn"
-            logging.info("Switched to Newborn tab")
-
+    elif selected_tab == "newborn":
         newborn_data = shared_data["newborn"]
         if newborn_data:
             # Create dummy facilities_by_region for compatibility
@@ -1054,11 +1061,7 @@ def render():
         else:
             st.error("Newborn data not available")
 
-    with tab3:
-        if st.session_state.active_tab != "summary":
-            st.session_state.active_tab = "summary"
-            logging.info("Switched to Summary tab")
-
+    elif selected_tab == "summary":
         # Empty selected_facilities list for facility level
         selected_facilities = []
 
@@ -1070,18 +1073,14 @@ def render():
             shared_data,
         )
 
-    with tab4:
-        if st.session_state.active_tab != "mentorship":
-            st.session_state.active_tab = "mentorship"
-            logging.info("Switched to Mentorship tab")
-
+    elif selected_tab == "mentorship":
         # Check if mentorship data should be loaded
         if not st.session_state.tab_data_loaded["mentorship"]:
             st.markdown(
                 """
             <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
                  border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
-                <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+                <div style="font-size: 4rem; margin-bottom: 1rem;">&#128203;</div>
                 <h2 style="color: #495057; margin-bottom: 1rem;">Mentorship Dashboard</h2>
                 <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
                     View mentorship tracking data and ODK form submissions
@@ -1109,7 +1108,7 @@ def render():
                     """
                 <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
                      border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
-                    <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+                    <div style="font-size: 4rem; margin-bottom: 1rem;">&#128203;</div>
                     <h2 style="color: #495057; margin-bottom: 1rem;">Loading Mentorship Dashboard...</h2>
                     <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
                         Please wait while we process the data. This may take 1-2 minutes.
@@ -1125,11 +1124,8 @@ def render():
                 st.session_state.tab_loading["mentorship"] = False
                 st.rerun()
             display_odk_dashboard(user)
-    with tab5:
-        if st.session_state.active_tab != "resources":
-            st.session_state.active_tab = "resources"
-            logging.info("Switched to Resources tab")
-    
+
+    elif selected_tab == "resources":
         render_resources_tab()
     # Log current active tab state
     logging.info(f"Current active tab: {st.session_state.active_tab}")
