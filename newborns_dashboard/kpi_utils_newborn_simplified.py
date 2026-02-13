@@ -4094,15 +4094,8 @@ def render_kmc_coverage_comparison_chart(
     if table_data:
         # Add 'Overall' row
         overall_row = {entity_label_text: "**OVERALL**"}
-        
-        # Calculate overall totals for each category across all entities in table_data
-        # Note: We need to re-aggregate numerators and denominators.
-        # However, table_data only has strings now. We should have stored raw values.
-        # Let's adjust the loop above to store raw data or re-compute overall from dataframe.
-        pass 
-        
+
         # BETTER APPROACH: Compute overall from the filtered dataframe of all selected entities
-        overall_doc_ids = []
         if comparison_mode == "facility":
             overall_df = df[df["orgUnit"].isin(entities)].copy()
         else: # region
@@ -4118,13 +4111,13 @@ def render_kmc_coverage_comparison_chart(
             overall_df = df[df["orgUnit"].isin(all_region_facilities)].copy()
 
         if not overall_df.empty:
-             overall_cpap_data = compute_cpap_coverage_by_weight_kpi(overall_df, facility_uids=None)
+             overall_kmc_data = compute_kmc_coverage_kpi(overall_df, facility_uids=None)
              for category_key, category_info in sorted(
                 filtered_categories.items(), key=lambda x: x[1]["sort_order"]
             ):
-                rate = overall_cpap_data["cpap_rates_by_category"].get(category_key, 0)
-                count = overall_cpap_data["cpap_counts_by_category"].get(category_key, 0)
-                total = overall_cpap_data["cpap_total_by_category"].get(category_key, 0)
+                rate = overall_kmc_data["kmc_rates_by_category"].get(category_key, 0)
+                count = overall_kmc_data["kmc_counts_by_category"].get(category_key, 0)
+                total = overall_kmc_data["kmc_total_by_category"].get(category_key, 0)
                 
                 if total == 0:
                      overall_row[category_info["short_name"]] = "-"

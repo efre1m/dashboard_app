@@ -1171,8 +1171,7 @@ def render_newborn_region_comparison_chart(
     denominator_name="Denominator",
     **kwargs
 ):
-    """Render region comparison chart - CHART ABOVE TABLE VERSION"""
-
+    """Render region comparison using multi-line chart (one line per region)."""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -1182,122 +1181,161 @@ def render_newborn_region_comparison_chart(
         st.info("⚠️ No data available for region comparison.")
         return
 
-    # Check for required columns
-    required_cols = ["Region", "numerator", "denominator"]
+    required_cols = ["Region", "numerator", "denominator", period_col]
     missing_cols = [col for col in required_cols if col not in df.columns]
-
     if missing_cols:
         st.error(f"❌ Missing required columns: {missing_cols}")
         st.write("Available columns:", list(df.columns))
         return
 
-    # Calculate region totals
+    # Keep existing summary computation logic (overall weighted by summed num/den).
     region_totals = {}
-    for region_name in region_names:
+    for region_name in (region_names or df["Region"].dropna().unique().tolist()):
         region_data = df[df["Region"] == region_name]
+        if region_data.empty:
+            continue
 
-        if not region_data.empty:
-            # SUM the numerator and denominator columns directly
-            total_numerator = region_data["numerator"].sum()
-            total_denominator = region_data["denominator"].sum()
+        total_numerator = pd.to_numeric(
+            region_data["numerator"], errors="coerce"
+        ).fillna(0).sum()
+        total_denominator = pd.to_numeric(
+            region_data["denominator"], errors="coerce"
+        ).fillna(0).sum()
+        weighted_rate = (
+            (total_numerator / total_denominator) * 100 if total_denominator > 0 else 0
+        )
 
-            # Calculate weighted average
-            weighted_rate = (
-                (total_numerator / total_denominator * 100)
-                if total_denominator > 0
-                else 0
-            )
+        region_totals[region_name] = {
+            "total_numerator": total_numerator,
+            "total_denominator": total_denominator,
+            "weighted_rate": weighted_rate,
+        }
 
-            region_totals[region_name] = {
-                "total_numerator": total_numerator,
-                "total_denominator": total_denominator,
-                "weighted_rate": weighted_rate,
-            }
+    if not region_totals:
+        st.info("⚠️ No comparison data available for regions.")
+        return
 
-    # Calculate overall totals
-    overall_numerator = sum(data["total_numerator"] for data in region_totals.values())
-    overall_denominator = sum(
-        data["total_denominator"] for data in region_totals.values()
-    )
+    overall_numerator = sum(v["total_numerator"] for v in region_totals.values())
+    overall_denominator = sum(v["total_denominator"] for v in region_totals.values())
     overall_rate = (
-        (overall_numerator / overall_denominator * 100)
-        if overall_denominator > 0
-        else 0
+        (overall_numerator / overall_denominator) * 100 if overall_denominator > 0 else 0
     )
 
-    # Create comparison table data
     comparison_data = []
     for region_name, totals in region_totals.items():
         comparison_data.append(
             {
                 "Region": region_name,
-                f"{numerator_name}": totals["total_numerator"],
-                f"{denominator_name}": totals["total_denominator"],
+                numerator_name: totals["total_numerator"],
+                denominator_name: totals["total_denominator"],
                 "Rate (%)": f"{totals['weighted_rate']:.2f}%",
             }
         )
-
-    # Add overall row
     comparison_data.append(
         {
             "Region": "Overall",
-            f"{numerator_name}": overall_numerator,
-            f"{denominator_name}": overall_denominator,
+            numerator_name: overall_numerator,
+            denominator_name: overall_denominator,
             "Rate (%)": f"{overall_rate:.2f}%",
         }
     )
-
     comparison_df = pd.DataFrame(comparison_data)
 
-    # *** 1. DISPLAY CHART FIRST ***
-    chart_data = comparison_df[comparison_df["Region"] != "Overall"].copy()
+    # Period-by-region chart data (same chart style as facility comparison: multi-line).
+    chart_df = df.copy()
+    if region_names:
+        chart_df = chart_df[chart_df["Region"].isin(region_names)].copy()
 
-    if not chart_data.empty:
-        chart_data["Rate_float"] = (
-            chart_data["Rate (%)"].str.replace("%", "").astype(float)
-        )
+    chart_df["numerator"] = pd.to_numeric(chart_df["numerator"], errors="coerce").fillna(0)
+    chart_df["denominator"] = pd.to_numeric(chart_df["denominator"], errors="coerce").fillna(0)
 
-        fig = px.bar(
-            chart_data,
-            x="Region",
-            y="Rate_float",
-            title=f"{title} - Regional Rates",
-            color="Region",
-            text_auto=".1f",
-            custom_data=[numerator_name, denominator_name]
-        )
-
-        fig.update_traces(
-            hovertemplate=get_attractive_hover_template(
-                title, numerator_name, denominator_name
-            )
-        )
-
-        fig.update_layout(
-            plot_bgcolor=bg_color,
-            paper_bgcolor=bg_color,
-            font_color=text_color,
-            showlegend=False,
-            yaxis_title="Rate (%)",
-            height=400,  # Fixed height for consistency
-        )
-
-        # Display chart at the top
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Add some spacing between chart and table
-    st.markdown("---")
-
-    # *** 2. DISPLAY TABLE SECOND ***
-    st.markdown("### Regional Data Summary")
-
-    # Display the table
-    st.dataframe(
-        comparison_df,
-        use_container_width=True,
-        height=300,  # Limit table height
+    grouped = (
+        chart_df.groupby(["Region", period_col], as_index=False)
+        .agg({"numerator": "sum", "denominator": "sum"})
+        .copy()
+    )
+    grouped["value"] = grouped.apply(
+        lambda r: (r["numerator"] / r["denominator"] * 100) if r["denominator"] > 0 else 0,
+        axis=1,
     )
 
+    # Normalize and strictly sort periods so lines do not zigzag.
+    grouped["_period_label"] = grouped[period_col].apply(format_period_month_year)
+
+    if "period_sort" in chart_df.columns:
+        period_map = (
+            chart_df[[period_col, "period_sort"]]
+            .dropna(subset=[period_col])
+            .drop_duplicates(subset=[period_col])
+            .copy()
+        )
+        period_map["_period_label"] = period_map[period_col].apply(format_period_month_year)
+        period_map["period_sort"] = pd.to_numeric(period_map["period_sort"], errors="coerce")
+        period_map = period_map.sort_values("period_sort")
+        period_order = period_map["_period_label"].dropna().tolist()
+        grouped = grouped.merge(
+            period_map[[period_col, "period_sort"]],
+            on=period_col,
+            how="left",
+        )
+    else:
+        grouped["period_sort"] = grouped["_period_label"].apply(
+            lambda x: dt.datetime.strptime(x, "%b-%y")
+            if isinstance(x, str) and "-" in x
+            else pd.NaT
+        )
+        period_order = (
+            grouped[["_period_label", "period_sort"]]
+            .drop_duplicates()
+            .sort_values("period_sort")
+            ["_period_label"]
+            .dropna()
+            .tolist()
+        )
+
+    grouped = grouped.sort_values(["Region", "period_sort", "_period_label"]).copy()
+
+    fig = px.line(
+        grouped,
+        x="_period_label",
+        y="value",
+        color="Region",
+        markers=True,
+        title=f"{title} - Region Comparison",
+        category_orders={"_period_label": period_order},
+        custom_data=["numerator", "denominator"],
+        height=350,
+    )
+    fig.update_traces(
+        line=dict(width=3),
+        marker=dict(size=7),
+        hovertemplate=get_attractive_hover_template(
+            title, numerator_name, denominator_name
+        ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
+    )
+    fig.update_layout(
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis_title="Period (Month-Year)",
+        yaxis_title=title,
+        xaxis=dict(
+            type="category",
+            categoryorder="array",
+            categoryarray=period_order,
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(rangemode="tozero", showgrid=True, gridcolor="rgba(128,128,128,0.2)"),
+        legend=dict(title="Regions", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### Regional Data Summary")
+    st.dataframe(comparison_df, use_container_width=True, height=300)
     return comparison_df
 
 
@@ -1743,116 +1781,23 @@ def render_admitted_newborns_region_comparison_chart(
     value_name="Admitted Newborns",
     **kwargs
 ):
-    """Render region comparison chart for Admitted Newborns - FIXED DOWNLOAD BUTTONS"""
+    """Use the exact admitted-mothers region comparison implementation."""
+    from utils.kpi_admitted_mothers import render_admitted_mothers_region_comparison_chart
 
-    import io  # Add this import at the top of the function
-
-    if text_color is None:
-        text_color = auto_text_color(bg_color)
-
-    st.subheader(title)
-
-    if df is None or df.empty:
-        st.info("⚠️ No data available for region comparison.")
-        return
-
-    # Check for required columns
-    if "Region" not in df.columns or value_col not in df.columns:
-        st.error("❌ Missing required columns for region comparison.")
-        return
-
-    # Calculate region totals
-    region_totals = {}
-    for region_name in region_names:
-        region_data = df[df["Region"] == region_name]
-
-        if not region_data.empty:
-            total_value = region_data[value_col].sum()
-            region_totals[region_name] = total_value
-
-    # Create comparison table data
-    comparison_data = []
-    for region_name, total_value in region_totals.items():
-        comparison_data.append(
-            {
-                "Region": region_name,
-                f"{value_name}": total_value,
-            }
-        )
-
-    # Add overall total
-    overall_total = sum(region_totals.values())
-    comparison_data.append(
-        {
-            "Region": "Overall",
-            f"{value_name}": overall_total,
-        }
+    return render_admitted_mothers_region_comparison_chart(
+        df=df,
+        period_col=period_col,
+        value_col=value_col,
+        title=title,
+        bg_color=bg_color,
+        text_color=text_color,
+        region_names=region_names,
+        region_mapping=region_mapping,
+        facilities_by_region=facilities_by_region,
+        value_name=value_name,
+        suppress_plot=kwargs.get("suppress_plot", False),
+        **kwargs,
     )
-
-    comparison_df = pd.DataFrame(comparison_data)
-
-    # *** 1. DISPLAY CHART FIRST ***
-    chart_data = comparison_df[comparison_df["Region"] != "Overall"].copy()
-
-    if not chart_data.empty:
-        fig = px.bar(
-            chart_data,
-            x="Region",
-            y=value_name,
-            title=f"{title} - Regional Comparison",
-            color="Region",
-            text_auto=True,
-        )
-
-        fig.update_traces(
-            hovertemplate=get_attractive_hover_template(value_name, "", "", is_count=True)
-        )
-
-        fig.update_layout(
-            plot_bgcolor=bg_color,
-            paper_bgcolor=bg_color,
-            font_color=text_color,
-            showlegend=False,
-            yaxis_title=value_name,
-            height=400,
-        )
-
-        # Display chart first
-        st.plotly_chart(fig, use_container_width=True)
-
-    # *** 2. DISPLAY TABLE SECOND ***
-    st.markdown("### Regional Summary")
-    st.dataframe(
-        comparison_df,
-        use_container_width=True,
-        height=300,
-    )
-
-    # *** 3. FIXED DOWNLOAD BUTTONS WITH UNIQUE KEYS ***
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        # Create CSV data - FIXED WITH UNIQUE KEY
-        csv_data = comparison_df.to_csv(index=False)
-
-        # Generate a UNIQUE key using title and timestamp
-        import time
-
-        unique_key = (
-            f"admitted_newborns_csv_{int(time.time())}_{hash(str(comparison_df))}"
-        )
-
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv_data,
-            file_name=f"admitted_newborns_region_comparison_{title.replace(' ', '_')}.csv",
-            mime="text/csv",
-            key=unique_key,  # UNIQUE KEY for Admitted Newborns
-            use_container_width=True,
-        )
-
-    return comparison_df
 
 
 # ---------------- Additional Helper Functions ----------------
