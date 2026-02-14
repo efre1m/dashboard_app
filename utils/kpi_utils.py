@@ -80,6 +80,94 @@ def format_period_month_year(period_str):
     return period_str
 
 
+def get_current_period_label():
+    """Get the current time aggregation label from session state."""
+    period_label = st.session_state.get("period_label", "Monthly")
+    if "filters" in st.session_state and "period_label" in st.session_state.filters:
+        period_label = st.session_state.filters["period_label"]
+    return str(period_label)
+
+
+def format_period_for_download(period_value, period_label):
+    """Format period value for CSV downloads, including monthly M/1/YYYY output."""
+    if pd.isna(period_value):
+        return ""
+
+    raw = str(period_value).strip()
+    if not raw:
+        return ""
+
+    parsed_date = None
+    formats_to_try = [
+        "%Y-%m",
+        "%b-%y",
+        "%B-%y",
+        "%Y-%m-%d",
+        "%m/%Y",
+        "%Y/%m",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%Y%m",
+    ]
+
+    for fmt in formats_to_try:
+        try:
+            parsed_date = dt.datetime.strptime(raw, fmt)
+            break
+        except (ValueError, TypeError):
+            continue
+
+    if parsed_date is not None and str(period_label).lower() == "monthly":
+        return f"{parsed_date.month}/1/{parsed_date.year}"
+
+    return raw
+
+
+def format_trend_period_for_download(period_value):
+    """Format period for trend-style display (MMM YYYY) where parseable."""
+    if pd.isna(period_value):
+        return ""
+
+    raw = str(period_value).strip()
+    if not raw:
+        return ""
+
+    formats_to_try = [
+        "%Y-%m",
+        "%b-%y",
+        "%B-%y",
+        "%Y-%m-%d",
+        "%m/%Y",
+        "%Y/%m",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%Y%m",
+    ]
+
+    for fmt in formats_to_try:
+        try:
+            return dt.datetime.strptime(raw, fmt).strftime("%b %Y")
+        except (ValueError, TypeError):
+            continue
+
+    return raw
+
+
+def format_period_list_for_download(period_series, period_label):
+    """Create a readable period string for download rows from available periods."""
+    if period_series is None:
+        return ""
+
+    formatted_periods = []
+    for period_value in pd.Series(period_series).dropna().tolist():
+        formatted = format_period_for_download(period_value, period_label)
+        if formatted:
+            formatted_periods.append(formatted)
+
+    unique_periods = list(dict.fromkeys(formatted_periods))
+    return ", ".join(unique_periods)
+
+
 def get_attractive_hover_template(
     kpi_name, numerator_name, denominator_name, is_count=False
 ):
@@ -1599,48 +1687,25 @@ def render_facility_comparison_chart(
             pivot_df = pd.DataFrame(pivot_data)
             st.dataframe(pivot_df, use_container_width=True)
 
-    # Keep download functionality
-    csv_data = []
-    for facility_name in comparison_df["Facility"].unique():
-        facility_data = comparison_df[comparison_df["Facility"] == facility_name]
-        if not facility_data.empty:
-            total_numerator = facility_data["numerator"].sum()
-            total_denominator = facility_data["denominator"].sum()
-            overall_value = (
-                (total_numerator / total_denominator * 100)
-                if total_denominator > 0
-                else 0
-            )
-            csv_data.append(
-                {
-                    "Facility": facility_name,
-                    numerator_name: total_numerator,
-                    denominator_name: total_denominator,
-                    title: f"{overall_value:.2f}%",
-                }
-            )
-
-    # Add overall row to CSV
-    if csv_data:
-        all_numerators = sum(item[numerator_name] for item in csv_data)
-        all_denominators = sum(item[denominator_name] for item in csv_data)
-        grand_overall = (
-            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+    # Keep download functionality (one row per facility per period)
+    period_label = get_current_period_label()
+    if not comparison_df.empty:
+        csv_df = comparison_df.copy()
+        csv_df["Time Period"] = csv_df["period_display"].apply(
+            lambda p: format_period_for_download(p, period_label)
         )
-        csv_data.append(
-            {
-                "Facility": "Overall",
-                numerator_name: all_numerators,
-                denominator_name: all_denominators,
-                title: f"{grand_overall:.2f}%",
-            }
+        csv_df = csv_df.rename(
+            columns={"numerator": numerator_name, "denominator": denominator_name}
         )
-
-        csv_df = pd.DataFrame(csv_data)
-        csv = csv_df.to_csv(index=False)
+        csv_df[title] = csv_df["value"].apply(
+            lambda v: f"{float(v):.2f}%" if is_rate_kpi else f"{float(v):,.0f}"
+        )
+        csv_df = csv_df[
+            ["Facility", "Time Period", numerator_name, denominator_name, title]
+        ].reset_index(drop=True)
         st.download_button(
             label="📥 Download Overall Comparison Data",
-            data=csv,
+            data=csv_df.to_csv(index=False),
             file_name=f"{title.lower().replace(' ', '_')}_facility_summary.csv",
             mime="text/csv",
             help="Download overall summary data for facility comparison",
@@ -1905,48 +1970,25 @@ def render_region_comparison_chart(
             pivot_df = pd.DataFrame(pivot_data).reset_index(drop=True)
             st.dataframe(pivot_df, use_container_width=True)
 
-    # Keep download functionality
-    csv_data = []
-    for region_name in comparison_df["Region"].unique():
-        region_data = comparison_df[comparison_df["Region"] == region_name]
-        if not region_data.empty:
-            total_numerator = region_data["numerator"].sum()
-            total_denominator = region_data["denominator"].sum()
-            overall_value = (
-                (total_numerator / total_denominator * 100)
-                if total_denominator > 0
-                else 0
-            )
-            csv_data.append(
-                {
-                    "Region": region_name,
-                    numerator_name: total_numerator,
-                    denominator_name: total_denominator,
-                    title: f"{overall_value:.2f}%",
-                }
-            )
-
-    # Add overall row to CSV
-    if csv_data:
-        all_numerators = sum(item[numerator_name] for item in csv_data)
-        all_denominators = sum(item[denominator_name] for item in csv_data)
-        grand_overall = (
-            (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
+    # Keep download functionality (one row per region per period)
+    period_label = get_current_period_label()
+    if not comparison_df.empty:
+        csv_df = comparison_df.copy()
+        csv_df["Time Period"] = csv_df["period_display"].apply(
+            lambda p: format_period_for_download(p, period_label)
         )
-        csv_data.append(
-            {
-                "Region": "Overall",
-                numerator_name: all_numerators,
-                denominator_name: all_denominators,
-                title: f"{grand_overall:.2f}%",
-            }
+        csv_df = csv_df.rename(
+            columns={"numerator": numerator_name, "denominator": denominator_name}
         )
-
-        csv_df = pd.DataFrame(csv_data).reset_index(drop=True)
-        csv = csv_df.to_csv(index=False)
+        csv_df[title] = csv_df["value"].apply(
+            lambda v: f"{float(v):.2f}%" if is_rate_kpi else f"{float(v):,.0f}"
+        )
+        csv_df = csv_df[
+            ["Region", "Time Period", numerator_name, denominator_name, title]
+        ].reset_index(drop=True)
         st.download_button(
             label="📥 Download Overall Comparison Data",
-            data=csv,
+            data=csv_df.to_csv(index=False),
             file_name=f"{title.lower().replace(' ', '_')}_region_summary.csv",
             mime="text/csv",
             help="Download overall summary data for region comparison",

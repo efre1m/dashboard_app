@@ -14,6 +14,8 @@ from utils.kpi_utils import (
     compute_total_deliveries,  # Import for consistency
     get_relevant_date_column_for_kpi,
     get_attractive_hover_template,  # FIXED: Added missing import
+    get_current_period_label,
+    format_period_for_download,
 )
 
 # ---------------- Caching Setup ----------------
@@ -399,9 +401,17 @@ def render_admitted_mothers_facility_comparison_chart(
     import time
     key_suffix = kwargs.get("key_suffix", "")
     unique_key = f"maternal_admitted_facility_{int(time.time())}_{key_suffix}_{hash(str(df))}"
+    period_label = get_current_period_label()
+    csv_df = df.copy()
+    csv_df["Time Period"] = csv_df[period_col].apply(
+        lambda p: format_period_for_download(p, period_label)
+    )
+    csv_df = csv_df[["Facility", "Time Period", value_col]].rename(
+        columns={value_col: f"{final_name} Count"}
+    )
     st.download_button(
         label="📥 Download Facility Comparison Data",
-        data=df.to_csv(index=False),
+        data=csv_df.to_csv(index=False),
         file_name="admitted_mothers_facility_comparison.csv",
         mime="text/csv",
         key=unique_key,
@@ -496,9 +506,17 @@ def render_admitted_mothers_region_comparison_chart(
     import time
     key_suffix = kwargs.get("key_suffix", "")
     unique_key = f"maternal_admitted_region_{int(time.time())}_{key_suffix}_{hash(str(df))}"
+    period_label = get_current_period_label()
+    csv_df = df.copy()
+    csv_df["Time Period"] = csv_df[period_col].apply(
+        lambda p: format_period_for_download(p, period_label)
+    )
+    csv_df = csv_df[["Region", "Time Period", value_col]].rename(
+        columns={value_col: f"{final_name} Count"}
+    )
     st.download_button(
         label="📥 Download Region Comparison Data",
-        data=df.to_csv(index=False),
+        data=csv_df.to_csv(index=False),
         file_name="admitted_mothers_region_comparison.csv",
         mime="text/csv",
         key=unique_key,

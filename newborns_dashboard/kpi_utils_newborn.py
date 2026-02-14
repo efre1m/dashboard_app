@@ -7,7 +7,13 @@ import hashlib
 import numpy as np
 import logging
 import warnings
-from utils.kpi_utils import auto_text_color, format_period_month_year, get_attractive_hover_template
+from utils.kpi_utils import (
+    auto_text_color,
+    format_period_month_year,
+    get_attractive_hover_template,
+    get_current_period_label,
+    format_period_for_download,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -1336,6 +1342,28 @@ def render_newborn_region_comparison_chart(
     st.markdown("---")
     st.markdown("### Regional Data Summary")
     st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # Download details with one row per region per period
+    period_label = get_current_period_label()
+    csv_df = grouped.copy()
+    csv_df["Time Period"] = csv_df["_period_label"].apply(
+        lambda p: format_period_for_download(p, period_label)
+    )
+    csv_df["Rate (%)"] = csv_df["value"].apply(lambda v: f"{float(v):.2f}%")
+    csv_df = csv_df[
+        ["Region", "Time Period", "numerator", "denominator", "Rate (%)"]
+    ].rename(
+        columns={"numerator": numerator_name, "denominator": denominator_name}
+    ).reset_index(drop=True)
+
+    st.download_button(
+        label="📥 Download Overall Comparison Data",
+        data=csv_df.to_csv(index=False),
+        file_name=f"{title.lower().replace(' ', '_')}_region_summary.csv",
+        mime="text/csv",
+        help="Download overall summary data for region comparison",
+        key=f"newborn_region_summary_{title.lower().replace(' ', '_')}_{len(csv_df)}",
+    )
     return comparison_df
 
 
@@ -1753,14 +1781,21 @@ def render_admitted_newborns_facility_comparison_chart(
         st.dataframe(pivot_df, use_container_width=True)
 
     # Download button with UNIQUE KEY
-    csv = comparison_df.to_csv(index=False)
+    period_label = get_current_period_label()
+    csv_df = comparison_df.copy()
+    csv_df["Time Period"] = csv_df["period_display"].apply(
+        lambda p: format_period_for_download(p, period_label)
+    )
+    csv_df = csv_df[["Facility", "Time Period", "value"]].rename(
+        columns={"value": f"{value_name} Count"}
+    )
 
     # Generate UNIQUE key for newborn download button
     unique_key = f"newborn_admitted_facility_{int(time.time())}_{hash(str(df))}"
 
     st.download_button(
         label="📥 Download Facility Comparison Data",
-        data=csv,
+        data=csv_df.to_csv(index=False),
         file_name="admitted_newborns_facility_comparison.csv",
         mime="text/csv",
         help="Download the facility comparison data",
