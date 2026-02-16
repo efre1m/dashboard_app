@@ -1511,10 +1511,13 @@ def render_admitted_newborns_trend_chart(
     # Download button with UNIQUE KEY
     summary_df = df.copy().reset_index(drop=True)
     summary_df = summary_df[[x_axis_col, value_col]].copy()
+    period_label = get_current_period_label()
 
     # Format period column
     if x_axis_col in summary_df.columns:
-        summary_df[x_axis_col] = summary_df[x_axis_col].apply(format_period_month_year)
+        summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+            lambda p: format_period_for_download(p, period_label)
+        )
 
     summary_df = summary_df.rename(columns={value_col: f"{value_name} Count"})
     summary_table = summary_df.copy()

@@ -1348,6 +1348,7 @@ def render_trend_chart(
 
     # Keep the download button - FIX DATE FORMAT ISSUE
     summary_df = df.copy().reset_index(drop=True)
+    period_label = get_current_period_label()
 
     if "numerator" in summary_df.columns and "denominator" in summary_df.columns:
         summary_df = summary_df[
@@ -1356,9 +1357,8 @@ def render_trend_chart(
 
         # FIX: Ensure period column is in proper format before exporting
         if x_axis_col in summary_df.columns:
-            # Convert any date-like strings to proper month-year format
             summary_df[x_axis_col] = summary_df[x_axis_col].apply(
-                format_period_month_year
+                lambda p: format_period_for_download(p, period_label)
             )
 
         summary_df = summary_df.rename(
@@ -1392,10 +1392,12 @@ def render_trend_chart(
         # FIX: Ensure period column is in proper format before exporting
         if x_axis_col in summary_df.columns:
             summary_df[x_axis_col] = summary_df[x_axis_col].apply(
-                format_period_month_year
+                lambda p: format_period_for_download(p, period_label)
             )
     if x_axis_col in summary_df.columns:
-        summary_df[x_axis_col] = summary_df[x_axis_col].apply(format_period_month_year)
+        summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+            lambda p: format_period_for_download(p, period_label)
+        )
 
     csv = summary_df.to_csv(index=False)
     st.download_button(

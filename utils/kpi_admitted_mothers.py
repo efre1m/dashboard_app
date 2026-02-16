@@ -304,8 +304,11 @@ def render_admitted_mothers_trend_chart(
     # Download button
     import time
     unique_key = f"maternal_admitted_trend_{int(time.time())}_{hash(str(df))}"
+    period_label = get_current_period_label()
     summary_df = df[[x_axis_col, value_col]].copy()
-    summary_df[x_axis_col] = summary_df[x_axis_col].apply(format_period_month_year)
+    summary_df[x_axis_col] = summary_df[x_axis_col].apply(
+        lambda p: format_period_for_download(p, period_label)
+    )
     csv = summary_df.to_csv(index=False)
     st.download_button(
         label="📥 Download Chart Data as CSV",
