@@ -1549,56 +1549,7 @@ def render():
         )
 
     elif selected_tab == "mentorship":
-        # Check if mentorship data should be loaded
-        if not st.session_state.tab_data_loaded["mentorship"]:
-            st.markdown(
-                """
-            <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
-                 border-radius: 12px; border: 2px dashed #dee2e6; margin: 2rem 0;">
-                <div style="font-size: 4rem; margin-bottom: 1rem;">&#128203;</div>
-                <h2 style="color: #495057; margin-bottom: 1rem;">Mentorship Dashboard</h2>
-                <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
-                    View mentorship tracking data and ODK form submissions
-                </p>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                if st.button(
-                    "Load Mentorship Data",
-                    use_container_width=True,
-                    type="primary",
-                    key="load_mentorship_data",
-                ):
-                    st.session_state.tab_loading["mentorship"] = True
-                    st.session_state.tab_data_loaded["mentorship"] = True
-                    st.rerun()
-        else:
-            # Show loading indicator if data is being processed
-            if st.session_state.tab_loading["mentorship"]:
-                st.markdown(
-                    """
-                <div style="text-align: center; padding: 3rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
-                     border-radius: 12px; border: 2px solid #dee2e6; margin: 2rem 0;">
-                    <div style="font-size: 4rem; margin-bottom: 1rem;">&#128203;</div>
-                    <h2 style="color: #495057; margin-bottom: 1rem;">Loading Mentorship Dashboard...</h2>
-                    <p style="color: #6c757d; font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem auto;">
-                        Please wait while we process the data. This may take 1-2 minutes.
-                    </p>
-                    <div style="display: inline-block; padding: 10px 20px; background: #007bff; color: white;
-                         border-radius: 25px; font-weight: bold;">
-                        Processing Data...
-                    </div>
-                </div>
-                """,
-                    unsafe_allow_html=True,
-                )
-                st.session_state.tab_loading["mentorship"] = False
-                st.rerun()
-            display_odk_dashboard(user)
+        display_odk_dashboard(user)
 
     elif selected_tab == "resources":
         render_resources_tab()

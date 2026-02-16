@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 import logging
 import time
+import os
+import plotly.graph_objects as go
 from typing import Dict
 from utils.odk_api import (
     AFAR_MENTORSHIP_ODK_PROJECT_ID,
@@ -27,6 +29,289 @@ def list_forms_cached(odk_project_id: str | int | None = None):
     if odk_project_id is None:
         return list_forms()
     return list_forms(odk_project_id=odk_project_id)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_merged_bmet_data() -> pd.DataFrame:
+    """Load merged mentorship dataset from local mentorship folder."""
+    merged_path = os.path.join(
+        os.path.dirname(__file__), "mentorship", "merged_bmet.csv"
+    )
+    if not os.path.exists(merged_path):
+        raise FileNotFoundError(f"Merged file not found: {merged_path}")
+    return pd.read_csv(merged_path)
+
+
+def _normalize_region_code(value) -> str:
+    """Normalize region code values to canonical string form like '1'..'6'."""
+    if pd.isna(value):
+        return ""
+    code = str(value).strip()
+    if code.endswith(".0"):
+        code = code[:-2]
+    return code
+
+
+def _get_region_code_to_name_mapping() -> dict[str, str]:
+    """
+    Build ODK region code to display name mapping using region_mapping.py.
+    Required mapping reference:
+    Tigray=3, Afar=5, Amhara=2, Oromia=1, SNNP=4 and 6.
+    """
+    mapping_from_module = get_odk_code_mapping_display()
+    code_to_name = {
+        "1": "Oromia",
+        "2": "Amhara",
+        "3": "Tigray",
+        "4": "SNNP",
+        "5": "Afar",
+        "6": "SNNP",
+    }
+    for code, names in mapping_from_module.items():
+        if code not in code_to_name and names:
+            code_to_name[code] = " / ".join(names)
+    return code_to_name
+
+
+def render_mentorship_analysis_dashboard():
+    """Render analysis for merged_bmet.csv with right-side filters and bar charts."""
+    st.markdown(
+        """
+    <style>
+    .mentorship-analysis-shell {
+        border: 1px solid #c7d2fe;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #eff6ff, #e0e7ff);
+        padding: 0.7rem 0.9rem;
+        margin: 0.3rem 0 0.8rem 0;
+    }
+    .mentorship-analysis-shell h4 {
+        color: #1e3a8a;
+        font-size: 1.02rem;
+        margin: 0;
+        font-weight: 800;
+    }
+    .mentorship-filter-box {
+        margin-bottom: 10px;
+    }
+    .mentorship-filter-title {
+        font-size: 1rem;
+        font-weight: 800;
+        color: #0f172a;
+        margin-bottom: 4px;
+    }
+    .mentorship-filter-subtitle {
+        font-size: 0.78rem;
+        color: #475569;
+        margin-bottom: 10px;
+    }
+    .mentorship-filter-divider {
+        height: 1px;
+        background: #bfdbfe;
+        margin: 8px 0 12px 0;
+    }
+    .st-key-mentorship_filters_card {
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        border: 3px solid #1d4ed8;
+        border-radius: 14px;
+        padding: 14px 14px 10px 14px;
+        box-shadow: 0 8px 18px rgba(2, 6, 23, 0.12);
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    try:
+        df = load_merged_bmet_data()
+    except FileNotFoundError as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:
+        st.error(f"Unable to load merged mentorship data: {exc}")
+        return
+
+    required_columns = [
+        "region",
+        "hospital",
+        "round",
+        "competency_assessment-Score",
+        "facility_assessment-score_fac",
+    ]
+    missing_cols = [c for c in required_columns if c not in df.columns]
+    if missing_cols:
+        st.error(f"Missing required columns in merged_bmet.csv: {missing_cols}")
+        return
+
+    work_df = df.copy()
+    work_df["region_code"] = work_df["region"].apply(_normalize_region_code)
+    region_code_map = _get_region_code_to_name_mapping()
+    work_df["region_label"] = work_df["region_code"].map(region_code_map).fillna(
+        work_df["region_code"].apply(lambda x: f"Unknown ({x})" if x else "Unknown")
+    )
+
+    score_cols = ["competency_assessment-Score", "facility_assessment-score_fac"]
+    for score_col in score_cols:
+        work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce").fillna(0)
+
+    work_df["hospital"] = work_df["hospital"].astype(str).str.strip()
+    work_df["round"] = work_df["round"].astype(str).str.strip()
+
+    round_options = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
+    if not round_options:
+        st.warning("No round values found in merged_bmet.csv.")
+        return
+
+    st.markdown(
+        """
+        <div class="mentorship-analysis-shell">
+            <h4>Mentorship Data Analysis</h4>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left_col, right_col = st.columns([4, 1])
+    hospital_page = 1
+    hospital_page_size = 7
+    paged_hospitals = []
+
+    with right_col:
+        with st.container(key="mentorship_filters_card"):
+            st.markdown('<div class="mentorship-filter-box">', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="mentorship-filter-title">Filters</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '<div class="mentorship-filter-subtitle">Refine by group and round</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown('<div class="mentorship-filter-divider"></div>', unsafe_allow_html=True)
+
+            filter_by = st.radio(
+                "Group By",
+                options=["Region", "Hospital"],
+                key="mentorship_analysis_group_by",
+            )
+
+            selected_round = st.selectbox(
+                "Round",
+                options=round_options,
+                key="mentorship_analysis_round",
+            )
+
+            entity_col = "region_label" if filter_by == "Region" else "hospital"
+            entity_options = sorted(
+                [v for v in work_df[entity_col].dropna().unique().tolist() if str(v).strip()]
+            )
+
+            all_token = "All Regions" if filter_by == "Region" else "All Hospitals"
+            selector_options = [all_token] + entity_options
+            entity_key = f"mentorship_entities_{filter_by.lower()}_selection"
+            if entity_key not in st.session_state or not st.session_state.get(entity_key):
+                st.session_state[entity_key] = [all_token]
+
+            st.multiselect(
+                f"Select {filter_by}s",
+                options=selector_options,
+                key=entity_key,
+            )
+
+            current_selected = st.session_state.get(entity_key, [all_token])
+            effective_selected = (
+                [all_token]
+                if (all_token in current_selected or len(current_selected) == 0)
+                else current_selected
+            )
+            selected_entities = (
+                entity_options if all_token in effective_selected else effective_selected
+            )
+
+            prefilter_df = work_df[work_df["round"] == selected_round].copy()
+            if selected_entities:
+                prefilter_df = prefilter_df[prefilter_df[entity_col].isin(selected_entities)]
+            else:
+                prefilter_df = prefilter_df.iloc[0:0]
+
+            if filter_by == "Hospital":
+                paged_hospitals = sorted(prefilter_df["hospital"].dropna().unique().tolist())
+                total_hospitals = len(paged_hospitals)
+                total_pages = max(1, (total_hospitals + hospital_page_size - 1) // hospital_page_size)
+                hospital_page = st.selectbox(
+                    "Hospital Page",
+                    options=list(range(1, total_pages + 1)),
+                    key="mentorship_hospital_page_selector",
+                )
+                if total_hospitals > 0:
+                    start_idx = (hospital_page - 1) * hospital_page_size + 1
+                    end_idx = min(hospital_page * hospital_page_size, total_hospitals)
+                    st.caption(
+                        f"Showing hospitals {start_idx}-{end_idx} of {total_hospitals}"
+                    )
+                else:
+                    st.caption("No hospitals for current filter.")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    with left_col:
+        filtered_df = work_df[work_df["round"] == selected_round].copy()
+        if selected_entities:
+            filtered_df = filtered_df[filtered_df[entity_col].isin(selected_entities)]
+        else:
+            filtered_df = filtered_df.iloc[0:0]
+
+        if filter_by == "Hospital" and len(paged_hospitals) > 0:
+            start = (hospital_page - 1) * hospital_page_size
+            end = start + hospital_page_size
+            current_hospitals = paged_hospitals[start:end]
+            filtered_df = filtered_df[filtered_df["hospital"].isin(current_hospitals)]
+
+        if filtered_df.empty:
+            st.info("No data for the selected filter combination.")
+            return
+
+        agg_df = (
+            filtered_df.groupby(entity_col, as_index=False)[score_cols]
+            .sum()
+            .sort_values(entity_col)
+        )
+
+        fig = go.Figure()
+        fig.add_bar(
+            x=agg_df[entity_col],
+            y=agg_df["competency_assessment-Score"],
+            name="competency_assessment-Score",
+            marker_color="#2563eb",
+        )
+        fig.add_bar(
+            x=agg_df[entity_col],
+            y=agg_df["facility_assessment-score_fac"],
+            name="facility_assessment-score_fac",
+            marker_color="#16a34a",
+        )
+        chart_height = 560 if filter_by == "Region" else 620
+        fig.update_layout(
+            barmode="group",
+            template="plotly_white",
+            height=chart_height,
+            margin=dict(l=20, r=20, t=40, b=20),
+            xaxis_title=filter_by,
+            yaxis_title="Score",
+            legend_title_text="Indicators",
+            bargap=0.14,
+            bargroupgap=0.08,
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bar_{filter_by}")
+
+        table_df = agg_df.rename(
+            columns={
+                entity_col: filter_by,
+                "competency_assessment-Score": "Competency Score",
+                "facility_assessment-score_fac": "Facility Score",
+            }
+        )
+        st.dataframe(table_df, use_container_width=True, hide_index=True)
 
 
 def display_odk_dashboard(user: dict = None):
@@ -101,6 +386,79 @@ def display_odk_dashboard(user: dict = None):
     current_username = current_user.get("username", "anonymous")
     current_region_id = current_user.get("region_id")
     current_role = current_user.get("role", "anonymous")
+
+    st.markdown(
+        """
+        <style>
+        .st-key-mentorship_section_selector [data-testid="stRadio"] {
+            padding: 0.55rem 0.7rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #f8fafc;
+            margin-bottom: 0.8rem;
+        }
+        .st-key-mentorship_section_selector [data-testid="stRadio"] div[role="radiogroup"][aria-orientation="horizontal"] {
+            gap: 0.45rem;
+        }
+        .st-key-mentorship_section_selector [data-testid="stRadio"] label {
+            margin: 0 !important;
+            padding: 0.55rem 1rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            background: #ffffff;
+            font-size: 1.0rem !important;
+            font-weight: 800 !important;
+        }
+        .st-key-mentorship_section_selector [data-testid="stRadio"] label:has(input:checked) {
+            border-color: #1d4ed8;
+            color: #ffffff !important;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            box-shadow: 0 2px 8px rgba(29, 78, 216, 0.25);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    section_choice = st.radio(
+        "Mentorship Section",
+        options=["Mentorship Data", "Mentorship Data Analysis"],
+        horizontal=True,
+        key="mentorship_section_selector",
+        label_visibility="collapsed",
+    )
+    if section_choice == "Mentorship Data Analysis":
+        render_mentorship_analysis_dashboard()
+        return
+
+    mentorship_data_loaded_key = f"mentorship_data_loaded_{current_user_id}"
+    if mentorship_data_loaded_key not in st.session_state:
+        st.session_state[mentorship_data_loaded_key] = False
+
+    if not st.session_state[mentorship_data_loaded_key]:
+        st.markdown(
+            """
+            <div style="text-align: center; padding: 2.2rem 1rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+                 border-radius: 12px; border: 2px dashed #dee2e6; margin: 0.8rem 0 1rem 0;">
+                <h3 style="color: #495057; margin-bottom: 0.6rem;">Mentorship Data</h3>
+                <p style="color: #6c757d; font-size: 1rem; max-width: 700px; margin: 0 auto;">
+                    ODK mentorship forms are loaded only when needed.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button(
+                "Load Mentorship Data",
+                use_container_width=True,
+                type="primary",
+                key=f"load_mentorship_data_{current_user_id}",
+            ):
+                st.session_state[mentorship_data_loaded_key] = True
+                st.rerun()
+        return
 
     is_afar_user = False
     if current_role == "regional":
