@@ -157,6 +157,20 @@ def render_mentorship_analysis_dashboard():
     work_df["hospital"] = work_df["hospital"].astype(str).str.strip()
     work_df["round"] = work_df["round"].astype(str).str.strip()
 
+    current_user = st.session_state.get("user", {})
+    is_regional_user = current_user.get("role") == "regional"
+    regional_locked_label = None
+    if is_regional_user:
+        try:
+            region_id = int(current_user.get("region_id"))
+        except (TypeError, ValueError):
+            region_id = None
+
+        regional_codes = get_odk_region_codes(region_id) if region_id is not None else []
+        if regional_codes:
+            work_df = work_df[work_df["region_code"].isin([str(c) for c in regional_codes])]
+            regional_locked_label = get_region_name_from_database_id(region_id)
+
     round_options = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
     if not round_options:
         st.warning("No round values found in merged_bmet.csv.")
@@ -172,9 +186,6 @@ def render_mentorship_analysis_dashboard():
     )
 
     left_col, right_col = st.columns([4, 1])
-    hospital_page = 1
-    hospital_page_size = 7
-    paged_hospitals = []
 
     with right_col:
         with st.container(key="mentorship_filters_card"):
@@ -215,9 +226,10 @@ def render_mentorship_analysis_dashboard():
                     )
                 return
 
+            group_mode_options = ["Regional"] if is_regional_user else ["Multi Regional", "Regional"]
             group_mode = st.radio(
                 "Group By",
-                options=["Multi Regional", "Regional"],
+                options=group_mode_options,
                 key="mentorship_analysis_group_mode",
             )
 
@@ -260,18 +272,22 @@ def render_mentorship_analysis_dashboard():
                 )
             else:
                 # Regional mode: choose one region, then compare facilities only within that region.
-                region_options = sorted(
-                    [
-                        v
-                        for v in work_df["region_label"].dropna().unique().tolist()
-                        if str(v).strip()
-                    ]
-                )
-                selected_region_for_facility = st.selectbox(
-                    "Select Region",
-                    options=region_options,
-                    key="mentorship_regional_selected_region",
-                )
+                if is_regional_user:
+                    selected_region_for_facility = regional_locked_label
+                    st.caption(f"Regional scope: {selected_region_for_facility}")
+                else:
+                    region_options = sorted(
+                        [
+                            v
+                            for v in work_df["region_label"].dropna().unique().tolist()
+                            if str(v).strip()
+                        ]
+                    )
+                    selected_region_for_facility = st.selectbox(
+                        "Select Region",
+                        options=region_options,
+                        key="mentorship_regional_selected_region",
+                    )
                 facilities_in_region = sorted(
                     [
                         v
@@ -333,30 +349,41 @@ def render_mentorship_analysis_dashboard():
         )
 
         fig = go.Figure()
+        hover_entity_label = "Region" if group_mode == "Multi Regional" else "Facility"
         fig.add_bar(
-            x=agg_df[entity_col],
-            y=agg_df["competency_assessment-Score"],
+            y=agg_df[entity_col],
+            x=agg_df["competency_assessment-Score"],
             name="competency_assessment-Score",
             marker_color="#2563eb",
+            orientation="h",
+            customdata=agg_df[[entity_col]].values,
+            hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Competency Score: %{{x}}<extra></extra>",
         )
         fig.add_bar(
-            x=agg_df[entity_col],
-            y=agg_df["facility_assessment-score_fac"],
+            y=agg_df[entity_col],
+            x=agg_df["facility_assessment-score_fac"],
             name="facility_assessment-score_fac",
             marker_color="#16a34a",
+            orientation="h",
+            customdata=agg_df[[entity_col]].values,
+            hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Facility Score: %{{x}}<extra></extra>",
         )
-        chart_height = 560 if group_mode == "Multi Regional" else 620
+        chart_height = max(560, min(1200, 90 + len(agg_df) * 36))
         fig.update_layout(
             barmode="group",
             template="plotly_white",
-            height=620 if group_mode == "Regional" else chart_height,
+            height=chart_height,
             margin=dict(l=20, r=20, t=40, b=20),
-            xaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
-            yaxis_title="Score",
+            xaxis_title="Score",
+            yaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
             legend_title_text="Indicators",
             bargap=0.14,
             bargroupgap=0.08,
+            font=dict(size=14),
+            hoverlabel=dict(font_size=16),
         )
+        fig.update_xaxes(tickfont=dict(size=13), title_font=dict(size=15))
+        fig.update_yaxes(tickfont=dict(size=13), title_font=dict(size=15))
         st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bar_{group_mode}")
 
         table_df = agg_df.rename(
@@ -367,6 +394,20 @@ def render_mentorship_analysis_dashboard():
             }
         )
         st.dataframe(table_df, use_container_width=True, hide_index=True)
+
+        competency_total = float(filtered_df["competency_assessment-Score"].sum())
+        facility_total = float(filtered_df["facility_assessment-score_fac"].sum())
+        overall_score = competency_total + facility_total
+        st.caption(
+            f"Round {selected_round} summary: "
+            f"Competency Score = {competency_total:.0f}, "
+            f"Facility Score = {facility_total:.0f}, "
+            f"Overall Score = {overall_score:.0f}."
+        )
+        st.caption(
+            "Variables: `competency_assessment-Score` and "
+            "`facility_assessment-score_fac` are aggregated totals for the selected filter."
+        )
 
 
 def display_odk_dashboard(user: dict = None):
