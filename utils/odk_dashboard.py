@@ -189,10 +189,36 @@ def render_mentorship_analysis_dashboard():
             )
             st.markdown('<div class="mentorship-filter-divider"></div>', unsafe_allow_html=True)
 
-            filter_by = st.radio(
+            data_choice = st.selectbox(
+                "Data to Analyze",
+                options=["BMET Data", "Skill Assessment Data"],
+                key="mentorship_analysis_data_choice",
+            )
+
+            # Skill assessment analysis is intentionally gated for now.
+            if data_choice == "Skill Assessment Data":
+                st.info("Skill assessment analysis will be available soon.")
+                st.markdown("</div>", unsafe_allow_html=True)
+                with left_col:
+                    st.markdown(
+                        """
+                        <div style="padding: 2rem 1.2rem; border: 1px solid #cbd5e1; border-radius: 12px;
+                             background: linear-gradient(135deg, #f8fafc, #eef2ff);">
+                            <h4 style="margin: 0 0 0.5rem 0; color: #1e293b;">Skill Assessment Analysis</h4>
+                            <p style="margin: 0; color: #475569;">
+                                This section is under preparation and will be enabled soon.
+                                Please select <strong>BMET Data</strong> to continue current analysis.
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                return
+
+            group_mode = st.radio(
                 "Group By",
-                options=["Region", "Hospital"],
-                key="mentorship_analysis_group_by",
+                options=["Multi Regional", "Regional"],
+                key="mentorship_analysis_group_mode",
             )
 
             selected_round = st.selectbox(
@@ -201,71 +227,100 @@ def render_mentorship_analysis_dashboard():
                 key="mentorship_analysis_round",
             )
 
-            entity_col = "region_label" if filter_by == "Region" else "hospital"
-            entity_options = sorted(
-                [v for v in work_df[entity_col].dropna().unique().tolist() if str(v).strip()]
-            )
-
-            all_token = "All Regions" if filter_by == "Region" else "All Hospitals"
-            selector_options = [all_token] + entity_options
-            entity_key = f"mentorship_entities_{filter_by.lower()}_selection"
-            if entity_key not in st.session_state or not st.session_state.get(entity_key):
-                st.session_state[entity_key] = [all_token]
-
-            st.multiselect(
-                f"Select {filter_by}s",
-                options=selector_options,
-                key=entity_key,
-            )
-
-            current_selected = st.session_state.get(entity_key, [all_token])
-            effective_selected = (
-                [all_token]
-                if (all_token in current_selected or len(current_selected) == 0)
-                else current_selected
-            )
-            selected_entities = (
-                entity_options if all_token in effective_selected else effective_selected
-            )
-
-            prefilter_df = work_df[work_df["round"] == selected_round].copy()
-            if selected_entities:
-                prefilter_df = prefilter_df[prefilter_df[entity_col].isin(selected_entities)]
-            else:
-                prefilter_df = prefilter_df.iloc[0:0]
-
-            if filter_by == "Hospital":
-                paged_hospitals = sorted(prefilter_df["hospital"].dropna().unique().tolist())
-                total_hospitals = len(paged_hospitals)
-                total_pages = max(1, (total_hospitals + hospital_page_size - 1) // hospital_page_size)
-                hospital_page = st.selectbox(
-                    "Hospital Page",
-                    options=list(range(1, total_pages + 1)),
-                    key="mentorship_hospital_page_selector",
+            selected_region_for_facility = None
+            if group_mode == "Multi Regional":
+                entity_col = "region_label"
+                entity_options = sorted(
+                    [
+                        v
+                        for v in work_df[entity_col].dropna().unique().tolist()
+                        if str(v).strip()
+                    ]
                 )
-                if total_hospitals > 0:
-                    start_idx = (hospital_page - 1) * hospital_page_size + 1
-                    end_idx = min(hospital_page * hospital_page_size, total_hospitals)
-                    st.caption(
-                        f"Showing hospitals {start_idx}-{end_idx} of {total_hospitals}"
-                    )
-                else:
-                    st.caption("No hospitals for current filter.")
+                all_token = "All Regions"
+                selector_options = [all_token] + entity_options
+                entity_key = "mentorship_entities_multi_regional_selection"
+                if entity_key not in st.session_state or not st.session_state.get(entity_key):
+                    st.session_state[entity_key] = [all_token]
+
+                st.multiselect(
+                    "Select Regions",
+                    options=selector_options,
+                    key=entity_key,
+                )
+
+                current_selected = st.session_state.get(entity_key, [all_token])
+                effective_selected = (
+                    [all_token]
+                    if (all_token in current_selected or len(current_selected) == 0)
+                    else current_selected
+                )
+                selected_entities = (
+                    entity_options if all_token in effective_selected else effective_selected
+                )
+            else:
+                # Regional mode: choose one region, then compare facilities only within that region.
+                region_options = sorted(
+                    [
+                        v
+                        for v in work_df["region_label"].dropna().unique().tolist()
+                        if str(v).strip()
+                    ]
+                )
+                selected_region_for_facility = st.selectbox(
+                    "Select Region",
+                    options=region_options,
+                    key="mentorship_regional_selected_region",
+                )
+                facilities_in_region = sorted(
+                    [
+                        v
+                        for v in work_df.loc[
+                            work_df["region_label"] == selected_region_for_facility, "hospital"
+                        ]
+                        .dropna()
+                        .unique()
+                        .tolist()
+                        if str(v).strip()
+                    ]
+                )
+                entity_col = "hospital"
+                all_token = "All Facilities in Region"
+                selector_options = [all_token] + facilities_in_region
+                entity_key = "mentorship_entities_regional_facilities_selection"
+                if entity_key not in st.session_state or not st.session_state.get(entity_key):
+                    st.session_state[entity_key] = [all_token]
+
+                st.multiselect(
+                    "Select Facilities",
+                    options=selector_options,
+                    key=entity_key,
+                )
+                current_selected = st.session_state.get(entity_key, [all_token])
+                effective_selected = (
+                    [all_token]
+                    if (all_token in current_selected or len(current_selected) == 0)
+                    else current_selected
+                )
+                selected_entities = (
+                    facilities_in_region
+                    if all_token in effective_selected
+                    else effective_selected
+                )
 
             st.markdown("</div>", unsafe_allow_html=True)
 
     with left_col:
         filtered_df = work_df[work_df["round"] == selected_round].copy()
+        if group_mode == "Regional" and selected_region_for_facility:
+            filtered_df = filtered_df[
+                filtered_df["region_label"] == selected_region_for_facility
+            ]
+
         if selected_entities:
             filtered_df = filtered_df[filtered_df[entity_col].isin(selected_entities)]
         else:
             filtered_df = filtered_df.iloc[0:0]
-
-        if filter_by == "Hospital" and len(paged_hospitals) > 0:
-            start = (hospital_page - 1) * hospital_page_size
-            end = start + hospital_page_size
-            current_hospitals = paged_hospitals[start:end]
-            filtered_df = filtered_df[filtered_df["hospital"].isin(current_hospitals)]
 
         if filtered_df.empty:
             st.info("No data for the selected filter combination.")
@@ -290,23 +345,23 @@ def render_mentorship_analysis_dashboard():
             name="facility_assessment-score_fac",
             marker_color="#16a34a",
         )
-        chart_height = 560 if filter_by == "Region" else 620
+        chart_height = 560 if group_mode == "Multi Regional" else 620
         fig.update_layout(
             barmode="group",
             template="plotly_white",
-            height=chart_height,
+            height=620 if group_mode == "Regional" else chart_height,
             margin=dict(l=20, r=20, t=40, b=20),
-            xaxis_title=filter_by,
+            xaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
             yaxis_title="Score",
             legend_title_text="Indicators",
             bargap=0.14,
             bargroupgap=0.08,
         )
-        st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bar_{filter_by}")
+        st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bar_{group_mode}")
 
         table_df = agg_df.rename(
             columns={
-                entity_col: filter_by,
+                entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
                 "competency_assessment-Score": "Competency Score",
                 "facility_assessment-score_fac": "Facility Score",
             }

@@ -1325,64 +1325,67 @@ def render():
             time_elapsed = time.time() - st.session_state[timestamp_key]
             # Sidebar info removed per user request
 
+    sidebar_tab_label = st.session_state.get("regional_active_tab_selector", "Maternal")
+    hide_sidebar_filters = sidebar_tab_label in {
+        "Mentorship",
+        "Resources",
+        "Usage Tracking",
+    }
+
     # ================ SIMPLE FACILITY SELECTION ================
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 3px;">🏥 Facility Selection</p>',
-        unsafe_allow_html=True,
-    )
-
-    # Get current selection with safe default
-    current_selection = st.session_state.get("selected_facilities", ["All Facilities"])
-
-    # Facility selection with optimized layout
-    with st.sidebar.form("facility_selection_form", border=False):
-        # Simple multiselect for facilities
-        facility_options = ["All Facilities"] + [f[0] for f in facilities]
-
-        selected_facilities = st.multiselect(
-            "Choose facilities:",
-            options=facility_options,
-            default=current_selection,
-            help="Select facilities to display data for",
-            key="facility_multiselect",
-            label_visibility="collapsed",
+    if not hide_sidebar_filters:
+        st.sidebar.markdown("---")
+        st.sidebar.markdown(
+            '<p style="color: white; font-weight: 600; margin-bottom: 3px;">🏥 Facility Selection</p>',
+            unsafe_allow_html=True,
         )
 
-        # Handle "All Facilities" logic
-        if "All Facilities" in selected_facilities:
-            if len(selected_facilities) > 1:
-                # Remove "All Facilities" if other facilities are selected
-                selected_facilities = [
-                    f for f in selected_facilities if f != "All Facilities"
-                ]
-            else:
-                # Only "All Facilities" is selected
-                selected_facilities = ["All Facilities"]
+        current_selection = st.session_state.get("selected_facilities", ["All Facilities"])
+        with st.sidebar.form("facility_selection_form", border=False):
+            facility_options = ["All Facilities"] + [f[0] for f in facilities]
+            selected_facilities = st.multiselect(
+                "Choose facilities:",
+                options=facility_options,
+                default=current_selection,
+                help="Select facilities to display data for",
+                key="facility_multiselect",
+                label_visibility="collapsed",
+            )
 
-        selection_submitted = st.form_submit_button(
-            "Apply Selection", use_container_width=True
+            if "All Facilities" in selected_facilities:
+                if len(selected_facilities) > 1:
+                    selected_facilities = [
+                        f for f in selected_facilities if f != "All Facilities"
+                    ]
+                else:
+                    selected_facilities = ["All Facilities"]
+
+            selection_submitted = st.form_submit_button(
+                "Apply Selection", use_container_width=True
+            )
+            if selection_submitted:
+                st.session_state.selected_facilities = selected_facilities
+                st.session_state.selection_applied = True
+                st.session_state.facility_filter_applied = True
+                st.rerun()
+
+        total_facilities = len(facilities)
+        selected_facilities = st.session_state.get(
+            "selected_facilities", ["All Facilities"]
         )
-        if selection_submitted:
-            st.session_state.selected_facilities = selected_facilities
-            st.session_state.selection_applied = True
-            st.session_state.facility_filter_applied = True
-            st.rerun()
+        if selected_facilities == ["All Facilities"]:
+            display_text = f"Selected: All ({total_facilities})"
+        else:
+            display_text = f"Selected: {len(selected_facilities)} / {total_facilities}"
 
-    # Display selection summary
-    total_facilities = len(facilities)
-    selected_facilities = st.session_state.get(
-        "selected_facilities", ["All Facilities"]
-    )
-    if selected_facilities == ["All Facilities"]:
-        display_text = f"Selected: All ({total_facilities})"
+        st.sidebar.markdown(
+            f"<p style='color: white; font-size: 13px; margin-top: -10px;'>{display_text}</p>",
+            unsafe_allow_html=True,
+        )
     else:
-        display_text = f"Selected: {len(selected_facilities)} / {total_facilities}"
-
-    st.sidebar.markdown(
-        f"<p style='color: white; font-size: 13px; margin-top: -10px;'>{display_text}</p>",
-        unsafe_allow_html=True,
-    )
+        selected_facilities = st.session_state.get(
+            "selected_facilities", ["All Facilities"]
+        )
 
     # Get facility UIDs for selected facilities
     if selected_facilities == ["All Facilities"]:
@@ -1394,22 +1397,21 @@ def render():
         ]
         facility_names = selected_facilities
 
-    # ================ SIMPLE VIEW MODE ================
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(
-        '<p style="color: white; font-weight: 600; margin-bottom: 3px;">📊 View Mode</p>',
-        unsafe_allow_html=True,
-    )
-
     view_mode = "Normal Trend"
-    if selected_facilities != ["All Facilities"] and len(selected_facilities) > 1:
-        view_mode = st.sidebar.radio(
-            "View:",
-            ["Normal Trend", "Facility Comparison"],
-            index=0,
-            key="view_mode_regional",
-            label_visibility="collapsed",
+    if not hide_sidebar_filters:
+        st.sidebar.markdown("---")
+        st.sidebar.markdown(
+            '<p style="color: white; font-weight: 600; margin-bottom: 3px;">📊 View Mode</p>',
+            unsafe_allow_html=True,
         )
+        if selected_facilities != ["All Facilities"] and len(selected_facilities) > 1:
+            view_mode = st.sidebar.radio(
+                "View:",
+                ["Normal Trend", "Facility Comparison"],
+                index=0,
+                key="view_mode_regional",
+                label_visibility="collapsed",
+            )
 
     # ================ STRICT TAB BRANCHING (HARD LAZY LOADING) ================
     tab_options = {
