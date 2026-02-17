@@ -368,22 +368,37 @@ def render_mentorship_analysis_dashboard():
             customdata=agg_df[[entity_col]].values,
             hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Facility Score: %{{x}}<extra></extra>",
         )
-        chart_height = max(560, min(1200, 90 + len(agg_df) * 36))
+        is_regional_mode = group_mode == "Regional"
+        chart_height = (
+            max(280, min(560, 56 + len(agg_df) * 16))
+            if is_regional_mode
+            else max(260, min(500, 52 + len(agg_df) * 14))
+        )
+        bar_gap = 0.26 if is_regional_mode else 0.20
+        bar_group_gap = 0.08 if is_regional_mode else 0.06
         fig.update_layout(
             barmode="group",
             template="plotly_white",
             height=chart_height,
-            margin=dict(l=20, r=20, t=40, b=20),
+            margin=dict(l=8, r=8, t=14, b=6),
             xaxis_title="Score",
             yaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
             legend_title_text="Indicators",
-            bargap=0.14,
-            bargroupgap=0.08,
-            font=dict(size=14),
-            hoverlabel=dict(font_size=16),
+            bargap=bar_gap,
+            bargroupgap=bar_group_gap,
+            font=dict(size=10),
+            hoverlabel=dict(font_size=11),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.0,
+                xanchor="left",
+                x=0,
+                font=dict(size=9),
+            ),
         )
-        fig.update_xaxes(tickfont=dict(size=13), title_font=dict(size=15))
-        fig.update_yaxes(tickfont=dict(size=13), title_font=dict(size=15))
+        fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
+        fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
         st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bar_{group_mode}")
 
         table_df = agg_df.rename(
