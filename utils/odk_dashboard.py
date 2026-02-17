@@ -5,6 +5,7 @@ import logging
 import time
 import os
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from typing import Dict
 from utils.odk_api import (
     AFAR_MENTORSHIP_ODK_PROJECT_ID,
@@ -42,6 +43,17 @@ def load_merged_bmet_data() -> pd.DataFrame:
     return pd.read_csv(merged_path)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_merged_skill_data() -> pd.DataFrame:
+    """Load merged skill assessment dataset from local mentorship folder."""
+    merged_path = os.path.join(
+        os.path.dirname(__file__), "mentorship", "merged_skill.csv"
+    )
+    if not os.path.exists(merged_path):
+        raise FileNotFoundError(f"Merged file not found: {merged_path}")
+    return pd.read_csv(merged_path)
+
+
 def _normalize_region_code(value) -> str:
     """Normalize region code values to canonical string form like '1'..'6'."""
     if pd.isna(value):
@@ -50,6 +62,18 @@ def _normalize_region_code(value) -> str:
     if code.endswith(".0"):
         code = code[:-2]
     return code
+
+
+def _normalize_entity_text(value) -> str:
+    """Normalize entity labels/codes for display, removing trailing .0 from numeric ids."""
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if text.endswith(".0"):
+        raw = text[:-2]
+        if raw.isdigit():
+            return raw
+    return text
 
 
 def _get_region_code_to_name_mapping() -> dict[str, str]:
@@ -74,7 +98,7 @@ def _get_region_code_to_name_mapping() -> dict[str, str]:
 
 
 def render_mentorship_analysis_dashboard():
-    """Render analysis for merged_bmet.csv with right-side filters and bar charts."""
+    """Render mentorship analysis for BMET and Skill datasets."""
     st.markdown(
         """
     <style>
@@ -122,60 +146,6 @@ def render_mentorship_analysis_dashboard():
         unsafe_allow_html=True,
     )
 
-    try:
-        df = load_merged_bmet_data()
-    except FileNotFoundError as exc:
-        st.error(str(exc))
-        return
-    except Exception as exc:
-        st.error(f"Unable to load merged mentorship data: {exc}")
-        return
-
-    required_columns = [
-        "region",
-        "hospital",
-        "round",
-        "competency_assessment-Score",
-        "facility_assessment-score_fac",
-    ]
-    missing_cols = [c for c in required_columns if c not in df.columns]
-    if missing_cols:
-        st.error(f"Missing required columns in merged_bmet.csv: {missing_cols}")
-        return
-
-    work_df = df.copy()
-    work_df["region_code"] = work_df["region"].apply(_normalize_region_code)
-    region_code_map = _get_region_code_to_name_mapping()
-    work_df["region_label"] = work_df["region_code"].map(region_code_map).fillna(
-        work_df["region_code"].apply(lambda x: f"Unknown ({x})" if x else "Unknown")
-    )
-
-    score_cols = ["competency_assessment-Score", "facility_assessment-score_fac"]
-    for score_col in score_cols:
-        work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce").fillna(0)
-
-    work_df["hospital"] = work_df["hospital"].astype(str).str.strip()
-    work_df["round"] = work_df["round"].astype(str).str.strip()
-
-    current_user = st.session_state.get("user", {})
-    is_regional_user = current_user.get("role") == "regional"
-    regional_locked_label = None
-    if is_regional_user:
-        try:
-            region_id = int(current_user.get("region_id"))
-        except (TypeError, ValueError):
-            region_id = None
-
-        regional_codes = get_odk_region_codes(region_id) if region_id is not None else []
-        if regional_codes:
-            work_df = work_df[work_df["region_code"].isin([str(c) for c in regional_codes])]
-            regional_locked_label = get_region_name_from_database_id(region_id)
-
-    round_options = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
-    if not round_options:
-        st.warning("No round values found in merged_bmet.csv.")
-        return
-
     st.markdown(
         """
         <div class="mentorship-analysis-shell">
@@ -205,25 +175,94 @@ def render_mentorship_analysis_dashboard():
                 options=["BMET Data", "Skill Assessment Data"],
                 key="mentorship_analysis_data_choice",
             )
+            is_skill_analysis = data_choice == "Skill Assessment Data"
 
-            # Skill assessment analysis is intentionally gated for now.
-            if data_choice == "Skill Assessment Data":
-                st.info("Skill assessment analysis will be available soon.")
-                st.markdown("</div>", unsafe_allow_html=True)
-                with left_col:
-                    st.markdown(
-                        """
-                        <div style="padding: 2rem 1.2rem; border: 1px solid #cbd5e1; border-radius: 12px;
-                             background: linear-gradient(135deg, #f8fafc, #eef2ff);">
-                            <h4 style="margin: 0 0 0.5rem 0; color: #1e293b;">Skill Assessment Analysis</h4>
-                            <p style="margin: 0; color: #475569;">
-                                This section is under preparation and will be enabled soon.
-                                Please select <strong>BMET Data</strong> to continue current analysis.
-                            </p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+            if is_skill_analysis:
+                try:
+                    df = load_merged_skill_data()
+                except FileNotFoundError as exc:
+                    st.error(str(exc))
+                    return
+                except Exception as exc:
+                    st.error(f"Unable to load merged skill data: {exc}")
+                    return
+
+                score_cols = [
+                    "POC1-POC1_perc",
+                    "POC2-POC2_perc",
+                    "POC3-POC3_perc",
+                    "POC4-POC4_perc",
+                    "POC5-POC5_perc",
+                    "POC6-POC6_perc",
+                    "POC7-POC7_perc",
+                    "POC8-POC8_perc",
+                    "POC_perc",
+                ]
+                required_columns = ["reg-region", "reg-hospital", "reg-round"] + score_cols
+                missing_cols = [c for c in required_columns if c not in df.columns]
+                if missing_cols:
+                    st.error(f"Missing required columns in merged_skill.csv: {missing_cols}")
+                    return
+
+                work_df = df.copy()
+                work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
+                work_df["hospital"] = work_df["reg-hospital"].apply(_normalize_entity_text)
+                work_df["round"] = work_df["reg-round"].astype(str).str.strip()
+                value_label = "Average %"
+                value_title = "Average Score (%)"
+            else:
+                try:
+                    df = load_merged_bmet_data()
+                except FileNotFoundError as exc:
+                    st.error(str(exc))
+                    return
+                except Exception as exc:
+                    st.error(f"Unable to load merged mentorship data: {exc}")
+                    return
+
+                score_cols = ["competency_assessment-Score", "facility_assessment-score_fac"]
+                required_columns = ["region", "hospital", "round"] + score_cols
+                missing_cols = [c for c in required_columns if c not in df.columns]
+                if missing_cols:
+                    st.error(f"Missing required columns in merged_bmet.csv: {missing_cols}")
+                    return
+
+                work_df = df.copy()
+                work_df["region_code"] = work_df["region"].apply(_normalize_region_code)
+                work_df["hospital"] = work_df["hospital"].apply(_normalize_entity_text)
+                work_df["round"] = work_df["round"].astype(str).str.strip()
+                for score_col in score_cols:
+                    work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce").fillna(0)
+                value_label = "Score"
+                value_title = "Score"
+
+            if is_skill_analysis:
+                for score_col in score_cols:
+                    work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce")
+
+            region_code_map = _get_region_code_to_name_mapping()
+            work_df["region_label"] = work_df["region_code"].map(region_code_map).fillna(
+                work_df["region_code"].apply(lambda x: f"Unknown ({x})" if x else "Unknown")
+            )
+
+            current_user = st.session_state.get("user", {})
+            is_regional_user = current_user.get("role") == "regional"
+            regional_locked_label = None
+            if is_regional_user:
+                try:
+                    region_id = int(current_user.get("region_id"))
+                except (TypeError, ValueError):
+                    region_id = None
+
+                regional_codes = get_odk_region_codes(region_id) if region_id is not None else []
+                if regional_codes:
+                    work_df = work_df[work_df["region_code"].isin([str(c) for c in regional_codes])]
+                    regional_locked_label = get_region_name_from_database_id(region_id)
+
+            round_options = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
+            if not round_options:
+                data_file = "merged_skill.csv" if is_skill_analysis else "merged_bmet.csv"
+                st.warning(f"No round values found in {data_file}.")
                 return
 
             group_mode_options = ["Regional"] if is_regional_user else ["Multi Regional", "Regional"]
@@ -342,87 +381,186 @@ def render_mentorship_analysis_dashboard():
             st.info("No data for the selected filter combination.")
             return
 
-        agg_df = (
-            filtered_df.groupby(entity_col, as_index=False)[score_cols]
-            .sum()
-            .sort_values(entity_col)
-        )
+        if is_skill_analysis:
+            agg_df = (
+                filtered_df.groupby(entity_col, as_index=False)[score_cols]
+                .mean()
+                .sort_values(entity_col)
+            )
+        else:
+            agg_df = (
+                filtered_df.groupby(entity_col, as_index=False)[score_cols]
+                .sum()
+                .sort_values(entity_col)
+            )
 
-        fig = go.Figure()
         hover_entity_label = "Region" if group_mode == "Multi Regional" else "Facility"
-        fig.add_bar(
-            y=agg_df[entity_col],
-            x=agg_df["competency_assessment-Score"],
-            name="competency_assessment-Score",
-            marker_color="#2563eb",
-            orientation="h",
-            customdata=agg_df[[entity_col]].values,
-            hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Competency Score: %{{x}}<extra></extra>",
-        )
-        fig.add_bar(
-            y=agg_df[entity_col],
-            x=agg_df["facility_assessment-score_fac"],
-            name="facility_assessment-score_fac",
-            marker_color="#16a34a",
-            orientation="h",
-            customdata=agg_df[[entity_col]].values,
-            hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Facility Score: %{{x}}<extra></extra>",
-        )
-        is_regional_mode = group_mode == "Regional"
-        chart_height = (
-            max(280, min(560, 56 + len(agg_df) * 16))
-            if is_regional_mode
-            else max(260, min(500, 52 + len(agg_df) * 14))
-        )
-        bar_gap = 0.26 if is_regional_mode else 0.20
-        bar_group_gap = 0.08 if is_regional_mode else 0.06
-        fig.update_layout(
-            barmode="group",
-            template="plotly_white",
-            height=chart_height,
-            margin=dict(l=8, r=8, t=14, b=6),
-            xaxis_title="Score",
-            yaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
-            legend_title_text="Indicators",
-            bargap=bar_gap,
-            bargroupgap=bar_group_gap,
-            font=dict(size=10),
-            hoverlabel=dict(font_size=11),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.0,
-                xanchor="left",
-                x=0,
+
+        if is_skill_analysis:
+            metric_colors = [
+                "#2563eb",
+                "#0ea5e9",
+                "#0891b2",
+                "#16a34a",
+                "#65a30d",
+                "#ca8a04",
+                "#ea580c",
+                "#dc2626",
+                "#7c3aed",
+            ]
+            subplot_titles = [
+                "Point of Care 1",
+                "Point of Care 2",
+                "Point of Care 3",
+                "Point of Care 4",
+                "Point of Care 5",
+                "Point of Care 6",
+                "Point of Care 7",
+                "Point of Care 8",
+                "Overall Point of Care",
+            ]
+            hover_metric_labels = subplot_titles
+            fig = make_subplots(
+                rows=3,
+                cols=3,
+                subplot_titles=subplot_titles,
+                vertical_spacing=0.08,
+                horizontal_spacing=0.06,
+            )
+            for idx, metric in enumerate(score_cols):
+                row = idx // 3 + 1
+                col = idx % 3 + 1
+                fig.add_bar(
+                    y=agg_df[entity_col],
+                    x=agg_df[metric].fillna(0),
+                    orientation="h",
+                    marker_color=metric_colors[idx % len(metric_colors)],
+                    showlegend=False,
+                    customdata=agg_df[[entity_col]].values,
+                    hovertemplate=(
+                        f"{hover_entity_label}: %{{customdata[0]}}"
+                        f"<br>{hover_metric_labels[idx]}: %{{x:.2f}}"
+                        "<extra></extra>"
+                    ),
+                    row=row,
+                    col=col,
+                )
+                fig.update_xaxes(
+                    title_text=value_title,
+                    tickfont=dict(size=8),
+                    title_font=dict(size=9),
+                    automargin=True,
+                    row=row,
+                    col=col,
+                )
+                fig.update_yaxes(
+                    tickfont=dict(size=8),
+                    title_font=dict(size=9),
+                    automargin=True,
+                    row=row,
+                    col=col,
+                )
+
+            skill_chart_height = max(760, min(1350, 620 + len(agg_df) * 14))
+            fig.update_layout(
+                template="plotly_white",
+                height=skill_chart_height,
+                margin=dict(l=8, r=8, t=36, b=8),
                 font=dict(size=9),
-            ),
-        )
-        fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
-        fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
-        st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bar_{group_mode}")
+                hoverlabel=dict(font_size=10),
+                bargap=0.24,
+                bargroupgap=0.08,
+            )
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"mentorship_skill_bars_{group_mode}_{selected_round}",
+            )
 
-        table_df = agg_df.rename(
-            columns={
-                entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
-                "competency_assessment-Score": "Competency Score",
-                "facility_assessment-score_fac": "Facility Score",
-            }
-        )
-        st.dataframe(table_df, use_container_width=True, hide_index=True)
+            table_df = agg_df.rename(
+                columns={entity_col: "Region" if group_mode == "Multi Regional" else "Facility"}
+            ).round(2)
+            st.dataframe(table_df, use_container_width=True, hide_index=True)
 
-        competency_total = float(filtered_df["competency_assessment-Score"].sum())
-        facility_total = float(filtered_df["facility_assessment-score_fac"].sum())
-        overall_score = competency_total + facility_total
-        st.caption(
-            f"Round {selected_round} summary: "
-            f"Competency Score = {competency_total:.0f}, "
-            f"Facility Score = {facility_total:.0f}, "
-            f"Overall Score = {overall_score:.0f}."
-        )
-        st.caption(
-            "Variables: `competency_assessment-Score` and "
-            "`facility_assessment-score_fac` are aggregated totals for the selected filter."
-        )
+            st.caption(
+                "Averages are computed per selected group as: "
+                "`sum(variable values) / count(records with non-null variable)`."
+            )
+        else:
+            fig = go.Figure()
+            fig.add_bar(
+                y=agg_df[entity_col],
+                x=agg_df["competency_assessment-Score"],
+                name="competency_assessment-Score",
+                marker_color="#2563eb",
+                orientation="h",
+                customdata=agg_df[[entity_col]].values,
+                hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Competency Score: %{{x}}<extra></extra>",
+            )
+            fig.add_bar(
+                y=agg_df[entity_col],
+                x=agg_df["facility_assessment-score_fac"],
+                name="facility_assessment-score_fac",
+                marker_color="#16a34a",
+                orientation="h",
+                customdata=agg_df[[entity_col]].values,
+                hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Facility Score: %{{x}}<extra></extra>",
+            )
+            is_regional_mode = group_mode == "Regional"
+            chart_height = (
+                max(280, min(560, 56 + len(agg_df) * 16))
+                if is_regional_mode
+                else max(260, min(500, 52 + len(agg_df) * 14))
+            )
+            bar_gap = 0.26 if is_regional_mode else 0.20
+            bar_group_gap = 0.08 if is_regional_mode else 0.06
+            fig.update_layout(
+                barmode="group",
+                template="plotly_white",
+                height=chart_height,
+                margin=dict(l=8, r=8, t=14, b=6),
+                xaxis_title=value_title,
+                yaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
+                legend_title_text="Indicators",
+                bargap=bar_gap,
+                bargroupgap=bar_group_gap,
+                font=dict(size=10),
+                hoverlabel=dict(font_size=11),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.0,
+                    xanchor="left",
+                    x=0,
+                    font=dict(size=9),
+                ),
+            )
+            fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
+            fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bar_{group_mode}")
+
+            table_df = agg_df.rename(
+                columns={
+                    entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
+                    "competency_assessment-Score": "Competency Score",
+                    "facility_assessment-score_fac": "Facility Score",
+                }
+            )
+            st.dataframe(table_df, use_container_width=True, hide_index=True)
+
+            competency_total = float(filtered_df["competency_assessment-Score"].sum())
+            facility_total = float(filtered_df["facility_assessment-score_fac"].sum())
+            overall_score = competency_total + facility_total
+            st.caption(
+                f"Round {selected_round} summary: "
+                f"Competency Score = {competency_total:.0f}, "
+                f"Facility Score = {facility_total:.0f}, "
+                f"Overall Score = {overall_score:.0f}."
+            )
+            st.caption(
+                "Variables: `competency_assessment-Score` and "
+                "`facility_assessment-score_fac` are aggregated totals for the selected filter."
+            )
 
 
 def display_odk_dashboard(user: dict = None):
