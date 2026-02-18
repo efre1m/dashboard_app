@@ -16,10 +16,6 @@ def load_csv_with_encoding(file_path):
             df = pd.read_csv(file_path, encoding=encoding)
             logging.info(f"Successfully loaded {file_path.name} with {encoding} encoding")
             
-            # Rename 'No' column to 'ID' if it exists
-            if 'No' in df.columns:
-                df = df.rename(columns={'No': 'ID'})
-            
             return df
         except UnicodeDecodeError:
             continue
@@ -31,9 +27,6 @@ def load_csv_with_encoding(file_path):
     try:
         df = pd.read_csv(file_path, encoding=None, engine='python')
         logging.info(f"Loaded {file_path.name} with auto-detected encoding")
-        
-        if 'No' in df.columns:
-            df = df.rename(columns={'No': 'ID'})
         
         return df
     except Exception as e:
@@ -133,6 +126,8 @@ def render_resources_tab():
             maternal_df = load_maternal_indicators()
         
         if not maternal_df.empty:
+            maternal_df = maternal_df.reset_index(drop=True).copy()
+            maternal_df["No"] = range(1, len(maternal_df) + 1)
             st.markdown("#### 🤰 Maternal Health Indicators")
             
             # Build HTML table
@@ -197,7 +192,7 @@ def render_resources_tab():
             <table class="custom-table">
             <thead>
                 <tr>
-                    <th class="col-id">ID</th>
+                    <th class="col-id">No</th>
                     <th class="col-name">Indicator Name</th>
                     <th class="col-numerator">Numerator</th>
                     <th class="col-denominator">Denominator</th>
@@ -210,7 +205,7 @@ def render_resources_tab():
             for _, row in maternal_df.iterrows():
                 html += f"""
                 <tr>
-                    <td class="col-id">{row.get('ID', row.get('No', ''))}</td>
+                    <td class="col-id">{row.get('No', '')}</td>
                     <td class="col-name"><strong>{row.get('Indicator Name', '')}</strong></td>
                     <td class="col-numerator text-justify">{row.get('Numerator', '')}</td>
                     <td class="col-denominator text-justify">{row.get('Denominator', '')}</td>
@@ -251,6 +246,8 @@ def render_resources_tab():
             newborn_df = load_newborn_indicators()
         
         if not newborn_df.empty:
+            newborn_df = newborn_df.reset_index(drop=True).copy()
+            newborn_df["No"] = range(1, len(newborn_df) + 1)
             st.markdown("#### 👶 Newborn Health Indicators")
             
             # Build HTML table
@@ -315,7 +312,7 @@ def render_resources_tab():
             <table class="custom-table">
             <thead>
                 <tr>
-                    <th class="col-id">ID</th>
+                    <th class="col-id">No</th>
                     <th class="col-name">Indicator Name</th>
                     <th class="col-numerator">Numerator</th>
                     <th class="col-denominator">Denominator</th>
@@ -328,7 +325,7 @@ def render_resources_tab():
             for _, row in newborn_df.iterrows():
                 html += f"""
                 <tr>
-                    <td class="col-id">{row.get('ID', row.get('No', ''))}</td>
+                    <td class="col-id">{row.get('No', '')}</td>
                     <td class="col-name"><strong>{row.get('Indicator Name', '')}</strong></td>
                     <td class="col-numerator text-justify">{row.get('Numerator', '')}</td>
                     <td class="col-denominator text-justify">{row.get('Denominator', '')}</td>

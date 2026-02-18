@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Dict
 from utils.odk_api import (
+    AFAR_MENTORSHIP_PROJECT14_FORM_IDS,
     AFAR_MENTORSHIP_ODK_PROJECT_ID,
     AFAR_MENTORSHIP_SECTION_LABEL,
     AFAR_REGION_ID,
@@ -814,8 +815,13 @@ def display_odk_dashboard(user: dict = None):
         )
 
     # Display forms
-    if st.session_state.get(odk_data_key) and len(st.session_state[odk_data_key]) > 0:
-        display_forms_grid(st.session_state[odk_data_key], key_prefix="mentorship")
+    top_forms_data = dict(st.session_state.get(odk_data_key, {}))
+    if is_afar_user and top_forms_data:
+        for form_id in AFAR_MENTORSHIP_PROJECT14_FORM_IDS:
+            top_forms_data.pop(form_id, None)
+
+    if top_forms_data and len(top_forms_data) > 0:
+        display_forms_grid(top_forms_data, key_prefix="mentorship")
     else:
         st.info("📭 No forms data available. Click 'Refresh Data' to try again.")
 
@@ -851,6 +857,15 @@ def display_forms_grid(
         # 🔥 OPTIMIZATION: Get display name from cached forms
         forms = list_forms_cached(odk_project_id)
         form_metadata = next((f for f in forms if f.get("xmlFormId") == form_id), {})
+
+        # Fallback: if form is from another project (e.g., selected Project 14 forms in Afar section),
+        # resolve its display name from default project metadata.
+        if not form_metadata and odk_project_id is not None:
+            default_forms = list_forms_cached()
+            form_metadata = next(
+                (f for f in default_forms if f.get("xmlFormId") == form_id), {}
+            )
+
         display_name = form_metadata.get("name", form_id)
 
         col = cols[i % 2]

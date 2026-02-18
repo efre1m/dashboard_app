@@ -21,6 +21,11 @@ ODK_TIMEOUT = int(os.getenv("ODK_TIMEOUT", "60"))
 AFAR_REGION_ID = 8
 AFAR_MENTORSHIP_ODK_PROJECT_ID = 17
 AFAR_MENTORSHIP_SECTION_LABEL = "IMNID Blended Mentorship Afar HC"
+AFAR_MENTORSHIP_PROJECT14_FORM_IDS = [
+    "aD6f7rZoBW5ZTQvLZKhHgc",
+    "a9pNa6jSmnZd5qRKVTXTmY",
+    "asbEbWjC7CYWk3RCC2DfkS",
+]
 
 _session: requests.Session | None = None
 
@@ -132,16 +137,22 @@ def filter_by_region(df: pd.DataFrame, database_region_id: int) -> pd.DataFrame:
         return df
 
     # Convert region column to string and clean
-    df[region_col] = df[region_col].astype(str).str.strip()
+    series = df[region_col].astype(str).str.strip()
+    series_lower = series.str.lower()
 
-    # Filter by numeric region codes
+    # Support both numeric ODK codes and text names like "Afar" in Region column.
     allowed_codes = [str(code).strip() for code in target_codes]
-
-    filtered = df[df[region_col].isin(allowed_codes)]
-
+    allowed_codes_lower = [c.lower() for c in allowed_codes]
     region_name = get_region_name_from_database_id(database_region_id)
+    allowed_region_names_lower = [region_name.lower().strip()] if region_name else []
+
+    mask = series_lower.isin(allowed_codes_lower) | series_lower.isin(
+        allowed_region_names_lower
+    )
+    filtered = df[mask]
+
     logging.info(
-        f"Filtered {len(filtered)}/{len(df)} records for database_region_id={database_region_id} ({region_name}) using ODK codes: {', '.join(allowed_codes)}"
+        f"Filtered {len(filtered)}/{len(df)} records for database_region_id={database_region_id} ({region_name}) using ODK region values: {', '.join(allowed_codes + [region_name])}"
     )
 
     return filtered
@@ -274,7 +285,14 @@ def fetch_afar_mentorship_forms(user: dict | None) -> dict[str, pd.DataFrame]:
         if not df.empty:
             form_dfs[form_id] = df
 
+    # Also include specific Project 14 forms requested for Afar mentorship view.
+    for form_id in AFAR_MENTORSHIP_PROJECT14_FORM_IDS:
+        df = fetch_form_csv(form_id, odk_project_id=ODK_PROJECT_ID)
+        df = filter_by_region(df, AFAR_REGION_ID)
+        if not df.empty:
+            form_dfs[form_id] = df
+
     logging.info(
-        f"Fetched {len(form_dfs)} DataFrames from Afar mentorship project {AFAR_MENTORSHIP_ODK_PROJECT_ID}."
+        f"Fetched {len(form_dfs)} DataFrames for Afar mentorship section (project {AFAR_MENTORSHIP_ODK_PROJECT_ID} + selected project {ODK_PROJECT_ID} forms)."
     )
     return form_dfs

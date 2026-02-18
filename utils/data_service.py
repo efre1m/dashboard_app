@@ -699,6 +699,7 @@ def fetch_odk_data_for_user(
     try:
         # Import here to avoid circular imports
         from utils.odk_api import (
+            AFAR_MENTORSHIP_PROJECT14_FORM_IDS,
             AFAR_MENTORSHIP_SECTION_LABEL,
             AFAR_REGION_ID,
             fetch_afar_mentorship_forms,
@@ -730,9 +731,13 @@ def fetch_odk_data_for_user(
             try:
                 if int(user.get("region_id")) == AFAR_REGION_ID:
                     # IMPORTANT: fetch_afar_mentorship_forms() makes NO API calls unless the condition is met.
-                    result[AFAR_MENTORSHIP_SECTION_LABEL] = fetch_afar_mentorship_forms(
-                        user
-                    )
+                    afar_forms = fetch_afar_mentorship_forms(user)
+                    result[AFAR_MENTORSHIP_SECTION_LABEL] = afar_forms
+
+                    # Prevent duplicates: move selected Project 14 forms to Afar section only.
+                    for project14_form_id in AFAR_MENTORSHIP_PROJECT14_FORM_IDS:
+                        if project14_form_id in afar_forms:
+                            odk_forms.pop(project14_form_id, None)
             except (TypeError, ValueError):
                 pass
 
