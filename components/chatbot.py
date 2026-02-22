@@ -2604,8 +2604,20 @@ class ChatbotLogic:
                 return plot_df, f"Here is the data table for **{kpi_name}**{context_desc}."
                 
             # Step 10b: Render Plot (Multi-trace / Drill-down aware)
+            line_plot_df = plot_df
+            if chart_type == "line" or chart_type not in {"bar", "area"}:
+                if "Denominator" in line_plot_df.columns:
+                    den_vals = pd.to_numeric(
+                        line_plot_df["Denominator"], errors="coerce"
+                    ).fillna(0)
+                    line_plot_df = line_plot_df.copy()
+                    line_plot_df["Value"] = pd.to_numeric(
+                        line_plot_df["Value"], errors="coerce"
+                    )
+                    line_plot_df.loc[den_vals <= 0, "Value"] = np.nan
+
             if chart_type == "line":
-                fig = px.line(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, custom_data=["Numerator", "Denominator"])
+                fig = px.line(line_plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=False, line_shape="spline", height=400, custom_data=["Numerator", "Denominator"])
             elif chart_type == "bar":
                 if parsed.get("orientation") == "h":
                     fig = px.bar(plot_df, x="Value", y="Period", color=color_col,  title=f"{kpi_name}", height=400, orientation='h', barmode='group', custom_data=["Numerator", "Denominator"])
@@ -2614,9 +2626,12 @@ class ChatbotLogic:
             elif chart_type == "area":
                 fig = px.area(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, custom_data=["Numerator", "Denominator"])
             else: # Default to line
-                fig = px.line(plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=True, height=400, custom_data=["Numerator", "Denominator"])
+                fig = px.line(line_plot_df, x="Period", y="Value", color=color_col, title=f"{kpi_name}", markers=False, line_shape="spline", height=400, custom_data=["Numerator", "Denominator"])
                 
-            fig.update_traces(marker=dict(size=8)) if chart_type != "bar" else None
+            if chart_type == "line":
+                fig.update_traces(mode="lines", cliponaxis=False)
+                fig.update_xaxes(layer="below traces")
+                fig.update_yaxes(layer="below traces")
             
             # Add custom hover template to show numerator and denominator
             # Treat "Missing" indicators as rates if they have a denominator
@@ -2646,6 +2661,11 @@ class ChatbotLogic:
                 )
             
             fig.update_traces(hovertemplate=hover_template)
+            if is_rate:
+                if chart_type == "bar" and parsed.get("orientation") == "h":
+                    fig.update_layout(xaxis=dict(range=[-0.5, 100.5], dtick=25))
+                else:
+                    fig.update_layout(yaxis=dict(range=[-0.5, 100.5], dtick=25))
             
             # Refine title
             title_text = f"{kpi_name}"

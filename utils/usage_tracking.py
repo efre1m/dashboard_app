@@ -8,12 +8,15 @@ def fetch_usage_logs():
     conn = get_db_connection()
     df = pd.read_sql("""
         SELECT u.username, u.first_name, u.last_name, u.role,
-               f.facility_name, r.region_name, c.country_name,
+               f.facility_name,
+               COALESCE(r_user.region_name, r_fac.region_name) AS region_name,
+               c.country_name,
                l.login_time, u.region_id, u.facility_id
         FROM login_logs l
         JOIN users u ON l.user_id = u.user_id
         LEFT JOIN facilities f ON u.facility_id = f.facility_id
-        LEFT JOIN regions r ON u.region_id = r.region_id
+        LEFT JOIN regions r_user ON u.region_id = r_user.region_id
+        LEFT JOIN regions r_fac ON f.region_id = r_fac.region_id
         LEFT JOIN countries c ON u.country_id = c.country_id
         ORDER BY l.login_time DESC
     """, conn)
@@ -148,7 +151,7 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
                 st.info("No Regional activity found.")
         tab_idx += 1
 
-    # 3. Facility Level (Bar Chart)
+    # 3. Facility Level (Line Chart per Facility)
     if 'facility' in display_roles:
         with tabs[tab_idx]:
             df = filtered_logs[filtered_logs['role'].str.lower() == 'facility'].copy()
@@ -156,15 +159,26 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
                 col_chart, col_tbl = st.columns([3, 2])
                 
                 with col_chart:
-                    chart_df = df['facility_name'].value_counts().nlargest(15).reset_index()
-                    chart_df.columns = ['Facility', 'Logins']
-                    
-                    fig = px.bar(chart_df, x='Facility', y='Logins', color='Facility',
-                                title="Top 15 Most Active Facilities", template="plotly_white")
+                    df['login_time'] = pd.to_datetime(df['login_time'])
+                    df['login_date'] = df['login_time'].dt.date
+                    df['facility_name'] = df['facility_name'].fillna('Unknown Facility')
+                    # Group by date AND facility for multi-line trends, same pattern as regional view
+                    chart_df = df.groupby(['login_date', 'facility_name']).size().reset_index(name='Logins')
+
+                    fig = px.line(
+                        chart_df,
+                        x='login_date',
+                        y='Logins',
+                        color='facility_name',
+                        title="Facility Login Trends",
+                        markers=True,
+                        line_shape="spline",
+                        template="plotly_white"
+                    )
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
                     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
-                    fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20), showlegend=False)
+                    fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col_tbl:

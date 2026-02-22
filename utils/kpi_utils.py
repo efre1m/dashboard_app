@@ -123,6 +123,20 @@ def format_period_for_download(period_value, period_label):
     return raw
 
 
+def build_stable_color_map(labels):
+    """Return deterministic color mapping for categorical series labels."""
+    palette = (
+        px.colors.qualitative.Plotly
+        + px.colors.qualitative.Set2
+        + px.colors.qualitative.D3
+    )
+    sorted_labels = sorted({str(x) for x in labels if pd.notna(x)}, key=str.lower)
+    return {
+        label: palette[idx % len(palette)]
+        for idx, label in enumerate(sorted_labels)
+    }
+
+
 def format_trend_period_for_download(period_value):
     """Format period for trend-style display (MMM YYYY) where parseable."""
     if pd.isna(period_value):
@@ -1192,20 +1206,36 @@ def render_trend_chart(
         hover_columns = []
         use_hover_data = False
 
+    plot_df = df.copy()
+    table_df = df.copy()
+    if use_hover_data:
+        den_vals = pd.to_numeric(plot_df[denominator_name], errors="coerce").fillna(0)
+        plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
+        valid_mask = den_vals > 0
+        plot_df = plot_df[valid_mask].copy()
+        table_df = table_df[valid_mask].copy()
+
+    if use_hover_data and table_df.empty:
+        st.subheader(title)
+        st.info("No valid data to display (denominator is zero for all periods).")
+        return
+
     try:
         fig = px.line(
-            df,
+            plot_df,
             x=x_axis_col,
             y=value_col,
-            markers=True,
-            line_shape="linear",
+            markers=False,
+            line_shape="spline",
             title=title,
             height=400,
             custom_data=[numerator_name, denominator_name] if use_hover_data else None,
         )
         fig.update_traces(
-            line=dict(width=3),
-            marker=dict(size=7),
+            mode="lines",
+            line=dict(width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
         )
 
         # Apply standardized hover template
@@ -1223,17 +1253,18 @@ def render_trend_chart(
     except Exception as e:
         st.error(f"Error creating chart: {str(e)}")
         fig = px.line(
-            df,
+            plot_df,
             x=x_axis_col,
             y=value_col,
-            markers=True,
+            markers=False,
+            line_shape="spline",
             title=title,
             height=400,
         )
 
     is_categorical = (
         not all(isinstance(x, (dt.date, dt.datetime)) for x in df[period_col])
-        if not df.empty
+        if not plot_df.empty
         else True
     )
 
@@ -1249,6 +1280,7 @@ def render_trend_chart(
             tickangle=-45 if is_categorical else 0,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            layer="below traces",
         ),
         yaxis=dict(
             rangemode="tozero",
@@ -1256,33 +1288,42 @@ def render_trend_chart(
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            layer="below traces",
         ),
     )
 
-    if "Rate" in title or "%" in title:
-        fig.update_layout(yaxis_tickformat=".2f")
+    is_rate_chart = (
+        "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
+    )
+    if is_rate_chart:
+        fig.update_layout(
+            yaxis_tickformat=".2f",
+            yaxis_range=[-0.5, 100.5],
+            yaxis_dtick=25,
+        )
     if any(k in title for k in ["Deliveries", "Acceptance"]):
         fig.update_layout(yaxis_tickformat=",")
 
     # Display metrics at the TOP for immediate visibility
-    if len(df) > 0:
+    metrics_df = table_df if use_hover_data else df
+    if len(metrics_df) > 0:
         col1, col2, col3 = st.columns(3)
         val_format = ".2f" if ("Rate" in title or "%" in title) else ",.0f"
         suffix = "%" if ("Rate" in title or "%" in title) else ""
-        
+
         with col1:
-            st.metric("📈 Latest Value", f"{df[value_col].iloc[-1]:{val_format}}{suffix}")
+            st.metric("Latest Value", f"{metrics_df[value_col].iloc[-1]:{val_format}}{suffix}")
         with col2:
-            st.metric("📊 Average", f"{df[value_col].mean():{val_format}}{suffix}")
+            st.metric("Average", f"{metrics_df[value_col].mean():{val_format}}{suffix}")
         with col3:
-            if len(df) > 1:
-                last_value = df[value_col].iloc[-1]
-                prev_value = df[value_col].iloc[-2]
+            if len(metrics_df) > 1:
+                last_value = metrics_df[value_col].iloc[-1]
+                prev_value = metrics_df[value_col].iloc[-2]
                 trend_change = last_value - prev_value
-                trend_symbol = "▲" if trend_change > 0 else ("▼" if trend_change < 0 else "–")
-                st.metric("📈 Trend", f"{trend_change:.2f}{suffix} {trend_symbol}")
+                trend_symbol = "UP" if trend_change > 0 else ("DOWN" if trend_change < 0 else "-")
+                st.metric("Trend", f"{trend_change:.2f}{suffix} {trend_symbol}")
             else:
-                st.metric("📈 Trend", "–")
+                st.metric("Trend", "-")
 
     # Display the chart with reduced height
     fig.update_layout(height=260, margin=dict(t=20, b=20, l=10, r=10))
@@ -1293,7 +1334,7 @@ def render_trend_chart(
     # =========== COMPACT TABLE ===========
     with st.expander("📊 View Detailed Data Table", expanded=True):
         # Create a clean display dataframe
-        display_df = df.copy()
+        display_df = table_df.copy() if use_hover_data else df.copy()
         
         # Select columns to show in table
         table_columns = [x_axis_col, value_col]
@@ -1319,14 +1360,15 @@ def render_trend_chart(
             display_df[denominator_name] = display_df[denominator_name].apply(lambda x: f"{x:,.0f}")
 
         # Add Overall/Total row
-        if "numerator" in df.columns and "denominator" in df.columns:
-            total_numerator = df["numerator"].sum()
-            total_denominator = df["denominator"].sum()
+        overall_source_df = table_df if use_hover_data else df
+        if "numerator" in overall_source_df.columns and "denominator" in overall_source_df.columns:
+            total_numerator = overall_source_df["numerator"].sum()
+            total_denominator = overall_source_df["denominator"].sum()
             overall_value = (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
         else:
-            overall_value = df[value_col].mean() if not df.empty else 0
-            total_numerator = df[value_col].sum() if not df.empty else 0
-            total_denominator = len(df)
+            overall_value = overall_source_df[value_col].mean() if not overall_source_df.empty else 0
+            total_numerator = overall_source_df[value_col].sum() if not overall_source_df.empty else 0
+            total_denominator = len(overall_source_df)
 
         # Create overall row
         overall_row = {
@@ -1347,7 +1389,7 @@ def render_trend_chart(
         st.dataframe(display_df, use_container_width=True)
 
     # Keep the download button - FIX DATE FORMAT ISSUE
-    summary_df = df.copy().reset_index(drop=True)
+    summary_df = (table_df.copy() if use_hover_data else df.copy()).reset_index(drop=True)
     period_label = get_current_period_label()
 
     if "numerator" in summary_df.columns and "denominator" in summary_df.columns:
@@ -1521,16 +1563,16 @@ def render_facility_comparison_chart(
                 # Skip if both numerator and denominator are 0
                 # Ensure numeric types to prevent 'int + str' errors
                 numerator_val = pd.to_numeric(row.get("numerator", 0), errors='coerce')
-                denominator_val = pd.to_numeric(row.get("denominator", 1), errors='coerce')
+                denominator_val = pd.to_numeric(row.get("denominator", 0), errors='coerce')
                 value_val = pd.to_numeric(row.get(value_col, 0) if value_col in row else 0, errors='coerce')
                 
                 # Replace NaN with 0
                 numerator_val = 0 if pd.isna(numerator_val) else numerator_val
-                denominator_val = 1 if pd.isna(denominator_val) or denominator_val == 0 else denominator_val
+                denominator_val = 0 if pd.isna(denominator_val) else denominator_val
                 value_val = 0 if pd.isna(value_val) else value_val
 
-                if numerator_val == 0 and denominator_val == 0:
-                    continue  # Skip this period for this facility
+                if denominator_val <= 0:
+                    continue  # Skip periods with no denominator/data
 
                 comparison_data.append(
                     {
@@ -1547,6 +1589,12 @@ def render_facility_comparison_chart(
         return
 
     comparison_df = pd.DataFrame(comparison_data)
+
+    # Exclude denominator<=0 rows from all outputs (plot/table/download)
+    comparison_df = comparison_df[pd.to_numeric(comparison_df["denominator"], errors="coerce").fillna(0) > 0].copy()
+    if comparison_df.empty:
+        st.info("No valid comparison data available (denominator is zero for all periods).")
+        return
 
     # Sort periods properly for display
     try:
@@ -1597,12 +1645,20 @@ def render_facility_comparison_chart(
             st.metric("🌍 Grand Overall Value", f"{grand_overall:{val_format}}{suffix}")
 
     # Create the chart with reduced height
+    comparison_plot_df = comparison_df.copy()
+    den_vals = pd.to_numeric(comparison_plot_df["denominator"], errors="coerce").fillna(0)
+    comparison_plot_df["value"] = pd.to_numeric(comparison_plot_df["value"], errors="coerce")
+    comparison_plot_df.loc[den_vals <= 0, "value"] = np.nan
+    facility_color_map = build_stable_color_map(comparison_plot_df["Facility"].unique())
+
     fig = px.line(
-        comparison_df,
+        comparison_plot_df,
         x="period_display",
         y="value",
         color="Facility",
-        markers=True,
+        color_discrete_map=facility_color_map,
+        markers=False,
+        line_shape="spline",
         title=f"{title} - Facility Comparison",
         height=350,
         category_orders={"period_display": period_order},
@@ -1610,8 +1666,10 @@ def render_facility_comparison_chart(
     )
 
     fig.update_traces(
-        line=dict(width=3),
-        marker=dict(size=7),
+        mode="lines",
+        line=dict(width=3, shape="spline", smoothing=0.35),
+        connectgaps=True,
+        cliponaxis=False,
         hovertemplate=get_attractive_hover_template(
             title, numerator_name, denominator_name, is_count=not is_rate_kpi
         ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
@@ -1629,6 +1687,7 @@ def render_facility_comparison_chart(
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            layer="below traces",
         ),
         yaxis=dict(
             rangemode="tozero",
@@ -1636,6 +1695,7 @@ def render_facility_comparison_chart(
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            layer="below traces",
         ),
         legend=dict(
             title="Facilities",
@@ -1648,7 +1708,11 @@ def render_facility_comparison_chart(
     )
 
     if is_rate_kpi:
-        fig.update_layout(yaxis_tickformat=".2f")
+        fig.update_layout(
+            yaxis_tickformat=".2f",
+            yaxis_range=[-0.5, 100.5],
+            yaxis_dtick=25,
+        )
 
     # Generate unique key for facility comparison chart
     chart_key = f"facility_comp_{title.replace(' ', '_')}_{len(facility_uids) if facility_uids else 0}_{key_suffix}"
@@ -1804,14 +1868,8 @@ def render_region_comparison_chart(
                 )
                 total_numerator = pd.to_numeric(period_group["numerator"], errors='coerce').sum()
                 total_denominator_sum = pd.to_numeric(period_group["denominator"], errors='coerce').sum()
-                total_denominator = (
-                    total_denominator_sum
-                    if total_denominator_sum > 0
-                    else 1
-                )
-
-                # Skip if both numerator and denominator are 0
-                if total_numerator == 0 and total_denominator == 0:
+                total_denominator = total_denominator_sum
+                if total_denominator <= 0:
                     continue
 
                 formatted_period = format_period_month_year(period_display)
@@ -1830,6 +1888,12 @@ def render_region_comparison_chart(
         return
 
     comparison_df = pd.DataFrame(comparison_data).reset_index(drop=True)
+
+    # Exclude denominator<=0 rows from all outputs (plot/table/download)
+    comparison_df = comparison_df[pd.to_numeric(comparison_df["denominator"], errors="coerce").fillna(0) > 0].copy()
+    if comparison_df.empty:
+        st.info("No valid comparison data available (denominator is zero for all periods).")
+        return
 
     # Sort periods properly for display
     try:
@@ -1880,12 +1944,20 @@ def render_region_comparison_chart(
             st.metric("🌍 Grand Overall Value", f"{grand_overall:{val_format}}{suffix}")
 
     # Create the chart with reduced height
+    comparison_plot_df = comparison_df.copy()
+    den_vals = pd.to_numeric(comparison_plot_df["denominator"], errors="coerce").fillna(0)
+    comparison_plot_df["value"] = pd.to_numeric(comparison_plot_df["value"], errors="coerce")
+    comparison_plot_df.loc[den_vals <= 0, "value"] = np.nan
+    region_color_map = build_stable_color_map(comparison_plot_df["Region"].unique())
+
     fig = px.line(
-        comparison_df,
+        comparison_plot_df,
         x="period_display",
         y="value",
         color="Region",
-        markers=True,
+        color_discrete_map=region_color_map,
+        markers=False,
+        line_shape="spline",
         title=f"{title} - Region Comparison",
         height=350,
         category_orders={"period_display": period_order},
@@ -1893,8 +1965,10 @@ def render_region_comparison_chart(
     )
 
     fig.update_traces(
-        line=dict(width=3),
-        marker=dict(size=7),
+        mode="lines",
+        line=dict(width=3, shape="spline", smoothing=0.35),
+        connectgaps=True,
+        cliponaxis=False,
         hovertemplate=get_attractive_hover_template(
             title, numerator_name, denominator_name, is_count=not is_rate_kpi
         ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
@@ -1912,6 +1986,7 @@ def render_region_comparison_chart(
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            layer="below traces",
         ),
         yaxis=dict(
             rangemode="tozero",
@@ -1919,6 +1994,7 @@ def render_region_comparison_chart(
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            layer="below traces",
         ),
         legend=dict(
             title="Regions",
@@ -1931,7 +2007,11 @@ def render_region_comparison_chart(
     )
 
     if is_rate_kpi:
-        fig.update_layout(yaxis_tickformat=".2f")
+        fig.update_layout(
+            yaxis_tickformat=".2f",
+            yaxis_range=[-0.5, 100.5],
+            yaxis_dtick=25,
+        )
 
     # Generate unique key for region comparison chart
     chart_key = f"region_comp_{title.replace(' ', '_')}_{len(region_names) if region_names else 0}_{key_suffix}"

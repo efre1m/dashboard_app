@@ -9,6 +9,7 @@ import logging
 import warnings
 from utils.kpi_utils import (
     auto_text_color,
+    build_stable_color_map,
     format_period_month_year,
     get_attractive_hover_template,
     get_current_period_label,
@@ -1246,6 +1247,11 @@ def render_newborn_region_comparison_chart(
         }
     )
     comparison_df = pd.DataFrame(comparison_data)
+    if denominator_name in comparison_df.columns:
+        comparison_df[denominator_name] = pd.to_numeric(
+            comparison_df[denominator_name], errors="coerce"
+        ).fillna(0)
+        comparison_df = comparison_df[comparison_df[denominator_name] > 0].copy()
 
     # Period-by-region chart data (same chart style as facility comparison: multi-line).
     chart_df = df.copy()
@@ -1264,6 +1270,8 @@ def render_newborn_region_comparison_chart(
         lambda r: (r["numerator"] / r["denominator"] * 100) if r["denominator"] > 0 else 0,
         axis=1,
     )
+    # Keep denominator-zero periods out of the line plot (no fake zero points).
+    grouped = grouped[pd.to_numeric(grouped["denominator"], errors="coerce").fillna(0) > 0].copy()
 
     # Normalize and strictly sort periods so lines do not zigzag.
     grouped["_period_label"] = grouped[period_col].apply(format_period_month_year)
@@ -1301,20 +1309,28 @@ def render_newborn_region_comparison_chart(
 
     grouped = grouped.sort_values(["Region", "period_sort", "_period_label"]).copy()
 
+    grouped_plot_df = grouped.copy()
+    grouped_plot_df["value"] = pd.to_numeric(grouped_plot_df["value"], errors="coerce")
+    region_color_map = build_stable_color_map(grouped_plot_df["Region"].unique())
+
     fig = px.line(
-        grouped,
+        grouped_plot_df,
         x="_period_label",
         y="value",
         color="Region",
-        markers=True,
+        color_discrete_map=region_color_map,
+        markers=False,
+        line_shape="spline",
         title=f"{title} - Region Comparison",
         category_orders={"_period_label": period_order},
         custom_data=["numerator", "denominator"],
         height=350,
     )
     fig.update_traces(
-        line=dict(width=3),
-        marker=dict(size=7),
+        mode="lines",
+        line=dict(width=3, shape="spline", smoothing=0.35),
+        connectgaps=True,
+        cliponaxis=False,
         hovertemplate=get_attractive_hover_template(
             title, numerator_name, denominator_name
         ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
@@ -1333,8 +1349,16 @@ def render_newborn_region_comparison_chart(
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            layer="below traces",
         ),
-        yaxis=dict(rangemode="tozero", showgrid=True, gridcolor="rgba(128,128,128,0.2)"),
+        yaxis=dict(
+            rangemode="tozero",
+            range=[-0.5, 100.5],
+            dtick=25,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            layer="below traces",
+        ),
         legend=dict(title="Regions", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -1345,7 +1369,10 @@ def render_newborn_region_comparison_chart(
 
     # Download details with one row per region per period
     period_label = get_current_period_label()
-    csv_df = grouped.copy()
+    grouped_valid_df = grouped[
+        pd.to_numeric(grouped["denominator"], errors="coerce").fillna(0) > 0
+    ].copy()
+    csv_df = grouped_valid_df.copy()
     csv_df["Time Period"] = csv_df["_period_label"].apply(
         lambda p: format_period_for_download(p, period_label)
     )

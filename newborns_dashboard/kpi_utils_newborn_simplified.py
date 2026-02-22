@@ -837,6 +837,12 @@ def render_birth_weight_trend_chart(
         return
 
     trend_df = pd.DataFrame(trend_data)
+    trend_valid_df = trend_df[
+        pd.to_numeric(trend_df["cpap_general_total"], errors="coerce").fillna(0) > 0
+    ].copy()
+    if trend_valid_df.empty:
+        st.warning("No valid CPAP data to display (denominator is zero for all periods).")
+        return
 
     # Create stacked bar chart for birth weight rate
     fig = go.Figure()
@@ -911,7 +917,7 @@ def render_birth_weight_trend_chart(
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[0, 105],  # 0 to 105% (with small buffer)
+            range=[-0.5, 100.5],  # Tiny padding keeps boundary lines visible
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -1155,7 +1161,7 @@ def render_birth_weight_facility_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[0, 105],  # 0 to 105% (with small buffer)
+            range=[-0.5, 100.5],  # Tiny padding keeps boundary lines visible
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -1400,7 +1406,7 @@ def render_birth_weight_region_comparison(
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[0, 105],  # 0 to 105% (with buffer)
+            range=[-0.5, 100.5],  # Tiny padding keeps boundary lines visible
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -1574,13 +1580,13 @@ def render_cpap_general_trend_chart(
 
     # Prepare hover data as numpy array
     hover_data = np.column_stack(
-        (trend_df["cpap_general_count"], trend_df["cpap_general_total"])
+        (trend_valid_df["cpap_general_count"], trend_valid_df["cpap_general_total"])
     )
 
     fig.add_trace(
         go.Bar(
-            x=trend_df[period_col],
-            y=trend_df["cpap_general_rate"],
+            x=trend_valid_df[period_col],
+            y=trend_valid_df["cpap_general_rate"],
             name="General CPAP",
             marker_color="#3498db",  # Blue for General CPAP
             hovertemplate=get_attractive_hover_template(
@@ -1591,12 +1597,8 @@ def render_cpap_general_trend_chart(
     )
 
     # Calculate Y-axis range for percentage charts
-    all_rates = trend_df["cpap_general_rate"].tolist()
-    if all_rates:
-        max_rate = max(all_rates)
-        y_max = min(100, max_rate * 1.1)  # Cap at 100% for percentages
-    else:
-        y_max = 100
+    all_rates = trend_valid_df["cpap_general_rate"].tolist()
+    y_max = 100
 
     fig.update_layout(
         title=title,
@@ -1618,6 +1620,7 @@ def render_cpap_general_trend_chart(
         yaxis=dict(
             rangemode="tozero",
             range=[0, y_max],
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -1634,7 +1637,7 @@ def render_cpap_general_trend_chart(
     # Create a detailed table
     table_data = []
 
-    for _, row in trend_df.iterrows():
+    for _, row in trend_valid_df.iterrows():
         table_row = {
             "Period": row[period_col],
             "Rate (%)": f"{row['cpap_general_rate']:.1f}%",
@@ -1644,8 +1647,8 @@ def render_cpap_general_trend_chart(
         table_data.append(table_row)
 
     # Add overall row
-    total_cases = trend_df["cpap_general_count"].sum()
-    total_admitted = trend_df["cpap_general_total"].sum()
+    total_cases = trend_valid_df["cpap_general_count"].sum()
+    total_admitted = trend_valid_df["cpap_general_total"].sum()
     overall_rate = (total_cases / total_admitted * 100) if total_admitted > 0 else 0
 
     overall_row = {
@@ -1670,7 +1673,7 @@ def render_cpap_general_trend_chart(
     st.subheader("📥 Download Data")
 
     # Create a simplified version for download
-    download_df = trend_df.copy()
+    download_df = trend_valid_df.copy()
 
     # Select and rename columns
     download_df = download_df[
@@ -1762,23 +1765,36 @@ def render_cpap_rds_trend_chart(
         return
 
     trend_df = pd.DataFrame(trend_data)
+    trend_plot_df = trend_df.copy()
+    den_vals = pd.to_numeric(trend_plot_df["cpap_rds_total"], errors="coerce").fillna(0)
+    trend_plot_df["cpap_rds_rate"] = pd.to_numeric(
+        trend_plot_df["cpap_rds_rate"], errors="coerce"
+    )
+    trend_plot_df.loc[den_vals <= 0, "cpap_rds_rate"] = np.nan
+    trend_valid_df = trend_df[
+        pd.to_numeric(trend_df["cpap_rds_total"], errors="coerce").fillna(0) > 0
+    ].copy()
+    if trend_valid_df.empty:
+        st.warning("No valid CPAP for RDS data to display (denominator is zero for all periods).")
+        return
 
     # Create bar chart for CPAP for RDS
     fig = go.Figure()
 
     # Prepare hover data as numpy array
     hover_data = np.column_stack(
-        (trend_df["cpap_rds_count"], trend_df["cpap_rds_total"])
+        (trend_plot_df["cpap_rds_count"], trend_plot_df["cpap_rds_total"])
     )
 
     fig.add_trace(
         go.Scatter(
-            x=trend_df[period_col],
-            y=trend_df["cpap_rds_rate"],
-            mode="lines+markers",
+            x=trend_plot_df[period_col],
+            y=trend_plot_df["cpap_rds_rate"],
+            mode="lines",
             name="CPAP for RDS",
-            line=dict(color="#3498db", width=3),
-            marker=dict(size=8, color="#3498db"),
+            line=dict(color="#3498db", width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
             hovertemplate=get_attractive_hover_template(
                 "CPAP for RDS", numerator_name, denominator_name
             ),
@@ -1787,12 +1803,8 @@ def render_cpap_rds_trend_chart(
     )
 
     # Calculate Y-axis range for percentage charts
-    all_rates = trend_df["cpap_rds_rate"].tolist()
-    if all_rates:
-        max_rate = max(all_rates)
-        y_max = min(100, max_rate * 1.1)  # Cap at 100% for percentages
-    else:
-        y_max = 110  # Default to 110% for percentages
+    all_rates = trend_plot_df["cpap_rds_rate"].tolist()
+    y_max = 100
 
     fig.update_layout(
         title=title,
@@ -1810,14 +1822,17 @@ def render_cpap_rds_trend_chart(
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            layer="below traces",
         ),
         yaxis=dict(
             rangemode="tozero",
             range=[0, y_max],
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            layer="below traces",
         ),
     )
 
@@ -1830,7 +1845,7 @@ def render_cpap_rds_trend_chart(
     # Create a detailed table
     table_data = []
 
-    for _, row in trend_df.iterrows():
+    for _, row in trend_valid_df.iterrows():
         table_row = {
             "Period": row[period_col],
             "Rate (%)": f"{row['cpap_rds_rate']:.1f}%",
@@ -1840,8 +1855,8 @@ def render_cpap_rds_trend_chart(
         table_data.append(table_row)
 
     # Add overall row
-    total_cases = trend_df["cpap_rds_count"].sum()
-    total_rds = trend_df["cpap_rds_total"].sum()
+    total_cases = trend_valid_df["cpap_rds_count"].sum()
+    total_rds = trend_valid_df["cpap_rds_total"].sum()
     overall_rate = (total_cases / total_rds * 100) if total_rds > 0 else 0
 
     overall_row = {
@@ -1866,7 +1881,7 @@ def render_cpap_rds_trend_chart(
     st.subheader("📥 Download Data")
 
     # Create a simplified version for download
-    download_df = trend_df.copy()
+    download_df = trend_valid_df.copy()
 
     # Select and rename columns
     download_df = download_df[
@@ -2018,6 +2033,7 @@ def render_cpap_general_facility_comparison(
         yaxis=dict(
             rangemode="tozero",
             range=[0, y_max],
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -2196,6 +2212,7 @@ def render_cpap_rds_facility_comparison(
         yaxis=dict(
             rangemode="tozero",
             range=[0, y_max],
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -2382,6 +2399,7 @@ def render_cpap_general_region_comparison(
         yaxis=dict(
             rangemode="tozero",
             range=[0, y_max],
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -2567,6 +2585,7 @@ def render_cpap_rds_region_comparison(
         yaxis=dict(
             rangemode="tozero",
             range=[0, y_max],
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -2750,10 +2769,10 @@ def render_kmc_coverage_trend_chart(
                     x=trend_df[period_col],
                     y=trend_df[rate_col],
                     name=category_info["name"],
-                    mode='lines+markers',
-                    line=dict(color='#1f77b4', width=3),  # Consistent blue color
-                    marker=dict(size=8, color='#1f77b4'),
+                    mode='lines',
+                    line=dict(color='#1f77b4', width=3, shape="spline", smoothing=0.35),  # Consistent blue color
                     connectgaps=True,  # Connect gaps for None values (0/0)
+                    cliponaxis=False,
                     hovertemplate=get_attractive_hover_template(
                         category_info["name"], "Cases", "Total"
                     ),
@@ -2776,11 +2795,7 @@ def render_kmc_coverage_trend_chart(
             valid_rates = [r for r in trend_df[rate_col].tolist() if pd.notna(r)]
             all_rates.extend(valid_rates)
 
-    if all_rates:
-        max_rate = max(all_rates)
-        y_max = min(100, max_rate * 1.2)
-    else:
-        y_max = 100
+    y_max = 100
 
     fig.update_layout(
         title=title,
@@ -2808,7 +2823,7 @@ def render_kmc_coverage_trend_chart(
     )
     
     fig.update_yaxes(
-        range=[0, 110], # Force 0-110%
+        range=[-2, 102], # Extra padding prevents spline clipping at 0/100 boundaries
         dtick=25,       # 25% steps
         gridcolor="rgba(128,128,128,0.2)",
         showgrid=True,  # Horizontal gridlines
@@ -3068,10 +3083,10 @@ def render_cpap_by_weight_trend_chart(
                     x=trend_df[period_col],
                     y=trend_df[rate_col],
                     name=category_info["name"],
-                    mode='lines+markers',
-                    line=dict(color='#1f77b4', width=3),  # Consistent blue color
-                    marker=dict(size=8, color='#1f77b4'),
+                    mode='lines',
+                    line=dict(color='#1f77b4', width=3, shape="spline", smoothing=0.35),  # Consistent blue color
                     connectgaps=True,  # Connect gaps for None values (0/0)
+                    cliponaxis=False,
                     hovertemplate=get_attractive_hover_template(
                         category_info["name"], "CPAP Cases", "Total"
                     ),
@@ -3094,11 +3109,7 @@ def render_cpap_by_weight_trend_chart(
             valid_rates = [r for r in trend_df[rate_col].tolist() if pd.notna(r)]
             all_rates.extend(valid_rates)
 
-    if all_rates:
-        max_rate = max(all_rates)
-        y_max = min(100, max_rate * 1.2)
-    else:
-        y_max = 100
+    y_max = 100
 
     fig.update_layout(
         title=title,
@@ -3126,7 +3137,7 @@ def render_cpap_by_weight_trend_chart(
     )
     
     fig.update_yaxes(
-        range=[0, 110], # Force 0-110%
+        range=[-2, 102], # Extra padding prevents spline clipping at 0/100 boundaries
         dtick=25,       # 25% steps
         gridcolor="rgba(128,128,128,0.2)",
         showgrid=True,  # Horizontal gridlines
@@ -3385,6 +3396,7 @@ def render_kmc_facility_comparison(
         yaxis=dict(
             rangemode="tozero",
             range=[0, y_max],  # FIXED: Always 0-100%
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -3589,8 +3601,8 @@ def render_kmc_region_comparison(
                 )
             )
 
-    # Calculate Y-axis range for percentage charts - ALWAYS 0-110%
-    y_max = 110  # Always show up to 110% for rates
+    # Calculate Y-axis range for percentage charts - ALWAYS 0-100%
+    y_max = 100  # Always show up to 100% for rates
 
     fig.update_layout(
         title=f"{title}",
@@ -3613,6 +3625,7 @@ def render_kmc_region_comparison(
         yaxis=dict(
             rangemode="tozero",
             range=[0, y_max],  # FIXED: Always 0-100%
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
@@ -3887,7 +3900,11 @@ def render_kmc_coverage_comparison_chart(
     # Use Names for color mapping to be consistent across charts if possible, or UIDs? 
     # Better to use the Entity Item (UID for facility, Name for region) to be unique
     color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set2
-    entity_colors = {entity: color_palette[i % len(color_palette)] for i, entity in enumerate(entities)}
+    sorted_entities = sorted(entities, key=lambda e: str(get_label(e)).lower())
+    entity_colors = {
+        entity: color_palette[i % len(color_palette)]
+        for i, entity in enumerate(sorted_entities)
+    }
 
     # Compute KMC coverage for each entity
     comparison_data = {}
@@ -3980,10 +3997,10 @@ def render_kmc_coverage_comparison_chart(
                         x=entity_df[period_col],
                         y=entity_df[rate_col],
                         name=label, # Use Name
-                        mode='lines+markers',
-                        line=dict(color=entity_colors[entity_id], width=3),
-                        marker=dict(size=8, color=entity_colors[entity_id]),
+                        mode='lines',
+                        line=dict(color=entity_colors[entity_id], width=3, shape="spline", smoothing=0.35),
                         connectgaps=True,
+                        cliponaxis=False,
                         legendgroup=label, # Group by Name
                         showlegend=(idx == 0),
                         hovertemplate=f"<b>{label}</b><br>" +
@@ -4034,7 +4051,7 @@ def render_kmc_coverage_comparison_chart(
     )
     
     fig.update_yaxes(
-        range=[0, 110],
+        range=[-2, 102],
         dtick=25,
         gridcolor="rgba(128,128,128,0.2)",
         showgrid=True,
@@ -4205,7 +4222,11 @@ def render_cpap_by_weight_comparison_chart(
 
     # Generate distinct colors for each entity
     color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set2
-    entity_colors = {entity: color_palette[i % len(color_palette)] for i, entity in enumerate(entities)}
+    sorted_entities = sorted(entities, key=lambda e: str(get_label(e)).lower())
+    entity_colors = {
+        entity: color_palette[i % len(color_palette)]
+        for i, entity in enumerate(sorted_entities)
+    }
 
     # Compute CPAP coverage for each entity
     comparison_data = {}
@@ -4294,10 +4315,10 @@ def render_cpap_by_weight_comparison_chart(
                         x=entity_df[period_col],
                         y=entity_df[rate_col],
                         name=label,
-                        mode='lines+markers',
-                        line=dict(color=entity_colors[entity_id], width=3),
-                        marker=dict(size=8, color=entity_colors[entity_id]),
+                        mode='lines',
+                        line=dict(color=entity_colors[entity_id], width=3, shape="spline", smoothing=0.35),
                         connectgaps=True,
+                        cliponaxis=False,
                         legendgroup=label,
                         showlegend=(idx == 0),
                         hovertemplate=f"<b>{label}</b><br>" +
@@ -4348,7 +4369,7 @@ def render_cpap_by_weight_comparison_chart(
     )
     
     fig.update_yaxes(
-        range=[0, 110],
+        range=[-2, 102],
         dtick=25,
         gridcolor="rgba(128,128,128,0.2)",
         showgrid=True,
@@ -4505,7 +4526,11 @@ def render_cpap_rds_comparison_line_chart(
 
     # Generate distinct colors for each entity
     color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set2
-    entity_colors = {entity: color_palette[i % len(color_palette)] for i, entity in enumerate(entities)}
+    sorted_entities = sorted(entities, key=lambda e: str(get_label(e)).lower())
+    entity_colors = {
+        entity: color_palette[i % len(color_palette)]
+        for i, entity in enumerate(sorted_entities)
+    }
 
     # Compute CPAP for RDS rates for each period and entity
     comparison_data = {}
@@ -4558,23 +4583,27 @@ def render_cpap_rds_comparison_line_chart(
     # Add a line for each entity
     for entity_id, entity_df in comparison_data.items():
         label = get_label(entity_id)
+        entity_plot_df = entity_df.copy()
+        den_vals = pd.to_numeric(entity_plot_df["total_rds"], errors="coerce").fillna(0)
+        entity_plot_df["rate"] = pd.to_numeric(entity_plot_df["rate"], errors="coerce")
+        entity_plot_df.loc[den_vals <= 0, "rate"] = np.nan
         
         fig.add_trace(
             go.Scatter(
-                x=entity_df[period_col],
-                y=entity_df["rate"],
+                x=entity_plot_df[period_col],
+                y=entity_plot_df["rate"],
                 name=label,
-                mode='lines+markers',
-                line=dict(color=entity_colors[entity_id], width=3),
-                marker=dict(size=10, color=entity_colors[entity_id]),
+                mode='lines',
+                line=dict(color=entity_colors[entity_id], width=3, shape="spline", smoothing=0.35),
                 connectgaps=True,
+                cliponaxis=False,
                 hovertemplate=f"<b>{label}</b><br>" +
                             "Period: %{x}<br>" +
                             "CPAP Rate: %{y:.1f}%<br>" +
                             "CPAP Cases: %{customdata[0]:.0f}<br>" +
                             "Total RDS: %{customdata[1]:.0f}<extra></extra>",
                 customdata=np.column_stack(
-                    (entity_df["cpap_count"], entity_df["total_rds"])
+                    (entity_plot_df["cpap_count"], entity_plot_df["total_rds"])
                 ),
             )
         )
@@ -4615,7 +4644,7 @@ def render_cpap_rds_comparison_line_chart(
     )
     
     fig.update_yaxes(
-        range=[0, 110],
+        range=[-0.5, 100.5],
         dtick=25,
         gridcolor="rgba(128,128,128,0.2)",
         showgrid=True,
