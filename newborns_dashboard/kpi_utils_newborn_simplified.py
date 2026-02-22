@@ -838,10 +838,10 @@ def render_birth_weight_trend_chart(
 
     trend_df = pd.DataFrame(trend_data)
     trend_valid_df = trend_df[
-        pd.to_numeric(trend_df["cpap_general_total"], errors="coerce").fillna(0) > 0
+        pd.to_numeric(trend_df["total_admitted"], errors="coerce").fillna(0) > 0
     ].copy()
     if trend_valid_df.empty:
-        st.warning("No valid CPAP data to display (denominator is zero for all periods).")
+        st.warning("No valid birth weight data to display (denominator is zero for all periods).")
         return
 
     # Create stacked bar chart for birth weight rate

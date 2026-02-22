@@ -161,20 +161,12 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
                 with col_chart:
                     df['login_time'] = pd.to_datetime(df['login_time'])
                     df['login_date'] = df['login_time'].dt.date
-                    df['facility_name'] = df['facility_name'].fillna('Unknown Facility')
-                    # Group by date AND facility for multi-line trends, same pattern as regional view
+                    # Group by date AND facility for multi-line
                     chart_df = df.groupby(['login_date', 'facility_name']).size().reset_index(name='Logins')
-
-                    fig = px.line(
-                        chart_df,
-                        x='login_date',
-                        y='Logins',
-                        color='facility_name',
-                        title="Facility Login Trends",
-                        markers=True,
-                        line_shape="spline",
-                        template="plotly_white"
-                    )
+                    
+                    fig = px.line(chart_df, x='login_date', y='Logins', color='facility_name', 
+                                 title="Facility Login Trends",
+                                 markers=True, line_shape="spline", template="plotly_white")
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
                     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
