@@ -5,6 +5,7 @@ import logging
 import os
 import glob
 import re
+from utils.facility_codes import apply_facility_codes_to_dataframe
 
 # ========== IMPROVED FACILITY NAME NORMALIZATION ==========
 
@@ -593,7 +594,7 @@ def load_patient_data_for_user(
         else:
             logging.info(f"✅ Filtered data for user: {len(filtered_df)} patients")
 
-        return filtered_df
+        return apply_facility_codes_to_dataframe(filtered_df)
 
     except Exception as e:
         logging.error(f"❌ Failed to load CSV data from {csv_file}: {e}")

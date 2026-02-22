@@ -1,7 +1,76 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from pathlib import Path
 from utils.db import get_db_connection
+
+
+@st.cache_data(ttl=3600)
+def load_facility_code_mapping():
+    """Load facility name -> facility code mapping from the local reference file."""
+    mapping_path = Path(__file__).resolve().parent / "IMNID_facility_code.xlsx"
+    if not mapping_path.exists():
+        return {}
+
+    try:
+        ref_df = pd.read_excel(mapping_path)
+    except Exception:
+        return {}
+
+    required_cols = {"facility_name", "facility_code"}
+    if not required_cols.issubset(set(ref_df.columns)):
+        return {}
+
+    clean_df = ref_df[["facility_name", "facility_code"]].copy()
+    clean_df["facility_name"] = clean_df["facility_name"].astype(str).str.strip()
+    clean_df = clean_df[clean_df["facility_name"] != ""]
+
+    def to_code_str(v):
+        if pd.isna(v):
+            return None
+        as_num = pd.to_numeric(v, errors="coerce")
+        if pd.notna(as_num):
+            return str(int(as_num))
+        v_str = str(v).strip()
+        return v_str if v_str else None
+
+    clean_df["facility_code"] = clean_df["facility_code"].apply(to_code_str)
+    clean_df = clean_df[clean_df["facility_code"].notna()]
+
+    return dict(
+        zip(
+            clean_df["facility_name"].str.lower(),
+            clean_df["facility_code"],
+        )
+    )
+
+
+def enrich_logs_with_facility_codes(logs_df):
+    """Replace facility labels with facility_code and derive region code from first digit."""
+    if logs_df is None or logs_df.empty:
+        return logs_df
+
+    code_map = load_facility_code_mapping()
+    if not code_map:
+        return logs_df
+
+    df = logs_df.copy()
+    name_norm = df["facility_name"].fillna("").astype(str).str.strip().str.lower()
+    mapped_codes = name_norm.map(code_map)
+
+    # Use mapped code where available; otherwise keep original facility label.
+    original_name = df["facility_name"].fillna("Unknown Facility").astype(str).str.strip()
+    df["facility_name"] = mapped_codes.fillna(original_name)
+
+    # Region code is the first digit of facility_code for facility users.
+    is_facility_user = df["role"].astype(str).str.lower() == "facility"
+    mapped_code_str = mapped_codes.fillna("").astype(str).str.strip()
+    region_code = mapped_code_str.str[0]
+    region_code = region_code.where(mapped_code_str != "", None)
+    df.loc[is_facility_user, "region_name"] = region_code[is_facility_user]
+
+    return df
+
 
 @st.cache_data(ttl=60)
 def fetch_usage_logs():
@@ -26,7 +95,7 @@ def fetch_usage_logs():
 def render_usage_tracking_shared(user_role, user_region_id=None):
     st.subheader("Usage Analytics & Tracking")
     
-    logs = fetch_usage_logs()
+    logs = enrich_logs_with_facility_codes(fetch_usage_logs())
     if logs.empty:
         st.info("No login activity recorded yet.")
         return

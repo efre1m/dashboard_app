@@ -1,6 +1,7 @@
 # utils/queries.py
 from typing import List, Tuple, Optional, Dict
 from utils.db import get_db_connection
+from utils.facility_codes import get_facility_code
 import logging
 import streamlit as st
 
@@ -187,7 +188,7 @@ def get_orgunit_uids_for_user(user: dict) -> List[Tuple[str, str]]:
             pass
 
     logging.info("OrgUnits fetched for user '%s': %s", user.get("username"), ous)
-    return [(ou, name) for ou, name in ous if ou]
+    return [(ou, get_facility_code(name, ou, fallback=name)) for ou, name in ous if ou]
 
 
 def get_facility_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
@@ -219,7 +220,7 @@ def get_facility_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
         except Exception:
             pass
 
-    return facility_name
+    return get_facility_code(facility_name, dhis_uid, fallback=facility_name)
 
 
 def get_region_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
@@ -329,7 +330,10 @@ def get_facilities_for_user(user: dict) -> List[Tuple[str, str]]:
         except Exception:
             pass
 
-    return facilities
+    return [
+        (get_facility_code(facility_name, dhis2_uid, fallback=facility_name), dhis2_uid)
+        for facility_name, dhis2_uid in facilities
+    ]
 
 
 def get_facility_mapping_for_user(user: dict) -> Dict[str, str]:
@@ -399,7 +403,9 @@ def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, st
         for region_name, facility_name, dhis2_uid in facilities:
             if region_name not in facilities_by_region:
                 facilities_by_region[region_name] = []
-            facilities_by_region[region_name].append((facility_name, dhis2_uid))
+            facilities_by_region[region_name].append(
+                (get_facility_code(facility_name, dhis2_uid, fallback=facility_name), dhis2_uid)
+            )
 
     except Exception as e:
         logging.error(f"Error fetching facilities grouped by region: {e}")
