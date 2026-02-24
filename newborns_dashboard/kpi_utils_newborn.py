@@ -12,6 +12,7 @@ from utils.kpi_utils import (
     build_stable_color_map,
     format_period_month_year,
     get_attractive_hover_template,
+    get_comparison_hover_template,
     get_current_period_label,
     format_period_for_download,
 )
@@ -1331,9 +1332,9 @@ def render_newborn_region_comparison_chart(
         line=dict(width=3, shape="spline", smoothing=0.35),
         connectgaps=True,
         cliponaxis=False,
-        hovertemplate=get_attractive_hover_template(
-            title, numerator_name, denominator_name
-        ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
+        hovertemplate=get_comparison_hover_template(
+            "Region", title, numerator_name, denominator_name, is_count=False
+        ),
     )
     fig.update_layout(
         paper_bgcolor=bg_color,
@@ -1739,7 +1740,9 @@ def render_admitted_newborns_facility_comparison_chart(
     fig.update_traces(
         texttemplate="%{text:,.0f}",
         textposition="outside",
-        hovertemplate=get_attractive_hover_template(value_name, "", "", is_count=True).replace("%{x}", "%{x}<br>Facility: %{fullData.name}")
+        hovertemplate=get_comparison_hover_template(
+            "Facility", value_name, "", "", is_count=True
+        ),
     )
 
     fig.update_layout(

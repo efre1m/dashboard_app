@@ -1,7 +1,7 @@
 # utils/queries.py
 from typing import List, Tuple, Optional, Dict
 from utils.db import get_db_connection
-from utils.facility_codes import get_facility_code
+from utils.facility_codes import get_facility_code, get_region_code
 import logging
 import streamlit as st
 
@@ -252,7 +252,7 @@ def get_region_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
         except Exception:
             pass
 
-    return region_name
+    return get_region_code(region_name=region_name, fallback=region_name)
 
 
 def get_country_name_by_dhis_uid(dhis_uid: str) -> Optional[str]:
@@ -401,9 +401,12 @@ def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, st
 
         # Group facilities by region
         for region_name, facility_name, dhis2_uid in facilities:
-            if region_name not in facilities_by_region:
-                facilities_by_region[region_name] = []
-            facilities_by_region[region_name].append(
+            region_label = get_region_code(
+                facility_name=facility_name, region_name=region_name, fallback=region_name
+            )
+            if region_label not in facilities_by_region:
+                facilities_by_region[region_label] = []
+            facilities_by_region[region_label].append(
                 (get_facility_code(facility_name, dhis2_uid, fallback=facility_name), dhis2_uid)
             )
 

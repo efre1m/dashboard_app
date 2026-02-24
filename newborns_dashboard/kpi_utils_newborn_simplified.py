@@ -11,7 +11,10 @@ import logging
 from datetime import datetime
 
 # Import shared utilities
-from utils.kpi_utils import auto_text_color, get_attractive_hover_template
+from utils.kpi_utils import (
+    auto_text_color,
+    get_attractive_hover_template,
+)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -1101,54 +1104,68 @@ def render_birth_weight_facility_comparison(
 
     facility_df = pd.DataFrame(facility_data)
 
-    # Create stacked bar chart WITH SORTED CATEGORIES
-    fig = go.Figure()
-
-    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
-    for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(),
-        key=lambda x: x[1]["sort_order"],
-        reverse=True,  # Reverse for stacking order
-    ):
-        short_name = category_info["short_name"]
-        if short_name in facility_df.columns:
-            # Calculate percentage for this category - USING TOTAL ADMITTED AS DENOMINATOR
-            facility_df[f"{short_name}_rate"] = (
-                facility_df[short_name] / facility_df["Total Admitted"] * 100
-            ).fillna(0)
-
-            fig.add_trace(
-                go.Bar(
-                    x=facility_df["Facility"],
-                    y=facility_df[f"{short_name}_rate"],
-                    name=category_info["name"],
-                    marker_color=category_info["color"],
-                    customdata=facility_df[[short_name, "Total Admitted"]],
-                    hovertemplate=get_attractive_hover_template(
-                        category_info["name"], "Newborns", "Total Admitted"
-                    ),
-                )
+    # Plot as grouped bar chart by birth-weight category (x-axis = category).
+    chart_rows = []
+    for _, row in facility_df.iterrows():
+        denominator = pd.to_numeric(row.get("Total Admitted", 0), errors="coerce")
+        denominator = 0 if pd.isna(denominator) else float(denominator)
+        if denominator <= 0:
+            continue
+        for _, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            short_name = category_info["short_name"]
+            numerator = pd.to_numeric(row.get(short_name, 0), errors="coerce")
+            numerator = 0 if pd.isna(numerator) else float(numerator)
+            rate = (numerator / denominator) * 100
+            chart_rows.append(
+                {
+                    "Category": category_info["name"],
+                    "Facility": row["Facility"],
+                    "Rate": rate,
+                    "Numerator": numerator,
+                    "Denominator": denominator,
+                }
             )
 
-    # Calculate Y-axis range
-    all_values = []
-    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
-        short_name = category_info["short_name"]
-        if short_name in facility_df.columns:
-            all_values.extend(facility_df[short_name].tolist())
+    chart_df = pd.DataFrame(chart_rows)
+    if chart_df.empty:
+        st.warning("No valid birth weight comparison data to display (denominator is zero for all entities).")
+        return
 
-    if all_values:
-        max_value = max(all_values)
-        y_max = max_value * 1.1  # Add 10% padding
-    else:
-        y_max = None
+    fig = px.bar(
+        chart_df,
+        x="Category",
+        y="Rate",
+        color="Facility",
+        barmode="group",
+        title=title,
+        height=500,
+        custom_data=["Numerator", "Denominator"],
+        category_orders={
+            "Category": [
+                c["name"]
+                for _, c in sorted(
+                    BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+                )
+            ]
+        },
+    )
+    fig.update_traces(
+        hovertemplate=(
+            "Category: %{x}<br>"
+            "Facility: %{fullData.name}<br>"
+            "Birth Weight Rate (%): %{y:.2f}%<br>"
+            "Newborns: %{customdata[0]:,.0f}<br>"
+            "Total Admitted: %{customdata[1]:,.0f}<extra></extra>"
+        )
+    )
 
     fig.update_layout(
         title=title,
         height=500,
-        xaxis_title="Facility",
-        yaxis_title="Percentage of Newborns (%)",
-        barmode="stack",
+        xaxis_title="Birth Weight Category",
+        yaxis_title="Birth Weight Rate (%)",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
@@ -1162,16 +1179,14 @@ def render_birth_weight_facility_comparison(
         yaxis=dict(
             rangemode="tozero",
             range=[-0.5, 100.5],  # Tiny padding keeps boundary lines visible
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
             ticksuffix="%",
         ),
-        legend=dict(
-            traceorder="reversed",  # Reverse legend to match stacking order
-            title="Birth Weight Categories",
-        ),
+        legend=dict(title="Facility"),
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -1348,52 +1363,68 @@ def render_birth_weight_region_comparison(
 
     region_df = pd.DataFrame(region_data)
 
-    # Create stacked bar chart
-    fig = go.Figure()
-
-    # Add bars for each BW category IN CORRECT ORDER (from smallest to largest)
-    for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
-    ):
-        short_name = category_info["short_name"]
-        if short_name in region_df.columns:
-            # Calculate percentage for this category - USING TOTAL ADMITTED AS DENOMINATOR
-            region_df[f"{short_name}_rate"] = (
-                region_df[short_name] / region_df["Total Admitted"] * 100
-            ).fillna(0)
-
-            fig.add_trace(
-                go.Bar(
-                    x=region_df["Region"],
-                    y=region_df[f"{short_name}_rate"],
-                    name=category_info["name"],
-                    marker_color=category_info["color"],
-                    customdata=region_df[[short_name, "Total Admitted"]],
-                    hovertemplate=get_attractive_hover_template(
-                        category_info["name"], "Newborns", "Total Admitted"
-                    ),
-                )
+    # Plot as grouped bar chart by birth-weight category (x-axis = category).
+    chart_rows = []
+    for _, row in region_df.iterrows():
+        denominator = pd.to_numeric(row.get("Total Admitted", 0), errors="coerce")
+        denominator = 0 if pd.isna(denominator) else float(denominator)
+        if denominator <= 0:
+            continue
+        for _, category_info in sorted(
+            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        ):
+            short_name = category_info["short_name"]
+            numerator = pd.to_numeric(row.get(short_name, 0), errors="coerce")
+            numerator = 0 if pd.isna(numerator) else float(numerator)
+            rate = (numerator / denominator) * 100
+            chart_rows.append(
+                {
+                    "Category": category_info["name"],
+                    "Region": row["Region"],
+                    "Rate": rate,
+                    "Numerator": numerator,
+                    "Denominator": denominator,
+                }
             )
 
-    # Calculate Y-axis range
-    all_values = []
-    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
-        short_name = category_info["short_name"]
-        if short_name in region_df.columns:
-            all_values.extend(region_df[short_name].tolist())
+    chart_df = pd.DataFrame(chart_rows)
+    if chart_df.empty:
+        st.warning("No valid birth weight comparison data to display (denominator is zero for all entities).")
+        return
 
-    if all_values:
-        max_value = max(all_values)
-        y_max = max_value * 1.1  # Add 10% padding
-    else:
-        y_max = None
+    fig = px.bar(
+        chart_df,
+        x="Category",
+        y="Rate",
+        color="Region",
+        barmode="group",
+        title=title,
+        height=500,
+        custom_data=["Numerator", "Denominator"],
+        category_orders={
+            "Category": [
+                c["name"]
+                for _, c in sorted(
+                    BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+                )
+            ]
+        },
+    )
+    fig.update_traces(
+        hovertemplate=(
+            "Category: %{x}<br>"
+            "Region: %{fullData.name}<br>"
+            "Birth Weight Rate (%): %{y:.2f}%<br>"
+            "Newborns: %{customdata[0]:,.0f}<br>"
+            "Total Admitted: %{customdata[1]:,.0f}<extra></extra>"
+        )
+    )
 
     fig.update_layout(
         title=title,
         height=500,
-        xaxis_title="Region",
-        yaxis_title="Percentage of Newborns (%)",
-        barmode="stack",
+        xaxis_title="Birth Weight Category",
+        yaxis_title="Birth Weight Rate (%)",
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
@@ -1407,15 +1438,14 @@ def render_birth_weight_region_comparison(
         yaxis=dict(
             rangemode="tozero",
             range=[-0.5, 100.5],  # Tiny padding keeps boundary lines visible
+            dtick=25,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
             ticksuffix="%",
         ),
-        legend=dict(
-            title="Birth Weight Categories",
-        ),
+        legend=dict(title="Region"),
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -3368,7 +3398,7 @@ def render_kmc_facility_comparison(
                     y=facility_df[short_name],  # This is the RATE value
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
+                    hovertemplate="Facility: %{x}<br>%{data.name}: %{y:.1f}%<extra></extra>",
                 )
             )
 
@@ -3597,7 +3627,7 @@ def render_kmc_region_comparison(
                     y=region_df[short_name],  # This is the RATE value
                     name=category_info["name"],
                     marker_color=category_info["color"],
-                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
+                    hovertemplate="Region: %{x}<br>%{data.name}: %{y:.1f}%<extra></extra>",
                 )
             )
 
@@ -4003,10 +4033,10 @@ def render_kmc_coverage_comparison_chart(
                         cliponaxis=False,
                         legendgroup=label, # Group by Name
                         showlegend=(idx == 0),
-                        hovertemplate=f"<b>{label}</b><br>" +
-                                    f"{category_info['name']}<br>" +
-                                    "Period: %{x}<br>" +
-                                    "Rate: %{y:.1f}%<br>" +
+                        hovertemplate=
+                                    "Date: %{x}<br>" +
+                                    f"Entity: {label}<br>" +
+                                    f"{category_info['name']}: %{{y:.1f}}%<br>" +
                                     "Cases: %{customdata[0]:.0f}<br>" +
                                     "Total: %{customdata[1]:.0f}<extra></extra>",
                         customdata=np.column_stack(
@@ -4321,10 +4351,10 @@ def render_cpap_by_weight_comparison_chart(
                         cliponaxis=False,
                         legendgroup=label,
                         showlegend=(idx == 0),
-                        hovertemplate=f"<b>{label}</b><br>" +
-                                    f"{category_info['name']}<br>" +
-                                    "Period: %{x}<br>" +
-                                    "Rate: %{y:.1f}%<br>" +
+                        hovertemplate=
+                                    "Date: %{x}<br>" +
+                                    f"Entity: {label}<br>" +
+                                    f"{category_info['name']}: %{{y:.1f}}%<br>" +
                                     "Cases: %{customdata[0]:.0f}<br>" +
                                     "Total: %{customdata[1]:.0f}<extra></extra>",
                         customdata=np.column_stack(
@@ -4597,9 +4627,10 @@ def render_cpap_rds_comparison_line_chart(
                 line=dict(color=entity_colors[entity_id], width=3, shape="spline", smoothing=0.35),
                 connectgaps=True,
                 cliponaxis=False,
-                hovertemplate=f"<b>{label}</b><br>" +
-                            "Period: %{x}<br>" +
-                            "CPAP Rate: %{y:.1f}%<br>" +
+                hovertemplate=
+                            "Date: %{x}<br>" +
+                            f"Entity: {label}<br>" +
+                            "CPAP for RDS: %{y:.1f}%<br>" +
                             "CPAP Cases: %{customdata[0]:.0f}<br>" +
                             "Total RDS: %{customdata[1]:.0f}<extra></extra>",
                 customdata=np.column_stack(

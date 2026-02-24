@@ -186,19 +186,36 @@ def get_attractive_hover_template(
     kpi_name, numerator_name, denominator_name, is_count=False
 ):
     """
-    Generate an attractive, well-styled hover template for Plotly charts.
+    Generate a compact hover template for Plotly charts.
     """
     if is_count:
+        return f"Date: %{{x}}<br>{kpi_name}: %{{y:,.0f}}<extra></extra>"
+
+    return (
+        f"Date: %{{x}}<br>"
+        f"{kpi_name}: %{{y:.2f}}%<br>"
+        f"{numerator_name}: %{{customdata[0]:,.0f}}<br>"
+        f"{denominator_name}: %{{customdata[1]:,.0f}}<extra></extra>"
+    )
+
+
+def get_comparison_hover_template(
+    entity_label, kpi_name, numerator_name, denominator_name, is_count=False
+):
+    """Standard compact hover template for facility/region comparison charts."""
+    if is_count:
         return (
-            "<span style='font-size:13px; font-weight:bold; color:#1f2937;'>%{x}</span><br><br>"
-            + f"<span style='color:#4b5563; font-weight:500;'>{kpi_name}:</span> <span style='font-weight:bold; color:#3b82f6; font-size:14px;'>%{{y:,.0f}}</span><extra></extra>"
+            f"Date: %{{x}}<br>"
+            f"{entity_label}: %{{fullData.name}}<br>"
+            f"{kpi_name}: %{{y:,.0f}}<extra></extra>"
         )
 
     return (
-        "<span style='font-size:13px; font-weight:bold; color:#1f2937;'>%{x}</span><br><br>"
-        + f"<span style='color:#4b5563; font-weight:500;'>{kpi_name}:</span> <span style='font-weight:bold; color:#2ecc71; font-size:14px;'>%{{y:.2f}}%</span><br>"
-        + f"<span style='color:#e67e22; font-weight:500; font-size:12px;'>{numerator_name}:</span> <span style='font-weight:600; color:#374151; font-size:12px;'>%{{customdata[0]:,.0f}}</span><br>"
-        + f"<span style='color:#9b59b6; font-weight:500; font-size:12px;'>{denominator_name}:</span> <span style='font-weight:600; color:#374151; font-size:12px;'>%{{customdata[1]:,.0f}}</span><extra></extra>"
+        f"Date: %{{x}}<br>"
+        f"{entity_label}: %{{fullData.name}}<br>"
+        f"{kpi_name}: %{{y:.2f}}%<br>"
+        f"{numerator_name}: %{{customdata[0]:,.0f}}<br>"
+        f"{denominator_name}: %{{customdata[1]:,.0f}}<extra></extra>"
     )
 
 
@@ -1670,9 +1687,13 @@ def render_facility_comparison_chart(
         line=dict(width=3, shape="spline", smoothing=0.35),
         connectgaps=True,
         cliponaxis=False,
-        hovertemplate=get_attractive_hover_template(
-            title, numerator_name, denominator_name, is_count=not is_rate_kpi
-        ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
+        hovertemplate=get_comparison_hover_template(
+            "Facility",
+            title,
+            numerator_name,
+            denominator_name,
+            is_count=not is_rate_kpi,
+        ),
     )
 
     fig.update_layout(
@@ -1969,9 +1990,13 @@ def render_region_comparison_chart(
         line=dict(width=3, shape="spline", smoothing=0.35),
         connectgaps=True,
         cliponaxis=False,
-        hovertemplate=get_attractive_hover_template(
-            title, numerator_name, denominator_name, is_count=not is_rate_kpi
-        ).replace("%{y", f"%{{fullData.name}}<br>{title}: %{{y"),
+        hovertemplate=get_comparison_hover_template(
+            "Region",
+            title,
+            numerator_name,
+            denominator_name,
+            is_count=not is_rate_kpi,
+        ),
     )
 
     fig.update_layout(

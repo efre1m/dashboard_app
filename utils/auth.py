@@ -2,7 +2,7 @@
 import streamlit as st
 import bcrypt
 from utils.db import get_db_connection
-from utils.facility_codes import get_facility_code
+from utils.facility_codes import get_facility_code, get_region_code
 
 
 def _is_bcrypt_hash(value: str) -> bool:
@@ -92,6 +92,9 @@ def authenticate_user(username: str, password: str):
     facility_display = get_facility_code(
         facility_name, facility_dhis_uid, fallback=facility_name
     )
+    region_display = get_region_code(
+        facility_name=facility_name, region_name=region_name, facility_code=facility_display, fallback=region_name
+    )
 
     return {
         "user_id": user_id,
@@ -104,7 +107,7 @@ def authenticate_user(username: str, password: str):
         "country_id": country_id,
         "facility_name": facility_display,
         "facility_dhis_uid": facility_dhis_uid,
-        "region_name": region_name,
+        "region_name": region_display,
         "region_dhis_uid": region_dhis_uid,
         "country_name": country_name,
         "country_dhis_uid": country_dhis_uid,

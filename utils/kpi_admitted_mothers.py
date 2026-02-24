@@ -14,6 +14,7 @@ from utils.kpi_utils import (
     compute_total_deliveries,  # Import for consistency
     get_relevant_date_column_for_kpi,
     get_attractive_hover_template,  # FIXED: Added missing import
+    get_comparison_hover_template,
     get_current_period_label,
     format_period_for_download,
 )
@@ -372,7 +373,9 @@ def render_admitted_mothers_facility_comparison_chart(
     fig.update_traces(
         texttemplate="%{text:,.0f}",
         textposition="outside",
-        hovertemplate=get_attractive_hover_template(final_name, "", "", is_count=True).replace("%{y", f"%{{fullData.name}}<br>{final_name}: %{{y")
+        hovertemplate=get_comparison_hover_template(
+            "Facility", final_name, "", "", is_count=True
+        ),
     )
 
     fig.update_layout(
@@ -478,7 +481,9 @@ def render_admitted_mothers_region_comparison_chart(
     fig.update_traces(
         texttemplate="%{text:,.0f}",
         textposition="outside",
-        hovertemplate=get_attractive_hover_template(final_name, "", "", is_count=True).replace("%{y", f"%{{fullData.name}}<br>{final_name}: %{{y")
+        hovertemplate=get_comparison_hover_template(
+            "Region", final_name, "", "", is_count=True
+        ),
     )
 
     fig.update_layout(

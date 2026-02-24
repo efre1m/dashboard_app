@@ -1,73 +1,26 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from pathlib import Path
 from utils.db import get_db_connection
-
-
-@st.cache_data(ttl=3600)
-def load_facility_code_mapping():
-    """Load facility name -> facility code mapping from the local reference file."""
-    mapping_path = Path(__file__).resolve().parent / "IMNID_facility_code.xlsx"
-    if not mapping_path.exists():
-        return {}
-
-    try:
-        ref_df = pd.read_excel(mapping_path)
-    except Exception:
-        return {}
-
-    required_cols = {"facility_name", "facility_code"}
-    if not required_cols.issubset(set(ref_df.columns)):
-        return {}
-
-    clean_df = ref_df[["facility_name", "facility_code"]].copy()
-    clean_df["facility_name"] = clean_df["facility_name"].astype(str).str.strip()
-    clean_df = clean_df[clean_df["facility_name"] != ""]
-
-    def to_code_str(v):
-        if pd.isna(v):
-            return None
-        as_num = pd.to_numeric(v, errors="coerce")
-        if pd.notna(as_num):
-            return str(int(as_num))
-        v_str = str(v).strip()
-        return v_str if v_str else None
-
-    clean_df["facility_code"] = clean_df["facility_code"].apply(to_code_str)
-    clean_df = clean_df[clean_df["facility_code"].notna()]
-
-    return dict(
-        zip(
-            clean_df["facility_name"].str.lower(),
-            clean_df["facility_code"],
-        )
-    )
+from utils.facility_codes import apply_facility_codes_to_dataframe, get_region_code
 
 
 def enrich_logs_with_facility_codes(logs_df):
-    """Replace facility labels with facility_code and derive region code from first digit."""
+    """Replace facility labels with facility code and region labels with region code."""
     if logs_df is None or logs_df.empty:
         return logs_df
 
-    code_map = load_facility_code_mapping()
-    if not code_map:
+    df = apply_facility_codes_to_dataframe(logs_df)
+    if df is None or df.empty:
         return logs_df
 
-    df = logs_df.copy()
-    name_norm = df["facility_name"].fillna("").astype(str).str.strip().str.lower()
-    mapped_codes = name_norm.map(code_map)
-
-    # Use mapped code where available; otherwise keep original facility label.
-    original_name = df["facility_name"].fillna("Unknown Facility").astype(str).str.strip()
-    df["facility_name"] = mapped_codes.fillna(original_name)
-
-    # Region code is the first digit of facility_code for facility users.
+    # For facility users, force region label to mapped region_code.
     is_facility_user = df["role"].astype(str).str.lower() == "facility"
-    mapped_code_str = mapped_codes.fillna("").astype(str).str.strip()
-    region_code = mapped_code_str.str[0]
-    region_code = region_code.where(mapped_code_str != "", None)
-    df.loc[is_facility_user, "region_name"] = region_code[is_facility_user]
+    if "facility_name" in df.columns and "region_name" in df.columns:
+        df.loc[is_facility_user, "region_name"] = [
+            get_region_code(facility_name=f, region_name=r, facility_code=f, fallback=r)
+            for f, r in zip(df.loc[is_facility_user, "facility_name"], df.loc[is_facility_user, "region_name"])
+        ]
 
     return df
 
