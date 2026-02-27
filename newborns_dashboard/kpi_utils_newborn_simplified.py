@@ -807,6 +807,21 @@ def render_birth_weight_trend_chart(
         st.warning("⚠️ No data available for the selected period.")
         return
 
+    with st.expander("Filter Birth Weight Categories", expanded=False):
+        selected_categories = st.multiselect(
+            "Select Birth Weight Categories:",
+            options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
+            default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
+            key="birth_weight_category_filter",
+        )
+
+    filtered_categories = {
+        k: v for k, v in BIRTH_WEIGHT_CATEGORIES.items() if v["name"] in selected_categories
+    }
+    if not filtered_categories:
+        st.warning("No categories selected.")
+        return
+
     # Get unique periods
     periods = df[period_col].unique()
 
@@ -847,93 +862,90 @@ def render_birth_weight_trend_chart(
         st.warning("No valid birth weight data to display (denominator is zero for all periods).")
         return
 
-    # Create stacked bar chart for birth weight rate
-    fig = go.Figure()
-
-    # Add bars for each BW category IN REVERSE ORDER (for proper stacking)
-    for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(),
-        key=lambda x: x[1]["sort_order"],
-        reverse=True,  # Reverse for stacking order
-    ):
+    # Compute category rates with the same denominator logic (total admitted newborns).
+    den_vals = pd.to_numeric(trend_df["total_admitted"], errors="coerce").fillna(0)
+    for category_key in filtered_categories.keys():
         count_col = f"{category_key}_count"
+        rate_col = f"{category_key}_rate"
+        num_vals = pd.to_numeric(trend_df[count_col], errors="coerce").fillna(0)
+        trend_df[rate_col] = np.where(den_vals > 0, (num_vals / den_vals) * 100, np.nan)
 
-        if count_col in trend_df.columns:
-            # Calculate percentage for this category - USING TOTAL ADMITTED AS DENOMINATOR
-            trend_df[f"{category_key}_rate"] = (
-                trend_df[count_col] / trend_df["total_admitted"] * 100
-            ).fillna(0)
+    # Match KMC/CPAP-by-weight style: one line chart per category in a 3x2 layout.
+    rows = 3
+    cols = 2
+    sorted_categories = sorted(
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
+    )
+    fig = make_subplots(
+        rows=rows,
+        cols=cols,
+        subplot_titles=[category_info["name"] for _, category_info in sorted_categories],
+        vertical_spacing=0.10,
+        horizontal_spacing=0.08,
+    )
 
-            fig.add_trace(
-                go.Bar(
-                    x=trend_df[period_col],
-                    y=trend_df[f"{category_key}_rate"],
-                    name=category_info["name"],
-                    marker_color=category_info["color"],
-                    customdata=trend_df[[count_col, "total_admitted"]],
-                    hovertemplate=get_attractive_hover_template(
-                        category_info["name"], "Newborns", "Total Admitted"
-                    ),
-                )
-            )
+    for idx, (category_key, category_info) in enumerate(sorted_categories):
+        rate_col = f"{category_key}_rate"
+        count_col = f"{category_key}_count"
+        current_row = (idx // cols) + 1
+        current_col = (idx % cols) + 1
 
-    # Calculate Y-axis range PROPERLY
-    # We need to calculate the TOTAL height of each stacked bar (sum of all categories for each period)
-    period_totals = []
-    for period in periods:
-        period_data = trend_df[trend_df[period_col] == period].iloc[0]
-        total = 0
-        for category_key in BIRTH_WEIGHT_CATEGORIES.keys():
-            count_col = f"{category_key}_count"
-            if count_col in period_data:
-                total += period_data[count_col]
-        period_totals.append(total)
-
-    if period_totals:
-        max_total = max(period_totals)
-        # Add GENEROUS padding to ensure no cutting off
-        y_max = max_total * 1.3  # 30% padding instead of 10%
-
-        # Always ensure minimum height for visibility
-        y_max = max(y_max, 20)  # Minimum of 20 to see small values
-    else:
-        y_max = 20  # Default minimum height
+        fig.add_trace(
+            go.Scatter(
+                x=trend_df[period_col],
+                y=trend_df[rate_col],
+                name=category_info["name"],
+                mode="lines",
+                line=dict(color="#1f77b4", width=3, shape="spline", smoothing=0.35),
+                connectgaps=True,
+                cliponaxis=False,
+                hovertemplate=get_attractive_hover_template(
+                    category_info["name"], "Newborns", "Total Admitted"
+                ),
+                customdata=np.column_stack((trend_df[count_col], trend_df["total_admitted"])),
+            ),
+            row=current_row,
+            col=current_col,
+        )
 
     fig.update_layout(
         title=title,
-        height=500,
-        xaxis_title="Period",
-        yaxis_title="Percentage of Newborns (%)",
-        barmode="stack",
-        showlegend=True,
+        height=1000,
+        showlegend=False,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis=dict(
-            type="category",
-            categoryorder="array",
-            categoryarray=periods,  # Ensure chronological order
-            tickangle=-45,
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-        ),
-        yaxis=dict(
-            rangemode="tozero",
-            range=[-0.5, 100.5],  # Tiny padding keeps boundary lines visible
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-            zeroline=True,
-            zerolinecolor="rgba(128,128,128,0.5)",
-            ticksuffix="%",
-        ),
-        legend=dict(
-            traceorder="reversed",  # Reverse legend to match stacking order
-            title="Birth Weight Categories",
-        ),
-        # Add margin to ensure no cutting
-        margin=dict(l=50, r=50, t=50, b=100),
+        margin=dict(l=60, r=60, t=80, b=60),
     )
+
+    fig.update_xaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=periods,
+        tickangle=-45,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        showline=True,
+        linewidth=2,
+        linecolor="rgba(128,128,128,0.8)",
+        mirror=True,
+    )
+
+    fig.update_yaxes(
+        range=[-2, 102],
+        dtick=25,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        zeroline=True,
+        zerolinecolor="rgba(128,128,128,0.5)",
+        ticksuffix="%",
+        showline=True,
+        linewidth=2,
+        linecolor="rgba(128,128,128,0.8)",
+        mirror=True,
+    )
+    fig.update_layout(yaxis_tickformat=".1f")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -949,7 +961,7 @@ def render_birth_weight_trend_chart(
 
         # Add counts for each category IN ORDER
         for category_key, category_info in sorted(
-            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+            filtered_categories.items(), key=lambda x: x[1]["sort_order"]
         ):
             count_col = f"{category_key}_count"
             if count_col in period_data:
@@ -965,7 +977,7 @@ def render_birth_weight_trend_chart(
     # Add overall row
     overall_row = {"Period": "Overall"}
     for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
     ):
         count_col = f"{category_key}_count"
         count = int(trend_df[count_col].sum())
@@ -996,7 +1008,7 @@ def render_birth_weight_trend_chart(
     # Select only the period and count columns IN ORDER
     download_cols = [period_col, "total_admitted", "total_with_birth_weight"]
     for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
     ):
         download_cols.append(f"{category_key}_count")
 
@@ -1010,7 +1022,7 @@ def render_birth_weight_trend_chart(
     ].sum()
 
     for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
     ):
         col_name = f"{category_key}_count"
         if col_name in download_df.columns:
@@ -1027,7 +1039,7 @@ def render_birth_weight_trend_chart(
         "total_with_birth_weight": "Total Newborns with Birth Weight Recorded",
     }
     for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
     ):
         clean_name = clean_category_name(category_info["name"])
         column_names[f"{category_key}_count"] = f"{clean_name} Newborns"
@@ -1069,6 +1081,21 @@ def render_birth_weight_facility_comparison(
     # Get periods (for information only, not for selection)
     periods = df[period_col].unique() if not df.empty else []
 
+    with st.expander("Filter Birth Weight Categories", expanded=False):
+        selected_categories = st.multiselect(
+            "Select Birth Weight Categories:",
+            options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
+            default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
+            key="birth_weight_facility_comparison_category_filter",
+        )
+
+    filtered_categories = {
+        k: v for k, v in BIRTH_WEIGHT_CATEGORIES.items() if v["name"] in selected_categories
+    }
+    if not filtered_categories:
+        st.warning("No categories selected.")
+        return
+
     # FIX: Check if periods is empty properly
     if periods is None or len(periods) == 0:
         st.warning("⚠️ No data available for comparison.")
@@ -1090,7 +1117,7 @@ def render_birth_weight_facility_comparison(
 
             # Add each category count IN ORDER
             for category_key, category_info in sorted(
-                BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+                filtered_categories.items(), key=lambda x: x[1]["sort_order"]
             ):
                 row_data[category_info["short_name"]] = bw_data[
                     "bw_category_counts"
@@ -1104,90 +1131,146 @@ def render_birth_weight_facility_comparison(
 
     facility_df = pd.DataFrame(facility_data)
 
-    # Plot as grouped bar chart by birth-weight category (x-axis = category).
-    chart_rows = []
-    for _, row in facility_df.iterrows():
-        denominator = pd.to_numeric(row.get("Total Admitted", 0), errors="coerce")
-        denominator = 0 if pd.isna(denominator) else float(denominator)
-        if denominator <= 0:
-            continue
-        for _, category_info in sorted(
-            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
-        ):
-            short_name = category_info["short_name"]
-            numerator = pd.to_numeric(row.get(short_name, 0), errors="coerce")
-            numerator = 0 if pd.isna(numerator) else float(numerator)
-            rate = (numerator / denominator) * 100
-            chart_rows.append(
-                {
-                    "Category": category_info["name"],
-                    "Facility": row["Facility"],
-                    "Rate": rate,
-                    "Numerator": numerator,
-                    "Denominator": denominator,
-                }
-            )
+    # Build period-level line comparison in the same style used by KMC/CPAP-by-weight.
+    periods = sort_periods_chronologically(periods)
+    entities_map = dict(zip(facility_uids, facility_names))
+    entities = [uid for uid in facility_uids if uid in entities_map]
 
-    chart_df = pd.DataFrame(chart_rows)
-    if chart_df.empty:
+    color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set2
+    sorted_entities = sorted(entities, key=lambda e: str(entities_map.get(e, e)).lower())
+    entity_colors = {
+        entity: color_palette[i % len(color_palette)]
+        for i, entity in enumerate(sorted_entities)
+    }
+
+    comparison_data = {}
+    for facility_uid in entities:
+        entity_df = df[df["orgUnit"] == facility_uid].copy()
+        if entity_df.empty:
+            continue
+
+        entity_period_data = []
+        for period in periods:
+            period_df = entity_df[entity_df[period_col] == period]
+            bw_data = compute_birth_weight_kpi(period_df, facility_uids=None)
+
+            total_admitted = bw_data.get("total_admitted", 0)
+            period_row = {period_col: period, "total_admitted": total_admitted}
+
+            for category_key in filtered_categories.keys():
+                count = bw_data["bw_category_counts"].get(category_key, 0)
+                rate = (count / total_admitted) * 100 if total_admitted > 0 else None
+                period_row[f"{category_key}_rate"] = rate
+                period_row[f"{category_key}_count"] = count
+
+            entity_period_data.append(period_row)
+
+        if entity_period_data:
+            comparison_data[facility_uid] = pd.DataFrame(entity_period_data)
+
+    if not comparison_data:
         st.warning("No valid birth weight comparison data to display (denominator is zero for all entities).")
         return
 
-    fig = px.bar(
-        chart_df,
-        x="Category",
-        y="Rate",
-        color="Facility",
-        barmode="group",
-        title=title,
-        height=500,
-        custom_data=["Numerator", "Denominator"],
-        category_orders={
-            "Category": [
-                c["name"]
-                for _, c in sorted(
-                    BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
-                )
-            ]
-        },
+    rows = 3
+    cols = 2
+    sorted_categories = sorted(
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
     )
-    fig.update_traces(
-        hovertemplate=(
-            "Category: %{x}<br>"
-            "Facility: %{fullData.name}<br>"
-            "Birth Weight Rate (%): %{y:.2f}%<br>"
-            "Newborns: %{customdata[0]:,.0f}<br>"
-            "Total Admitted: %{customdata[1]:,.0f}<extra></extra>"
-        )
+    fig = make_subplots(
+        rows=rows,
+        cols=cols,
+        subplot_titles=[category_info["name"] for _, category_info in sorted_categories],
+        vertical_spacing=0.10,
+        horizontal_spacing=0.08,
     )
+
+    for idx, (category_key, category_info) in enumerate(sorted_categories):
+        rate_col = f"{category_key}_rate"
+        count_col = f"{category_key}_count"
+        current_row = (idx // cols) + 1
+        current_col = (idx % cols) + 1
+
+        for facility_uid, entity_period_df in comparison_data.items():
+            label = entities_map.get(facility_uid, facility_uid)
+            fig.add_trace(
+                go.Scatter(
+                    x=entity_period_df[period_col],
+                    y=entity_period_df[rate_col],
+                    name=label,
+                    mode="lines",
+                    line=dict(
+                        color=entity_colors[facility_uid],
+                        width=3,
+                        shape="spline",
+                        smoothing=0.35,
+                    ),
+                    connectgaps=True,
+                    cliponaxis=False,
+                    legendgroup=label,
+                    showlegend=(idx == 0),
+                    hovertemplate=(
+                        "Date: %{x}<br>"
+                        f"Entity: {label}<br>"
+                        f"{category_info['name']}: %{{y:.1f}}%<br>"
+                        "Newborns: %{customdata[0]:.0f}<br>"
+                        "Total Admitted: %{customdata[1]:.0f}<extra></extra>"
+                    ),
+                    customdata=np.column_stack(
+                        (entity_period_df[count_col], entity_period_df["total_admitted"])
+                    ),
+                ),
+                row=current_row,
+                col=current_col,
+            )
 
     fig.update_layout(
         title=title,
-        height=500,
-        xaxis_title="Birth Weight Category",
-        yaxis_title="Birth Weight Rate (%)",
+        height=1000,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            itemwidth=30,
+            title="Facility",
+        ),
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis=dict(
-            type="category",
-            tickangle=-45,
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-        ),
-        yaxis=dict(
-            rangemode="tozero",
-            range=[-0.5, 100.5],  # Tiny padding keeps boundary lines visible
-            dtick=25,
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-            zeroline=True,
-            zerolinecolor="rgba(128,128,128,0.5)",
-            ticksuffix="%",
-        ),
-        legend=dict(title="Facility"),
+        margin=dict(l=60, r=60, t=120, b=60),
     )
+
+    fig.update_xaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=periods,
+        tickangle=-45,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        showline=True,
+        linewidth=2,
+        linecolor="rgba(128,128,128,0.8)",
+        mirror=True,
+    )
+
+    fig.update_yaxes(
+        range=[-2, 102],
+        dtick=25,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        zeroline=True,
+        zerolinecolor="rgba(128,128,128,0.5)",
+        ticksuffix="%",
+        showline=True,
+        linewidth=2,
+        linecolor="rgba(128,128,128,0.8)",
+        mirror=True,
+    )
+    fig.update_layout(yaxis_tickformat=".1f")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1197,7 +1280,7 @@ def render_birth_weight_facility_comparison(
 
     # 2. Calculate Overall totals
     numeric_cols = ["Total Admitted", "Total with Birth Weight"] + [
-        category_info["short_name"] for category_info in BIRTH_WEIGHT_CATEGORIES.values()
+        category_info["short_name"] for category_info in filtered_categories.values()
     ]
     overall_totals = display_df[numeric_cols].sum()
     overall_row = {"Facility": "**Overall**"}
@@ -1218,7 +1301,7 @@ def render_birth_weight_facility_comparison(
     )
 
     # 5. Format category columns: rate% (n/m) where m is Total Admitted
-    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+    for category_info in filtered_categories.values():
         col = category_info["short_name"]
         if col in display_df.columns:
             display_df[col] = display_df.apply(
@@ -1237,7 +1320,7 @@ def render_birth_weight_facility_comparison(
     # 7. Select and reorder columns for display
     category_cols = [
         category_info["short_name"] 
-        for category_info in sorted(BIRTH_WEIGHT_CATEGORIES.values(), key=lambda x: x["sort_order"])
+        for category_info in sorted(filtered_categories.values(), key=lambda x: x["sort_order"])
     ]
     
     final_cols = [
@@ -1270,7 +1353,7 @@ def render_birth_weight_facility_comparison(
         "Total with Birth Weight": "Total Newborns with Birth Weight Recorded",
     }
     for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
     ):
         clean_name = clean_category_name(category_info["name"])
         column_names[category_info["short_name"]] = f"{clean_name} Newborns"
@@ -1319,6 +1402,21 @@ def render_birth_weight_region_comparison(
     # Get periods (for information only)
     periods = df[period_col].unique() if not df.empty else []
 
+    with st.expander("Filter Birth Weight Categories", expanded=False):
+        selected_categories = st.multiselect(
+            "Select Birth Weight Categories:",
+            options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
+            default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
+            key="birth_weight_region_comparison_category_filter",
+        )
+
+    filtered_categories = {
+        k: v for k, v in BIRTH_WEIGHT_CATEGORIES.items() if v["name"] in selected_categories
+    }
+    if not filtered_categories:
+        st.warning("No categories selected.")
+        return
+
     if periods is None or len(periods) == 0:
         st.warning("⚠️ No data available for comparison.")
         return
@@ -1349,7 +1447,7 @@ def render_birth_weight_region_comparison(
 
                 # Add each category count IN ORDER
                 for category_key, category_info in sorted(
-                    BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+                    filtered_categories.items(), key=lambda x: x[1]["sort_order"]
                 ):
                     row_data[category_info["short_name"]] = bw_data[
                         "bw_category_counts"
@@ -1363,90 +1461,152 @@ def render_birth_weight_region_comparison(
 
     region_df = pd.DataFrame(region_data)
 
-    # Plot as grouped bar chart by birth-weight category (x-axis = category).
-    chart_rows = []
-    for _, row in region_df.iterrows():
-        denominator = pd.to_numeric(row.get("Total Admitted", 0), errors="coerce")
-        denominator = 0 if pd.isna(denominator) else float(denominator)
-        if denominator <= 0:
-            continue
-        for _, category_info in sorted(
-            BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
-        ):
-            short_name = category_info["short_name"]
-            numerator = pd.to_numeric(row.get(short_name, 0), errors="coerce")
-            numerator = 0 if pd.isna(numerator) else float(numerator)
-            rate = (numerator / denominator) * 100
-            chart_rows.append(
-                {
-                    "Category": category_info["name"],
-                    "Region": row["Region"],
-                    "Rate": rate,
-                    "Numerator": numerator,
-                    "Denominator": denominator,
-                }
-            )
+    # Build period-level line comparison in the same style used by KMC/CPAP-by-weight.
+    periods = sort_periods_chronologically(periods)
+    entities = list(region_names)
 
-    chart_df = pd.DataFrame(chart_rows)
-    if chart_df.empty:
+    color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set2
+    sorted_entities = sorted(entities, key=lambda e: str(e).lower())
+    entity_colors = {
+        entity: color_palette[i % len(color_palette)]
+        for i, entity in enumerate(sorted_entities)
+    }
+
+    comparison_data = {}
+    for region_name in entities:
+        raw_facilities = facilities_by_region.get(region_name, [])
+        region_facility_uids = [
+            facility[1] if isinstance(facility, (list, tuple)) and len(facility) > 1 else facility
+            for facility in raw_facilities
+        ]
+        if not region_facility_uids:
+            continue
+
+        entity_df = df[df["orgUnit"].isin(region_facility_uids)].copy()
+        if entity_df.empty:
+            continue
+
+        entity_period_data = []
+        for period in periods:
+            period_df = entity_df[entity_df[period_col] == period]
+            bw_data = compute_birth_weight_kpi(period_df, facility_uids=None)
+
+            total_admitted = bw_data.get("total_admitted", 0)
+            period_row = {period_col: period, "total_admitted": total_admitted}
+
+            for category_key in filtered_categories.keys():
+                count = bw_data["bw_category_counts"].get(category_key, 0)
+                rate = (count / total_admitted) * 100 if total_admitted > 0 else None
+                period_row[f"{category_key}_rate"] = rate
+                period_row[f"{category_key}_count"] = count
+
+            entity_period_data.append(period_row)
+
+        if entity_period_data:
+            comparison_data[region_name] = pd.DataFrame(entity_period_data)
+
+    if not comparison_data:
         st.warning("No valid birth weight comparison data to display (denominator is zero for all entities).")
         return
 
-    fig = px.bar(
-        chart_df,
-        x="Category",
-        y="Rate",
-        color="Region",
-        barmode="group",
-        title=title,
-        height=500,
-        custom_data=["Numerator", "Denominator"],
-        category_orders={
-            "Category": [
-                c["name"]
-                for _, c in sorted(
-                    BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
-                )
-            ]
-        },
+    rows = 3
+    cols = 2
+    sorted_categories = sorted(
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
     )
-    fig.update_traces(
-        hovertemplate=(
-            "Category: %{x}<br>"
-            "Region: %{fullData.name}<br>"
-            "Birth Weight Rate (%): %{y:.2f}%<br>"
-            "Newborns: %{customdata[0]:,.0f}<br>"
-            "Total Admitted: %{customdata[1]:,.0f}<extra></extra>"
-        )
+    fig = make_subplots(
+        rows=rows,
+        cols=cols,
+        subplot_titles=[category_info["name"] for _, category_info in sorted_categories],
+        vertical_spacing=0.10,
+        horizontal_spacing=0.08,
     )
+
+    for idx, (category_key, category_info) in enumerate(sorted_categories):
+        rate_col = f"{category_key}_rate"
+        count_col = f"{category_key}_count"
+        current_row = (idx // cols) + 1
+        current_col = (idx % cols) + 1
+
+        for region_name, entity_period_df in comparison_data.items():
+            fig.add_trace(
+                go.Scatter(
+                    x=entity_period_df[period_col],
+                    y=entity_period_df[rate_col],
+                    name=region_name,
+                    mode="lines",
+                    line=dict(
+                        color=entity_colors[region_name],
+                        width=3,
+                        shape="spline",
+                        smoothing=0.35,
+                    ),
+                    connectgaps=True,
+                    cliponaxis=False,
+                    legendgroup=region_name,
+                    showlegend=(idx == 0),
+                    hovertemplate=(
+                        "Date: %{x}<br>"
+                        f"Entity: {region_name}<br>"
+                        f"{category_info['name']}: %{{y:.1f}}%<br>"
+                        "Newborns: %{customdata[0]:.0f}<br>"
+                        "Total Admitted: %{customdata[1]:.0f}<extra></extra>"
+                    ),
+                    customdata=np.column_stack(
+                        (entity_period_df[count_col], entity_period_df["total_admitted"])
+                    ),
+                ),
+                row=current_row,
+                col=current_col,
+            )
 
     fig.update_layout(
         title=title,
-        height=500,
-        xaxis_title="Birth Weight Category",
-        yaxis_title="Birth Weight Rate (%)",
+        height=1000,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            itemwidth=30,
+            title="Region",
+        ),
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis=dict(
-            type="category",
-            tickangle=-45,
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-        ),
-        yaxis=dict(
-            rangemode="tozero",
-            range=[-0.5, 100.5],  # Tiny padding keeps boundary lines visible
-            dtick=25,
-            showgrid=True,
-            gridcolor="rgba(128,128,128,0.2)",
-            zeroline=True,
-            zerolinecolor="rgba(128,128,128,0.5)",
-            ticksuffix="%",
-        ),
-        legend=dict(title="Region"),
+        margin=dict(l=60, r=60, t=120, b=60),
     )
+
+    fig.update_xaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=periods,
+        tickangle=-45,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        showline=True,
+        linewidth=2,
+        linecolor="rgba(128,128,128,0.8)",
+        mirror=True,
+    )
+
+    fig.update_yaxes(
+        range=[-2, 102],
+        dtick=25,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        zeroline=True,
+        zerolinecolor="rgba(128,128,128,0.5)",
+        ticksuffix="%",
+        showline=True,
+        linewidth=2,
+        linecolor="rgba(128,128,128,0.8)",
+        mirror=True,
+    )
+    fig.update_layout(yaxis_tickformat=".1f")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1456,7 +1616,7 @@ def render_birth_weight_region_comparison(
 
     # 2. Calculate Overall totals
     numeric_cols = ["Total Admitted", "Total with Birth Weight"] + [
-        category_info["short_name"] for category_info in BIRTH_WEIGHT_CATEGORIES.values()
+        category_info["short_name"] for category_info in filtered_categories.values()
     ]
     overall_totals = display_df[numeric_cols].sum()
     overall_row = {"Region": "**Overall**"}
@@ -1477,7 +1637,7 @@ def render_birth_weight_region_comparison(
     )
 
     # 5. Format category columns: rate% (n/m) where m is Total Admitted
-    for category_info in BIRTH_WEIGHT_CATEGORIES.values():
+    for category_info in filtered_categories.values():
         col = category_info["short_name"]
         if col in display_df.columns:
             display_df[col] = display_df.apply(
@@ -1496,7 +1656,7 @@ def render_birth_weight_region_comparison(
     # 7. Select and reorder columns for display
     category_cols = [
         category_info["short_name"] 
-        for category_info in sorted(BIRTH_WEIGHT_CATEGORIES.values(), key=lambda x: x["sort_order"])
+        for category_info in sorted(filtered_categories.values(), key=lambda x: x["sort_order"])
     ]
     
     final_cols = [
@@ -1529,7 +1689,7 @@ def render_birth_weight_region_comparison(
         "Total with Birth Weight": "Total Newborns with Birth Weight Recorded",
     }
     for category_key, category_info in sorted(
-        BIRTH_WEIGHT_CATEGORIES.items(), key=lambda x: x[1]["sort_order"]
+        filtered_categories.items(), key=lambda x: x[1]["sort_order"]
     ):
         clean_name = clean_category_name(category_info["name"])
         column_names[category_info["short_name"]] = f"{clean_name} Newborns"
