@@ -23,6 +23,18 @@ from utils.region_mapping import (
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
+MENTORSHIP_METRIC_COLORS = [
+    "#2563eb",
+    "#0ea5e9",
+    "#0891b2",
+    "#16a34a",
+    "#ca8a04",
+    "#14b8a6",
+    "#7c3aed",
+    "#9333ea",
+    "#334155",
+]
+
 
 # 🔥 OPTIMIZATION: Cache forms listing for 1 hour
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -49,6 +61,17 @@ def load_merged_skill_data() -> pd.DataFrame:
     """Load merged skill assessment dataset from local mentorship folder."""
     merged_path = os.path.join(
         os.path.dirname(__file__), "mentorship", "merged_skill.csv"
+    )
+    if not os.path.exists(merged_path):
+        raise FileNotFoundError(f"Merged file not found: {merged_path}")
+    return pd.read_csv(merged_path)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_merged_qoc_data() -> pd.DataFrame:
+    """Load merged QoC mentorship dataset from local mentorship folder."""
+    merged_path = os.path.join(
+        os.path.dirname(__file__), "mentorship", "merged_qoc.csv"
     )
     if not os.path.exists(merged_path):
         raise FileNotFoundError(f"Merged file not found: {merged_path}")
@@ -173,10 +196,11 @@ def render_mentorship_analysis_dashboard():
 
             data_choice = st.selectbox(
                 "Data to Analyze",
-                options=["BMET Data", "Skill Assessment Data"],
+                options=["BMET Data", "Skill Assessment Data", "Quality of Care Data"],
                 key="mentorship_analysis_data_choice",
             )
             is_skill_analysis = data_choice == "Skill Assessment Data"
+            is_qoc_analysis = data_choice == "Quality of Care Data"
 
             if is_skill_analysis:
                 try:
@@ -209,6 +233,56 @@ def render_mentorship_analysis_dashboard():
                 work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
                 work_df["hospital"] = work_df["reg-hospital"].apply(_normalize_entity_text)
                 work_df["round"] = work_df["reg-round"].astype(str).str.strip()
+                value_label = "Average %"
+                value_title = "Average Score (%)"
+            elif is_qoc_analysis:
+                try:
+                    df = load_merged_qoc_data()
+                except FileNotFoundError as exc:
+                    st.error(str(exc))
+                    return
+                except Exception as exc:
+                    st.error(f"Unable to load merged QoC data: {exc}")
+                    return
+
+                score_cols = [
+                    "QOC1_b-QOC1_perce",
+                    "QOC2_b-QOC2-QOC2_perce",
+                    "QOC3_b-QOC3_perce",
+                    "QOC4_b-QOC4_perce",
+                    "QOC5_b-QOC5_gr5-QOC5_perce",
+                    "QOC_perce",
+                ]
+
+                region_col = "region" if "region" in df.columns else "reg-region"
+                hospital_col = "hospital" if "hospital" in df.columns else "reg-hospital"
+                round_col = "round" if "round" in df.columns else "reg-round"
+                unit_col = "unit"
+
+                required_columns = [region_col, hospital_col, round_col, unit_col] + score_cols
+                missing_cols = [c for c in required_columns if c not in df.columns]
+                if missing_cols:
+                    st.error(f"Missing required columns in merged_qoc.csv: {missing_cols}")
+                    return
+
+                work_df = df.copy()
+                work_df["region_code"] = work_df[region_col].apply(_normalize_region_code)
+                work_df["hospital"] = work_df[hospital_col].apply(_normalize_entity_text)
+                work_df["round"] = work_df[round_col].astype(str).str.strip()
+                work_df["unit"] = (
+                    work_df[unit_col]
+                    .astype(str)
+                    .str.strip()
+                    .replace({"1.0": "1", "2.0": "2"})
+                )
+                # Unit semantics:
+                # - "1" = Labor and Delivery
+                # - "2" = NICU/KMC
+                # - "1 2", "2 1", or "21" mean both (include in both filters)
+                work_df["unit_has_1"] = work_df["unit"].astype(str).str.contains("1", regex=False)
+                work_df["unit_has_2"] = work_df["unit"].astype(str).str.contains("2", regex=False)
+                for score_col in score_cols:
+                    work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce")
                 value_label = "Average %"
                 value_title = "Average Score (%)"
             else:
@@ -278,6 +352,23 @@ def render_mentorship_analysis_dashboard():
                 options=round_options,
                 key="mentorship_analysis_round",
             )
+
+            selected_unit = None
+            if is_qoc_analysis:
+                if work_df.empty:
+                    st.warning("No unit values found in merged_qoc.csv.")
+                    return
+                unit_display_options = ["1 - Labor and Delivery", "2 - NICU/KMC"]
+                selected_unit_display = st.selectbox(
+                    "Unit",
+                    options=unit_display_options,
+                    key="mentorship_analysis_qoc_unit",
+                )
+                reverse_map = {
+                    "1 - Labor and Delivery": "1",
+                    "2 - NICU/KMC": "2",
+                }
+                selected_unit = reverse_map.get(selected_unit_display, selected_unit_display)
 
             selected_region_for_facility = None
             if group_mode == "Multi Regional":
@@ -367,7 +458,15 @@ def render_mentorship_analysis_dashboard():
             st.markdown("</div>", unsafe_allow_html=True)
 
     with left_col:
+        qoc_records_df = None
+        qoc_sums_df = None
+        qoc_non_null_counts_df = None
         filtered_df = work_df[work_df["round"] == selected_round].copy()
+        if is_qoc_analysis and selected_unit is not None:
+            if selected_unit == "1":
+                filtered_df = filtered_df[filtered_df["unit_has_1"]]
+            elif selected_unit == "2":
+                filtered_df = filtered_df[filtered_df["unit_has_2"]]
         if group_mode == "Regional" and selected_region_for_facility:
             filtered_df = filtered_df[
                 filtered_df["region_label"] == selected_region_for_facility
@@ -388,6 +487,31 @@ def render_mentorship_analysis_dashboard():
                 .mean()
                 .sort_values(entity_col)
             )
+        elif is_qoc_analysis:
+            grouped = filtered_df.groupby(entity_col, as_index=False)
+            counts_df = grouped.size().rename(columns={"size": "_record_count"})
+            sums_df = grouped[score_cols].sum(numeric_only=True).fillna(0)
+            non_null_counts_df = (
+                grouped[score_cols]
+                .count()
+                .rename(columns={col: f"{col}__non_null_count" for col in score_cols})
+            )
+            agg_df = counts_df.merge(sums_df, on=entity_col, how="left").merge(
+                non_null_counts_df, on=entity_col, how="left"
+            )
+            qoc_records_df = counts_df.copy()
+            qoc_sums_df = sums_df.copy()
+            qoc_non_null_counts_df = non_null_counts_df.copy()
+            for col in score_cols:
+                denom_col = f"{col}__non_null_count"
+                agg_df[col] = (
+                    pd.to_numeric(agg_df[col], errors="coerce").fillna(0)
+                    / pd.to_numeric(agg_df[denom_col], errors="coerce").replace(0, pd.NA)
+                ).fillna(0)
+            agg_df = agg_df.drop(
+                columns=["_record_count"]
+                + [f"{col}__non_null_count" for col in score_cols]
+            ).sort_values(entity_col)
         else:
             agg_df = (
                 filtered_df.groupby(entity_col, as_index=False)[score_cols]
@@ -398,17 +522,7 @@ def render_mentorship_analysis_dashboard():
         hover_entity_label = "Region" if group_mode == "Multi Regional" else "Facility"
 
         if is_skill_analysis:
-            metric_colors = [
-                "#2563eb",
-                "#0ea5e9",
-                "#0891b2",
-                "#16a34a",
-                "#65a30d",
-                "#ca8a04",
-                "#ea580c",
-                "#dc2626",
-                "#7c3aed",
-            ]
+            metric_colors = MENTORSHIP_METRIC_COLORS
             subplot_titles = [
                 "Point of Care 1",
                 "Point of Care 2",
@@ -478,8 +592,22 @@ def render_mentorship_analysis_dashboard():
                 key=f"mentorship_skill_bars_{group_mode}_{selected_round}",
             )
 
+            skill_table_labels = {
+                score_cols[0]: "Point of Care 1 (%)",
+                score_cols[1]: "Point of Care 2 (%)",
+                score_cols[2]: "Point of Care 3 (%)",
+                score_cols[3]: "Point of Care 4 (%)",
+                score_cols[4]: "Point of Care 5 (%)",
+                score_cols[5]: "Point of Care 6 (%)",
+                score_cols[6]: "Point of Care 7 (%)",
+                score_cols[7]: "Point of Care 8 (%)",
+                score_cols[8]: "Overall Point of Care (%)",
+            }
             table_df = agg_df.rename(
-                columns={entity_col: "Region" if group_mode == "Multi Regional" else "Facility"}
+                columns={
+                    entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
+                    **skill_table_labels,
+                }
             ).round(2)
             st.dataframe(table_df, use_container_width=True, hide_index=True)
 
@@ -487,13 +615,134 @@ def render_mentorship_analysis_dashboard():
                 "Averages are computed per selected group as: "
                 "`sum(variable values) / count(records with non-null variable)`."
             )
+        elif is_qoc_analysis:
+            metric_colors = MENTORSHIP_METRIC_COLORS
+            subplot_titles = [
+                "Maintaining Warm",
+                "KMC",
+                "CPAP",
+                "Neonatal Jaundice",
+                "IPC Measures",
+                "Overall QoC",
+            ]
+            hover_metric_labels = subplot_titles
+            fig = make_subplots(
+                rows=2,
+                cols=3,
+                subplot_titles=subplot_titles,
+                vertical_spacing=0.10,
+                horizontal_spacing=0.07,
+            )
+            for idx, metric in enumerate(score_cols):
+                row = idx // 3 + 1
+                col = idx % 3 + 1
+                fig.add_bar(
+                    y=agg_df[entity_col],
+                    x=agg_df[metric].fillna(0),
+                    orientation="h",
+                    marker_color=metric_colors[idx % len(metric_colors)],
+                    showlegend=False,
+                    customdata=agg_df[[entity_col]].values,
+                    hovertemplate=(
+                        f"{hover_entity_label}: %{{customdata[0]}}"
+                        f"<br>{hover_metric_labels[idx]}: %{{x:.2f}}"
+                        "<extra></extra>"
+                    ),
+                    row=row,
+                    col=col,
+                )
+                fig.update_xaxes(
+                    title_text=value_title,
+                    tickfont=dict(size=8),
+                    title_font=dict(size=9),
+                    automargin=True,
+                    row=row,
+                    col=col,
+                )
+                fig.update_yaxes(
+                    tickfont=dict(size=8),
+                    title_font=dict(size=9),
+                    automargin=True,
+                    row=row,
+                    col=col,
+                )
+
+            qoc_chart_height = max(640, min(1200, 520 + len(agg_df) * 14))
+            fig.update_layout(
+                template="plotly_white",
+                height=qoc_chart_height,
+                margin=dict(l=8, r=8, t=36, b=8),
+                font=dict(size=9),
+                hoverlabel=dict(font_size=10),
+                bargap=0.24,
+                bargroupgap=0.08,
+            )
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"mentorship_qoc_bars_{group_mode}_{selected_round}_{selected_unit}",
+            )
+
+            qoc_table_labels = {
+                score_cols[0]: "Maintaining Warm (%)",
+                score_cols[1]: "KMC (%)",
+                score_cols[2]: "CPAP (%)",
+                score_cols[3]: "Neonatal Jaundice (%)",
+                score_cols[4]: "IPC Measures (%)",
+                score_cols[5]: "Overall QoC (%)",
+            }
+            table_df = agg_df.rename(
+                columns={
+                    entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
+                    **qoc_table_labels,
+                }
+            ).round(2)
+            st.dataframe(table_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "Averages are computed per selected group as: "
+                "`sum(variable values) / count(records with non-null variable)`."
+            )
+            st.caption(
+                "QoC variables: QOC1_b-QOC1_perce, QOC2_b-QOC2-QOC2_perce, "
+                "QOC3_b-QOC3_perce, QOC4_b-QOC4_perce, QOC5_b-QOC5_gr5-QOC5_perce, QOC_perce."
+            )
+            if (
+                qoc_records_df is not None
+                and qoc_sums_df is not None
+                and qoc_non_null_counts_df is not None
+            ):
+                with st.expander("QoC Computation Audit (Sum and Record Count)", expanded=False):
+                    audit_df = (
+                        qoc_records_df.merge(qoc_sums_df, on=entity_col, how="left").merge(
+                            qoc_non_null_counts_df, on=entity_col, how="left"
+                        )
+                    )
+                    audit_df = audit_df.rename(
+                        columns={
+                            entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
+                            "_record_count": "Filtered Records",
+                            "QOC1_b-QOC1_perce": "Maintaining Warm Sum",
+                            "QOC2_b-QOC2-QOC2_perce": "KMC Sum",
+                            "QOC3_b-QOC3_perce": "CPAP Sum",
+                            "QOC4_b-QOC4_perce": "Neonatal Jaundice Sum",
+                            "QOC5_b-QOC5_gr5-QOC5_perce": "IPC Measures Sum",
+                            "QOC_perce": "Overall QoC Sum",
+                            "QOC1_b-QOC1_perce__non_null_count": "Maintaining Warm Non-Null Count",
+                            "QOC2_b-QOC2-QOC2_perce__non_null_count": "KMC Non-Null Count",
+                            "QOC3_b-QOC3_perce__non_null_count": "CPAP Non-Null Count",
+                            "QOC4_b-QOC4_perce__non_null_count": "Neonatal Jaundice Non-Null Count",
+                            "QOC5_b-QOC5_gr5-QOC5_perce__non_null_count": "IPC Measures Non-Null Count",
+                            "QOC_perce__non_null_count": "Overall QoC Non-Null Count",
+                        }
+                    )
+                    st.dataframe(audit_df.round(2), use_container_width=True, hide_index=True)
         else:
             fig = go.Figure()
             fig.add_bar(
                 y=agg_df[entity_col],
                 x=agg_df["competency_assessment-Score"],
-                name="competency_assessment-Score",
-                marker_color="#2563eb",
+                name="Competency Score",
+                marker_color=MENTORSHIP_METRIC_COLORS[0],
                 orientation="h",
                 customdata=agg_df[[entity_col]].values,
                 hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Competency Score: %{{x}}<extra></extra>",
@@ -501,8 +750,8 @@ def render_mentorship_analysis_dashboard():
             fig.add_bar(
                 y=agg_df[entity_col],
                 x=agg_df["facility_assessment-score_fac"],
-                name="facility_assessment-score_fac",
-                marker_color="#16a34a",
+                name="Facility Score",
+                marker_color=MENTORSHIP_METRIC_COLORS[1],
                 orientation="h",
                 customdata=agg_df[[entity_col]].values,
                 hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Facility Score: %{{x}}<extra></extra>",
