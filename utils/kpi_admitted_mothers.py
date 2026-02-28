@@ -17,6 +17,7 @@ from utils.kpi_utils import (
     get_comparison_hover_template,
     get_current_period_label,
     format_period_for_download,
+    _build_next_month_forecast_payload,
 )
 
 # ---------------- Caching Setup ----------------
@@ -225,27 +226,69 @@ def render_admitted_mothers_trend_chart(
         except Exception:
             df = df.sort_values(period_col)
 
+    forecast_payload = None
+    if str(get_current_period_label()).lower() == "monthly":
+        forecast_payload = _build_next_month_forecast_payload(
+            df,
+            x_axis_col,
+            value_col,
+            forecast_min_points=4,
+        )
+        if forecast_payload:
+            forecast_payload["forecast_y"] = max(
+                0.0, float(forecast_payload.get("forecast_y", 0.0))
+            )
+
+    plot_df = df[[x_axis_col, value_col]].copy()
+    plot_df["Series"] = "Actual"
+    category_order = df[x_axis_col].tolist()
+    if forecast_payload:
+        next_period = forecast_payload["next_x"]
+        forecast_value = float(np.round(forecast_payload["forecast_y"], 0))
+        plot_df = pd.concat(
+            [
+                plot_df,
+                pd.DataFrame(
+                    [
+                        {
+                            x_axis_col: next_period,
+                            value_col: forecast_value,
+                            "Series": "Forecast Next Month",
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
+        if next_period not in category_order:
+            category_order.append(next_period)
+
     # Create chart
     try:
         fig = px.bar(
-            df,
+            plot_df,
             x=x_axis_col,
             y=value_col,
+            color="Series",
+            color_discrete_map={
+                "Actual": "#1f77b4",
+                "Forecast Next Month": "#f39c12",
+            },
             title=title,
             height=400,
             text=value_col,
-            category_orders={x_axis_col: df[x_axis_col].tolist()},
+            category_orders={x_axis_col: category_order},
         )
 
         fig.update_traces(
-            texttemplate="%{text:.0f}",
+            texttemplate="%{text:,.0f}",
             textposition="outside",
-            hovertemplate=get_attractive_hover_template(final_name, "", "", is_count=True),
+            hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,.0f}<extra></extra>",
         )
     except Exception as e:
         st.error(f"Error creating chart: {str(e)}")
         fig = px.bar(
-            df,
+            plot_df,
             x=x_axis_col,
             y=value_col,
             title=title,
@@ -265,7 +308,7 @@ def render_admitted_mothers_trend_chart(
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             categoryorder="array",
-            categoryarray=df[x_axis_col].tolist(),
+            categoryarray=category_order,
         ),
         yaxis=dict(
             rangemode="tozero",
@@ -278,6 +321,13 @@ def render_admitted_mothers_trend_chart(
     )
 
     st.plotly_chart(fig, use_container_width=True, key=f"admitted_mothers_chart_{kwargs.get('key_suffix', '')}")
+    if forecast_payload:
+        delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
+        direction = "Increase" if delta > 0 else ("Decrease" if delta < 0 else "No Change")
+        st.caption(
+            f"Forecast (next month): {forecast_payload['forecast_y']:,.0f} "
+            f"({direction} vs latest actual)."
+        )
 
     # Table below graph
     st.markdown("---")

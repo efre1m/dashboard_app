@@ -842,6 +842,18 @@ def render_newborn_trend_chart_section(
     group = pd.DataFrame(period_data)
     group = group.sort_values("period_sort")
 
+    data_quality_kpis = {
+        "Missing Temperature (%)",
+        "Missing Birth Weight (%)",
+        "Missing Status of Discharge (%)",
+        "Missing Discharge Status (%)",
+        "Missing Birth Location (%)",
+    }
+    enable_next_month_forecast = (
+        kpi_selection in data_quality_kpis
+        and str(period_label).lower() == "monthly"
+    )
+
     # Render the chart WITH TABLE
     try:
         # SPECIAL HANDLING FOR ADMITTED NEWBORNS
@@ -870,6 +882,10 @@ def render_newborn_trend_chart_section(
                 numerator_label,
                 denominator_label,
                 facility_uids,
+                forecast_enabled=enable_next_month_forecast,
+                forecast_min_points=4,
+                forecast_bounds=(0.0, 100.0),
+                show_markers=True,
             )
     except Exception as e:
         st.error(f"Error rendering chart for {kpi_selection}: {str(e)}")

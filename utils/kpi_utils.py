@@ -7,6 +7,11 @@ import hashlib
 import numpy as np
 import warnings
 
+try:
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+except Exception:
+    ExponentialSmoothing = None
+
 warnings.filterwarnings("ignore")
 
 # ---------------- Caching Setup ----------------
@@ -180,6 +185,106 @@ def format_period_list_for_download(period_series, period_label):
 
     unique_periods = list(dict.fromkeys(formatted_periods))
     return ", ".join(unique_periods)
+
+
+def _forecast_next_month_damped_holt(values):
+    """One-step damped Holt forecast using statsmodels ExponentialSmoothing."""
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    n = len(arr)
+    if n == 0:
+        return None
+    if n == 1:
+        return float(arr[-1])
+    if n < 4:
+        return float(arr[-1] + 0.6 * (arr[-1] - arr[-2]))
+
+    if ExponentialSmoothing is not None:
+        try:
+            series = pd.Series(arr, dtype=float)
+            model = ExponentialSmoothing(
+                series,
+                trend="add",
+                damped_trend=True,
+                seasonal=None,
+                initialization_method="estimated",
+            )
+            fit = model.fit(optimized=True, use_brute=True)
+            next_val = fit.forecast(1)
+            if hasattr(next_val, "iloc"):
+                return float(next_val.iloc[0])
+            return float(next_val[0])
+        except Exception:
+            pass
+
+    # Conservative fallback when statsmodels is unavailable or fitting fails.
+    return float(arr[-1] + 0.6 * (arr[-1] - arr[-2]))
+
+
+def _build_next_month_forecast_payload(
+    plot_df,
+    period_col,
+    value_col,
+    forecast_min_points=4,
+):
+    """Build plotting payload for a one-month-ahead forecast."""
+    if plot_df is None or plot_df.empty:
+        return None
+
+    work_df = plot_df.copy()
+    work_df[value_col] = pd.to_numeric(work_df[value_col], errors="coerce")
+    work_df = work_df[work_df[value_col].notna()].copy()
+    if work_df.empty:
+        return None
+
+    if "period_sort" in work_df.columns:
+        work_df["_period_dt"] = pd.to_datetime(work_df["period_sort"], errors="coerce")
+        work_df["_period_dt"] = (
+            work_df["_period_dt"].dt.to_period("M").dt.to_timestamp()
+        )
+    else:
+        work_df["_period_dt"] = pd.to_datetime(
+            work_df[period_col].apply(format_period_month_year),
+            format="%b-%y",
+            errors="coerce",
+        )
+
+    work_df = work_df[work_df["_period_dt"].notna()].copy()
+    if len(work_df) < 2:
+        return None
+
+    work_df = work_df.sort_values("_period_dt")
+    work_df = work_df.drop_duplicates(subset=["_period_dt"], keep="last")
+
+    values = work_df[value_col].astype(float).tolist()
+    if len(values) < 2:
+        return None
+
+    forecast_value = _forecast_next_month_damped_holt(values)
+    if forecast_value is None:
+        return None
+
+    last_period_dt = work_df["_period_dt"].iloc[-1]
+    next_period_dt = last_period_dt + pd.DateOffset(months=1)
+
+    x_values = work_df[period_col].astype(str).tolist()
+    last_x = x_values[-1]
+    next_x = next_period_dt.strftime("%b-%y")
+
+    if len(values) < forecast_min_points:
+        forecast_value = float(values[-1] + 0.6 * (values[-1] - values[-2]))
+
+    category_order = list(x_values)
+    if next_x not in category_order:
+        category_order.append(next_x)
+
+    return {
+        "last_x": last_x,
+        "next_x": next_x,
+        "last_y": float(values[-1]),
+        "forecast_y": float(forecast_value),
+        "category_order": category_order,
+    }
 
 
 def get_attractive_hover_template(
@@ -1189,6 +1294,10 @@ def render_trend_chart(
     denominator_name="Denominator",
     facility_uids=None,
     key_suffix="",
+    forecast_enabled=False,
+    forecast_min_points=4,
+    forecast_bounds=None,
+    show_markers=False,
 ):
     # Create unique key
     if facility_uids:
@@ -1237,19 +1346,48 @@ def render_trend_chart(
         st.info("No valid data to display (denominator is zero for all periods).")
         return
 
+    is_rate_like = (
+        "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
+    )
+    forecast_payload = None
+    if forecast_enabled and str(get_current_period_label()).lower() == "monthly":
+        forecast_payload = _build_next_month_forecast_payload(
+            plot_df,
+            x_axis_col,
+            value_col,
+            forecast_min_points=forecast_min_points,
+        )
+        if forecast_payload and forecast_bounds is not None:
+            lower, upper = forecast_bounds
+            forecast_payload["forecast_y"] = float(
+                np.clip(forecast_payload["forecast_y"], lower, upper)
+            )
+
     try:
+        single_period = (
+            plot_df[x_axis_col].nunique() <= 1
+            if (not plot_df.empty and x_axis_col in plot_df.columns)
+            else False
+        )
+        show_point_markers = bool(show_markers or single_period)
         fig = px.line(
             plot_df,
             x=x_axis_col,
             y=value_col,
-            markers=False,
+            markers=show_point_markers,
             line_shape="spline",
             title=title,
             height=400,
             custom_data=[numerator_name, denominator_name] if use_hover_data else None,
         )
+        if show_point_markers:
+            fig.update_traces(
+                mode="lines+markers",
+                marker=dict(size=8 if not single_period else 9),
+            )
+        else:
+            fig.update_traces(mode="lines")
         fig.update_traces(
-            mode="lines",
             line=dict(width=3, shape="spline", smoothing=0.35),
             connectgaps=True,
             cliponaxis=False,
@@ -1257,10 +1395,9 @@ def render_trend_chart(
 
         # Apply standardized hover template
         if use_hover_data:
-            is_rate = "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
             fig.update_traces(
                 hovertemplate=get_attractive_hover_template(
-                    title, numerator_name, denominator_name, is_count=not is_rate
+                    title, numerator_name, denominator_name, is_count=not is_rate_like
                 )
             )
         else:
@@ -1269,14 +1406,82 @@ def render_trend_chart(
             )
     except Exception as e:
         st.error(f"Error creating chart: {str(e)}")
+        single_period = (
+            plot_df[x_axis_col].nunique() <= 1
+            if (not plot_df.empty and x_axis_col in plot_df.columns)
+            else False
+        )
+        show_point_markers = bool(show_markers or single_period)
         fig = px.line(
             plot_df,
             x=x_axis_col,
             y=value_col,
-            markers=False,
+            markers=show_point_markers,
             line_shape="spline",
             title=title,
             height=400,
+        )
+        if show_point_markers:
+            fig.update_traces(
+                mode="lines+markers",
+                marker=dict(size=8 if not single_period else 9),
+            )
+        else:
+            fig.update_traces(mode="lines")
+
+    if forecast_payload:
+        delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
+        is_data_quality_chart = "missing" in title.lower()
+        if delta > 0:
+            direction_label = "Increase"
+            direction_arrow = "UP"
+            direction_color = "#d62728" if is_data_quality_chart else "#2ca02c"
+        elif delta < 0:
+            direction_label = "Decrease"
+            direction_arrow = "DOWN"
+            direction_color = "#2ca02c" if is_data_quality_chart else "#d62728"
+        else:
+            direction_label = "No Change"
+            direction_arrow = "FLAT"
+            direction_color = "#7f7f7f"
+
+        forecast_hover = (
+            "Date: %{x}<br>Forecast: %{y:.2f}%<extra></extra>"
+            if is_rate_like
+            else "Date: %{x}<br>Forecast: %{y:,.2f}<extra></extra>"
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[forecast_payload["last_x"], forecast_payload["next_x"]],
+                y=[forecast_payload["last_y"], forecast_payload["forecast_y"]],
+                mode="lines+markers",
+                name=f"Forecast Next Month ({direction_label})",
+                line=dict(width=2, color=direction_color, dash="dash"),
+                marker=dict(size=7, color=direction_color),
+                connectgaps=True,
+                hovertemplate=forecast_hover,
+            )
+        )
+
+        delta_suffix = " pts" if is_rate_like else ""
+        fig.add_annotation(
+            x=forecast_payload["next_x"],
+            y=forecast_payload["forecast_y"],
+            text="Forecast (Next Month)",
+            showarrow=False,
+            yshift=16,
+            font=dict(color=direction_color, size=10),
+        )
+
+        fig.add_annotation(
+            x=forecast_payload["next_x"],
+            y=forecast_payload["forecast_y"],
+            text=f"{direction_arrow} {abs(delta):.2f}{delta_suffix}",
+            showarrow=True,
+            arrowhead=2,
+            ax=0,
+            ay=-24 if delta >= 0 else 24,
+            font=dict(color=direction_color, size=10),
         )
 
     is_categorical = (
@@ -1308,10 +1513,13 @@ def render_trend_chart(
             layer="below traces",
         ),
     )
+    if is_categorical and forecast_payload:
+        fig.update_xaxes(
+            categoryorder="array",
+            categoryarray=forecast_payload["category_order"],
+        )
 
-    is_rate_chart = (
-        "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
-    )
+    is_rate_chart = is_rate_like
     if is_rate_chart:
         fig.update_layout(
             yaxis_tickformat=".2f",
@@ -1347,6 +1555,11 @@ def render_trend_chart(
     # Generate unique key for plotly chart
     chart_key = f"trend_chart_{title.replace(' ', '_')}_{str(facility_uids) if facility_uids else 'overall'}"
     st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    if forecast_payload:
+        st.caption(
+            "Forecast note: one-month projection from a damped Holt trend model; "
+            "UP/DOWN indicates expected direction versus the latest actual value."
+        )
 
     # =========== COMPACT TABLE ===========
     with st.expander("📊 View Detailed Data Table", expanded=True):
@@ -1668,13 +1881,18 @@ def render_facility_comparison_chart(
     comparison_plot_df.loc[den_vals <= 0, "value"] = np.nan
     facility_color_map = build_stable_color_map(comparison_plot_df["Facility"].unique())
 
+    single_period = (
+        comparison_plot_df["period_display"].nunique() <= 1
+        if not comparison_plot_df.empty
+        else False
+    )
     fig = px.line(
         comparison_plot_df,
         x="period_display",
         y="value",
         color="Facility",
         color_discrete_map=facility_color_map,
-        markers=False,
+        markers=single_period,
         line_shape="spline",
         title=f"{title} - Facility Comparison",
         height=350,
@@ -1682,19 +1900,35 @@ def render_facility_comparison_chart(
         custom_data=["numerator", "denominator"],
     )
 
-    fig.update_traces(
-        mode="lines",
-        line=dict(width=3, shape="spline", smoothing=0.35),
-        connectgaps=True,
-        cliponaxis=False,
-        hovertemplate=get_comparison_hover_template(
-            "Facility",
-            title,
-            numerator_name,
-            denominator_name,
-            is_count=not is_rate_kpi,
-        ),
-    )
+    if single_period:
+        fig.update_traces(
+            mode="lines+markers",
+            marker=dict(size=8),
+            line=dict(width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
+            hovertemplate=get_comparison_hover_template(
+                "Facility",
+                title,
+                numerator_name,
+                denominator_name,
+                is_count=not is_rate_kpi,
+            ),
+        )
+    else:
+        fig.update_traces(
+            mode="lines",
+            line=dict(width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
+            hovertemplate=get_comparison_hover_template(
+                "Facility",
+                title,
+                numerator_name,
+                denominator_name,
+                is_count=not is_rate_kpi,
+            ),
+        )
 
     fig.update_layout(
         paper_bgcolor=bg_color,
@@ -1971,13 +2205,18 @@ def render_region_comparison_chart(
     comparison_plot_df.loc[den_vals <= 0, "value"] = np.nan
     region_color_map = build_stable_color_map(comparison_plot_df["Region"].unique())
 
+    single_period = (
+        comparison_plot_df["period_display"].nunique() <= 1
+        if not comparison_plot_df.empty
+        else False
+    )
     fig = px.line(
         comparison_plot_df,
         x="period_display",
         y="value",
         color="Region",
         color_discrete_map=region_color_map,
-        markers=False,
+        markers=single_period,
         line_shape="spline",
         title=f"{title} - Region Comparison",
         height=350,
@@ -1985,19 +2224,35 @@ def render_region_comparison_chart(
         custom_data=["numerator", "denominator"],
     )
 
-    fig.update_traces(
-        mode="lines",
-        line=dict(width=3, shape="spline", smoothing=0.35),
-        connectgaps=True,
-        cliponaxis=False,
-        hovertemplate=get_comparison_hover_template(
-            "Region",
-            title,
-            numerator_name,
-            denominator_name,
-            is_count=not is_rate_kpi,
-        ),
-    )
+    if single_period:
+        fig.update_traces(
+            mode="lines+markers",
+            marker=dict(size=8),
+            line=dict(width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
+            hovertemplate=get_comparison_hover_template(
+                "Region",
+                title,
+                numerator_name,
+                denominator_name,
+                is_count=not is_rate_kpi,
+            ),
+        )
+    else:
+        fig.update_traces(
+            mode="lines",
+            line=dict(width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
+            hovertemplate=get_comparison_hover_template(
+                "Region",
+                title,
+                numerator_name,
+                denominator_name,
+                is_count=not is_rate_kpi,
+            ),
+        )
 
     fig.update_layout(
         paper_bgcolor=bg_color,

@@ -15,6 +15,7 @@ from utils.kpi_utils import (
     get_comparison_hover_template,
     get_current_period_label,
     format_period_for_download,
+    _build_next_month_forecast_payload,
 )
 
 warnings.filterwarnings("ignore")
@@ -1132,6 +1133,7 @@ def render_newborn_trend_chart(
         numerator_name,
         denominator_name,
         facility_uids,
+        **kwargs,
     )
 
 
@@ -1314,28 +1316,45 @@ def render_newborn_region_comparison_chart(
     grouped_plot_df["value"] = pd.to_numeric(grouped_plot_df["value"], errors="coerce")
     region_color_map = build_stable_color_map(grouped_plot_df["Region"].unique())
 
+    single_period = (
+        grouped_plot_df["_period_label"].nunique() <= 1
+        if not grouped_plot_df.empty
+        else False
+    )
     fig = px.line(
         grouped_plot_df,
         x="_period_label",
         y="value",
         color="Region",
         color_discrete_map=region_color_map,
-        markers=False,
+        markers=single_period,
         line_shape="spline",
         title=f"{title} - Region Comparison",
         category_orders={"_period_label": period_order},
         custom_data=["numerator", "denominator"],
         height=350,
     )
-    fig.update_traces(
-        mode="lines",
-        line=dict(width=3, shape="spline", smoothing=0.35),
-        connectgaps=True,
-        cliponaxis=False,
-        hovertemplate=get_comparison_hover_template(
-            "Region", title, numerator_name, denominator_name, is_count=False
-        ),
-    )
+    if single_period:
+        fig.update_traces(
+            mode="lines+markers",
+            marker=dict(size=8),
+            line=dict(width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
+            hovertemplate=get_comparison_hover_template(
+                "Region", title, numerator_name, denominator_name, is_count=False
+            ),
+        )
+    else:
+        fig.update_traces(
+            mode="lines",
+            line=dict(width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
+            hovertemplate=get_comparison_hover_template(
+                "Region", title, numerator_name, denominator_name, is_count=False
+            ),
+        )
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -1442,21 +1461,63 @@ def render_admitted_newborns_trend_chart(
         except Exception as e:
             df = df.sort_values(period_col)
 
+    forecast_payload = None
+    if str(get_current_period_label()).lower() == "monthly":
+        forecast_payload = _build_next_month_forecast_payload(
+            df,
+            x_axis_col,
+            value_col,
+            forecast_min_points=4,
+        )
+        if forecast_payload:
+            forecast_payload["forecast_y"] = max(
+                0.0, float(forecast_payload.get("forecast_y", 0.0))
+            )
+
+    plot_df = df[[x_axis_col, value_col]].copy()
+    plot_df["Series"] = "Actual"
+    category_order = df[x_axis_col].tolist()
+    if forecast_payload:
+        next_period = forecast_payload["next_x"]
+        forecast_value = float(np.round(forecast_payload["forecast_y"], 0))
+        plot_df = pd.concat(
+            [
+                plot_df,
+                pd.DataFrame(
+                    [
+                        {
+                            x_axis_col: next_period,
+                            value_col: forecast_value,
+                            "Series": "Forecast Next Month",
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
+        if next_period not in category_order:
+            category_order.append(next_period)
+
     # Create chart
     fig = px.bar(
-        df,
+        plot_df,
         x=x_axis_col,
         y=value_col,
+        color="Series",
+        color_discrete_map={
+            "Actual": "#1f77b4",
+            "Forecast Next Month": "#f39c12",
+        },
         title=title,
         height=400,
         text=value_col,
-        category_orders={x_axis_col: df[x_axis_col].tolist()},
+        category_orders={x_axis_col: category_order},
     )
 
     fig.update_traces(
-        texttemplate="%{text:.0f}",
+        texttemplate="%{text:,.0f}",
         textposition="outside",
-        hovertemplate=get_attractive_hover_template(value_name, "", "", is_count=True)
+        hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,.0f}<extra></extra>",
     )
 
     fig.update_layout(
@@ -1472,7 +1533,7 @@ def render_admitted_newborns_trend_chart(
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
             categoryorder="array",
-            categoryarray=df[x_axis_col].tolist(),
+            categoryarray=category_order,
         ),
         yaxis=dict(
             rangemode="tozero",
@@ -1488,6 +1549,13 @@ def render_admitted_newborns_trend_chart(
 
     # Display the chart
     st.plotly_chart(fig, use_container_width=True)
+    if forecast_payload:
+        delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
+        direction = "Increase" if delta > 0 else ("Decrease" if delta < 0 else "No Change")
+        st.caption(
+            f"Forecast (next month): {forecast_payload['forecast_y']:,.0f} "
+            f"({direction} vs latest actual)."
+        )
 
     # Display table below graph
     st.markdown("---")
