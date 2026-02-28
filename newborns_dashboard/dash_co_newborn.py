@@ -842,17 +842,9 @@ def render_newborn_trend_chart_section(
     group = pd.DataFrame(period_data)
     group = group.sort_values("period_sort")
 
-    data_quality_kpis = {
-        "Missing Temperature (%)",
-        "Missing Birth Weight (%)",
-        "Missing Status of Discharge (%)",
-        "Missing Discharge Status (%)",
-        "Missing Birth Location (%)",
-    }
-    enable_next_month_forecast = (
-        kpi_selection in data_quality_kpis
-        and str(period_label).lower() == "monthly"
-    )
+    enable_next_period_forecast = True
+    # Keep newborn trend lines smooth (no points) for all standard line KPIs.
+    use_markers_for_trend = False
 
     # Render the chart WITH TABLE
     try:
@@ -882,10 +874,11 @@ def render_newborn_trend_chart_section(
                 numerator_label,
                 denominator_label,
                 facility_uids,
-                forecast_enabled=enable_next_month_forecast,
+                forecast_enabled=enable_next_period_forecast,
                 forecast_min_points=4,
                 forecast_bounds=(0.0, 100.0),
-                show_markers=True,
+                show_markers=use_markers_for_trend,
+                forecast_show_markers=use_markers_for_trend,
             )
     except Exception as e:
         st.error(f"Error rendering chart for {kpi_selection}: {str(e)}")

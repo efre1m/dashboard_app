@@ -8,6 +8,11 @@ import numpy as np
 import warnings
 
 try:
+    from utils.indicator_definitions import KPI_DEFINITIONS
+except Exception:
+    KPI_DEFINITIONS = {}
+
+try:
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
 except Exception:
     ExponentialSmoothing = None
@@ -187,7 +192,59 @@ def format_period_list_for_download(period_series, period_label):
     return ", ".join(unique_periods)
 
 
-def _forecast_next_month_damped_holt(values):
+def _is_increase_bad_for_indicator(indicator_title):
+    """Return True when an increasing trend should be treated as worsening."""
+    title = str(indicator_title or "").strip().lower()
+    if not title:
+        return False
+
+    # First, try interpretation metadata from known indicator definitions.
+    for kpi_name, kpi_meta in KPI_DEFINITIONS.items():
+        kpi_name_norm = str(kpi_name).strip().lower()
+        if kpi_name_norm in title or title in kpi_name_norm:
+            interpretation = str(kpi_meta.get("interpretation", "")).lower()
+            if "lower rates indicate better" in interpretation:
+                return True
+            if "higher rates indicate better" in interpretation:
+                return False
+
+    # Fallback semantic keywords.
+    bad_on_increase_keywords = [
+        "missing",
+        "complication",
+        "mortality",
+        "death",
+        "stillbirth",
+        "hypothermia",
+        "pph",
+        "hemorrhage",
+        "episiotomy",
+        "c-section",
+        "c section",
+        "outborn",
+    ]
+    good_on_increase_keywords = [
+        "coverage",
+        "acceptance",
+        "uterotonic",
+        "arv",
+        "prophylaxis",
+        "inborn",
+        "normal vaginal",
+        "svd",
+        "admitted",
+    ]
+
+    if any(keyword in title for keyword in bad_on_increase_keywords):
+        return True
+    if any(keyword in title for keyword in good_on_increase_keywords):
+        return False
+
+    # Conservative default: treat as favorable when increasing.
+    return False
+
+
+def _forecast_next_period_damped_holt(values):
     """One-step damped Holt forecast using statsmodels ExponentialSmoothing."""
     arr = np.asarray(values, dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -221,15 +278,95 @@ def _forecast_next_month_damped_holt(values):
     return float(arr[-1] + 0.6 * (arr[-1] - arr[-2]))
 
 
-def _build_next_month_forecast_payload(
+def _format_weekly_period_label(period_start):
+    """Format weekly period label like: Week 12 (17-23 Mar, 2025)."""
+    period_start = pd.Timestamp(period_start).to_pydatetime().date()
+    period_end = period_start + dt.timedelta(days=6)
+    week_number = period_start.isocalendar()[1]
+    if period_start.year == period_end.year:
+        if period_start.month == period_end.month:
+            date_range = (
+                f"{period_start.day:02d}-{period_end.day:02d} "
+                f"{period_start.strftime('%b')}, {period_start.year}"
+            )
+        else:
+            date_range = (
+                f"{period_start.day:02d} {period_start.strftime('%b')} - "
+                f"{period_end.day:02d} {period_end.strftime('%b')}, {period_start.year}"
+            )
+    else:
+        date_range = (
+            f"{period_start.strftime('%d %b, %Y')} - "
+            f"{period_end.strftime('%d %b, %Y')}"
+        )
+    return f"Week {week_number} ({date_range})"
+
+
+def _format_quarterly_period_label(period_start):
+    """Format quarterly label like: Q1 (Jan-Mar 2025)."""
+    ts = pd.Timestamp(period_start)
+    quarter = int(((ts.month - 1) // 3) + 1)
+    month_ranges = {1: "Jan-Mar", 2: "Apr-Jun", 3: "Jul-Sep", 4: "Oct-Dec"}
+    return f"Q{quarter} ({month_ranges[quarter]} {ts.year})"
+
+
+def _get_forecast_period_config(period_label):
+    """Return offset, unit, and normalization behavior for a period label."""
+    label = str(period_label or "Monthly").strip().lower()
+    if label == "daily":
+        return {"key": "daily", "unit": "Day", "offset": pd.DateOffset(days=1)}
+    if label == "weekly":
+        return {"key": "weekly", "unit": "Week", "offset": pd.DateOffset(weeks=1)}
+    if label == "quarterly":
+        return {"key": "quarterly", "unit": "Quarter", "offset": pd.DateOffset(months=3)}
+    if label == "yearly":
+        return {"key": "yearly", "unit": "Year", "offset": pd.DateOffset(years=1)}
+    return {"key": "monthly", "unit": "Month", "offset": pd.DateOffset(months=1)}
+
+
+def _normalize_period_timestamp(series, period_key):
+    """Normalize timestamps to period starts."""
+    ts = pd.to_datetime(series, errors="coerce")
+    if period_key == "daily":
+        return ts.dt.normalize()
+    if period_key == "weekly":
+        return (ts - pd.to_timedelta(ts.dt.weekday, unit="D")).dt.normalize()
+    if period_key == "quarterly":
+        return ts.dt.to_period("Q").dt.start_time
+    if period_key == "yearly":
+        return ts.dt.to_period("Y").dt.start_time
+    return ts.dt.to_period("M").dt.start_time
+
+
+def _format_next_period_label(next_period_dt, period_key):
+    """Format next period label to match dashboard period display style."""
+    ts = pd.Timestamp(next_period_dt)
+    if period_key == "daily":
+        return ts.strftime("%d %b %Y")
+    if period_key == "weekly":
+        return _format_weekly_period_label(ts)
+    if period_key == "quarterly":
+        return _format_quarterly_period_label(ts)
+    if period_key == "yearly":
+        return ts.strftime("%Y")
+    return ts.strftime("%b-%y")
+
+
+def _build_next_period_forecast_payload(
     plot_df,
     period_col,
     value_col,
     forecast_min_points=4,
+    period_label=None,
 ):
-    """Build plotting payload for a one-month-ahead forecast."""
+    """Build plotting payload for a one-step-ahead forecast for current aggregation."""
     if plot_df is None or plot_df.empty:
         return None
+
+    if period_label is None:
+        period_label = get_current_period_label()
+    config = _get_forecast_period_config(period_label)
+    period_key = config["key"]
 
     work_df = plot_df.copy()
     work_df[value_col] = pd.to_numeric(work_df[value_col], errors="coerce")
@@ -238,16 +375,17 @@ def _build_next_month_forecast_payload(
         return None
 
     if "period_sort" in work_df.columns:
-        work_df["_period_dt"] = pd.to_datetime(work_df["period_sort"], errors="coerce")
-        work_df["_period_dt"] = (
-            work_df["_period_dt"].dt.to_period("M").dt.to_timestamp()
+        work_df["_period_dt"] = _normalize_period_timestamp(
+            work_df["period_sort"], period_key
         )
     else:
-        work_df["_period_dt"] = pd.to_datetime(
-            work_df[period_col].apply(format_period_month_year),
-            format="%b-%y",
-            errors="coerce",
+        work_df["_period_dt"] = _normalize_period_timestamp(
+            work_df[period_col], period_key
         )
+        if work_df["_period_dt"].isna().all():
+            work_df["_period_dt"] = _normalize_period_timestamp(
+                work_df[period_col].apply(format_period_month_year), "monthly"
+            )
 
     work_df = work_df[work_df["_period_dt"].notna()].copy()
     if len(work_df) < 2:
@@ -260,16 +398,16 @@ def _build_next_month_forecast_payload(
     if len(values) < 2:
         return None
 
-    forecast_value = _forecast_next_month_damped_holt(values)
+    forecast_value = _forecast_next_period_damped_holt(values)
     if forecast_value is None:
         return None
 
     last_period_dt = work_df["_period_dt"].iloc[-1]
-    next_period_dt = last_period_dt + pd.DateOffset(months=1)
+    next_period_dt = last_period_dt + config["offset"]
 
     x_values = work_df[period_col].astype(str).tolist()
     last_x = x_values[-1]
-    next_x = next_period_dt.strftime("%b-%y")
+    next_x = _format_next_period_label(next_period_dt, period_key)
 
     if len(values) < forecast_min_points:
         forecast_value = float(values[-1] + 0.6 * (values[-1] - values[-2]))
@@ -284,7 +422,26 @@ def _build_next_month_forecast_payload(
         "last_y": float(values[-1]),
         "forecast_y": float(forecast_value),
         "category_order": category_order,
+        "period_label": str(period_label),
+        "period_unit": config["unit"],
+        "period_key": period_key,
     }
+
+
+def _build_next_month_forecast_payload(
+    plot_df,
+    period_col,
+    value_col,
+    forecast_min_points=4,
+):
+    """Backward-compatible wrapper for next-period forecast payload."""
+    return _build_next_period_forecast_payload(
+        plot_df,
+        period_col,
+        value_col,
+        forecast_min_points=forecast_min_points,
+        period_label=get_current_period_label(),
+    )
 
 
 def get_attractive_hover_template(
@@ -1294,10 +1451,11 @@ def render_trend_chart(
     denominator_name="Denominator",
     facility_uids=None,
     key_suffix="",
-    forecast_enabled=False,
+    forecast_enabled=True,
     forecast_min_points=4,
     forecast_bounds=None,
     show_markers=False,
+    forecast_show_markers=True,
 ):
     # Create unique key
     if facility_uids:
@@ -1350,12 +1508,13 @@ def render_trend_chart(
         "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
     )
     forecast_payload = None
-    if forecast_enabled and str(get_current_period_label()).lower() == "monthly":
-        forecast_payload = _build_next_month_forecast_payload(
+    if forecast_enabled:
+        forecast_payload = _build_next_period_forecast_payload(
             plot_df,
             x_axis_col,
             value_col,
             forecast_min_points=forecast_min_points,
+            period_label=get_current_period_label(),
         )
         if forecast_payload and forecast_bounds is not None:
             lower, upper = forecast_bounds
@@ -1431,15 +1590,16 @@ def render_trend_chart(
 
     if forecast_payload:
         delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
-        is_data_quality_chart = "missing" in title.lower()
+        forecast_unit = forecast_payload.get("period_unit", "Period")
+        increase_is_bad = _is_increase_bad_for_indicator(title)
         if delta > 0:
             direction_label = "Increase"
             direction_arrow = "UP"
-            direction_color = "#d62728" if is_data_quality_chart else "#2ca02c"
+            direction_color = "#d62728" if increase_is_bad else "#2ca02c"
         elif delta < 0:
             direction_label = "Decrease"
             direction_arrow = "DOWN"
-            direction_color = "#2ca02c" if is_data_quality_chart else "#d62728"
+            direction_color = "#2ca02c" if increase_is_bad else "#d62728"
         else:
             direction_label = "No Change"
             direction_arrow = "FLAT"
@@ -1454,11 +1614,24 @@ def render_trend_chart(
             go.Scatter(
                 x=[forecast_payload["last_x"], forecast_payload["next_x"]],
                 y=[forecast_payload["last_y"], forecast_payload["forecast_y"]],
-                mode="lines+markers",
-                name=f"Forecast Next Month ({direction_label})",
+                mode="lines",
+                name=f"Forecast Next {forecast_unit} ({direction_label})",
                 line=dict(width=2, color=direction_color, dash="dash"),
-                marker=dict(size=7, color=direction_color),
                 connectgaps=True,
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[forecast_payload["next_x"]],
+                y=[forecast_payload["forecast_y"]],
+                mode="markers",
+                marker=dict(
+                    size=8,
+                    color=direction_color,
+                    opacity=1.0 if forecast_show_markers else 0.0,
+                ),
+                showlegend=False,
                 hovertemplate=forecast_hover,
             )
         )
@@ -1467,7 +1640,7 @@ def render_trend_chart(
         fig.add_annotation(
             x=forecast_payload["next_x"],
             y=forecast_payload["forecast_y"],
-            text="Forecast (Next Month)",
+            text=f"Forecast (Next {forecast_unit})",
             showarrow=False,
             yshift=16,
             font=dict(color=direction_color, size=10),
@@ -1556,9 +1729,10 @@ def render_trend_chart(
     chart_key = f"trend_chart_{title.replace(' ', '_')}_{str(facility_uids) if facility_uids else 'overall'}"
     st.plotly_chart(fig, use_container_width=True, key=chart_key)
     if forecast_payload:
+        forecast_unit = forecast_payload.get("period_unit", "Period")
         st.caption(
-            "Forecast note: one-month projection from a damped Holt trend model; "
-            "UP/DOWN indicates expected direction versus the latest actual value."
+            f"Forecast note: one-step (next {forecast_unit.lower()}) projection from a "
+            "damped Holt trend model; UP/DOWN indicates expected direction versus the latest value."
         )
 
     # =========== COMPACT TABLE ===========

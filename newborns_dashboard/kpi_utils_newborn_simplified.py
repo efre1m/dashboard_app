@@ -14,6 +14,7 @@ from datetime import datetime
 from utils.kpi_utils import (
     auto_text_color,
     get_attractive_hover_template,
+    _build_next_period_forecast_payload,
 )
 
 # Set up logging
@@ -53,6 +54,108 @@ def download_csv_button(
         mime="text/csv",
         help=help_text,
     )
+
+
+def _compute_forecast_payload_for_series(
+    series_df,
+    period_col,
+    value_col,
+):
+    """Compute next-period forecast payload for a single series."""
+    if series_df is None or series_df.empty or value_col not in series_df.columns:
+        return None
+
+    work_df = series_df.copy()
+    work_df[value_col] = pd.to_numeric(work_df[value_col], errors="coerce")
+    work_df = work_df[work_df[value_col].notna()].copy()
+    if work_df.empty or len(work_df) < 2:
+        return None
+
+    if "period_sort" not in work_df.columns:
+        work_df["period_sort"] = pd.to_datetime(work_df[period_col], errors="coerce")
+
+    return _build_next_period_forecast_payload(
+        work_df,
+        period_col,
+        value_col,
+        forecast_min_points=4,
+        period_label=st.session_state.get("period_label", "Monthly"),
+    )
+
+
+def _add_forecast_trace(
+    fig,
+    forecast_payload,
+    trace_name,
+    color="#f39c12",
+    row=None,
+    col=None,
+    show_markers=False,
+    show_delta_text=True,
+    increase_is_bad=False,
+):
+    """Add a dashed next-period forecast segment to an existing figure."""
+    if not forecast_payload:
+        return
+
+    delta = float(forecast_payload["forecast_y"] - forecast_payload["last_y"])
+    if delta > 0:
+        direction = "UP"
+        direction_color = "#d62728" if increase_is_bad else "#2ca02c"
+        text_pos = "top center"
+    elif delta < 0:
+        direction = "DOWN"
+        direction_color = "#2ca02c" if increase_is_bad else "#d62728"
+        text_pos = "bottom center"
+    else:
+        direction = "FLAT"
+        direction_color = "#7f7f7f"
+        text_pos = "top center"
+
+    connector_trace = go.Scatter(
+        x=[forecast_payload["last_x"], forecast_payload["next_x"]],
+        y=[forecast_payload["last_y"], forecast_payload["forecast_y"]],
+        mode="lines",
+        name=trace_name,
+        line=dict(color=direction_color, width=2, dash="dash"),
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+    point_trace = go.Scatter(
+        x=[forecast_payload["next_x"]],
+        y=[forecast_payload["forecast_y"]],
+        mode="markers",
+        marker=dict(
+            size=6,
+            color=direction_color,
+            opacity=1.0 if show_markers else 0.0,
+        ),
+        hovertemplate="<b>%{x}</b><br>Forecast: %{y:.1f}%<extra></extra>",
+        showlegend=False,
+    )
+
+    delta_trace = go.Scatter(
+        x=[forecast_payload["next_x"]],
+        y=[forecast_payload["forecast_y"]],
+        mode="text",
+        text=[f"{direction} {abs(delta):.2f} pts"],
+        textposition=text_pos,
+        textfont=dict(color=direction_color, size=10),
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+    if row is not None and col is not None:
+        fig.add_trace(connector_trace, row=row, col=col)
+        fig.add_trace(point_trace, row=row, col=col)
+        if show_delta_text:
+            fig.add_trace(delta_trace, row=row, col=col)
+    else:
+        fig.add_trace(connector_trace)
+        fig.add_trace(point_trace)
+        if show_delta_text:
+            fig.add_trace(delta_trace)
 
 
 # ---------------- Newborn KPI Constants - EXACT DATASET COLUMN NAMES ----------------
@@ -834,9 +937,15 @@ def render_birth_weight_trend_chart(
     for period in periods:
         period_df = df[df[period_col] == period]
         bw_data = compute_birth_weight_kpi(period_df, facility_uids)
+        period_sort_val = (
+            pd.to_datetime(period_df["period_sort"], errors="coerce").min()
+            if "period_sort" in period_df.columns
+            else pd.NaT
+        )
 
         period_row = {
             period_col: period,
+            "period_sort": period_sort_val,
             "total_with_birth_weight": bw_data["total_with_birth_weight"],
             "total_admitted": bw_data["total_admitted"],
         }
@@ -883,6 +992,7 @@ def render_birth_weight_trend_chart(
         vertical_spacing=0.10,
         horizontal_spacing=0.08,
     )
+    axis_periods = list(periods)
 
     for idx, (category_key, category_info) in enumerate(sorted_categories):
         rate_col = f"{category_key}_rate"
@@ -908,6 +1018,28 @@ def render_birth_weight_trend_chart(
             col=current_col,
         )
 
+        forecast_series_df = trend_df[[period_col, "period_sort", rate_col]].rename(
+            columns={rate_col: "rate_value"}
+        )
+        forecast_payload = _compute_forecast_payload_for_series(
+            forecast_series_df,
+            period_col,
+            "rate_value",
+        )
+        _add_forecast_trace(
+            fig,
+            forecast_payload,
+            trace_name=f"{category_info['name']} Forecast",
+            row=current_row,
+            col=current_col,
+            show_markers=False,
+            increase_is_bad=bool(category_info.get("max", 999999) <= 2499),
+        )
+        if forecast_payload:
+            next_x = forecast_payload.get("next_x")
+            if next_x and next_x not in axis_periods:
+                axis_periods.append(next_x)
+
     fig.update_layout(
         title=title,
         height=1000,
@@ -922,7 +1054,7 @@ def render_birth_weight_trend_chart(
     fig.update_xaxes(
         type="category",
         categoryorder="array",
-        categoryarray=periods,
+        categoryarray=axis_periods,
         tickangle=-45,
         gridcolor="rgba(128,128,128,0.2)",
         showgrid=True,
@@ -948,6 +1080,9 @@ def render_birth_weight_trend_chart(
     fig.update_layout(yaxis_tickformat=".1f")
 
     st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "Dashed orange segments represent one-step forecast for the next selected period."
+    )
 
     # SINGLE COMPARISON TABLE
     st.subheader("📊 Birth Weight Rate Table (%)")
@@ -1940,9 +2075,15 @@ def render_cpap_rds_trend_chart(
     for period in periods:
         period_df = df[df[period_col] == period]
         cpap_rds_data = compute_cpap_for_rds_kpi(period_df, facility_uids)
+        period_sort_val = (
+            pd.to_datetime(period_df["period_sort"], errors="coerce").min()
+            if "period_sort" in period_df.columns
+            else pd.NaT
+        )
 
         period_row = {
             period_col: period,
+            "period_sort": period_sort_val,
             "cpap_rds_rate": cpap_rds_data.get("cpap_rate", 0.0),
             "cpap_rds_count": cpap_rds_data.get("cpap_count", 0),
             "cpap_rds_total": cpap_rds_data.get("total_rds", 0),
@@ -1992,6 +2133,21 @@ def render_cpap_rds_trend_chart(
         )
     )
 
+    forecast_series_df = trend_plot_df[
+        [period_col, "period_sort", "cpap_rds_rate"]
+    ].rename(columns={"cpap_rds_rate": "rate_value"})
+    forecast_payload = _compute_forecast_payload_for_series(
+        forecast_series_df,
+        period_col,
+        "rate_value",
+    )
+    _add_forecast_trace(fig, forecast_payload, trace_name="CPAP for RDS Forecast")
+    axis_periods = list(periods)
+    if forecast_payload:
+        next_x = forecast_payload.get("next_x")
+        if next_x and next_x not in axis_periods:
+            axis_periods.append(next_x)
+
     # Calculate Y-axis range for percentage charts
     all_rates = trend_plot_df["cpap_rds_rate"].tolist()
     y_max = 100
@@ -2008,7 +2164,7 @@ def render_cpap_rds_trend_chart(
         xaxis=dict(
             type="category",
             categoryorder="array",
-            categoryarray=periods,  # Ensure chronological order
+            categoryarray=axis_periods,  # Ensure chronological order
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
@@ -2028,6 +2184,17 @@ def render_cpap_rds_trend_chart(
 
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "Dashed orange segments represent one-step forecast for the next selected period."
+    )
+    if forecast_payload:
+        delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
+        forecast_unit = forecast_payload.get("period_unit", "Period")
+        direction = "Increase" if delta > 0 else ("Decrease" if delta < 0 else "No Change")
+        st.caption(
+            f"Forecast (next {forecast_unit.lower()}): {forecast_payload['forecast_y']:.1f}% "
+            f"({direction} vs latest value)."
+        )
 
     # SINGLE TABLE
     st.subheader("📊 CPAP for RDS Table")
@@ -2900,8 +3067,13 @@ def render_kmc_coverage_trend_chart(
     for period in periods:
         period_df = df[df[period_col] == period]
         kmc_data = compute_kmc_coverage_kpi(period_df, facility_uids)
+        period_sort_val = (
+            pd.to_datetime(period_df["period_sort"], errors="coerce").min()
+            if "period_sort" in period_df.columns
+            else pd.NaT
+        )
 
-        period_row = {period_col: period}
+        period_row = {period_col: period, "period_sort": period_sort_val}
 
         # Add KMC rate for each category IN ORDER
         for category_key, category_info in sorted(
@@ -2939,6 +3111,7 @@ def render_kmc_coverage_trend_chart(
         vertical_spacing=0.10,
         horizontal_spacing=0.08
     )
+    axis_periods = list(periods)
     
     # Map subplots
     # Dynamically calculate row and column for each subplot
@@ -2975,6 +3148,26 @@ def render_kmc_coverage_trend_chart(
                 row=current_row,
                 col=current_col
             )
+
+            forecast_series_df = trend_df[[period_col, "period_sort", rate_col]].rename(
+                columns={rate_col: "rate_value"}
+            )
+            forecast_payload = _compute_forecast_payload_for_series(
+                forecast_series_df,
+                period_col,
+                "rate_value",
+            )
+            _add_forecast_trace(
+                fig,
+                forecast_payload,
+                trace_name=f"{category_info['name']} Forecast",
+                row=current_row,
+                col=current_col,
+            )
+            if forecast_payload:
+                next_x = forecast_payload.get("next_x")
+                if next_x and next_x not in axis_periods:
+                    axis_periods.append(next_x)
             
     # Calculate Y-axis range for percentage charts
     all_rates = []
@@ -3002,7 +3195,7 @@ def render_kmc_coverage_trend_chart(
     fig.update_xaxes(
         type="category",
         categoryorder="array",
-        categoryarray=periods,
+        categoryarray=axis_periods,
         tickangle=-45,
         gridcolor="rgba(128,128,128,0.2)",
         showgrid=True,  # Enable vertical gridlines
@@ -3213,8 +3406,13 @@ def render_cpap_by_weight_trend_chart(
     for period in periods:
         period_df = df[df[period_col] == period]
         cpap_data = compute_cpap_coverage_by_weight_kpi(period_df, facility_uids)
+        period_sort_val = (
+            pd.to_datetime(period_df["period_sort"], errors="coerce").min()
+            if "period_sort" in period_df.columns
+            else pd.NaT
+        )
 
-        period_row = {period_col: period}
+        period_row = {period_col: period, "period_sort": period_sort_val}
 
         # Add CPAP rate for each category IN ORDER
         for category_key, category_info in sorted(
@@ -3253,6 +3451,7 @@ def render_cpap_by_weight_trend_chart(
         vertical_spacing=0.10,
         horizontal_spacing=0.08
     )
+    axis_periods = list(periods)
     
     # Map subplots
     # Dynamically calculate row and column for each subplot
@@ -3290,6 +3489,26 @@ def render_cpap_by_weight_trend_chart(
                 col=current_col
             )
 
+            forecast_series_df = trend_df[[period_col, "period_sort", rate_col]].rename(
+                columns={rate_col: "rate_value"}
+            )
+            forecast_payload = _compute_forecast_payload_for_series(
+                forecast_series_df,
+                period_col,
+                "rate_value",
+            )
+            _add_forecast_trace(
+                fig,
+                forecast_payload,
+                trace_name=f"{category_info['name']} Forecast",
+                row=current_row,
+                col=current_col,
+            )
+            if forecast_payload:
+                next_x = forecast_payload.get("next_x")
+                if next_x and next_x not in axis_periods:
+                    axis_periods.append(next_x)
+
     # Calculate Y-axis range for percentage charts
     all_rates = []
     for category_key in filtered_categories.keys():
@@ -3316,7 +3535,7 @@ def render_cpap_by_weight_trend_chart(
     fig.update_xaxes(
         type="category",
         categoryorder="array",
-        categoryarray=periods,
+        categoryarray=axis_periods,
         tickangle=-45,
         gridcolor="rgba(128,128,128,0.2)",
         showgrid=True,  # Enable vertical gridlines

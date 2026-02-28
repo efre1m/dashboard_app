@@ -226,21 +226,20 @@ def render_admitted_mothers_trend_chart(
         except Exception:
             df = df.sort_values(period_col)
 
-    forecast_payload = None
-    if str(get_current_period_label()).lower() == "monthly":
-        forecast_payload = _build_next_month_forecast_payload(
-            df,
-            x_axis_col,
-            value_col,
-            forecast_min_points=4,
+    forecast_payload = _build_next_month_forecast_payload(
+        df,
+        x_axis_col,
+        value_col,
+        forecast_min_points=4,
+    )
+    if forecast_payload:
+        forecast_payload["forecast_y"] = max(
+            0.0, float(forecast_payload.get("forecast_y", 0.0))
         )
-        if forecast_payload:
-            forecast_payload["forecast_y"] = max(
-                0.0, float(forecast_payload.get("forecast_y", 0.0))
-            )
 
     plot_df = df[[x_axis_col, value_col]].copy()
     plot_df["Series"] = "Actual"
+    plot_df["_hover_label"] = final_name
     category_order = df[x_axis_col].tolist()
     if forecast_payload:
         next_period = forecast_payload["next_x"]
@@ -254,6 +253,7 @@ def render_admitted_mothers_trend_chart(
                             x_axis_col: next_period,
                             value_col: forecast_value,
                             "Series": "Forecast Next Month",
+                            "_hover_label": "Forecast",
                         }
                     ]
                 ),
@@ -278,12 +278,13 @@ def render_admitted_mothers_trend_chart(
             height=400,
             text=value_col,
             category_orders={x_axis_col: category_order},
+            custom_data=["_hover_label"],
         )
 
         fig.update_traces(
             texttemplate="%{text:,.0f}",
             textposition="outside",
-            hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,.0f}<extra></extra>",
+            hovertemplate="<b>%{x}</b><br>%{customdata[0]}: %{y:,.0f}<extra></extra>",
         )
     except Exception as e:
         st.error(f"Error creating chart: {str(e)}")
@@ -323,10 +324,11 @@ def render_admitted_mothers_trend_chart(
     st.plotly_chart(fig, use_container_width=True, key=f"admitted_mothers_chart_{kwargs.get('key_suffix', '')}")
     if forecast_payload:
         delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
+        forecast_unit = forecast_payload.get("period_unit", "Period")
         direction = "Increase" if delta > 0 else ("Decrease" if delta < 0 else "No Change")
         st.caption(
-            f"Forecast (next month): {forecast_payload['forecast_y']:,.0f} "
-            f"({direction} vs latest actual)."
+            f"Forecast (next {forecast_unit.lower()}): {forecast_payload['forecast_y']:,.0f} "
+            f"({direction} vs latest value)."
         )
 
     # Table below graph
