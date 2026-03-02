@@ -232,10 +232,15 @@ def render_admitted_mothers_trend_chart(
         value_col,
         forecast_min_points=4,
     )
+    forecast_series_label = "Forecast Next Month"
+    forecast_hover_label = "Forecast"
     if forecast_payload:
         forecast_payload["forecast_y"] = max(
             0.0, float(forecast_payload.get("forecast_y", 0.0))
         )
+        if forecast_payload.get("forecast_mode") == "current_period_projection":
+            forecast_series_label = "Projected End of Month"
+            forecast_hover_label = "Projected EOM"
 
     plot_df = df[[x_axis_col, value_col]].copy()
     plot_df["Series"] = "Actual"
@@ -252,8 +257,8 @@ def render_admitted_mothers_trend_chart(
                         {
                             x_axis_col: next_period,
                             value_col: forecast_value,
-                            "Series": "Forecast Next Month",
-                            "_hover_label": "Forecast",
+                            "Series": forecast_series_label,
+                            "_hover_label": forecast_hover_label,
                         }
                     ]
                 ),
@@ -273,6 +278,7 @@ def render_admitted_mothers_trend_chart(
             color_discrete_map={
                 "Actual": "#1f77b4",
                 "Forecast Next Month": "#f39c12",
+                "Projected End of Month": "#f39c12",
             },
             title=title,
             height=400,
@@ -326,10 +332,16 @@ def render_admitted_mothers_trend_chart(
         delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
         forecast_unit = forecast_payload.get("period_unit", "Period")
         direction = "Increase" if delta > 0 else ("Decrease" if delta < 0 else "No Change")
-        st.caption(
-            f"Forecast (next {forecast_unit.lower()}): {forecast_payload['forecast_y']:,.0f} "
-            f"({direction} vs latest value)."
-        )
+        if forecast_payload.get("forecast_mode") == "current_period_projection":
+            st.caption(
+                f"Projected end of current {forecast_unit.lower()}: {forecast_payload['forecast_y']:,.0f} "
+                f"({direction} vs previous {forecast_unit.lower()})."
+            )
+        else:
+            st.caption(
+                f"Forecast (next {forecast_unit.lower()}): {forecast_payload['forecast_y']:,.0f} "
+                f"({direction} vs latest value)."
+            )
 
     # Table below graph
     st.markdown("---")

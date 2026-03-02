@@ -352,12 +352,20 @@ def _format_next_period_label(next_period_dt, period_key):
     return ts.strftime("%b-%y")
 
 
+def _current_period_start(period_key, now_ts=None):
+    """Return the normalized start timestamp for the current selected period."""
+    now_value = pd.Timestamp.now() if now_ts is None else pd.Timestamp(now_ts)
+    normalized = _normalize_period_timestamp(pd.Series([now_value]), period_key)
+    return normalized.iloc[0]
+
+
 def _build_next_period_forecast_payload(
     plot_df,
     period_col,
     value_col,
     forecast_min_points=4,
     period_label=None,
+    open_month_rollover_day=None,
 ):
     """Build plotting payload for a one-step-ahead forecast for current aggregation."""
     if plot_df is None or plot_df.empty:
@@ -398,14 +406,68 @@ def _build_next_period_forecast_payload(
     if len(values) < 2:
         return None
 
+    last_period_dt = work_df["_period_dt"].iloc[-1]
+    x_values = work_df[period_col].astype(str).tolist()
+    now_ts = pd.Timestamp.now()
+    current_period_dt = _current_period_start(period_key, now_ts=now_ts)
+    days_in_month = int(now_ts.days_in_month)
+    if open_month_rollover_day is None:
+        # Default behavior: keep projecting current month until the final calendar day.
+        safe_rollover_day = days_in_month
+    else:
+        safe_rollover_day = max(1, min(days_in_month, int(open_month_rollover_day)))
+
+    # Monthly-specific behavior:
+    # If current month is still early (before rollover day) and present in data,
+    # project end-of-month for that same month while keeping the actual MTD point.
+    can_project_current_month = (
+        period_key == "monthly"
+        and pd.notna(last_period_dt)
+        and pd.notna(current_period_dt)
+        and pd.Timestamp(last_period_dt) == pd.Timestamp(current_period_dt)
+        and int(now_ts.day) < safe_rollover_day
+        and len(values) >= 2
+    )
+
+    if can_project_current_month:
+        train_values = values[:-1]
+        if len(train_values) < 1:
+            return None
+
+        forecast_value = _forecast_next_period_damped_holt(train_values)
+        if forecast_value is None:
+            return None
+
+        if len(train_values) >= 2 and len(train_values) < forecast_min_points:
+            forecast_value = float(
+                train_values[-1] + 0.6 * (train_values[-1] - train_values[-2])
+            )
+
+        period_progress = float(now_ts.day / max(days_in_month, 1))
+        category_order = list(x_values)
+
+        return {
+            "last_x": x_values[-2],
+            "next_x": x_values[-1],
+            "last_y": float(values[-2]),
+            "forecast_y": float(forecast_value),
+            "actual_current_y": float(values[-1]),
+            "actual_current_x": x_values[-1],
+            "category_order": category_order,
+            "period_label": str(period_label),
+            "period_unit": config["unit"],
+            "period_key": period_key,
+            "forecast_mode": "current_period_projection",
+            "period_progress": period_progress,
+            "rollover_day": safe_rollover_day,
+            "training_points": int(len(train_values)),
+        }
+
     forecast_value = _forecast_next_period_damped_holt(values)
     if forecast_value is None:
         return None
 
-    last_period_dt = work_df["_period_dt"].iloc[-1]
     next_period_dt = last_period_dt + config["offset"]
-
-    x_values = work_df[period_col].astype(str).tolist()
     last_x = x_values[-1]
     next_x = _format_next_period_label(next_period_dt, period_key)
 
@@ -425,6 +487,10 @@ def _build_next_period_forecast_payload(
         "period_label": str(period_label),
         "period_unit": config["unit"],
         "period_key": period_key,
+        "forecast_mode": "next_period_forecast",
+        "period_progress": None,
+        "rollover_day": safe_rollover_day,
+        "training_points": int(len(values)),
     }
 
 
@@ -1589,6 +1655,8 @@ def render_trend_chart(
             fig.update_traces(mode="lines")
 
     if forecast_payload:
+        forecast_mode = forecast_payload.get("forecast_mode", "next_period_forecast")
+        projecting_current_period = forecast_mode == "current_period_projection"
         delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
         forecast_unit = forecast_payload.get("period_unit", "Period")
         increase_is_bad = _is_increase_bad_for_indicator(title)
@@ -1606,17 +1674,29 @@ def render_trend_chart(
             direction_color = "#7f7f7f"
 
         forecast_hover = (
-            "Date: %{x}<br>Forecast: %{y:.2f}%<extra></extra>"
+            (
+                "Date: %{x}<br>Projected EOM: %{y:.2f}%<extra></extra>"
+                if projecting_current_period
+                else "Date: %{x}<br>Forecast: %{y:.2f}%<extra></extra>"
+            )
             if is_rate_like
-            else "Date: %{x}<br>Forecast: %{y:,.2f}<extra></extra>"
+            else (
+                "Date: %{x}<br>Projected EOM: %{y:,.2f}<extra></extra>"
+                if projecting_current_period
+                else "Date: %{x}<br>Forecast: %{y:,.2f}<extra></extra>"
+            )
         )
         fig.add_trace(
             go.Scatter(
                 x=[forecast_payload["last_x"], forecast_payload["next_x"]],
                 y=[forecast_payload["last_y"], forecast_payload["forecast_y"]],
                 mode="lines",
-                name=f"Forecast Next {forecast_unit} ({direction_label})",
-                line=dict(width=2, color=direction_color, dash="dash"),
+                name=(
+                    f"Projected {forecast_unit} End ({direction_label})"
+                    if projecting_current_period
+                    else f"Forecast Next {forecast_unit} ({direction_label})"
+                ),
+                line=dict(width=2, color=direction_color),
                 connectgaps=True,
                 hoverinfo="skip",
             )
@@ -1640,7 +1720,11 @@ def render_trend_chart(
         fig.add_annotation(
             x=forecast_payload["next_x"],
             y=forecast_payload["forecast_y"],
-            text=f"Forecast (Next {forecast_unit})",
+            text=(
+                f"Projected End ({forecast_unit})"
+                if projecting_current_period
+                else f"Forecast (Next {forecast_unit})"
+            ),
             showarrow=False,
             yshift=16,
             font=dict(color=direction_color, size=10),
@@ -1730,10 +1814,22 @@ def render_trend_chart(
     st.plotly_chart(fig, use_container_width=True, key=chart_key)
     if forecast_payload:
         forecast_unit = forecast_payload.get("period_unit", "Period")
-        st.caption(
-            f"Forecast note: one-step (next {forecast_unit.lower()}) projection from a "
-            "damped Holt trend model; UP/DOWN indicates expected direction versus the latest value."
-        )
+        forecast_mode = forecast_payload.get("forecast_mode", "next_period_forecast")
+        if forecast_mode == "current_period_projection":
+            progress = forecast_payload.get("period_progress")
+            progress_text = ""
+            if progress is not None:
+                progress_text = f" (month progress: {progress * 100:.0f}%)"
+            st.caption(
+                "Forecast note: solid line is actual MTD for the current month, dashed line is "
+                f"projected end-of-month from a damped Holt trend model{progress_text}. "
+                "UP/DOWN compares the projection with the previous month."
+            )
+        else:
+            st.caption(
+                f"Forecast note: one-step (next {forecast_unit.lower()}) projection from a "
+                "damped Holt trend model; UP/DOWN indicates expected direction versus the latest value."
+            )
 
     # =========== COMPACT TABLE ===========
     with st.expander("📊 View Detailed Data Table", expanded=True):

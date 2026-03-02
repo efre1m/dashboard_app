@@ -98,6 +98,10 @@ def _add_forecast_trace(
     if not forecast_payload:
         return
 
+    projecting_current_period = (
+        forecast_payload.get("forecast_mode") == "current_period_projection"
+    )
+    point_label = "Projected EOM" if projecting_current_period else "Forecast"
     delta = float(forecast_payload["forecast_y"] - forecast_payload["last_y"])
     if delta > 0:
         direction = "UP"
@@ -117,7 +121,7 @@ def _add_forecast_trace(
         y=[forecast_payload["last_y"], forecast_payload["forecast_y"]],
         mode="lines",
         name=trace_name,
-        line=dict(color=direction_color, width=2, dash="dash"),
+        line=dict(color=direction_color, width=2),
         hoverinfo="skip",
         showlegend=False,
     )
@@ -131,7 +135,7 @@ def _add_forecast_trace(
             color=direction_color,
             opacity=1.0 if show_markers else 0.0,
         ),
-        hovertemplate="<b>%{x}</b><br>Forecast: %{y:.1f}%<extra></extra>",
+        hovertemplate=f"<b>%{{x}}</b><br>{point_label}: %{{y:.1f}}%<extra></extra>",
         showlegend=False,
     )
 
@@ -993,6 +997,7 @@ def render_birth_weight_trend_chart(
         horizontal_spacing=0.08,
     )
     axis_periods = list(periods)
+    forecast_mode_seen = None
 
     for idx, (category_key, category_info) in enumerate(sorted_categories):
         rate_col = f"{category_key}_rate"
@@ -1039,6 +1044,8 @@ def render_birth_weight_trend_chart(
             next_x = forecast_payload.get("next_x")
             if next_x and next_x not in axis_periods:
                 axis_periods.append(next_x)
+            if forecast_mode_seen is None:
+                forecast_mode_seen = forecast_payload.get("forecast_mode")
 
     fig.update_layout(
         title=title,
@@ -1080,9 +1087,14 @@ def render_birth_weight_trend_chart(
     fig.update_layout(yaxis_tickformat=".1f")
 
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(
-        "Dashed orange segments represent one-step forecast for the next selected period."
-    )
+    if forecast_mode_seen == "current_period_projection":
+        st.caption(
+            "Dashed segments represent projected end-of-month values while solid lines show current month MTD actuals."
+        )
+    else:
+        st.caption(
+            "Dashed segments represent one-step forecast for the next selected period."
+        )
 
     # SINGLE COMPARISON TABLE
     st.subheader("📊 Birth Weight Rate Table (%)")
@@ -2184,17 +2196,28 @@ def render_cpap_rds_trend_chart(
 
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(
-        "Dashed orange segments represent one-step forecast for the next selected period."
-    )
+    if forecast_payload and forecast_payload.get("forecast_mode") == "current_period_projection":
+        st.caption(
+            "Dashed segment represents projected end-of-month while the solid line shows current month MTD actual."
+        )
+    else:
+        st.caption(
+            "Dashed segment represents one-step forecast for the next selected period."
+        )
     if forecast_payload:
         delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
         forecast_unit = forecast_payload.get("period_unit", "Period")
         direction = "Increase" if delta > 0 else ("Decrease" if delta < 0 else "No Change")
-        st.caption(
-            f"Forecast (next {forecast_unit.lower()}): {forecast_payload['forecast_y']:.1f}% "
-            f"({direction} vs latest value)."
-        )
+        if forecast_payload.get("forecast_mode") == "current_period_projection":
+            st.caption(
+                f"Projected end of current {forecast_unit.lower()}: {forecast_payload['forecast_y']:.1f}% "
+                f"({direction} vs previous {forecast_unit.lower()})."
+            )
+        else:
+            st.caption(
+                f"Forecast (next {forecast_unit.lower()}): {forecast_payload['forecast_y']:.1f}% "
+                f"({direction} vs latest value)."
+            )
 
     # SINGLE TABLE
     st.subheader("📊 CPAP for RDS Table")
