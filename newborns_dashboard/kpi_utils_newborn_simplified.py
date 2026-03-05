@@ -14,7 +14,6 @@ from datetime import datetime
 from utils.kpi_utils import (
     auto_text_color,
     get_attractive_hover_template,
-    _build_next_period_forecast_payload,
 )
 
 # Set up logging
@@ -61,26 +60,8 @@ def _compute_forecast_payload_for_series(
     period_col,
     value_col,
 ):
-    """Compute next-period forecast payload for a single series."""
-    if series_df is None or series_df.empty or value_col not in series_df.columns:
-        return None
-
-    work_df = series_df.copy()
-    work_df[value_col] = pd.to_numeric(work_df[value_col], errors="coerce")
-    work_df = work_df[work_df[value_col].notna()].copy()
-    if work_df.empty or len(work_df) < 2:
-        return None
-
-    if "period_sort" not in work_df.columns:
-        work_df["period_sort"] = pd.to_datetime(work_df[period_col], errors="coerce")
-
-    return _build_next_period_forecast_payload(
-        work_df,
-        period_col,
-        value_col,
-        forecast_min_points=4,
-        period_label=st.session_state.get("period_label", "Monthly"),
-    )
+    """Forecasting disabled: keep function for compatibility and always return None."""
+    return None
 
 
 def _add_forecast_trace(
@@ -1087,14 +1068,6 @@ def render_birth_weight_trend_chart(
     fig.update_layout(yaxis_tickformat=".1f")
 
     st.plotly_chart(fig, use_container_width=True)
-    if forecast_mode_seen == "current_period_projection":
-        st.caption(
-            "Dashed segments represent projected end-of-month values while solid lines show current month MTD actuals."
-        )
-    else:
-        st.caption(
-            "Dashed segments represent one-step forecast for the next selected period."
-        )
 
     # SINGLE COMPARISON TABLE
     st.subheader("📊 Birth Weight Rate Table (%)")
@@ -2196,28 +2169,6 @@ def render_cpap_rds_trend_chart(
 
     fig.update_layout(yaxis_tickformat=".1f")
     st.plotly_chart(fig, use_container_width=True)
-    if forecast_payload and forecast_payload.get("forecast_mode") == "current_period_projection":
-        st.caption(
-            "Dashed segment represents projected end-of-month while the solid line shows current month MTD actual."
-        )
-    else:
-        st.caption(
-            "Dashed segment represents one-step forecast for the next selected period."
-        )
-    if forecast_payload:
-        delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
-        forecast_unit = forecast_payload.get("period_unit", "Period")
-        direction = "Increase" if delta > 0 else ("Decrease" if delta < 0 else "No Change")
-        if forecast_payload.get("forecast_mode") == "current_period_projection":
-            st.caption(
-                f"Projected end of current {forecast_unit.lower()}: {forecast_payload['forecast_y']:.1f}% "
-                f"({direction} vs previous {forecast_unit.lower()})."
-            )
-        else:
-            st.caption(
-                f"Forecast (next {forecast_unit.lower()}): {forecast_payload['forecast_y']:.1f}% "
-                f"({direction} vs latest value)."
-            )
 
     # SINGLE TABLE
     st.subheader("📊 CPAP for RDS Table")

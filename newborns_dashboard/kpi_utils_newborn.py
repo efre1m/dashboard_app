@@ -15,7 +15,6 @@ from utils.kpi_utils import (
     get_comparison_hover_template,
     get_current_period_label,
     format_period_for_download,
-    _build_next_month_forecast_payload,
 )
 
 warnings.filterwarnings("ignore")
@@ -1461,21 +1460,7 @@ def render_admitted_newborns_trend_chart(
         except Exception as e:
             df = df.sort_values(period_col)
 
-    forecast_payload = _build_next_month_forecast_payload(
-        df,
-        x_axis_col,
-        value_col,
-        forecast_min_points=4,
-    )
-    forecast_series_label = "Forecast Next Month"
-    forecast_hover_label = "Forecast"
-    if forecast_payload:
-        forecast_payload["forecast_y"] = max(
-            0.0, float(forecast_payload.get("forecast_y", 0.0))
-        )
-        if forecast_payload.get("forecast_mode") == "current_period_projection":
-            forecast_series_label = "Projected End of Month"
-            forecast_hover_label = "Projected EOM"
+    forecast_payload = None
 
     plot_df = df[[x_axis_col, value_col]].copy()
     plot_df["Series"] = "Actual"
@@ -1492,8 +1477,8 @@ def render_admitted_newborns_trend_chart(
                         {
                             x_axis_col: next_period,
                             value_col: forecast_value,
-                            "Series": forecast_series_label,
-                            "_hover_label": forecast_hover_label,
+                            "Series": "Forecast",
+                            "_hover_label": "Forecast",
                         }
                     ]
                 ),
@@ -1511,8 +1496,7 @@ def render_admitted_newborns_trend_chart(
         color="Series",
         color_discrete_map={
             "Actual": "#1f77b4",
-            "Forecast Next Month": "#f39c12",
-            "Projected End of Month": "#f39c12",
+            "Forecast": "#f39c12",
         },
         title=title,
         height=400,
@@ -1550,6 +1534,8 @@ def render_admitted_newborns_trend_chart(
             zerolinecolor="rgba(128,128,128,0.5)",
         ),
     )
+    if "Series" in plot_df.columns and plot_df["Series"].nunique() <= 1:
+        fig.update_layout(showlegend=False)
 
     # Format y-axis as integers with commas
     fig.update_layout(yaxis_tickformat=",")

@@ -842,7 +842,7 @@ def render_newborn_trend_chart_section(
     group = pd.DataFrame(period_data)
     group = group.sort_values("period_sort")
 
-    enable_next_period_forecast = True
+    enable_next_period_forecast = False
     # Keep newborn trend lines smooth (no points) for all standard line KPIs.
     use_markers_for_trend = False
 

@@ -1517,7 +1517,7 @@ def render_trend_chart(
     denominator_name="Denominator",
     facility_uids=None,
     key_suffix="",
-    forecast_enabled=True,
+    forecast_enabled=False,
     forecast_min_points=4,
     forecast_bounds=None,
     show_markers=False,
