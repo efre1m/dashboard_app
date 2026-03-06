@@ -140,6 +140,273 @@ def _fuzzy_facility_match(raw_name: str, exact_lookup, candidates, alias_lookup)
     return None, None, "unmatched"
 
 
+def _fill_blank_values(target: pd.Series, source: pd.Series) -> pd.Series:
+    """Fill only blank/NaN cells in target with values from source."""
+    out = target.astype("object").copy()
+    src = source.astype("object")
+    missing_mask = out.isna() | out.astype(str).str.strip().isin(["", "nan", "None"])
+    out.loc[missing_mask] = src.loc[missing_mask]
+    return out
+
+
+def _build_unique_lookup(columns, key_builder):
+    """Build a unique lookup map; keys with collisions are dropped for safety."""
+    lookup = {}
+    collisions = set()
+    for col in columns:
+        key = key_builder(col)
+        if key in lookup and lookup[key] != col:
+            collisions.add(key)
+            continue
+        lookup[key] = col
+    for key in collisions:
+        lookup.pop(key, None)
+    return lookup
+
+
+def _align_to_target_columns(
+    source_df: pd.DataFrame,
+    target_columns,
+    explicit_mappings=None,
+    auto_exclude_sources=None,
+):
+    """
+    Align a source dataframe to target columns using:
+      1) explicit mappings,
+      2) exact-column carry over,
+      3) unique normalized full-name matches,
+      4) unique leaf-name matches (after last '-') for nested ODK fields.
+    """
+    explicit_mappings = explicit_mappings or {}
+    auto_exclude_sources = set(auto_exclude_sources or [])
+    aligned = source_df.reindex(columns=target_columns).copy()
+
+    mapped_sources = set(c for c in source_df.columns if c in target_columns)
+    applied_mappings = []
+
+    target_norm_lookup = _build_unique_lookup(
+        target_columns, key_builder=lambda c: _normalize_for_matching(c)
+    )
+    target_leaf_raw_lookup = _build_unique_lookup(
+        target_columns, key_builder=lambda c: c.split("-")[-1]
+    )
+    target_leaf_norm_lookup = _build_unique_lookup(
+        target_columns, key_builder=lambda c: _normalize_for_matching(c.split("-")[-1])
+    )
+
+    def _apply(source_col, target_col, method):
+        if source_col not in source_df.columns or target_col not in aligned.columns:
+            return
+        aligned[target_col] = _fill_blank_values(aligned[target_col], source_df[source_col])
+        mapped_sources.add(source_col)
+        if source_col != target_col:
+            applied_mappings.append(f"{source_col} -> {target_col} ({method})")
+
+    for source_col, target_col in explicit_mappings.items():
+        _apply(source_col, target_col, "explicit")
+
+    for source_col in source_df.columns:
+        if source_col in mapped_sources or source_col in auto_exclude_sources:
+            continue
+
+        norm_key = _normalize_for_matching(source_col)
+        target_col = target_norm_lookup.get(norm_key)
+        method = "normalized_full"
+
+        if not target_col:
+            target_col = target_leaf_raw_lookup.get(source_col)
+            method = "leaf_raw"
+        if not target_col:
+            target_col = target_leaf_norm_lookup.get(norm_key)
+            method = "leaf_normalized"
+
+        if target_col:
+            _apply(source_col, target_col, method)
+
+    return aligned, applied_mappings, mapped_sources
+
+
+def _pick_first_non_blank_column_value(df: pd.DataFrame, candidate_columns):
+    """Return first non-blank value per row from candidate columns."""
+    available = [c for c in candidate_columns if c in df.columns]
+    if not available:
+        return pd.Series([""] * len(df), index=df.index, dtype="object")
+
+    out = df[available[0]].fillna("").astype(str)
+    for col in available[1:]:
+        col_vals = df[col].fillna("").astype(str)
+        use_col_mask = out.str.strip().eq("")
+        out = out.where(~use_col_mask, col_vals)
+    return out
+
+
+def _prepare_afar_rows_for_merge(base_dir, target_columns, facility_map_df):
+    """
+    Prepare skill_assessment_afar.csv rows aligned to merged_skill schema.
+    Uses strict mapping safeguards to avoid cross-column mixing.
+    """
+    afar_file = os.path.join(base_dir, "mentorship", "skill_assessment_afar.csv")
+    if not os.path.exists(afar_file):
+        print("Afar skill file not found, skipping Afar append step.")
+        return pd.DataFrame(columns=target_columns)
+
+    afar_df = pd.read_csv(afar_file)
+    if afar_df.empty:
+        print("Afar skill file is empty, skipping Afar append step.")
+        return pd.DataFrame(columns=target_columns)
+
+    exact_lookup, candidates, code_to_name = _build_facility_lookup(facility_map_df)
+    alias_lookup = {
+        _normalize_facility_name(k): _normalize_facility_name(v)
+        for k, v in MANUAL_FACILITY_ALIASES.items()
+    }
+
+    # Prefer explicit text facility fields before coded selectors.
+    preferred_facility_columns = [
+        "facilityoza",
+        "facilityozaf",
+        "facilityoz",
+        "facilityozo",
+        "facilityozt",
+        "facilityozsd",
+        "facilityo",
+        "facilitya",
+        "facilityt",
+        "facilitysd",
+        "facilityaf",
+    ]
+    facility_source_values = _pick_first_non_blank_column_value(
+        afar_df, preferred_facility_columns
+    )
+
+    mapped_codes = []
+    matched_count = 0
+    unmatched_count = 0
+    exact_count = 0
+    fuzzy_count = 0
+    manual_count = 0
+    direct_code_count = 0
+    unmatched_names = []
+
+    for raw_name in facility_source_values.fillna(""):
+        raw_text = str(raw_name).strip()
+        code = None
+        method = "none"
+
+        if raw_text and raw_text.isdigit() and raw_text in code_to_name:
+            code = raw_text
+            method = "direct_code"
+        elif raw_text:
+            code, _, method = _fuzzy_facility_match(
+                raw_text, exact_lookup, candidates, alias_lookup
+            )
+
+        if code:
+            matched_count += 1
+            if method == "exact":
+                exact_count += 1
+            elif method == "manual_alias":
+                manual_count += 1
+            elif method == "direct_code":
+                direct_code_count += 1
+            else:
+                fuzzy_count += 1
+            mapped_codes.append(str(code))
+        else:
+            unmatched_count += 1
+            mapped_codes.append("")
+            if raw_text:
+                unmatched_names.append(raw_text)
+
+    reg_hospital_series = pd.Series(mapped_codes, index=afar_df.index, dtype="object")
+    if "reg-hospital" in afar_df.columns:
+        afar_df["reg-hospital"] = _fill_blank_values(
+            afar_df["reg-hospital"], reg_hospital_series
+        )
+    else:
+        insert_after = "facilityoz" if "facilityoz" in afar_df.columns else afar_df.columns[0]
+        insert_idx = afar_df.columns.get_loc(insert_after) + 1
+        afar_df.insert(insert_idx, "reg-hospital", reg_hospital_series)
+
+    explicit_mappings = {
+        "region": "reg-region",
+        "other_reg": "reg-other_reg",
+        "period": "reg-round",
+        "facilityaf": "reg-facilityozaf",
+        "facilityozaf": "reg-facilityozaf",
+        "mentor": "mentee_mentor-mentor",
+        "mentee_name": "mentee_mentor-mentee_name",
+        "mentee_code": "mentee_mentor-mentee_code",
+        "id": "mentee_mentor-id",
+        "id_note": "mentee_mentor-id_note",
+        "_submission_time": "SubmissionDate",
+        "end": "SubmissionDate",
+        "today": "start",
+    }
+    auto_exclude_sources = {
+        # Keep facility/region mapping explicit to avoid region-column mixing.
+        "facilityo",
+        "facilitya",
+        "facilityt",
+        "facilitysd",
+        "facilityaf",
+        "facilityoz",
+        "facilityozo",
+        "facilityoza",
+        "facilityozt",
+        "facilityozsd",
+        "facilityozaf",
+        "region",
+        "other_reg",
+        "period",
+    }
+
+    afar_aligned, afar_mappings, mapped_sources = _align_to_target_columns(
+        afar_df,
+        target_columns,
+        explicit_mappings=explicit_mappings,
+        auto_exclude_sources=auto_exclude_sources,
+    )
+
+    # Backfill SubmissionDate in priority order.
+    if "SubmissionDate" in afar_aligned.columns:
+        for candidate in ("SubmissionDate", "_submission_time", "end", "today"):
+            if candidate in afar_df.columns:
+                afar_aligned["SubmissionDate"] = _fill_blank_values(
+                    afar_aligned["SubmissionDate"], afar_df[candidate]
+                )
+
+    # Backfill start date from today when missing.
+    if "start" in afar_aligned.columns and "today" in afar_df.columns:
+        afar_aligned["start"] = _fill_blank_values(afar_aligned["start"], afar_df["today"])
+
+    unmapped_source_cols = sorted(
+        c
+        for c in afar_df.columns
+        if c not in mapped_sources and c not in explicit_mappings
+    )
+
+    print(
+        "Afar facility mapping to reg-hospital: "
+        f"matched={matched_count}, unmatched={unmatched_count}, "
+        f"exact={exact_count}, manual={manual_count}, "
+        f"fuzzy={fuzzy_count}, direct_code={direct_code_count}"
+    )
+    if unmatched_names:
+        sample_unmatched = sorted(set(unmatched_names))[:25]
+        print(
+            "Afar unmatched facility samples "
+            f"({len(sample_unmatched)} shown): {sample_unmatched}"
+        )
+    print(f"Afar applied mappings ({len(afar_mappings)}): {afar_mappings}")
+    print(
+        "Afar unmapped source columns after alignment "
+        f"({len(unmapped_source_cols)}): {unmapped_source_cols}"
+    )
+
+    return afar_aligned
+
+
 def merge_skill_forms():
     """Append skill assessment rows to final skill file using column-name alignment."""
     base_dir = os.path.dirname(__file__)
@@ -252,8 +519,6 @@ def merge_skill_forms():
     ]
     only_in_skill = [col for col in skill_df.columns if col not in final_skill_df.columns]
 
-    skill_aligned = skill_df.reindex(columns=final_skill_df.columns)
-
     # Manual semantic mappings between source and final naming conventions
     explicit_mappings = {
         "region": "reg-region",
@@ -271,38 +536,27 @@ def merge_skill_forms():
         "facilityaf": "reg-facilityozaf",
         "facilityozaf": "reg-facilityozaf",
     }
-    applied_mappings = []
-    for source_col, target_col in explicit_mappings.items():
-        if source_col in skill_df.columns and target_col in skill_aligned.columns:
-            skill_aligned[target_col] = skill_df[source_col]
-            applied_mappings.append(f"{source_col} -> {target_col}")
-
-    # Heuristic mappings for "almost same" ODK-generated names
-    unmatched_source = [
-        c
-        for c in only_in_skill
-        if c in skill_df.columns and c not in explicit_mappings
-    ]
-    unmatched_target = [
-        c
-        for c in only_in_final_skill
-        if c in skill_aligned.columns and c not in explicit_mappings.values()
-    ]
-    target_by_norm = {_normalize_for_matching(c): c for c in unmatched_target}
-
-    for source_col in unmatched_source:
-        normalized = _normalize_for_matching(source_col)
-        target_col = target_by_norm.get(normalized)
-        if target_col:
-            skill_aligned[target_col] = skill_df[source_col]
-            applied_mappings.append(f"{source_col} -> {target_col}")
+    skill_aligned, applied_mappings, skill_mapped_sources = _align_to_target_columns(
+        skill_df,
+        final_skill_df.columns.tolist(),
+        explicit_mappings=explicit_mappings,
+    )
 
     merged_df = pd.concat([final_skill_df, skill_aligned], ignore_index=True)
 
-    mapped_sources = {m.split(" -> ")[0] for m in applied_mappings}
-    mapped_targets = {m.split(" -> ")[1] for m in applied_mappings}
+    mapped_targets = {m.split(" -> ")[1].split(" (")[0] for m in applied_mappings}
     remaining_only_in_final = [c for c in only_in_final_skill if c not in mapped_targets]
-    remaining_only_in_skill = [c for c in only_in_skill if c not in mapped_sources]
+    remaining_only_in_skill = [c for c in only_in_skill if c not in skill_mapped_sources]
+
+    # Append Afar skill assessment rows to merged output with strict alignment.
+    afar_aligned = _prepare_afar_rows_for_merge(
+        base_dir,
+        final_skill_df.columns.tolist(),
+        facility_map_df,
+    )
+    afar_rows_added = len(afar_aligned)
+    if afar_rows_added:
+        merged_df = pd.concat([merged_df, afar_aligned], ignore_index=True)
 
     print(f"Merged columns ({len(common_cols)}): {common_cols}")
     print(
@@ -319,6 +573,7 @@ def merge_skill_forms():
         sample_unmatched = sorted(set(unmatched_names))[:25]
         print(f"Unmatched facilityoza samples ({len(sample_unmatched)} shown): {sample_unmatched}")
     print(f"Applied explicit/heuristic mappings ({len(applied_mappings)}): {applied_mappings}")
+    print(f"Afar rows appended to merged_skill.csv: {afar_rows_added}")
     print(
         "Columns only in Final_Skill assessment_EPS_revised2.csv "
         f"before mapping ({len(only_in_final_skill)}): {only_in_final_skill}"
@@ -338,6 +593,7 @@ def merge_skill_forms():
     try:
         merged_df.to_csv(merged_file, index=False)
         print(f"Output path: {merged_file}")
+        print(f"Final merged row count: {len(merged_df)}")
     except PermissionError:
         print(f"Could not write output file (permission denied): {merged_file}")
         print("Close the file if it is open, then run again.")
