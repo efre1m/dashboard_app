@@ -80,12 +80,13 @@ def load_merged_qoc_data() -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_data_mentorship_form_data() -> pd.DataFrame:
-    """Load Data Mentorship form dataset from local mentorship folder."""
-    data_path = os.path.join(
-        os.path.dirname(__file__), "mentorship", "Data_Mentorship_form.csv"
-    )
+    """Load merged Data Mentorship dataset from local mentorship folder."""
+    data_path = os.path.join(os.path.dirname(__file__), "mentorship", "merged_data.csv")
     if not os.path.exists(data_path):
-        raise FileNotFoundError(f"Mentorship file not found: {data_path}")
+        raise FileNotFoundError(
+            f"Merged mentorship file not found: {data_path}. "
+            "Run utils/data_mentorship_merge.py to generate it."
+        )
     return pd.read_csv(data_path)
 
 
@@ -329,7 +330,7 @@ def render_mentorship_analysis_dashboard():
                     st.error(str(exc))
                     return
                 except Exception as exc:
-                    st.error(f"Unable to load Data Mentorship form data: {exc}")
+                    st.error(f"Unable to load merged Data Mentorship form data: {exc}")
                     return
 
                 system_access_cols = ["q21", "q22", "q23", "q24"]
@@ -364,7 +365,7 @@ def render_mentorship_analysis_dashboard():
                 missing_cols = [c for c in required_columns if c not in df.columns]
                 if missing_cols:
                     st.error(
-                        "Missing required columns in Data_Mentorship_form.csv: "
+                        "Missing required columns in merged_data.csv: "
                         f"{missing_cols}"
                     )
                     return
@@ -467,7 +468,7 @@ def render_mentorship_analysis_dashboard():
                 elif is_qoc_analysis:
                     data_file = "merged_qoc.csv"
                 elif is_data_mentorship_analysis:
-                    data_file = "Data_Mentorship_form.csv"
+                    data_file = "merged_data.csv"
                 else:
                     data_file = "merged_bmet.csv"
                 st.warning(f"No round values found in {data_file}.")

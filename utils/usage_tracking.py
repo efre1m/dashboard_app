@@ -2,27 +2,14 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from utils.db import get_db_connection
-from utils.facility_codes import apply_facility_codes_to_dataframe, get_region_code
 
 
 def enrich_logs_with_facility_codes(logs_df):
-    """Replace facility labels with facility code and region labels with region code."""
+    """Preserve facility and region names exactly as returned from the database."""
     if logs_df is None or logs_df.empty:
         return logs_df
 
-    df = apply_facility_codes_to_dataframe(logs_df)
-    if df is None or df.empty:
-        return logs_df
-
-    # For facility users, force region label to mapped region_code.
-    is_facility_user = df["role"].astype(str).str.lower() == "facility"
-    if "facility_name" in df.columns and "region_name" in df.columns:
-        df.loc[is_facility_user, "region_name"] = [
-            get_region_code(facility_name=f, region_name=r, facility_code=f, fallback=r)
-            for f, r in zip(df.loc[is_facility_user, "facility_name"], df.loc[is_facility_user, "region_name"])
-        ]
-
-    return df
+    return logs_df.copy()
 
 
 @st.cache_data(ttl=60)
