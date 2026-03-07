@@ -237,6 +237,7 @@ def render_mentorship_analysis_dashboard():
             is_skill_analysis = data_choice == "Skill Assessment Data"
             is_qoc_analysis = data_choice == "Quality of Care Data"
             is_data_mentorship_analysis = data_choice == "Data Mentorship Data"
+            is_bmet_analysis = data_choice == "BMET Data"
 
             if is_skill_analysis:
                 try:
@@ -432,9 +433,9 @@ def render_mentorship_analysis_dashboard():
                 work_df["hospital"] = work_df["hospital"].apply(_normalize_entity_text)
                 work_df["round"] = work_df["round"].astype(str).str.strip()
                 for score_col in score_cols:
-                    work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce").fillna(0)
-                value_label = "Score"
-                value_title = "Score"
+                    work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce")
+                value_label = "Average Score"
+                value_title = "Average Score"
 
             if is_skill_analysis:
                 for score_col in score_cols:
@@ -657,6 +658,24 @@ def render_mentorship_analysis_dashboard():
                     )
                 ).fillna(0)
             agg_df = agg_df.sort_values(entity_col)
+        elif is_bmet_analysis:
+            grouped = filtered_df.groupby(entity_col, as_index=False)
+            sums_df = grouped[score_cols].sum(numeric_only=True).fillna(0)
+            non_null_counts_df = (
+                grouped[score_cols]
+                .count()
+                .rename(columns={col: f"{col}__non_null_count" for col in score_cols})
+            )
+            agg_df = sums_df.merge(non_null_counts_df, on=entity_col, how="left")
+            for col in score_cols:
+                denom_col = f"{col}__non_null_count"
+                agg_df[col] = (
+                    pd.to_numeric(agg_df[col], errors="coerce").fillna(0)
+                    / pd.to_numeric(agg_df[denom_col], errors="coerce").replace(0, pd.NA)
+                ).fillna(0)
+            agg_df = agg_df.drop(
+                columns=[f"{col}__non_null_count" for col in score_cols]
+            ).sort_values(entity_col)
         else:
             agg_df = (
                 filtered_df.groupby(entity_col, as_index=False)[score_cols]
@@ -984,7 +1003,7 @@ def render_mentorship_analysis_dashboard():
                 marker_color=MENTORSHIP_METRIC_COLORS[0],
                 orientation="h",
                 customdata=agg_df[[entity_col]].values,
-                hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Competency Score: %{{x}}<extra></extra>",
+                hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Competency Score: %{{x:.2f}}<extra></extra>",
             )
             fig.add_bar(
                 y=agg_df[entity_col],
@@ -993,7 +1012,7 @@ def render_mentorship_analysis_dashboard():
                 marker_color=MENTORSHIP_METRIC_COLORS[1],
                 orientation="h",
                 customdata=agg_df[[entity_col]].values,
-                hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Facility Score: %{{x}}<extra></extra>",
+                hovertemplate=f"{hover_entity_label}: %{{customdata[0]}}<br>Facility Score: %{{x:.2f}}<extra></extra>",
             )
             is_regional_mode = group_mode == "Regional"
             chart_height = (
@@ -1024,7 +1043,12 @@ def render_mentorship_analysis_dashboard():
                     font=dict(size=9),
                 ),
             )
-            fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
+            fig.update_xaxes(
+                tickfont=dict(size=9),
+                title_font=dict(size=10),
+                automargin=True,
+                tickformat=".2f",
+            )
             fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
             st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bar_{group_mode}")
 
@@ -1034,21 +1058,26 @@ def render_mentorship_analysis_dashboard():
                     "competency_assessment-Score": "Competency Score",
                     "facility_assessment-score_fac": "Facility Score",
                 }
-            )
+            ).round(2)
             st.dataframe(table_df, use_container_width=True, hide_index=True)
 
-            competency_total = float(filtered_df["competency_assessment-Score"].sum())
-            facility_total = float(filtered_df["facility_assessment-score_fac"].sum())
-            overall_score = competency_total + facility_total
+            competency_series = pd.to_numeric(
+                filtered_df["competency_assessment-Score"], errors="coerce"
+            )
+            facility_series = pd.to_numeric(
+                filtered_df["facility_assessment-score_fac"], errors="coerce"
+            )
+            competency_avg = float(competency_series.mean()) if competency_series.notna().any() else 0.0
+            facility_avg = float(facility_series.mean()) if facility_series.notna().any() else 0.0
             st.caption(
                 f"Round {selected_round} summary: "
-                f"Competency Score = {competency_total:.0f}, "
-                f"Facility Score = {facility_total:.0f}, "
-                f"Overall Score = {overall_score:.0f}."
+                f"Competency Average = {competency_avg:.2f}, "
+                f"Facility Average = {facility_avg:.2f}."
             )
             st.caption(
                 "Variables: `competency_assessment-Score` and "
-                "`facility_assessment-score_fac` are aggregated totals for the selected filter."
+                "`facility_assessment-score_fac` are averaged as "
+                "`sum(values) / count(non-null submissions)` for each selected filter."
             )
 
 
