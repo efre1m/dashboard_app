@@ -78,6 +78,36 @@ def load_merged_qoc_data() -> pd.DataFrame:
     return pd.read_csv(merged_path)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_data_mentorship_form_data() -> pd.DataFrame:
+    """Load Data Mentorship form dataset from local mentorship folder."""
+    data_path = os.path.join(
+        os.path.dirname(__file__), "mentorship", "Data_Mentorship_form.csv"
+    )
+    if not os.path.exists(data_path):
+        raise FileNotFoundError(f"Mentorship file not found: {data_path}")
+    return pd.read_csv(data_path)
+
+
+def _yes_no_to_binary(series: pd.Series) -> pd.Series:
+    """
+    Convert common yes/no and boolean-like values to 1/0.
+    Missing/unrecognized values are treated as 0.
+    """
+    cleaned = series.astype(str).str.strip().str.lower()
+    mapped = cleaned.map(
+        {
+            "yes": 1,
+            "no": 0,
+            "true": 1,
+            "false": 0,
+            "1": 1,
+            "0": 0,
+        }
+    )
+    return mapped.fillna(0).astype(float)
+
+
 def _normalize_region_code(value) -> str:
     """Normalize region code values to canonical string form like '1'..'6'."""
     if pd.isna(value):
@@ -196,11 +226,17 @@ def render_mentorship_analysis_dashboard():
 
             data_choice = st.selectbox(
                 "Data to Analyze",
-                options=["BMET Data", "Skill Assessment Data", "Quality of Care Data"],
+                options=[
+                    "BMET Data",
+                    "Skill Assessment Data",
+                    "Quality of Care Data",
+                    "Data Mentorship Data",
+                ],
                 key="mentorship_analysis_data_choice",
             )
             is_skill_analysis = data_choice == "Skill Assessment Data"
             is_qoc_analysis = data_choice == "Quality of Care Data"
+            is_data_mentorship_analysis = data_choice == "Data Mentorship Data"
 
             if is_skill_analysis:
                 try:
@@ -285,6 +321,95 @@ def render_mentorship_analysis_dashboard():
                     work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce")
                 value_label = "Average %"
                 value_title = "Average Score (%)"
+            elif is_data_mentorship_analysis:
+                try:
+                    df = load_data_mentorship_form_data()
+                except FileNotFoundError as exc:
+                    st.error(str(exc))
+                    return
+                except Exception as exc:
+                    st.error(f"Unable to load Data Mentorship form data: {exc}")
+                    return
+
+                system_access_cols = ["q21", "q22", "q23", "q24"]
+                tracker_data_cols = [
+                    "q31",
+                    "q32",
+                    "q33",
+                    "q34",
+                    "q35",
+                    "q36",
+                    "q37",
+                    "q38",
+                    "q39",
+                    "q391",
+                ]
+                tracker_feature_cols = ["q41", "q42", "q43", "q44"]
+                analysis_cols = ["q51", "q52", "q53", "q54", "q55", "q56", "q57"]
+                all_indicator_cols = (
+                    system_access_cols
+                    + tracker_data_cols
+                    + tracker_feature_cols
+                    + analysis_cols
+                )
+
+                required_columns = (
+                    ["region", "hospital", "round"]
+                    + system_access_cols
+                    + tracker_data_cols
+                    + tracker_feature_cols
+                    + analysis_cols
+                )
+                missing_cols = [c for c in required_columns if c not in df.columns]
+                if missing_cols:
+                    st.error(
+                        "Missing required columns in Data_Mentorship_form.csv: "
+                        f"{missing_cols}"
+                    )
+                    return
+
+                work_df = df.copy()
+                work_df["region_code"] = work_df["region"].apply(_normalize_region_code)
+                work_df["hospital"] = work_df["hospital"].apply(_normalize_entity_text)
+                work_df["round"] = work_df["round"].astype(str).str.strip()
+
+                # Exclude submissions where all mentorship indicator questions are empty.
+                cleaned_answers = work_df[all_indicator_cols].apply(
+                    lambda col: col.astype(str).str.strip().str.lower()
+                )
+                has_any_indicator_answer = ~cleaned_answers.isin(
+                    {"", "nan", "none", "null", "na", "n/a"}
+                )
+                work_df = work_df[has_any_indicator_answer.any(axis=1)].copy()
+
+                if work_df.empty:
+                    st.warning(
+                        "No Data Mentorship submissions contain answered indicator questions."
+                    )
+                    return
+
+                for col in all_indicator_cols:
+                    work_df[col] = _yes_no_to_binary(work_df[col])
+
+                work_df["system_access_avg_score"] = work_df[system_access_cols].sum(axis=1)
+                work_df["tracker_data_entry_avg_score"] = work_df[tracker_data_cols].sum(
+                    axis=1
+                )
+                work_df["tracker_features_avg_score"] = work_df[
+                    tracker_feature_cols
+                ].sum(axis=1)
+                work_df["analysis_visualization_avg_score"] = work_df[
+                    analysis_cols
+                ].sum(axis=1)
+
+                score_cols = [
+                    "system_access_avg_score",
+                    "tracker_data_entry_avg_score",
+                    "tracker_features_avg_score",
+                    "analysis_visualization_avg_score",
+                ]
+                value_label = "Average Score"
+                value_title = "Average Score per Submission"
             else:
                 try:
                     df = load_merged_bmet_data()
@@ -336,7 +461,14 @@ def render_mentorship_analysis_dashboard():
 
             round_options = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
             if not round_options:
-                data_file = "merged_skill.csv" if is_skill_analysis else "merged_bmet.csv"
+                if is_skill_analysis:
+                    data_file = "merged_skill.csv"
+                elif is_qoc_analysis:
+                    data_file = "merged_qoc.csv"
+                elif is_data_mentorship_analysis:
+                    data_file = "Data_Mentorship_form.csv"
+                else:
+                    data_file = "merged_bmet.csv"
                 st.warning(f"No round values found in {data_file}.")
                 return
 
@@ -512,6 +644,19 @@ def render_mentorship_analysis_dashboard():
                 columns=["_record_count"]
                 + [f"{col}__non_null_count" for col in score_cols]
             ).sort_values(entity_col)
+        elif is_data_mentorship_analysis:
+            grouped = filtered_df.groupby(entity_col, as_index=False)
+            counts_df = grouped.size().rename(columns={"size": "_record_count"})
+            sums_df = grouped[score_cols].sum(numeric_only=True).fillna(0)
+            agg_df = counts_df.merge(sums_df, on=entity_col, how="left")
+            for col in score_cols:
+                agg_df[col] = (
+                    pd.to_numeric(agg_df[col], errors="coerce").fillna(0)
+                    / pd.to_numeric(agg_df["_record_count"], errors="coerce").replace(
+                        0, pd.NA
+                    )
+                ).fillna(0)
+            agg_df = agg_df.sort_values(entity_col)
         else:
             agg_df = (
                 filtered_df.groupby(entity_col, as_index=False)[score_cols]
@@ -736,6 +881,100 @@ def render_mentorship_analysis_dashboard():
                         }
                     )
                     st.dataframe(audit_df.round(2), use_container_width=True, hide_index=True)
+        elif is_data_mentorship_analysis:
+            metric_colors = MENTORSHIP_METRIC_COLORS
+            subplot_titles = [
+                "System Access & User Management",
+                "Tracker Data Entry (IMNID Program)",
+                "Tracker Features & Program Functionality",
+                "Analysis & Visualization (Dashboard Use)",
+            ]
+            fig = make_subplots(
+                rows=2,
+                cols=2,
+                subplot_titles=subplot_titles,
+                vertical_spacing=0.11,
+                horizontal_spacing=0.08,
+            )
+            for idx, metric in enumerate(score_cols):
+                row = idx // 2 + 1
+                col = idx % 2 + 1
+                fig.add_bar(
+                    y=agg_df[entity_col],
+                    x=agg_df[metric].fillna(0),
+                    orientation="h",
+                    marker_color=metric_colors[idx % len(metric_colors)],
+                    showlegend=False,
+                    customdata=agg_df[[entity_col]].values,
+                    hovertemplate=(
+                        f"{hover_entity_label}: %{{customdata[0]}}"
+                        f"<br>{subplot_titles[idx]}: %{{x:.2f}}"
+                        "<extra></extra>"
+                    ),
+                    row=row,
+                    col=col,
+                )
+                fig.update_xaxes(
+                    title_text=value_title,
+                    tickfont=dict(size=8),
+                    title_font=dict(size=9),
+                    automargin=True,
+                    row=row,
+                    col=col,
+                )
+                fig.update_yaxes(
+                    tickfont=dict(size=8),
+                    title_font=dict(size=9),
+                    automargin=True,
+                    row=row,
+                    col=col,
+                )
+
+            mentorship_chart_height = max(620, min(1200, 520 + len(agg_df) * 14))
+            fig.update_layout(
+                template="plotly_white",
+                height=mentorship_chart_height,
+                margin=dict(l=8, r=8, t=36, b=8),
+                font=dict(size=9),
+                hoverlabel=dict(font_size=10),
+                bargap=0.24,
+                bargroupgap=0.08,
+            )
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"mentorship_data_form_bars_{group_mode}_{selected_round}",
+            )
+
+            mentorship_table_labels = {
+                score_cols[0]: "System Access & User Management (Avg)",
+                score_cols[1]: "Tracker Data Entry (Avg)",
+                score_cols[2]: "Tracker Features & Program Functionality (Avg)",
+                score_cols[3]: "Analysis & Visualization (Avg)",
+            }
+            table_df = agg_df.rename(
+                columns={
+                    entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
+                    **mentorship_table_labels,
+                }
+            ).round(2)
+            table_columns = [
+                "Region" if group_mode == "Multi Regional" else "Facility",
+                "System Access & User Management (Avg)",
+                "Tracker Data Entry (Avg)",
+                "Tracker Features & Program Functionality (Avg)",
+                "Analysis & Visualization (Avg)",
+            ]
+            table_df = table_df[[c for c in table_columns if c in table_df.columns]]
+            st.dataframe(table_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "For each indicator, yes=1 and no=0 for the specified question set. "
+                "Average score is computed as `sum(binary values across filtered non-empty submissions) / total non-empty submissions`."
+            )
+            st.caption(
+                "Indicator groups: "
+                "`q21-q24`, `q31-q39 + q391`, `q41-q44`, `q51-q57`."
+            )
         else:
             fig = go.Figure()
             fig.add_bar(
