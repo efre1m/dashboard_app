@@ -35,6 +35,21 @@ MENTORSHIP_METRIC_COLORS = [
     "#334155",
 ]
 
+QI_COACHING_INDICATORS = [
+    ("part8_project-q801", "qi_wit_functional_pct", "QI Team/WIT Conduct Clinical Audit Regularly"),
+    ("part2_qi_structure-q203", "qi_meeting_pct", "QI Team/WIT Conduct Regular Meetings"),
+    ("part5_project-q502", "qi_trained_coach_pct", "QIT Members Trained on QI Methods"),
+    ("part6_project-q604", "qi_received_coaching_pct", "QIT Receives Regular QI Coaching"),
+    ("part3_project-q301", "qi_active_project_pct", "Active QI Projects Available in Unit"),
+    ("part3_project-q309", "qi_improvement_signal_pct", "Evidence of Improvement from Tested Change Ideas"),
+    ("part4_project-q408", "qi_storyboard_posted_pct", "QI Storyboard Posted on Ward Wall"),
+    (
+        "part5_project-q504",
+        "qi_cop_session_pct",
+        "QI Team Participates in Learning Session (Local Govt / SLL Supported)",
+    ),
+]
+
 
 # 🔥 OPTIMIZATION: Cache forms listing for 1 hour
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -79,6 +94,20 @@ def load_merged_qoc_data() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def load_merged_qi_coaching_data() -> pd.DataFrame:
+    """Load merged QI coaching dataset from local mentorship folder."""
+    merged_path = os.path.join(
+        os.path.dirname(__file__), "mentorship", "merged_qi_coaching.csv"
+    )
+    if not os.path.exists(merged_path):
+        raise FileNotFoundError(
+            f"Merged file not found: {merged_path}. "
+            "Run utils/qi_coaching_merge.py to generate it."
+        )
+    return pd.read_csv(merged_path)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_data_mentorship_form_data() -> pd.DataFrame:
     """Load merged Data Mentorship dataset from local mentorship folder."""
     data_path = os.path.join(os.path.dirname(__file__), "mentorship", "merged_data.csv")
@@ -107,6 +136,32 @@ def _yes_no_to_binary(series: pd.Series) -> pd.Series:
         }
     )
     return mapped.fillna(0).astype(float)
+
+
+def _blank_like_mask(series: pd.Series) -> pd.Series:
+    """Identify blank-like values that should be treated as missing."""
+    cleaned = series.astype(str).str.strip().str.lower()
+    return cleaned.isin({"", "nan", "none", "null", "na", "n/a"})
+
+
+def _to_numeric_indicator_value(series: pd.Series) -> pd.Series:
+    """
+    Convert responses to numeric values for indicator averaging.
+    Yes/no values become 1/0, while numeric responses keep their original value.
+    """
+    cleaned = series.astype(str).str.strip()
+    lowered = cleaned.str.lower()
+    result = pd.Series(index=series.index, dtype="float64")
+
+    blank_mask = _blank_like_mask(series)
+    result.loc[lowered.isin({"yes", "true", "y"})] = 1.0
+    result.loc[lowered.isin({"no", "false", "n"})] = 0.0
+
+    numeric = pd.to_numeric(cleaned, errors="coerce")
+    numeric_mask = numeric.notna() & ~blank_mask
+    result.loc[numeric_mask] = numeric.loc[numeric_mask].astype(float)
+
+    return result
 
 
 def _normalize_region_code(value) -> str:
@@ -153,7 +208,7 @@ def _get_region_code_to_name_mapping() -> dict[str, str]:
 
 
 def render_mentorship_analysis_dashboard():
-    """Render mentorship analysis for BMET and Skill datasets."""
+    """Render mentorship analysis for mentorship datasets."""
     st.markdown(
         """
     <style>
@@ -231,12 +286,14 @@ def render_mentorship_analysis_dashboard():
                     "BMET Data",
                     "Skill Assessment Data",
                     "Quality of Care Data",
+                    "QI Coaching Data",
                     "Data Mentorship Data",
                 ],
                 key="mentorship_analysis_data_choice",
             )
             is_skill_analysis = data_choice == "Skill Assessment Data"
             is_qoc_analysis = data_choice == "Quality of Care Data"
+            is_qi_coaching_analysis = data_choice == "QI Coaching Data"
             is_data_mentorship_analysis = data_choice == "Data Mentorship Data"
             is_bmet_analysis = data_choice == "BMET Data"
 
@@ -323,6 +380,46 @@ def render_mentorship_analysis_dashboard():
                     work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce")
                 value_label = "Average %"
                 value_title = "Average Score (%)"
+            elif is_qi_coaching_analysis:
+                try:
+                    df = load_merged_qi_coaching_data()
+                except FileNotFoundError as exc:
+                    st.error(str(exc))
+                    return
+                except Exception as exc:
+                    st.error(f"Unable to load merged QI coaching data: {exc}")
+                    return
+
+                indicator_source_cols = [spec[0] for spec in QI_COACHING_INDICATORS]
+                score_cols = [spec[1] for spec in QI_COACHING_INDICATORS]
+                required_columns = ["reg-region", "reg-hospital", "reg-round"] + indicator_source_cols
+                missing_cols = [c for c in required_columns if c not in df.columns]
+                if missing_cols:
+                    st.error(
+                        "Missing required columns in merged_qi_coaching.csv: "
+                        f"{missing_cols}"
+                    )
+                    return
+
+                work_df = df.copy()
+                work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
+                work_df["hospital"] = work_df["reg-hospital"].apply(_normalize_entity_text)
+                work_df["round"] = work_df["reg-round"].astype(str).str.strip()
+
+                has_any_indicator_answer = ~work_df[indicator_source_cols].apply(_blank_like_mask)
+                work_df = work_df[has_any_indicator_answer.any(axis=1)].copy()
+
+                if work_df.empty:
+                    st.warning(
+                        "No QI Coaching submissions contain answered indicator questions."
+                    )
+                    return
+
+                for source_col, metric_col, _ in QI_COACHING_INDICATORS:
+                    work_df[metric_col] = _to_numeric_indicator_value(work_df[source_col])
+
+                value_label = "Average x 100"
+                value_title = "Average Value x 100"
             elif is_data_mentorship_analysis:
                 try:
                     df = load_data_mentorship_form_data()
@@ -467,6 +564,8 @@ def render_mentorship_analysis_dashboard():
                     data_file = "merged_skill.csv"
                 elif is_qoc_analysis:
                     data_file = "merged_qoc.csv"
+                elif is_qi_coaching_analysis:
+                    data_file = "merged_qi_coaching.csv"
                 elif is_data_mentorship_analysis:
                     data_file = "merged_data.csv"
                 else:
@@ -645,6 +744,29 @@ def render_mentorship_analysis_dashboard():
             agg_df = agg_df.drop(
                 columns=["_record_count"]
                 + [f"{col}__non_null_count" for col in score_cols]
+            ).sort_values(entity_col)
+        elif is_qi_coaching_analysis:
+            grouped = filtered_df.groupby(entity_col, as_index=False)
+            sums_df = grouped[score_cols].sum(numeric_only=True).fillna(0)
+            non_null_counts_df = (
+                grouped[score_cols]
+                .count()
+                .rename(columns={col: f"{col}__non_null_count" for col in score_cols})
+            )
+            agg_df = sums_df.merge(non_null_counts_df, on=entity_col, how="left")
+            for col in score_cols:
+                denom_col = f"{col}__non_null_count"
+                agg_df[col] = (
+                    (
+                        pd.to_numeric(agg_df[col], errors="coerce").fillna(0)
+                        / pd.to_numeric(agg_df[denom_col], errors="coerce").replace(
+                            0, pd.NA
+                        )
+                    )
+                    * 100
+                ).fillna(0)
+            agg_df = agg_df.drop(
+                columns=[f"{col}__non_null_count" for col in score_cols]
             ).sort_values(entity_col)
         elif is_data_mentorship_analysis:
             grouped = filtered_df.groupby(entity_col, as_index=False)
@@ -901,6 +1023,97 @@ def render_mentorship_analysis_dashboard():
                         }
                     )
                     st.dataframe(audit_df.round(2), use_container_width=True, hide_index=True)
+        elif is_qi_coaching_analysis:
+            metric_colors = MENTORSHIP_METRIC_COLORS
+            subplot_titles = [spec[2] for spec in QI_COACHING_INDICATORS]
+            fig = make_subplots(
+                rows=4,
+                cols=2,
+                subplot_titles=subplot_titles,
+                vertical_spacing=0.08,
+                horizontal_spacing=0.08,
+            )
+            for idx, metric in enumerate(score_cols):
+                row = idx // 2 + 1
+                col = idx % 2 + 1
+                fig.add_bar(
+                    y=agg_df[entity_col],
+                    x=agg_df[metric].fillna(0),
+                    orientation="h",
+                    marker_color=metric_colors[idx % len(metric_colors)],
+                    showlegend=False,
+                    customdata=agg_df[[entity_col]].values,
+                    hovertemplate=(
+                        f"{hover_entity_label}: %{{customdata[0]}}"
+                        f"<br>{subplot_titles[idx]}: %{{x:.2f}}"
+                        "<extra></extra>"
+                    ),
+                    row=row,
+                    col=col,
+                )
+                fig.update_xaxes(
+                    title_text=value_title,
+                    tickfont=dict(size=8),
+                    title_font=dict(size=9),
+                    automargin=True,
+                    row=row,
+                    col=col,
+                )
+                fig.update_yaxes(
+                    tickfont=dict(size=8),
+                    title_font=dict(size=9),
+                    automargin=True,
+                    row=row,
+                    col=col,
+                )
+
+            qi_chart_height = max(860, min(1500, 720 + len(agg_df) * 16))
+            fig.update_layout(
+                template="plotly_white",
+                height=qi_chart_height,
+                margin=dict(l=8, r=8, t=36, b=8),
+                font=dict(size=9),
+                hoverlabel=dict(font_size=10),
+                bargap=0.24,
+                bargroupgap=0.08,
+            )
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"mentorship_qi_coaching_bars_{group_mode}_{selected_round}",
+            )
+
+            qi_table_labels = {
+                "qi_wit_functional_pct": "QI Team/WIT Conduct Clinical Audit Regularly (%)",
+                "qi_meeting_pct": "QI Team/WIT Conduct Regular Meetings (%)",
+                "qi_trained_coach_pct": "QIT Members Trained on QI Methods (Avg x100)",
+                "qi_received_coaching_pct": "QIT Receives Regular QI Coaching (%)",
+                "qi_active_project_pct": "Active QI Projects Available in Unit (%)",
+                "qi_improvement_signal_pct": "Evidence of Improvement from Tested Change Ideas (%)",
+                "qi_storyboard_posted_pct": "QI Storyboard Posted on Ward Wall (%)",
+                "qi_cop_session_pct": "QI Team Participates in Learning Session (Local Govt / SLL Supported) (%)",
+            }
+            table_df = agg_df.rename(
+                columns={
+                    entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
+                    **qi_table_labels,
+                }
+            ).round(2)
+            st.dataframe(table_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "For each QI coaching indicator, chart values are computed as "
+                "`(sum(response values) / count(non-null submissions for that question)) * 100`."
+            )
+            st.caption(
+                "Yes/no responses are converted to 1/0 before averaging. "
+                "`part5_project-q502` keeps its original numeric count before averaging."
+            )
+            st.caption(
+                "Indicator source columns: `part8_project-q801`, "
+                "`part2_qi_structure-q203`, `part5_project-q502`, "
+                "`part6_project-q604`, `part3_project-q301`, `part3_project-q309`, "
+                "`part4_project-q408`, `part5_project-q504`."
+            )
         elif is_data_mentorship_analysis:
             metric_colors = MENTORSHIP_METRIC_COLORS
             subplot_titles = [
