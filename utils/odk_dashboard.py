@@ -38,7 +38,11 @@ MENTORSHIP_METRIC_COLORS = [
 QI_COACHING_INDICATORS = [
     ("part8_project-q801", "qi_wit_functional_pct", "QI Team/WIT Conduct Clinical Audit Regularly"),
     ("part2_qi_structure-q203", "qi_meeting_pct", "QI Team/WIT Conduct Regular Meetings"),
-    ("part5_project-q502", "qi_trained_coach_pct", "QIT Members Trained on QI Methods"),
+    (
+        "part5_project-q502",
+        "qi_trained_coach_pct",
+        "At Least 1 QIT Member Trained on QI Methods",
+    ),
     ("part6_project-q604", "qi_received_coaching_pct", "QIT Receives Regular QI Coaching"),
     ("part3_project-q301", "qi_active_project_pct", "Active QI Projects Available in Unit"),
     ("part3_project-q309", "qi_improvement_signal_pct", "Evidence of Improvement from Tested Change Ideas"),
@@ -162,6 +166,20 @@ def _to_numeric_indicator_value(series: pd.Series) -> pd.Series:
     result.loc[numeric_mask] = numeric.loc[numeric_mask].astype(float)
 
     return result
+
+
+def _to_positive_binary_indicator_value(series: pd.Series) -> pd.Series:
+    """
+    Convert responses to a presence/absence indicator for percentage metrics.
+    Positive numeric values count as 1 and zero counts as 0.
+    """
+    numeric_values = _to_numeric_indicator_value(series)
+    binary_values = pd.Series(index=series.index, dtype="float64")
+
+    numeric_mask = numeric_values.notna()
+    binary_values.loc[numeric_mask] = (numeric_values.loc[numeric_mask] > 0).astype(float)
+
+    return binary_values
 
 
 def _normalize_region_code(value) -> str:
@@ -416,10 +434,15 @@ def render_mentorship_analysis_dashboard():
                     return
 
                 for source_col, metric_col, _ in QI_COACHING_INDICATORS:
-                    work_df[metric_col] = _to_numeric_indicator_value(work_df[source_col])
+                    if source_col == "part5_project-q502":
+                        work_df[metric_col] = _to_positive_binary_indicator_value(
+                            work_df[source_col]
+                        )
+                    else:
+                        work_df[metric_col] = _to_numeric_indicator_value(work_df[source_col])
 
-                value_label = "Average x 100"
-                value_title = "Average Value x 100"
+                value_label = "Percentage"
+                value_title = "Percentage (%)"
             elif is_data_mentorship_analysis:
                 try:
                     df = load_data_mentorship_form_data()
@@ -1045,7 +1068,7 @@ def render_mentorship_analysis_dashboard():
                     customdata=agg_df[[entity_col]].values,
                     hovertemplate=(
                         f"{hover_entity_label}: %{{customdata[0]}}"
-                        f"<br>{subplot_titles[idx]}: %{{x:.2f}}"
+                        f"<br>{subplot_titles[idx]}: %{{x:.2f}}%"
                         "<extra></extra>"
                     ),
                     row=row,
@@ -1086,7 +1109,7 @@ def render_mentorship_analysis_dashboard():
             qi_table_labels = {
                 "qi_wit_functional_pct": "QI Team/WIT Conduct Clinical Audit Regularly (%)",
                 "qi_meeting_pct": "QI Team/WIT Conduct Regular Meetings (%)",
-                "qi_trained_coach_pct": "QIT Members Trained on QI Methods (Avg x100)",
+                "qi_trained_coach_pct": "At Least 1 QIT Member Trained on QI Methods (%)",
                 "qi_received_coaching_pct": "QIT Receives Regular QI Coaching (%)",
                 "qi_active_project_pct": "Active QI Projects Available in Unit (%)",
                 "qi_improvement_signal_pct": "Evidence of Improvement from Tested Change Ideas (%)",
@@ -1106,7 +1129,8 @@ def render_mentorship_analysis_dashboard():
             )
             st.caption(
                 "Yes/no responses are converted to 1/0 before averaging. "
-                "`part5_project-q502` keeps its original numeric count before averaging."
+                "For `part5_project-q502`, any value greater than zero is treated as "
+                "yes=1 so the indicator stays a percentage instead of exceeding 100."
             )
             st.caption(
                 "Indicator source columns: `part8_project-q801`, "
