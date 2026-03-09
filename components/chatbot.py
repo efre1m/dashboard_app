@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from utils.llm_utils import query_llm
 from utils import kpi_utils
+from utils.indicator_definitions import KPI_DEFINITIONS as MATERNAL_KPI_DEFINITIONS
 
 # Import logic from dashboards to ensure data availability
 from dashboards import facility, regional, national
@@ -18,7 +19,182 @@ from utils.kpi_utils import (
 )
 from utils.kpi_admitted_mothers import get_numerator_denominator_for_admitted_mothers
 from utils.queries import get_facility_mapping_for_user, get_facilities_grouped_by_region, get_all_facilities_flat
-from utils.dash_co import KPI_OPTIONS, KPI_MAPPING
+from utils.dash_co import KPI_OPTIONS as MATERNAL_KPI_OPTIONS, KPI_MAPPING as MATERNAL_KPI_MAPPING
+from components.chatbot_newborn import (
+    get_newborn_chatbot_config,
+    get_newborn_welcome_message,
+)
+
+KPI_OPTIONS = MATERNAL_KPI_OPTIONS
+KPI_MAPPING = MATERNAL_KPI_MAPPING
+
+PROGRAM_SELECTION_TERMS = {
+    "maternal": {"maternal", "maternal health", "maternal indicators", "matenal"},
+    "newborn": {"newborn", "newborn care", "newborn indicators", "neonatal"},
+}
+
+MATERNAL_KPI_ALIASES = {
+    "csection": "C-Section Rate (%)",
+    "section": "C-Section Rate (%)",
+    "caesarean": "C-Section Rate (%)",
+    "cesarean": "C-Section Rate (%)",
+    "cesarian": "C-Section Rate (%)",
+    "ceasarean": "C-Section Rate (%)",
+    "maternal death": "Maternal Death Rate (per 100,000)",
+    "death": "Maternal Death Rate (per 100,000)",
+    "mortality": "Maternal Death Rate (per 100,000)",
+    "stillbirth": "Stillbirth Rate (%)",
+    "stil birth": "Stillbirth Rate (%)",
+    "stillbrith": "Stillbirth Rate (%)",
+    "pph": "Postpartum Hemorrhage (PPH) Rate (%)",
+    "hemorrhage": "Postpartum Hemorrhage (PPH) Rate (%)",
+    "hemorage": "Postpartum Hemorrhage (PPH) Rate (%)",
+    "hemorrage": "Postpartum Hemorrhage (PPH) Rate (%)",
+    "bleeding": "Postpartum Hemorrhage (PPH) Rate (%)",
+    "postpartum hemorrhage": "Postpartum Hemorrhage (PPH) Rate (%)",
+    "uterotonic": "Delivered women who received uterotonic (%)",
+    "uterotonc": "Delivered women who received uterotonic (%)",
+    "utertonic": "Delivered women who received uterotonic (%)",
+    "oxytocin": "Delivered women who received uterotonic (%)",
+    "missing obstetric condition": "Missing Obstetric Condition at Delivery",
+    "missing condition at delivery": "Missing Obstetric Condition at Delivery",
+    "missing postpartum": "Missing Obstetric Condition at Delivery",
+    "missing post": "Missing Obstetric Condition at Delivery",
+    "missing complications diagnosis": "Missing Obstetric Complications Diagnosis",
+    "missing obstetric complications": "Missing Obstetric Complications Diagnosis",
+    "missing antepartum": "Missing Obstetric Complications Diagnosis",
+    "missing ante": "Missing Obstetric Complications Diagnosis",
+    "missing uterotonics given": "Missing Uterotonics Given at Delivery",
+    "missing oxytocin given": "Missing Uterotonics Given at Delivery",
+    "missing uterotonic at delivery": "Missing Uterotonics Given at Delivery",
+    "missing uterotonic": "Missing Uterotonics Given at Delivery",
+    "missing utertonic": "Missing Uterotonics Given at Delivery",
+    "missing mode": "Missing Mode of Delivery",
+    "missing birth": "Missing Birth Outcome",
+    "missing outcome": "Missing Birth Outcome",
+    "missing condition": "Missing Condition of Discharge",
+    "missing discharge": "Missing Condition of Discharge",
+    "ippcar": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+    "contraceptive": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+    "family planning": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+    "family plainnig": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+    "fp": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+    "contraception": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
+    "pnc": "Early Postnatal Care (PNC) Coverage (%)",
+    "postnatal": "Early Postnatal Care (PNC) Coverage (%)",
+    "post natal": "Early Postnatal Care (PNC) Coverage (%)",
+    "arv": "ARV Prophylaxis Rate (%)",
+    "antiretroviral": "ARV Prophylaxis Rate (%)",
+    "hiv prophylaxis": "ARV Prophylaxis Rate (%)",
+    "assisted delivery": "Assisted Delivery Rate (%)",
+    "assisted": "Assisted Delivery Rate (%)",
+    "instrumental": "Assisted Delivery Rate (%)",
+    "vacuum": "Assisted Delivery Rate (%)",
+    "forceps": "Assisted Delivery Rate (%)",
+    "svd": "Normal Vaginal Delivery (SVD) Rate (%)",
+    "vaginal delivery": "Normal Vaginal Delivery (SVD) Rate (%)",
+    "normal delivery": "Normal Vaginal Delivery (SVD) Rate (%)",
+    "spontaneous": "Normal Vaginal Delivery (SVD) Rate (%)",
+    "vaginal": "Normal Vaginal Delivery (SVD) Rate (%)",
+    "episiotomy": "Episiotomy Rate (%)",
+    "episitomy": "Episiotomy Rate (%)",
+    "episotomy": "Episiotomy Rate (%)",
+    "episotomi": "Episiotomy Rate (%)",
+    "episiotmoy": "Episiotomy Rate (%)",
+    "episo": "Episiotomy Rate (%)",
+    "antepartum": "Antepartum Complications Rate (%)",
+    "ante partum": "Antepartum Complications Rate (%)",
+    "antipartum": "Antepartum Complications Rate (%)",
+    "antenatal complications": "Antepartum Complications Rate (%)",
+    "antenatal": "Antepartum Complications Rate (%)",
+    "antepartum complication": "Antepartum Complications Rate (%)",
+    "antepart": "Antepartum Complications Rate (%)",
+    "antepar": "Antepartum Complications Rate (%)",
+    "postpartum": "Postpartum Complications Rate (%)",
+    "post partum": "Postpartum Complications Rate (%)",
+    "postpartum complications": "Postpartum Complications Rate (%)",
+    "postpar": "Postpartum Complications Rate (%)",
+    "postpart": "Postpartum Complications Rate (%)",
+    "postpra": "Postpartum Complications Rate (%)",
+    "postpartum complicaiton": "Postpartum Complications Rate (%)",
+    "postpartum complicaiotns": "Postpartum Complications Rate (%)",
+    "postpartum complication": "Postpartum Complications Rate (%)",
+    "admitted mothers": "Admitted Mothers",
+    "admitted": "Admitted Mothers",
+    "admissions": "Admitted Mothers",
+    "admission": "Admitted Mothers",
+    "total mothers": "Admitted Mothers",
+    "enrollment": "Admitted Mothers",
+    "total enrollments": "Admitted Mothers",
+    "mothers": "Admitted Mothers",
+    "total deliveries": "Total Deliveries",
+    "deliveries": "Total Deliveries",
+    "births": "Total Deliveries",
+}
+
+MATERNAL_HELP_EXAMPLES = [
+    "Plot C-Section Rate last year",
+    "Show me Admitted Mothers",
+    "Compare Admitted Mothers for Adigrat and Suhul",
+    "Define PPH rate",
+    "List maternal indicators",
+]
+
+NEWBORN_CHATBOT_CONFIG = get_newborn_chatbot_config()
+
+PROGRAM_CONFIGS = {
+    "maternal": {
+        "program_key": "maternal",
+        "label": "Maternal",
+        "kpi_mapping": MATERNAL_KPI_MAPPING,
+        "kpi_options": MATERNAL_KPI_OPTIONS,
+        "kpi_aliases": MATERNAL_KPI_ALIASES,
+        "kpi_definitions": MATERNAL_KPI_DEFINITIONS,
+        "count_indicators": {"Admitted Mothers", "Total Deliveries"},
+        "examples": MATERNAL_HELP_EXAMPLES,
+    },
+    "newborn": NEWBORN_CHATBOT_CONFIG,
+}
+
+
+def detect_program_from_text(text):
+    query = re.sub(r"\s+", " ", str(text or "").lower()).strip()
+    if not query:
+        return None
+
+    newborn_hit = any(term in query for term in PROGRAM_SELECTION_TERMS["newborn"])
+    maternal_hit = any(term in query for term in PROGRAM_SELECTION_TERMS["maternal"])
+
+    if newborn_hit and not maternal_hit:
+        return "newborn"
+    if maternal_hit and not newborn_hit:
+        return "maternal"
+    return None
+
+
+def get_program_selection_message(role):
+    return (
+        "**Which program do you want to analyze first?**\n\n"
+        "Reply with `maternal` or `newborn`.\n\n"
+        "After that, I will use the matching indicators, definitions, and charts for your current access level."
+    )
+
+
+def get_maternal_welcome_message(role):
+    examples = "\n".join(f"- `{example}`" for example in MATERNAL_HELP_EXAMPLES)
+    return (
+        "**Maternal program selected.**\n\n"
+        "I am now using maternal indicators and maternal dashboard logic for the facilities you can access.\n\n"
+        "Available maternal indicators include C-Section, PPH, Maternal Death, Stillbirth, PNC, IPPCAR, uterotonic, admitted mothers, complications, and data quality indicators.\n\n"
+        f"Try asking:\n{examples}\n\n"
+        "Type `newborn` any time to switch programs."
+    )
+
+
+def get_program_welcome_message(role, program_key):
+    if program_key == "newborn":
+        return get_newborn_welcome_message(role)
+    return get_maternal_welcome_message(role)
 
 def ensure_data_loaded():
     """
@@ -40,6 +216,9 @@ def ensure_data_loaded():
         if hasattr(st.session_state, "maternal_patients_df") and not st.session_state.maternal_patients_df.empty:
             logging.info("✅ Chatbot: Using dashboard's already-loaded facility data")
             return {"maternal": {"patients": st.session_state.maternal_patients_df}}
+        if hasattr(st.session_state, "newborn_patients_df") and not st.session_state.newborn_patients_df.empty:
+            logging.info("âœ… Chatbot: Using dashboard's already-loaded facility newborn data")
+            return {"newborn": {"patients": st.session_state.newborn_patients_df}}
     
     elif role == "regional":
         if hasattr(st.session_state, "cached_shared_data_regional"):
@@ -49,6 +228,9 @@ def ensure_data_loaded():
         if hasattr(st.session_state, "regional_patients_df") and not st.session_state.regional_patients_df.empty:
             logging.info("✅ Chatbot: Using dashboard's already-loaded regional data")
             return {"maternal": {"patients": st.session_state.regional_patients_df}}
+        if hasattr(st.session_state, "newborn_patients_df") and not st.session_state.newborn_patients_df.empty:
+            logging.info("âœ… Chatbot: Using dashboard's already-loaded regional newborn data")
+            return {"newborn": {"patients": st.session_state.newborn_patients_df}}
     
     elif role == "national":
         if hasattr(st.session_state, "cached_shared_data_national"):
@@ -58,6 +240,9 @@ def ensure_data_loaded():
         if hasattr(st.session_state, "maternal_patients_df") and not st.session_state.maternal_patients_df.empty:
             logging.info("✅ Chatbot: Using dashboard's already-loaded national data")
             return {"maternal": {"patients": st.session_state.maternal_patients_df}}
+        if hasattr(st.session_state, "newborn_patients_df") and not st.session_state.newborn_patients_df.empty:
+            logging.info("âœ… Chatbot: Using dashboard's already-loaded national newborn data")
+            return {"newborn": {"patients": st.session_state.newborn_patients_df}}
         elif hasattr(st.session_state, "cached_shared_data"):
             return st.session_state.cached_shared_data
     
@@ -382,6 +567,68 @@ class ChatbotLogic:
             "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": "utils"
         }
 
+    def get_selected_program(self):
+        return st.session_state.get("chatbot_program")
+
+    def get_program_config(self, program_key=None):
+        active_program = program_key or self.get_selected_program() or "maternal"
+        return PROGRAM_CONFIGS.get(active_program, PROGRAM_CONFIGS["maternal"])
+
+    def apply_active_program_globals(self, program_key=None):
+        global KPI_MAPPING, KPI_OPTIONS
+
+        config = self.get_program_config(program_key)
+        KPI_MAPPING = config["kpi_mapping"]
+        KPI_OPTIONS = config["kpi_options"]
+        self.df = self.newborn_df if config["program_key"] == "newborn" else self.maternal_df
+        return config
+
+    def set_selected_program(self, program_key):
+        if program_key not in PROGRAM_CONFIGS:
+            return False
+
+        previous_program = self.get_selected_program()
+        st.session_state["chatbot_program"] = program_key
+        st.session_state["chatbot_context"] = {}
+        self.apply_active_program_globals(program_key)
+        return previous_program != program_key
+
+    def is_program_selection_only(self, query):
+        query_lower = re.sub(r"\s+", " ", str(query or "").lower()).strip()
+        if not query_lower:
+            return False
+
+        analysis_tokens = [
+            "plot",
+            "show",
+            "compare",
+            "define",
+            "what",
+            "how",
+            "trend",
+            "rate",
+            "chart",
+            "graph",
+            "table",
+            "list",
+            "value",
+            "count",
+            "number",
+            "indicator",
+            "kpi",
+        ]
+        return not any(token in query_lower for token in analysis_tokens)
+
+    def detect_cross_program(self, query, current_program):
+        other_program = "newborn" if current_program == "maternal" else "maternal"
+        other_aliases = self.get_program_config(other_program)["kpi_aliases"]
+        normalized_query = re.sub(r"\s+", " ", str(query or "").lower()).strip()
+
+        for alias in sorted(other_aliases.keys(), key=len, reverse=True):
+            if alias in normalized_query:
+                return other_program
+        return None
+
     def _silent_prepare_data(self, df, kpi_name, facility_uids=None, date_range_filters=None):
         """
         Use EXACT SAME logic as dashboard's national.py for consistency and performance.
@@ -439,12 +686,16 @@ class ChatbotLogic:
         for typo, correct in self.COMMON_TYPOS.items():
             query_norm = query_norm.replace(typo, correct)
         query_norm = re.sub(r'\s+', ' ', query_norm).strip()
+        active_program = self.get_selected_program() or "maternal"
+        active_config = self.get_program_config(active_program)
+        active_kpi_mapping = active_config["kpi_mapping"]
+        active_kpi_options = active_config["kpi_options"]
 
         # --- MISSING BIRTH OUTCOME (ISOLATED FIX ONLY) ---
         # If the query contains BOTH "birth" and a variation of "outcome/out come",
         # always lock the metric to "Missing Birth Outcome" (never substitute, never reuse context).
         _compact_query = query_norm.replace(" ", "")
-        missing_birth_outcome_lock = ("birth" in _compact_query and "outcome" in _compact_query)
+        missing_birth_outcome_lock = active_program == "maternal" and ("birth" in _compact_query and "outcome" in _compact_query)
         
         # Initialize variables for parsing
         selected_facility_uids = []
@@ -522,7 +773,7 @@ class ChatbotLogic:
             
         # 0.5. PRIORITY CHECK: If KPI is present, do NOT treat as metadata list
         # "Show C-Section Rate by facility" -> PLOT intent, not LIST intent
-        kpi_found_early = any(kpi.lower() in query_norm for kpi in KPI_MAPPING.keys()) or missing_birth_outcome_lock
+        kpi_found_early = any(kpi.lower() in query_norm for kpi in active_kpi_mapping.keys()) or missing_birth_outcome_lock
         
         if entity_type and not kpi_found_early:
             # Extract Region if mentioned (even in rule-based mode)
@@ -694,178 +945,7 @@ class ChatbotLogic:
         # query_norm is already computed at the start of parse_query
         # Normalization logic moved to top
         
-        # Comprehensive KPI Map based on dash_co.KPI_MAPPING
-        # Now includes phonetic variations and common typos
-        kpi_map = {
-            # C-Section (with typos)
-            "csection": "C-Section Rate (%)",
-            "section": "C-Section Rate (%)",
-            "caesarean": "C-Section Rate (%)",
-            "cesarean": "C-Section Rate (%)",
-            "cesarian": "C-Section Rate (%)",
-            "ceasarean": "C-Section Rate (%)",
-            
-            # Maternal Death
-            "maternal death": "Maternal Death Rate (per 100,000)",
-            "death": "Maternal Death Rate (per 100,000)",
-            "mortality": "Maternal Death Rate (per 100,000)",
-            
-            # Stillbirth (with typos)
-            "stillbirth": "Stillbirth Rate (%)",
-            "stil birth": "Stillbirth Rate (%)",
-            "stillbrith": "Stillbirth Rate (%)",
-            
-            # PPH (with typos)
-            "pph": "Postpartum Hemorrhage (PPH) Rate (%)",
-            "hemorrhage": "Postpartum Hemorrhage (PPH) Rate (%)",
-            "hemorage": "Postpartum Hemorrhage (PPH) Rate (%)",
-            "hemorrage": "Postpartum Hemorrhage (PPH) Rate (%)",
-            "bleeding": "Postpartum Hemorrhage (PPH) Rate (%)",
-            "postpartum hemorrhage": "Postpartum Hemorrhage (PPH) Rate (%)",
-            
-            # Uterotonic (with typos)
-            "uterotonic": "Delivered women who received uterotonic (%)",
-            "uterotonc": "Delivered women who received uterotonic (%)",
-            "utertonic": "Delivered women who received uterotonic (%)",
-            "oxytocin": "Delivered women who received uterotonic (%)",
-            
-            # IPPCAR
-            # Data Quality / Counts (Move to top to prioritize over general rates)
-            "missing obstetric condition": "Missing Obstetric Condition at Delivery",
-            "missing condition at delivery": "Missing Obstetric Condition at Delivery",
-            "missing postpartum": "Missing Obstetric Condition at Delivery",
-            "missing post": "Missing Obstetric Condition at Delivery",
-            "missing complications diagnosis": "Missing Obstetric Complications Diagnosis",
-            "missing obstetric complications": "Missing Obstetric Complications Diagnosis",
-            "missing antepartum": "Missing Obstetric Complications Diagnosis",
-            "missing ante": "Missing Obstetric Complications Diagnosis",
-            "missing uterotonics given": "Missing Uterotonics Given at Delivery",
-            "missing oxytocin given": "Missing Uterotonics Given at Delivery",
-            "missing uterotonic at delivery": "Missing Uterotonics Given at Delivery",
-            "missing uterotonic": "Missing Uterotonics Given at Delivery",
-            "missing utertonic": "Missing Uterotonics Given at Delivery",
-            
-            "missing mode": "Missing Mode of Delivery",
-            "missing birth": "Missing Birth Outcome",
-            "missing outcome": "Missing Birth Outcome",
-            "missing condition": "Missing Condition of Discharge",
-            "missing discharge": "Missing Condition of Discharge",
-            
-            # Form Rates
-            "ippcar": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-            "contraceptive": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-            "family planning": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-            "family plainnig": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-            "fp": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-            "contraception": "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)",
-            
-            # PNC
-            "pnc": "Early Postnatal Care (PNC) Coverage (%)",
-            "postnatal": "Early Postnatal Care (PNC) Coverage (%)",
-            "post natal": "Early Postnatal Care (PNC) Coverage (%)",
-            
-            # ARV
-            "arv": "ARV Prophylaxis Rate (%)",
-            "antiretroviral": "ARV Prophylaxis Rate (%)",
-            "hiv prophylaxis": "ARV Prophylaxis Rate (%)",
-            
-            # Assisted Delivery
-            "assisted delivery": "Assisted Delivery Rate (%)",
-            "assisted": "Assisted Delivery Rate (%)",
-            "instrumental": "Assisted Delivery Rate (%)",
-            "vacuum": "Assisted Delivery Rate (%)",
-            "forceps": "Assisted Delivery Rate (%)",
-            
-            # SVD
-            "svd": "Normal Vaginal Delivery (SVD) Rate (%)",
-            "vaginal delivery": "Normal Vaginal Delivery (SVD) Rate (%)",
-            "normal delivery": "Normal Vaginal Delivery (SVD) Rate (%)",
-            "spontaneous": "Normal Vaginal Delivery (SVD) Rate (%)",
-            "vaginal": "Normal Vaginal Delivery (SVD) Rate (%)",
-            
-            # Episiotomy (with typos)
-            "episiotomy": "Episiotomy Rate (%)",
-            "episitomy": "Episiotomy Rate (%)",
-            "episotomy": "Episiotomy Rate (%)",
-            "episotomi": "Episiotomy Rate (%)",
-            "episiotmoy": "Episiotomy Rate (%)",
-            "episo": "Episiotomy Rate (%)",
-            
-            "antepartum": "Antepartum Complications Rate (%)",
-            "ante partum": "Antepartum Complications Rate (%)",
-            "antipartum": "Antepartum Complications Rate (%)",
-            "antenatal complications": "Antepartum Complications Rate (%)",
-            "antenatal": "Antepartum Complications Rate (%)",
-            "antepartum complication": "Antepartum Complications Rate (%)",
-            "antepart": "Antepartum Complications Rate (%)",
-            "antepar": "Antepartum Complications Rate (%)",
-            "postpartum": "Postpartum Complications Rate (%)",
-            "post partum": "Postpartum Complications Rate (%)",
-            "postpartum complications": "Postpartum Complications Rate (%)",
-            "postpar": "Postpartum Complications Rate (%)",
-            "postpart": "Postpartum Complications Rate (%)",
-            "postpra": "Postpartum Complications Rate (%)",
-            "postpartum complicaiton": "Postpartum Complications Rate (%)",
-            "postpartum complicaiotns": "Postpartum Complications Rate (%)",
-            "postpartum complication": "Postpartum Complications Rate (%)",
-            
-
-            
-            # Admitted Mothers
-            "admitted mothers": "Admitted Mothers",
-            "admitted": "Admitted Mothers",
-            "admissions": "Admitted Mothers",
-            "admission": "Admitted Mothers",
-            "total mothers": "Admitted Mothers",
-            "enrollment": "Admitted Mothers",
-            "total enrollments": "Admitted Mothers",
-            "mothers": "Admitted Mothers",
-            
-            # Total Deliveries
-            "total deliveries": "Total Deliveries",
-            "deliveries": "Total Deliveries",
-            "births": "Total Deliveries",
-            
-            # Newborn indicators (with typos)
-            "inborn": "Inborn Rate (%)",
-            "outborn": "Outborn Rate (%)",
-            "neonatal death": "Neonatal Mortality Rate (%)",
-            "neonatal mortality": "Neonatal Mortality Rate (%)",
-            "nmr": "Neonatal Mortality Rate (%)",
-            "admitted newborns": "Admitted Newborns",
-            "newborn admissions": "Admitted Newborns",
-            "newborn admission": "Admitted Newborns",
-            
-            # KMC (with typos)
-            "kmc": "KMC Coverage by Birth Weight",
-            "kangaroo": "KMC Coverage by Birth Weight",
-            "kangaro": "KMC Coverage by Birth Weight",
-            "skin to skin": "KMC Coverage by Birth Weight",
-            
-            # CPAP (with typos)
-            "cpap": "General CPAP Coverage",
-            "c pap": "General CPAP Coverage",
-            "rds": "CPAP for RDS",
-            "respiratory distress": "CPAP for RDS",
-            
-            # Hypothermia (with typos)
-            "hypothermia": "Hypothermia on Admission Rate (%)",
-            "hypthermia": "Hypothermia on Admission Rate (%)",
-            "hipothermia": "Hypothermia on Admission Rate (%)",
-            "hypo thermia": "Hypothermia on Admission Rate (%)",
-
-            # Birth Weight & Other Newborn (with typos)
-            "birth weight": "Birth Weight Rate",
-            "birthweight": "Birth Weight Rate",
-            "birht weight": "Birth Weight Rate",
-            "bw": "Birth Weight Rate",
-            "kmc": "KMC Coverage by Birth Weight",
-            "kangaroo": "KMC Coverage by Birth Weight",
-            "cpap": "General CPAP Coverage",
-            "c-pap": "General CPAP Coverage",
-            "rds": "CPAP for RDS",
-            "respiratory distress": "CPAP for RDS",
-        }
+        kpi_map = active_config["kpi_aliases"]
         
         # Stop Word Removal for scanning
         stop_words = ["what", "is", "the", "are", "of", "in", "show", "me", "tell", "about", "rate", "value", "number", "total", "how", "many"]
@@ -917,7 +997,7 @@ class ChatbotLogic:
                      
         if not selected_kpi:
             # Fallback: check exact strings in KPI_OPTIONS (ignoring case)
-            for kpi in KPI_OPTIONS:
+            for kpi in active_kpi_options:
                 if kpi.lower() in query_lower:
                     selected_kpi = kpi
                     break
@@ -927,7 +1007,7 @@ class ChatbotLogic:
             selected_kpi = "Missing Birth Outcome"
                      
         # Force Bar Chart for Counts
-        if selected_kpi == "Admitted Mothers" and chart_type == "line":
+        if selected_kpi in {"Admitted Mothers", "Admitted Newborns"} and chart_type == "line":
             chart_type = "bar"
 
         # --- REGION-ONLY CONTEXT (Manual GUI Behavior) ---
@@ -1430,15 +1510,13 @@ class ChatbotLogic:
             if any(x in query_lower for x in ["what", "list", "show", "available", "options", "help", "how many", "total"]):
                 intent = "list_kpis"
         
-        # Explicit handling for "maternal" answer to clarification
-        if query_lower in ["maternal", "maternal indicators", "maternal health", "mothers", "matenal"]:
+        # Explicit handling for direct program references in current context
+        if active_program == "maternal" and query_lower in ["maternal", "maternal indicators", "maternal health", "mothers", "matenal"]:
+            intent = "list_kpis"
+        if active_program == "newborn" and query_lower in ["newborn", "newborn indicators", "newborn care", "neonatal"]:
             intent = "list_kpis"
         if "options" in query_lower or "capabilities" in query_lower:
             intent = "list_kpis"
-            
-        # Newborn Scope Detection
-        if "newborn" in query_lower:
-            intent = "scope_error_newborn"
 
         # Robust Scope Error Detection
         if any(x in query_lower for x in ["color", "style", "background", "theme", "dark mode", "appearance"]):
@@ -1730,6 +1808,7 @@ class ChatbotLogic:
         sorted_uids = sorted(facility_uids) if facility_uids else []
         
         key_data = {
+            "program": self.get_selected_program(),
             "kpi": parsed_query.get("kpi"),
             "facility_count": len(sorted_uids),
             "facility_hash": hashlib.md5(str(sorted_uids).encode()).hexdigest(),
@@ -1778,8 +1857,22 @@ class ChatbotLogic:
 
     def generate_response(self, query):
         global KPI_MAPPING, KPI_OPTIONS
-        parsed = self.parse_query(query)
         query_lower = query.lower()
+        role = self.user.get("role", "facility")
+        selected_program = self.get_selected_program()
+        detected_program = detect_program_from_text(query)
+
+        if detected_program:
+            self.set_selected_program(detected_program)
+            selected_program = detected_program
+            if self.is_program_selection_only(query):
+                return None, get_program_welcome_message(role, detected_program)
+
+        if not selected_program:
+            return None, get_program_selection_message(role)
+
+        active_program_config = self.apply_active_program_globals(selected_program)
+        parsed = self.parse_query(query)
         
         # --- PERFORMANCE CACHE ---
         cache_key = self._get_cache_key(parsed, parsed.get("facility_uids"))
@@ -1796,11 +1889,13 @@ class ChatbotLogic:
             if not kpi_name:
                 return None, "I understand you're asking for a definition, but I couldn't identify which indicator you're referring to. Could you please specify a name like 'PPH rate' or 'C-Section'?"
             
-            # Import comprehensive definitions
-            from utils.indicator_definitions import KPI_DEFINITIONS
-            
             # Try to get comprehensive definition first
-            kpi_def = KPI_DEFINITIONS.get(kpi_name)
+            active_definitions = active_program_config.get("kpi_definitions", {})
+            kpi_def = active_definitions.get(kpi_name)
+            if not kpi_def and hasattr(self, "KB_DEFINITIONS"):
+                basic_definition = self.KB_DEFINITIONS.get(kpi_name)
+                if basic_definition:
+                    kpi_def = {"description": basic_definition}
             
             if kpi_def:
                 # Build comprehensive response
@@ -1863,15 +1958,14 @@ class ChatbotLogic:
             if any(x in q_low for x in ["password", "login", "admin", "credential"]):
                 return None, "I'm your dashboard assistant. I don't handle system passwords or administrative access. Please contact your system administrator if you're having login issues! 🔒"
                 
-            role = self.user.get("role", "facility") # Default to facility if unknown
-            return None, get_welcome_message(role)
+            return None, get_program_welcome_message(role, selected_program)
             
         # Handle Chart Options Parsing
         if parsed.get("intent") == "chart_options":
              kpi_concern = parsed.get("kpi") or st.session_state.get("chatbot_context", {}).get("kpi")
-             
-             if kpi_concern == "Admitted Mothers":
-                 return None, "For **Admitted Mothers**, the available charts are:\n- **Vertical Bar Chart** (Default)\n- **Horizontal Bar Chart** (Say 'plot horizontal bar')\n- **Data Table**"
+              
+             if kpi_concern in {"Admitted Mothers", "Admitted Newborns"}:
+                 return None, f"For **{kpi_concern}**, the available charts are:\n- **Vertical Bar Chart** (Default)\n- **Horizontal Bar Chart** (Say 'plot horizontal bar')\n- **Data Table**"
              elif kpi_concern:
                  return None, f"For **{kpi_concern}**, I can generate:\n- **Line Chart**: Best for trends over time.\n- **Bar Chart**: Good for comparison.\n- **Area Chart**: Visualizes volume over time.\n- **Data Table**: Detailed numbers."
              else:
@@ -1883,13 +1977,14 @@ class ChatbotLogic:
 
         # Handle Hallucination Scope Error
         if parsed.get("intent") == "scope_error_hallucination":
-             return None, "I detected a term (like 'temperature') that I don't track directly. I specialize in **Maternal** and **Newborn** health indicators.\n\nTry asking about 'Hypothermia' or 'KMC' if you are interested in thermal care, or say 'list indicators' to see what I can do."
-             
+             return None, f"I detected a term that is not mapped directly in the **{active_program_config['label']}** program.\n\nTry asking for a specific indicator, or say `list indicators` to see what I can analyze."
+              
         # List KPIs handler at top (Consolidated)
         if parsed.get("intent") == "list_kpis":
+             program_label = active_program_config["label"]
              # Check if asking for count only
              if "how many" in query_lower or "count" in query_lower:
-                 msg = f"I currently have **{len(KPI_MAPPING)}** maternal health indicators available.\n\n"
+                 msg = f"I currently have **{len(KPI_MAPPING)}** {program_label.lower()} indicators available.\n\n"
                  msg += "Would you like me to list all of them? Just say 'yes' or 'list all indicators'."
                  # Store context for follow-up
                  st.session_state["chatbot_context"]["last_question"] = "indicators"
@@ -1897,21 +1992,18 @@ class ChatbotLogic:
              else:
                  # List all indicators
                  kpi_list = "\n".join([f"- **{k}**" for k in KPI_MAPPING.keys()])
-                 msg = f"Here are all the maternal health indicators I can provide information about:\n\n{kpi_list}"
+                 msg = f"Here are all the {program_label.lower()} indicators I can provide information about:\n\n{kpi_list}"
                  return None, msg
-             
-        # Handle Newborn Scope Error
-        if parsed.get("intent") == "scope_error_newborn":
-            return None, "I now have access to **Newborn Care** data! Try asking about 'CPAP', 'KMC', 'NMR', or 'Birth Weights'."
         
         # Handle Clear Chat
         if parsed.get("intent") == "clear":
              st.session_state.messages = []
-             st.session_state.chatbot_context = {} 
+             st.session_state.chatbot_context = {}
+             st.session_state["chatbot_program"] = None
              st.session_state.messages.append({
                 "role": "assistant",
-                "content": "Hello! I'm your dashboard assistant. You can ask me to plot trends like 'Plot C-Section Rate this month' or ask for specific values."
-             })
+                "content": get_program_selection_message(role)
+              })
              # Reset period filter to default
              if "filters" in st.session_state:
                  st.session_state.filters["period_label"] = "Monthly"
@@ -1999,26 +2091,18 @@ class ChatbotLogic:
              return None, None # Should have returned above, but just in case
         
         if not parsed["kpi"]:
-            # Smart response for out-of-scope queries
-            msg = "I have no information on these currently. If you want to know what I am capable of, you can list indicators for Maternal. Currently, I do not have info on other programs or on Newborn data."
+            cross_program = self.detect_cross_program(query, selected_program)
+            if cross_program:
+                cross_label = self.get_program_config(cross_program)["label"]
+                msg = f"That looks like a **{cross_label}** indicator. Type `{cross_program}` to switch programs, then ask again."
+            else:
+                msg = f"I could not match that request to a **{active_program_config['label']}** indicator. Say `list indicators` to see the available {active_program_config['label'].lower()} indicators."
             return None, msg
 
-        # --- SPECIALIZATION CHECK: Restrict to Maternal Indicators for Plotting/Explaining ---
-        # 1. Determine Data Source (Maternal vs Newborn)
-        use_newborn_data = False
+        # --- SPECIALIZATION CHECK: Use the explicitly selected program ---
+        use_newborn_data = selected_program == "newborn"
         kpi_name = parsed["kpi"]
-        kpi_lower = kpi_name.lower()
-        
-        # Comprehensive check for newborn indicators
-        newborn_indicators = [
-            "inborn", "outborn", "neonatal", "newborn", "nmr", "kmc", "cpap", 
-            "birth weight", "rds", "temperature", "missing temperature", 
-            "missing birth weight", "missing discharge status"
-        ]
-        
-        if any(x in kpi_lower for x in newborn_indicators):
-              use_newborn_data = True
-              
+
         active_df = self.newborn_df if use_newborn_data else self.maternal_df
         
         # Update session state with correct collection
@@ -2042,8 +2126,8 @@ class ChatbotLogic:
         date_range = parsed["date_range"]
         chart_type = parsed.get("chart_type", "line") # Safe get
         
-        # Enforce Bar Chart constraint for Admitted Mothers if not specified otherwise
-        if kpi_name == "Admitted Mothers" and chart_type == "line":
+        # Enforce Bar Chart constraint for count indicators if not specified otherwise
+        if kpi_name in {"Admitted Mothers", "Admitted Newborns"} and chart_type == "line":
              chart_type = "bar"
         
         # PROXY KPI MAPPING: Handle components (Numerator/Denominator)
@@ -2711,15 +2795,19 @@ class ChatbotLogic:
             else:
                   # Use standard kpi_utils for "utils" suffix or no suffix
                   numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(prepared_df, active_kpi_name, facility_uids)
-            
+
+            if kpi_suffix == "newborn_simplified" and target_component == "value":
+                return None, f"**{kpi_name}** is best viewed as a chart or table. Ask `plot {kpi_name}` or `show {kpi_name} in table format`."
+             
             # Resolve Component
             display_value = value
             if target_component == "numerator": display_value = numerator
             elif target_component == "denominator": display_value = denominator
-            
+             
             # Format display logic
-            if active_kpi_name == "Admitted Mothers":
-                response_text = f"The **Total Admitted Mothers** count is **{int(display_value):,}**"
+            value_indicator_names = active_program_config.get("count_indicators", set())
+            if active_kpi_name in value_indicator_names and target_component == "value":
+                response_text = f"The **{active_kpi_name}** count is **{int(display_value):,}**"
             elif target_component == "value":
                 response_text = f"The **{kpi_name}** is **{display_value:.2f}%**"
             else:
@@ -2811,9 +2899,12 @@ def render_chatbot():
     # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
-        # Dynamic Welcome Message
         user_role = st.session_state.get("user", {}).get("role", "national")
-        welcome_msg = get_welcome_message(user_role)
+        selected_program = st.session_state.get("chatbot_program")
+        if selected_program:
+            welcome_msg = get_program_welcome_message(user_role, selected_program)
+        else:
+            welcome_msg = get_program_selection_message(user_role)
         st.session_state.messages.append({
             "role": "assistant",
             "content": welcome_msg
@@ -2823,6 +2914,7 @@ def render_chatbot():
     if st.sidebar.button("🗑️ Clear Chat History", key="clear_chat_history_btn"):
          st.session_state.messages = []
          st.session_state.chatbot_context = {}
+         st.session_state["chatbot_program"] = None
          st.rerun()
 
     st.markdown('<div class="main-chat-container">', unsafe_allow_html=True)
@@ -2858,6 +2950,7 @@ def render_chatbot():
         chatbot_logic.maternal_df = chatbot_logic.maternal_df.reset_index(drop=True)
     if not chatbot_logic.newborn_df.empty:
         chatbot_logic.newborn_df = chatbot_logic.newborn_df.reset_index(drop=True)
+    chatbot_logic.apply_active_program_globals(st.session_state.get("chatbot_program"))
     
     # Inject KB_DEFINITIONS for Definition Intent
     chatbot_logic.KB_DEFINITIONS = {
@@ -2998,7 +3091,12 @@ def render_chatbot():
                      st.plotly_chart(message["figure"], use_container_width=True, key=f"chat_chart_{i}")
 
     # Accept user input
-    if prompt := st.chat_input("Ask about KPIs (e.g. 'Plot PPH rate for Facility A')..."):
+    selected_program = st.session_state.get("chatbot_program")
+    if selected_program:
+        chat_placeholder = f"Ask about {selected_program} indicators..."
+    else:
+        chat_placeholder = "Start by typing `maternal` or `newborn`..."
+    if prompt := st.chat_input(chat_placeholder):
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
         
@@ -3014,7 +3112,11 @@ def render_chatbot():
                     # Check for help intent explicitly here or rely on chatbot_logic
                     if prompt.lower().strip() in ["help", "info", "usage"]:
                          user_role = st.session_state.get("user", {}).get("role", "national")
-                         response_text = get_welcome_message(user_role)
+                         selected_program = st.session_state.get("chatbot_program")
+                         if selected_program:
+                             response_text = get_program_welcome_message(user_role, selected_program)
+                         else:
+                             response_text = get_program_selection_message(user_role)
                          fig = None
                     else:
                         # Rerurns (fig, text)
@@ -3063,7 +3165,12 @@ def render_chatbot():
                     
                     e_str = str(e).lower()
                     if "kpi" in e_str or "indicator" in e_str:
-                        error_msg += "It seems I couldn't find the specific health indicator you're looking for. I currently specialize in **Maternal Health indicators**."
+                        selected_program = st.session_state.get("chatbot_program")
+                        if selected_program:
+                            program_label = PROGRAM_CONFIGS[selected_program]["label"]
+                            error_msg += f"It seems I couldn't find the specific indicator you're looking for in the **{program_label}** program."
+                        else:
+                            error_msg += "It seems I couldn't find the specific indicator you're looking for."
                     elif "facility" in e_str or "region" in e_str:
                         error_msg += "I had trouble identifying the location (facility or region) in your prompt."
                     elif "local variable" in e_str:
@@ -3083,7 +3190,7 @@ def render_chatbot():
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-def get_welcome_message(role):
+def _legacy_get_welcome_message(role):
     """Generates a dynamic welcome message based on user role."""
     
     # Dashboard List
@@ -3125,3 +3232,10 @@ I can help you analyze data across the **{dashboard_str}** dashboards.
 Type **'Help'** at any time to see this message again.
 """
     return msg
+
+
+def get_welcome_message(role):
+    selected_program = st.session_state.get("chatbot_program")
+    if selected_program:
+        return get_program_welcome_message(role, selected_program)
+    return get_program_selection_message(role)
