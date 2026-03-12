@@ -15,16 +15,28 @@ from utils.queries import (
     get_facilities_grouped_by_region,
     get_facility_mapping_for_user,
 )
-from utils.dash_co import (
-    normalize_patient_dates,
-    render_trend_chart_section,
-    render_comparison_chart,
-    render_additional_analytics,
-    get_text_color,
-    apply_patient_filters,
-    render_patient_filter_controls,
-    render_kpi_tab_navigation,
-)
+try:
+    from utils.dash_co import (
+        normalize_patient_dates,
+        render_trend_chart_section,
+        render_comparison_chart,
+        render_additional_analytics,
+        get_text_color,
+        apply_patient_filters,
+        render_patient_filter_controls,
+        render_kpi_tab_navigation,
+    )
+except ImportError:
+    from utils.kpi_utils import normalize_patient_dates
+    from utils.dash_co import (
+        render_trend_chart_section,
+        render_comparison_chart,
+        render_additional_analytics,
+        get_text_color,
+        apply_patient_filters,
+        render_patient_filter_controls,
+        render_kpi_tab_navigation,
+    )
 from utils.kpi_utils import clear_cache, compute_kpis
 from utils.odk_dashboard import display_odk_dashboard
 from components.edit_profile import render_edit_profile

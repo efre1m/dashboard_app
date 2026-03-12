@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import numpy as np
 import re
 import random
 import difflib
 import logging
+import calendar
 from datetime import datetime, timedelta
 from utils.llm_utils import query_llm
 from utils import kpi_utils
@@ -29,8 +31,8 @@ KPI_OPTIONS = MATERNAL_KPI_OPTIONS
 KPI_MAPPING = MATERNAL_KPI_MAPPING
 
 PROGRAM_SELECTION_TERMS = {
-    "maternal": {"maternal", "maternal health", "maternal indicators", "matenal"},
-    "newborn": {"newborn", "newborn care", "newborn indicators", "neonatal"},
+    "maternal": {"maternal", "maternal health", "maternal indicators", "matenal", "materanl", "maternl", "materna", "mother", "mothers", "mothr", "mothrs", "mothres"},
+    "newborn": {"newborn", "newborns", "newborn care", "newborn indicators", "neonatal", "neonate", "newbonr", "newbrn", "newborm", "newbron", "newbrons", "nebrn", "nebrons"},
 }
 
 MATERNAL_KPI_ALIASES = {
@@ -124,6 +126,9 @@ MATERNAL_KPI_ALIASES = {
     "admissions": "Admitted Mothers",
     "admission": "Admitted Mothers",
     "total mothers": "Admitted Mothers",
+    "mothrs": "Admitted Mothers",
+    "mothr": "Admitted Mothers",
+    "mothres": "Admitted Mothers",
     "enrollment": "Admitted Mothers",
     "total enrollments": "Admitted Mothers",
     "mothers": "Admitted Mothers",
@@ -141,6 +146,9 @@ MATERNAL_HELP_EXAMPLES = [
 ]
 
 NEWBORN_CHATBOT_CONFIG = get_newborn_chatbot_config()
+
+MATERNAL_PROGRAM_HINTS = set(k.lower() for k in MATERNAL_KPI_ALIASES.keys()) | PROGRAM_SELECTION_TERMS["maternal"]
+NEWBORN_PROGRAM_HINTS = set(k.lower() for k in NEWBORN_CHATBOT_CONFIG["kpi_aliases"].keys()) | PROGRAM_SELECTION_TERMS["newborn"]
 
 PROGRAM_CONFIGS = {
     "maternal": {
@@ -162,13 +170,19 @@ def detect_program_from_text(text):
     if not query:
         return None
 
-    newborn_hit = any(term in query for term in PROGRAM_SELECTION_TERMS["newborn"])
-    maternal_hit = any(term in query for term in PROGRAM_SELECTION_TERMS["maternal"])
+    newborn_hit = any(term in query for term in NEWBORN_PROGRAM_HINTS)
+    maternal_hit = any(term in query for term in MATERNAL_PROGRAM_HINTS)
 
     if newborn_hit and not maternal_hit:
         return "newborn"
     if maternal_hit and not newborn_hit:
         return "maternal"
+    # If both are present, prefer explicit program words over generic KPI aliases
+    if newborn_hit and maternal_hit:
+        if any(term in query for term in PROGRAM_SELECTION_TERMS["newborn"]):
+            return "newborn"
+        if any(term in query for term in PROGRAM_SELECTION_TERMS["maternal"]):
+            return "maternal"
     return None
 
 
@@ -202,6 +216,11 @@ def ensure_data_loaded():
     """
     user = st.session_state.get("user", {})
     role = user.get("role", "")
+    
+    # Fallback: treat missing role as national to avoid first-run empty state
+    if not role:
+        user = {"role": "national"}
+        role = "national"
     
     if not role:
         return None
@@ -390,10 +409,8 @@ class ChatbotLogic:
             
             # Missing variations
             "misssing": "missing",
-            "missin": "missing",
             "mising": "missing",
             "mssing": "missing",
-            "misingg": "missing",
             
             # Neonatal variations
             "neo natal": "neonatal",
@@ -414,6 +431,16 @@ class ChatbotLogic:
             "sitllbirht": "stillbirth",
             "stillbirht": "stillbirth",
             "birht": "birth",
+            "mothrs": "mothers",
+            "mothr": "mothers",
+            "mothres": "mothers",
+            "newbron": "newborn",
+            "newbonr": "newborn",
+            "newbrn": "newborn",
+            "newborm": "newborn",
+            "newbrons": "newborns",
+            "nebrn": "newborn",
+            "nebrons": "newborn",
             "oucome": "outcome",
             "indicatofrs": "indicators",
             "totaly": "totally",
@@ -424,6 +451,10 @@ class ChatbotLogic:
             "enrollmet": "enrollment",
             "admited": "admitted",
             "admision": "admission",
+            "admittted": "admitted",
+            "admitteed": "admitted",
+            "adimtted": "admitted",
+            "admitd": "admitted",
             "delivry": "delivery",
             "vagnal": "vaginal",
             "materna": "maternal",
@@ -503,13 +534,23 @@ class ChatbotLogic:
              if first_word not in self.facility_search_index:
                   self.facility_search_index[first_word] = []
              self.facility_search_index[first_word].append(full_name)
+        
+        # 5. Ambiguous Prefixes (Terms that are too generic to match directly if found alone)
+        self.AMBIGUOUS_PREFIXES = ["ambo", "debre", "st", "saint", "mary", "kidane", "black", "lion", "felege", "gandhi", "yekatit", "alert", "menelik", "paul", "peter"]
+        
+        # 3.5 Unique first-word aliases (safe only when first word is unique and non-ambiguous)
+        for first_word, names in self.facility_search_index.items():
+            if (
+                len(names) == 1
+                and first_word not in self.AMBIGUOUS_PREFIXES
+                and first_word not in self.suffix_blind_mapping
+            ):
+                # Add a single-word alias so "adigrat" resolves even without suffix
+                self.suffix_blind_mapping[first_word] = names[0]
 
         # 4. Greedy Scan List (Sorted by length to catch longest phrases first)
         # We use keys from suffix_blind_mapping because it contains BOTH full names AND short names
         self.sorted_scan_names = sorted(self.suffix_blind_mapping.keys(), key=len, reverse=True)
-        
-        # 5. Ambiguous Prefixes (Terms that are too generic to match directly if found alone)
-        self.AMBIGUOUS_PREFIXES = ["ambo", "debre", "st", "saint", "mary", "kidane", "black", "lion", "felege", "gandhi", "yekatit", "alert", "menelik", "paul", "peter"]
         
         # 6. Add special handling for full ambiguous facility names with their UIDs
         for full_name in self.AMBIGUOUS_FACILITY_UIDS.keys():
@@ -684,7 +725,9 @@ class ChatbotLogic:
         # Move this to the top so it filters early keyword checks
         query_norm = re.sub(r'[^a-z0-9\s]', '', query_lower)
         for typo, correct in self.COMMON_TYPOS.items():
-            query_norm = query_norm.replace(typo, correct)
+            # Use word-boundary matching to avoid corrupting valid words
+            # e.g. 'missin' should NOT match inside 'missing'
+            query_norm = re.sub(r'\b' + re.escape(typo) + r'\b', correct, query_norm)
         query_norm = re.sub(r'\s+', ' ', query_norm).strip()
         active_program = self.get_selected_program() or "maternal"
         active_config = self.get_program_config(active_program)
@@ -773,7 +816,11 @@ class ChatbotLogic:
             
         # 0.5. PRIORITY CHECK: If KPI is present, do NOT treat as metadata list
         # "Show C-Section Rate by facility" -> PLOT intent, not LIST intent
-        kpi_found_early = any(kpi.lower() in query_norm for kpi in active_kpi_mapping.keys()) or missing_birth_outcome_lock
+        kpi_found_early = (
+            any(kpi.lower() in query_norm for kpi in active_kpi_mapping.keys())
+            or any(opt.lower() in query_norm for opt in active_kpi_options)
+            or missing_birth_outcome_lock
+        )
         
         if entity_type and not kpi_found_early:
             # Extract Region if mentioned (even in rule-based mode)
@@ -896,6 +943,105 @@ class ChatbotLogic:
                 if uid not in selected_facility_uids:
                     selected_facility_uids.append(uid)
                     selected_facility_names.append(name)
+        
+        # --- COMPARISON CATCH-UP: try to resolve additional facilities mentioned with "and"/commas ---
+        if comparison_mode and len(selected_facility_uids) < 2:
+            # First-word fallback: if a single unique facility shares the first word, select it
+            if len(selected_facility_uids) < 2:
+                for word in query_norm.split():
+                    if len(word) < 3:
+                        continue
+                    candidates = self.facility_search_index.get(word)
+                    if candidates:
+                        if len(candidates) == 1:
+                            official = candidates[0]
+                        else:
+                            # Pick the closest match among candidates instead of bailing
+                            lower_candidates = [c.lower() for c in candidates]
+                            best = difflib.get_close_matches(word, lower_candidates, n=1, cutoff=0.6)
+                            official = candidates[lower_candidates.index(best[0])] if best else None
+                        if official:
+                            uid = self.universal_facility_mapping.get(official)
+                            if uid and uid not in selected_facility_uids:
+                                selected_facility_uids.append(uid)
+                                selected_facility_names.append(official)
+                    if len(selected_facility_uids) >= 2:
+                        break
+
+            # Best-match fallback: pick closest facility name for stray tokens (even if not unique)
+            if len(selected_facility_uids) < 2:
+                norm_names_all = list(self.normalized_facility_mapping.keys())
+                for word in query_norm.split():
+                    if len(word) < 4:  # skip very short/ambiguous tokens
+                        continue
+                    matches = difflib.get_close_matches(word, norm_names_all, n=1, cutoff=0.68)
+                    if matches:
+                        official = self.suffix_blind_mapping.get(matches[0], self.normalized_facility_mapping.get(matches[0], matches[0]))
+                        uid = self.universal_facility_mapping.get(official)
+                        if uid and uid not in selected_facility_uids:
+                            selected_facility_uids.append(uid)
+                            selected_facility_names.append(official)
+                    if len(selected_facility_uids) >= 2:
+                        break
+
+            tokens = re.split(r"[,&]| and ", query_norm)
+            norm_keys = list(self.suffix_blind_mapping.keys())
+            for tok in tokens:
+                t = tok.strip()
+                if len(t) < 3:
+                    continue
+                matches = difflib.get_close_matches(t, norm_keys, n=1, cutoff=0.72)
+                if matches:
+                    official = self.suffix_blind_mapping[matches[0]]
+                    uid = self.universal_facility_mapping.get(official)
+                    if uid and uid not in selected_facility_uids:
+                        selected_facility_uids.append(uid)
+                        selected_facility_names.append(official)
+            # Additional scan: pick any facility name substring present in query
+            if len(selected_facility_uids) < 2:
+                for norm_name in self.sorted_scan_names:
+                    if norm_name in query_norm:
+                        official = self.suffix_blind_mapping[norm_name]
+                        uid = self.universal_facility_mapping.get(official)
+                        if uid and uid not in selected_facility_uids:
+                            selected_facility_uids.append(uid)
+                            selected_facility_names.append(official)
+                    if len(selected_facility_uids) >= 2:
+                        break
+            # Final fuzzy fallback across all facilities when still <2
+            if len(selected_facility_uids) < 2:
+                all_names = list(self.normalized_facility_mapping.keys())
+                matches = difflib.get_close_matches(query_norm, all_names, n=3, cutoff=0.55)
+                for m in matches:
+                    official = self.suffix_blind_mapping.get(m, m)
+                    uid = self.universal_facility_mapping.get(official)
+                    if uid and uid not in selected_facility_uids:
+                        selected_facility_uids.append(uid)
+                        selected_facility_names.append(official)
+                    if len(selected_facility_uids) >= 2:
+                        break
+            # Deep fuzzy over full facility list per token/word if still <2
+            if len(selected_facility_uids) < 2:
+                all_facilities = get_all_facilities_flat(self.user)
+                fac_names = [f[0] for f in all_facilities]
+                fac_name_to_uid = {f[0]: f[1] for f in all_facilities}
+                search_terms = tokens + query_norm.split()
+                for term in search_terms:
+                    term = term.strip()
+                    if len(term) < 3:
+                        continue
+                    m = difflib.get_close_matches(term, [n.lower() for n in fac_names], n=1, cutoff=0.65)
+                    if m:
+                        # find original name
+                        for name in fac_names:
+                            if name.lower() == m[0]:
+                                uid = fac_name_to_uid.get(name)
+                                if uid and uid not in selected_facility_uids:
+                                    selected_facility_uids.append(uid)
+                                    selected_facility_names.append(name)
+                                break
+                    if len(selected_facility_uids) >= 2:
+                        break
                   
         if "table" in query_lower:
             chart_type = "table"
@@ -959,7 +1105,8 @@ class ChatbotLogic:
         # This ensures "missing antepartum" doesn't match "antepartum"
         
         has_missing_keyword = "missing" in query_norm
-        
+        missing_birth_weight_flag = has_missing_keyword and "birth weight" in query_norm
+
         if has_missing_keyword:
             # Filter to only "missing" KPIs
             filtered_kpi_map = {k: v for k, v in kpi_map.items() if "missing" in k}
@@ -972,39 +1119,56 @@ class ChatbotLogic:
         
         for key in sorted_keys:
             if key in query_norm:
+                # Protect maternal alias "missing birth" from swallowing "missing birth weight"
+                if key.startswith("missing birth") and "weight" in query_norm and key != "missing birth weight (%)":
+                    continue
                 selected_kpi = filtered_kpi_map[key]
                 break
         
-        # If not found, try fuzzy matching on filtered words
+        # If not found, try fuzzy matching on filtered words (skip fuzzy when explicitly about missing to avoid cross-missing confusion)
         if not selected_kpi and filtered_query:
-            keys = list(kpi_map.keys())
-            matches = difflib.get_close_matches(filtered_query, keys, n=1, cutoff=0.6) # Increased cutoff
-            if matches:
-                 # Check if this match might be a false positive for a facility list
-                 # e.g. "failiteis" -> "episiotomy" 
-                 # If "list" or "show" is in query, we are very skeptical of fuzzy clinical matches
-                 is_list_query = any(w in query_lower for w in ["list", "show", "all"])
-                 if is_list_query and any(w in query_lower for w in ["fac", "hosp", "reg", "fail"]):
-                      pass # Don't set selected_kpi, let metadata_query catch it
-                 else:
-                      selected_kpi = kpi_map[matches[0]]
-            
-            # Sliding window backup
-            if not selected_kpi:
-                 if "eciton" in query_lower or "c -s" in query_lower:
-                     selected_kpi = "C-Section Rate (%)"
+            if not has_missing_keyword:
+                keys = list(kpi_map.keys())
+                matches = difflib.get_close_matches(filtered_query, keys, n=1, cutoff=0.6) # Increased cutoff
+                if matches:
+                     # Check if this match might be a false positive for a facility list
+                     # e.g. "failiteis" -> "episiotomy" 
+                     # If "list" or "show" is in query, we are very skeptical of fuzzy clinical matches
+                     is_list_query = any(w in query_lower for w in ["list", "show", "all"])
+                     if is_list_query and any(w in query_lower for w in ["fac", "hosp", "reg", "fail"]):
+                          pass # Don't set selected_kpi, let metadata_query catch it
+                     else:
+                          selected_kpi = kpi_map[matches[0]]
+                
+                # Sliding window backup
+                if not selected_kpi:
+                     if "eciton" in query_lower or "c -s" in query_lower:
+                         selected_kpi = "C-Section Rate (%)"
                      
                      
         if not selected_kpi:
             # Fallback: check exact strings in KPI_OPTIONS (ignoring case)
+            # CRITICAL: If query has "missing", only match "missing" KPIs to prevent
+            # e.g. "Birth Weight Rate" matching "missing birth weight rate"
             for kpi in active_kpi_options:
-                if kpi.lower() in query_lower:
+                kpi_l = kpi.lower()
+                if kpi_l in query_lower:
+                    if has_missing_keyword and "missing" not in kpi_l:
+                        continue  # Skip non-missing KPIs when query mentions "missing"
                     selected_kpi = kpi
                     break
 
         # MISSING BIRTH OUTCOME LOCK (ISOLATED FIX ONLY)
         if missing_birth_outcome_lock:
             selected_kpi = "Missing Birth Outcome"
+
+        # NEWBORN: hard-lock missing birth weight queries to the missing KPI (avoid fallback to Birth Weight Rate)
+        if (self.get_selected_program() or "maternal") == "newborn" and selected_kpi is None:
+            if "missing birth weight" in query_norm or "missing birthweight" in query_norm:
+                selected_kpi = "Missing Birth Weight (%)"
+        # Maternal: if user asked missing birth weight, push cross-program flow
+        if (self.get_selected_program() or "maternal") == "maternal" and missing_birth_weight_flag and not selected_kpi:
+            selected_kpi = None  # leave unset to trigger cross-program suggestion later
                      
         # Force Bar Chart for Counts
         if selected_kpi in {"Admitted Mothers", "Admitted Newborns"} and chart_type == "line":
@@ -1303,6 +1467,10 @@ class ChatbotLogic:
                     if t1 and t2:
                         d1, mo1, y1 = t1
                         d2, mo2, y2 = t2
+                        
+                        def _safe_date(y, m, d):
+                            last = calendar.monthrange(y, m)[1]
+                            return datetime(y, m, min(d, last))
 
                         if y1 and y2:
                             pass
@@ -1320,8 +1488,8 @@ class ChatbotLogic:
                                 y1 = DEFAULT_YEAR_IF_MISSING
                                 y2 = DEFAULT_YEAR_IF_MISSING
 
-                        start_date = datetime(y1, mo1, d1).strftime("%Y-%m-%d")
-                        end_date = datetime(y2, mo2, d2).strftime("%Y-%m-%d")
+                        start_date = _safe_date(y1, mo1, d1).strftime("%Y-%m-%d")
+                        end_date = _safe_date(y2, mo2, d2).strftime("%Y-%m-%d")
             except Exception as e:
                 logging.warning(f"Custom date range parsing failed: {e}")
 
@@ -1388,6 +1556,17 @@ class ChatbotLogic:
                             return dt_obj, dt_obj
                         except:
                             continue
+                    
+                    # Fallback: manual parse with day clamping (handles Feb 29 on non-leap years)
+                    m = re.search(r'([a-z]{3,})\\s+(\\d{1,2})(?:,)?\\s+(\\d{4})', ds, re.IGNORECASE)
+                    if m:
+                        mon_txt, day_txt, year_txt = m.groups()
+                        mon_num = datetime.strptime(mon_txt[:3], "%b").month
+                        year_num = int(year_txt)
+                        day_num = int(day_txt)
+                        last = calendar.monthrange(year_num, mon_num)[1]
+                        safe_dt = datetime(year_num, mon_num, min(day_num, last))
+                        return safe_dt, safe_dt
                     return None, None
 
                 if len(date_strings) >= 2:
@@ -1575,7 +1754,10 @@ class ChatbotLogic:
         # --- CONTEXT MERGING ---
         # If we have a stored context and current query is missing KPI or Facility, use context.
         context = st.session_state.get("chatbot_context", {})
-        
+        # Drop context if it comes from a different program (prevents maternal KPIs leaking into newborn and vice versa)
+        if context.get("source") and context.get("source") != (self.get_selected_program() or "maternal"):
+            context = {}
+
         # Merge KPI
         # Prevent context merging if intent is list or scope error
         if intent not in ["list_kpis", "scope_error"] and not selected_kpi:
@@ -1709,7 +1891,8 @@ class ChatbotLogic:
                  comparison_mode = True
                  comparison_entity = "facility" 
 
-        final_date_range = {"start_date": start_date, "end_date": end_date} if start_date else (None if reset_date else context.get("date_range"))
+        final_date_range = {"start_date": start_date, "end_date": end_date} if start_date else None
+        # Do NOT reuse prior context date range; default to all time unless explicitly provided
         
         # Merge Entity Type (For "Name them" queries)
         if intent == "text" and not selected_kpi and not entity_type:
@@ -1778,6 +1961,12 @@ class ChatbotLogic:
                 # Prioritize Facility if both present? usually facility is more specific.
                 # But if we found regions and NO facility UIDs, then region.
                 comparison_entity = "region"
+        
+        # If comparison by facility was requested but no facilities resolved, default to all accessible facilities
+        if comparison_mode and comparison_entity == "facility" and not selected_facility_uids:
+            all_facs = get_all_facilities_flat(self.user)
+            selected_facility_names = [f[0] for f in all_facs]
+            selected_facility_uids = [f[1] for f in all_facs]
 
         return {
             "intent": intent,
@@ -1862,17 +2051,41 @@ class ChatbotLogic:
         selected_program = self.get_selected_program()
         detected_program = detect_program_from_text(query)
 
-        if detected_program:
+        # Auto-select program: prefer detected hints; otherwise default to maternal
+        if detected_program and detected_program != selected_program:
             self.set_selected_program(detected_program)
             selected_program = detected_program
-            if self.is_program_selection_only(query):
-                return None, get_program_welcome_message(role, detected_program)
-
         if not selected_program:
-            return None, get_program_selection_message(role)
+            self.set_selected_program(detected_program or "maternal")
+            selected_program = self.get_selected_program()
 
         active_program_config = self.apply_active_program_globals(selected_program)
         parsed = self.parse_query(query)
+
+        # Guard: if selected program is newborn, prevent maternal-only KPIs from proceeding
+        if selected_program == "newborn" and parsed.get("kpi"):
+            from components.chatbot_newborn import validate_newborn_indicator
+            is_valid, err_msg = validate_newborn_indicator(parsed["kpi"])
+            if not is_valid:
+                return None, err_msg
+        # Guard: if selected program is maternal, prevent newborn-only KPIs from proceeding
+        if selected_program == "maternal" and parsed.get("kpi") and parsed["kpi"] not in active_program_config["kpi_mapping"]:
+            if parsed["kpi"] in PROGRAM_CONFIGS["newborn"]["kpi_mapping"]:
+                return None, "That looks like a newborn indicator. Type `newborn` to switch programs, then ask again."
+            # If user clearly asked for missing birth weight, guide to newborn
+            if "missing birth weight" in query_lower or "missing birthweight" in query_lower:
+                return None, "Missing Birth Weight is tracked in the newborn program. Type `newborn` then ask again, or say `list indicators` to see maternal options."
+            return None, "I couldn't match that to a maternal indicator. Say `list indicators` to see maternal options."
+
+        # Guard: if user requested facility comparison but we resolved fewer than 2 facilities, ask to clarify
+        if parsed.get("comparison_mode") and parsed.get("comparison_entity") == "facility":
+            if len(parsed.get("facility_uids", [])) < 2:
+                found = parsed.get("facility_names") or []
+                found_str = ", ".join(found) if found else "none"
+                return None, (
+                    f"I couldn't identify at least two facilities for comparison (found: {found_str}). "
+                    "Please specify the full facility names or say `list facilities` to view available options."
+                )
         
         # --- PERFORMANCE CACHE ---
         cache_key = self._get_cache_key(parsed, parsed.get("facility_uids"))
@@ -2088,9 +2301,15 @@ class ChatbotLogic:
         # Update Context even for Metadata queries (so "Total" can be answered next)
         if parsed.get("intent") == "metadata_query":
              st.session_state["chatbot_context"]["entity_type"] = entity_type
-             return None, None # Should have returned above, but just in case
+             return None, "Please specify whether you want a region or facility list so I can proceed."
         
         if not parsed["kpi"]:
+            # Enforce newborn strict fallback
+            if selected_program == "newborn":
+                from components.chatbot_newborn import validate_newborn_indicator
+                _, msg = validate_newborn_indicator(None)
+                return None, msg
+
             cross_program = self.detect_cross_program(query, selected_program)
             if cross_program:
                 cross_label = self.get_program_config(cross_program)["label"]
@@ -2247,7 +2466,6 @@ class ChatbotLogic:
                 if not data:
                     return None, f"I searched the data for **{kpi_name}**, but no categorical breakdowns were found for this period."
 
-                import plotly.express as px
                 df_pie = pd.DataFrame(data)
                 fig = px.pie(
                     df_pie, values="Count", names="Category", 
@@ -2269,7 +2487,7 @@ class ChatbotLogic:
             
             # 2. Get Data for Active KPI (using SILENT PREPARE)
             if use_newborn_data:
-                from newborns_dashboard.dash_co_newborn import prepare_data_for_newborn_trend_chart
+                from newborns_dashboard.kpi_utils_newborn import prepare_data_for_newborn_trend_chart
                 prepared_df, date_col = prepare_data_for_newborn_trend_chart(active_df, active_kpi_name, facility_uids, date_range)
             else:
                 prepared_df, date_col = self._silent_prepare_data(active_df, active_kpi_name, facility_uids, date_range)
@@ -2438,7 +2656,7 @@ class ChatbotLogic:
             
             # 3. Batch Fetch
             if use_newborn_data:
-                 from newborns_dashboard.dash_co_newborn import prepare_data_for_newborn_trend_chart
+                 from newborns_dashboard.kpi_utils_newborn import prepare_data_for_newborn_trend_chart
                  all_data_df, date_col = prepare_data_for_newborn_trend_chart(active_df, active_kpi_name, flat_uids, date_range)
             else:
                  all_data_df, date_col = self._silent_prepare_data(active_df, active_kpi_name, flat_uids, date_range)
@@ -2765,7 +2983,7 @@ class ChatbotLogic:
         else:
             # Text Response (Single value)
             if use_newborn_data:
-                 from newborns_dashboard.dash_co_newborn import prepare_data_for_newborn_trend_chart
+                 from newborns_dashboard.kpi_utils_newborn import prepare_data_for_newborn_trend_chart
                  prepared_df, date_col = prepare_data_for_newborn_trend_chart(active_df, active_kpi_name, facility_uids, date_range)
             else:
                  prepared_df, date_col = self._silent_prepare_data(
@@ -2777,7 +2995,7 @@ class ChatbotLogic:
             
             if prepared_df is None or prepared_df.empty:
                 return None, f"No data found for **{kpi_name}**."
-                
+            
             # Check for specialized KPI
             kpi_suffix = self.SPECIALIZED_KPI_MAP.get(active_kpi_name)
             
@@ -2900,11 +3118,9 @@ def render_chatbot():
     if "messages" not in st.session_state:
         st.session_state.messages = []
         user_role = st.session_state.get("user", {}).get("role", "national")
-        selected_program = st.session_state.get("chatbot_program")
-        if selected_program:
-            welcome_msg = get_program_welcome_message(user_role, selected_program)
-        else:
-            welcome_msg = get_program_selection_message(user_role)
+        if not st.session_state.get("chatbot_program"):
+            st.session_state["chatbot_program"] = "maternal"
+        welcome_msg = get_program_welcome_message(user_role, st.session_state["chatbot_program"])
         st.session_state.messages.append({
             "role": "assistant",
             "content": welcome_msg
@@ -3015,7 +3231,11 @@ def render_chatbot():
                          
                     render_func = getattr(module, func_name)
                     
-                    if suffix == "utils" or suffix == "newborn":
+                    if suffix == "utils":
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                    elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], value_name=params["active_kpi_name"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                    elif suffix == "newborn":
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     elif suffix == "newborn_simplified":
                         render_func(render_df, facility_uids=params["all_comparison_uids"], facility_names=params["facility_names"], key_suffix=f"msg_{message_index}")
@@ -3038,14 +3258,20 @@ def render_chatbot():
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         # FIX: Pass region names (comparison_targets) instead of UIDs
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                    elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
+                        from utils.queries import get_facilities_grouped_by_region
+                        regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
+                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, value_name=params["active_kpi_name"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     elif suffix == "newborn":
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         # FIX: Pass region names (comparison_targets) instead of UIDs
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                     elif suffix == "newborn_simplified":
-                        # FIX: Use region names
-                        render_func(render_df, region_names=params["comparison_targets"])
+                        # FIX: Use region names and region/facility mappings
+                        from utils.queries import get_facilities_grouped_by_region
+                        regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
+                        render_func(render_df, region_names=params["comparison_targets"], region_mapping=regions_mapping, facilities_by_region=regions_mapping)
                     elif suffix == "admitted_mothers":
                         # admitted_mothers has a different signature
                         # FIX: Use region names
@@ -3058,8 +3284,12 @@ def render_chatbot():
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
             else:
                 render_func = getattr(module, f"{func_prefix}_trend_chart")
-                if suffix == "utils" or suffix == "newborn":
+                if suffix == "utils":
                     render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
+                elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
+                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], value_name=params["active_kpi_name"], facility_uids=params.get("facility_uids"), key_suffix=f"msg_{message_index}")
+                elif suffix == "newborn":
+                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=params.get("facility_uids"), key_suffix=f"msg_{message_index}")
                 elif suffix == "newborn_simplified":
                     render_func(render_df, period_col="period_display", title=params["active_kpi_name"], facility_uids=params.get("facility_uids"))
                 elif suffix == "admitted_mothers":
@@ -3120,7 +3350,9 @@ def render_chatbot():
                          fig = None
                     else:
                         # Rerurns (fig, text)
-                        fig, response_text = chatbot_logic.generate_response(prompt)
+                         fig, response_text = chatbot_logic.generate_response(prompt)
+                         if fig is None and response_text is None:
+                             response_text = "I couldn't parse that yet. Please mention a program (maternal/newborn) and an indicator, or say `help`."
                     
                     message_placeholder.markdown(response_text)
                     
@@ -3168,15 +3400,24 @@ def render_chatbot():
                         selected_program = st.session_state.get("chatbot_program")
                         if selected_program:
                             program_label = PROGRAM_CONFIGS[selected_program]["label"]
-                            error_msg += f"It seems I couldn't find the specific indicator you're looking for in the **{program_label}** program."
+                            error_msg += (
+                                f"It seems I couldn't find the specific indicator you're looking for in the **{program_label}** program. "
+                                "Say `list indicators` to see what I can analyze."
+                            )
                         else:
-                            error_msg += "It seems I couldn't find the specific indicator you're looking for."
+                            error_msg += "It seems I couldn't find the specific indicator you're looking for. Say `list indicators` to see what I can analyze."
                     elif "facility" in e_str or "region" in e_str:
                         error_msg += "I had trouble identifying the location (facility or region) in your prompt."
                     elif "local variable" in e_str:
-                        error_msg += "I encountered a technical glitch while resolving names. Please try your request again."
+                        error_msg += (
+                            "I couldn't resolve that request cleanly. "
+                            "Say `list indicators` to see what I can analyze, or type `maternal`/`newborn` to switch programs."
+                        )
                     else:
-                        error_msg += "I'm not quite sure how to handle that specific question yet."
+                        error_msg += (
+                            "I'm not quite sure how to handle that specific question yet. "
+                            "Say `list indicators` to see the indicators I can analyze."
+                        )
                     
                     error_msg += "\n\n---\n"
                     error_msg += "💡 **How to Prompt for Best Results:**\n"
@@ -3188,6 +3429,12 @@ def render_chatbot():
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
 
     st.markdown('</div>', unsafe_allow_html=True)
+
+    # Auto-scroll to bottom on each rerun
+    st.markdown(
+        "<script>window.scrollTo(0, document.body.scrollHeight);</script>",
+        unsafe_allow_html=True,
+    )
 
 
 def _legacy_get_welcome_message(role):

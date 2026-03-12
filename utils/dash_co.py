@@ -128,6 +128,21 @@ from utils.kpi_missing_uterotonic import (
     get_numerator_denominator_for_missing_uterotonic,
 )
 
+# Explicit export list to avoid partially initialized import errors
+__all__ = [
+    "normalize_patient_dates",
+    "render_trend_chart_section",
+    "render_comparison_chart",
+    "render_trend_chart_section_facility",
+    "render_trend_chart_section_region",
+    "render_trend_chart_section_national",
+    "render_comparison_chart_section_facility",
+    "render_comparison_chart_section_region",
+    "render_comparison_chart_section_national",
+    "KPI_MAPPING",
+    "KPI_OPTIONS",
+]
+
 # KPI mapping for comparison charts - UPDATED NAMES
 KPI_MAPPING = {
     "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)": {

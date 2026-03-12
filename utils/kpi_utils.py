@@ -1810,7 +1810,9 @@ def render_trend_chart(
     # Display the chart with reduced height
     fig.update_layout(height=260, margin=dict(t=20, b=20, l=10, r=10))
     # Generate unique key for plotly chart
-    chart_key = f"trend_chart_{title.replace(' ', '_')}_{str(facility_uids) if facility_uids else 'overall'}"
+    # Include key_suffix to avoid duplicate plotly keys across chat messages
+    suffix_token = key_suffix if key_suffix else "base"
+    chart_key = f"trend_chart_{title.replace(' ', '_')}_{str(facility_uids) if facility_uids else 'overall'}_{suffix_token}"
     st.plotly_chart(fig, use_container_width=True, key=chart_key)
     if forecast_payload:
         forecast_unit = forecast_payload.get("period_unit", "Period")
@@ -1890,6 +1892,7 @@ def render_trend_chart(
 
     # Keep the download button - FIX DATE FORMAT ISSUE
     summary_df = (table_df.copy() if use_hover_data else df.copy()).reset_index(drop=True)
+    summary_df = summary_df.loc[:, ~summary_df.columns.duplicated()].copy()
     period_label = get_current_period_label()
 
     if "numerator" in summary_df.columns and "denominator" in summary_df.columns:

@@ -1380,7 +1380,7 @@ def render_newborn_region_comparison_chart(
         ),
         legend=dict(title="Regions", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=kwargs.get("key_suffix"))
 
     st.markdown("---")
     st.markdown("### Regional Data Summary")
@@ -1541,7 +1541,7 @@ def render_admitted_newborns_trend_chart(
     fig.update_layout(yaxis_tickformat=",")
 
     # Display the chart
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=kwargs.get("key_suffix"))
     if forecast_payload:
         delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
         forecast_unit = forecast_payload.get("period_unit", "Period")
@@ -1920,6 +1920,8 @@ def render_admitted_newborns_region_comparison_chart(
     """Use the exact admitted-mothers region comparison implementation."""
     from utils.kpi_admitted_mothers import render_admitted_mothers_region_comparison_chart
 
+    suppress_plot = kwargs.pop("suppress_plot", False)
+
     return render_admitted_mothers_region_comparison_chart(
         df=df,
         period_col=period_col,
@@ -1931,7 +1933,7 @@ def render_admitted_newborns_region_comparison_chart(
         region_mapping=region_mapping,
         facilities_by_region=facilities_by_region,
         value_name=value_name,
-        suppress_plot=kwargs.get("suppress_plot", False),
+        suppress_plot=suppress_plot,
         **kwargs,
     )
 
