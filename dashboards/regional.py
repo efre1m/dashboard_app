@@ -41,6 +41,7 @@ from utils.kpi_utils import clear_cache, compute_kpis
 from utils.odk_dashboard import display_odk_dashboard
 from components.edit_profile import render_edit_profile
 from utils.usage_tracking import render_usage_tracking_shared
+from dashboards.hfa import render_hfa_tab
 #from dashboards.data_quality_tracking import render_data_quality_tracking
 
 
@@ -296,6 +297,7 @@ def initialize_session_state():
             "summary": False,
             "mentorship": False,
             "data_quality": False,
+            "hfa": False,
             "tracking": False,
         },
         "tab_data_loaded": {
@@ -304,6 +306,7 @@ def initialize_session_state():
             "summary": False,
             "mentorship": False,
             "data_quality": True,
+            "hfa": True,
             "tracking": True,
         },
         "tab_loading": {
@@ -1341,6 +1344,7 @@ def render():
     hide_sidebar_filters = sidebar_tab_label in {
         "Mentorship",
         "Resources",
+        "HFA",
         "Usage Tracking",
     }
 
@@ -1432,6 +1436,7 @@ def render():
         "Summary": "summary",
         "Mentorship": "mentorship",
         "Resources": "resources",
+        "HFA": "hfa",
         "Usage Tracking": "tracking",
     }
     reverse_tab_options = {v: k for k, v in tab_options.items()}
@@ -1567,6 +1572,9 @@ def render():
 
     elif selected_tab == "resources":
         render_resources_tab()
+
+    elif selected_tab == "hfa":
+        render_hfa_tab(user, key_prefix="hfa_regional")
 
     elif selected_tab == "tracking":
         # Regional user tracks Facility users in their region
