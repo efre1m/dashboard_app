@@ -13,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import os
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -23,14 +24,35 @@ import re
 # Constants and paths (restrict all file I/O to utils/HFA)
 # ---------------------------------------------------------------------------
 
-HFA_DIR = Path("D:/dashboard_app/utils/HFA").resolve()
+def _looks_like_windows_drive_path(value: str) -> bool:
+    return bool(re.match(r"^[A-Za-z]:[\\/]", value))
+
+
+def _resolve_hfa_dir() -> Path:
+    project_root = Path(__file__).resolve().parents[1]
+    configured = (os.environ.get("DASHBOARD_APP_HFA_DIR") or os.environ.get("HFA_DIR") or "").strip()
+    if configured:
+        # Avoid accidentally treating a Windows drive path as a relative path on Linux/macOS.
+        if os.name != "nt" and _looks_like_windows_drive_path(configured):
+            return (project_root / "utils" / "HFA").resolve()
+
+        configured_path = Path(configured).expanduser()
+        if configured_path.is_absolute():
+            return configured_path.resolve()
+        return (project_root / configured_path).resolve()
+
+    return (project_root / "utils" / "HFA").resolve()
+
+
+HFA_DIR = _resolve_hfa_dir()
 MAPPING_PATH = HFA_DIR / "dhis2_to_hfafile_facility_mapping.xlsx"
 ALLOWED_ROLES = {"national", "regional"}
 
-# Build a case-insensitive lookup for region folders (only inside utils/HFA)
-REGION_FOLDERS: Dict[str, Path] = {
-    p.name.lower(): p for p in HFA_DIR.iterdir() if p.is_dir()
-}
+def _region_folders() -> Dict[str, Path]:
+    """Case-insensitive lookup for region folders (only inside utils/HFA)."""
+    if not HFA_DIR.exists():
+        return {}
+    return {p.name.lower(): p for p in HFA_DIR.iterdir() if p.is_dir()}
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +89,7 @@ def facilities_for_region(region: Optional[str]) -> List[str]:
 
 def _resolve_region_folder(region: str) -> Path:
     """Return the folder for a region (case-insensitive), defaulting to HFA root."""
-    return REGION_FOLDERS.get(region.lower(), HFA_DIR)
+    return _region_folders().get(region.lower(), HFA_DIR)
 
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -158,6 +180,14 @@ def render_hfa_tab(user: Dict, *, key_prefix: str = "hfa") -> None:
         st.info("The HFA dashboard is available only to national or regional users.")
         return
 
+    if not HFA_DIR.exists():
+        st.error(
+            "HFA directory not found. "
+            f"Expected: {HFA_DIR}. "
+            "Set `DASHBOARD_APP_HFA_DIR` (or `HFA_DIR`) to override."
+        )
+        return
+
     user_region = (
         user.get("region")
         or user.get("Region")
@@ -165,7 +195,11 @@ def render_hfa_tab(user: Dict, *, key_prefix: str = "hfa") -> None:
         or user.get("region_name")
     )
 
-    all_regions = region_values()
+    try:
+        all_regions = region_values()
+    except Exception as err:
+        st.error(f"Unable to load HFA mapping file: {err}")
+        return
     if role == "regional":
         regions = [r for r in all_regions if r.lower() == (user_region or "").lower()]
     else:
