@@ -1884,6 +1884,14 @@ def render_cpap_general_trend_chart(
         return
 
     trend_df = pd.DataFrame(trend_data)
+    trend_valid_df = trend_df[
+        pd.to_numeric(trend_df["cpap_general_total"], errors="coerce").fillna(0) > 0
+    ].copy()
+    if trend_valid_df.empty:
+        st.warning(
+            "No valid general CPAP data to display (denominator is zero for all periods)."
+        )
+        return
 
     # Create bar chart for general CPAP
     fig = go.Figure()
@@ -4139,13 +4147,13 @@ def render_kmc_rate_region_comparison(*args, **kwargs):
 def render_cpap_rate_facility_comparison(*args, **kwargs):
     """Render facility comparison for CPAP coverage - STACKED BAR CHART FOR RATES"""
     # This is an alias for the main function
-    return render_cpap_facility_comparison(*args, **kwargs)
+    return render_cpap_general_facility_comparison(*args, **kwargs)
 
 
 def render_cpap_rate_region_comparison(*args, **kwargs):
     """Render region comparison for CPAP coverage - STACKED BAR CHART FOR RATES"""
     # This is an alias for the main function
-    return render_cpap_region_comparison(*args, **kwargs)
+    return render_cpap_general_region_comparison(*args, **kwargs)
 
 
 # ---------------- Export all functions ----------------
