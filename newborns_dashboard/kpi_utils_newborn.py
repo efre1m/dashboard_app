@@ -1354,6 +1354,30 @@ def render_newborn_region_comparison_chart(
                 "Region", title, numerator_name, denominator_name, is_count=False
             ),
         )
+
+    values = (
+        pd.to_numeric(grouped_plot_df["value"], errors="coerce")
+        if "value" in grouped_plot_df.columns
+        else pd.Series(dtype="float64")
+    )
+    y_lower = -0.5
+    y_upper = 100.5
+    if not values.empty:
+        y_min = values.min(skipna=True)
+        y_max = values.max(skipna=True)
+
+        if y_min is not None and not pd.isna(y_min) and float(y_min) < y_lower:
+            pad = max(5.0, abs(float(y_min)) * 0.05)
+            y_lower = float(y_min) - pad
+        if y_max is not None and not pd.isna(y_max) and float(y_max) > y_upper:
+            pad = max(5.0, abs(float(y_max)) * 0.05)
+            y_upper = float(y_max) + pad
+
+    from utils.kpi_utils import _compute_nice_dtick
+
+    span = max(0.0, float(y_upper) - float(y_lower))
+    y_dtick = _compute_nice_dtick(span, max_ticks=7) or 25
+    y_tickformat = ".2f" if span <= 10 else ".0f"
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -1368,14 +1392,17 @@ def render_newborn_region_comparison_chart(
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            automargin=True,
             layer="below traces",
         ),
         yaxis=dict(
             rangemode="tozero",
-            range=[-0.5, 100.5],
-            dtick=25,
+            range=[y_lower, y_upper],
+            dtick=y_dtick,
+            tickformat=y_tickformat,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            automargin=True,
             layer="below traces",
         ),
         legend=dict(title="Regions", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),

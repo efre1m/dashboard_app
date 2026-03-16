@@ -5,6 +5,7 @@ import datetime as dt
 import streamlit as st
 import hashlib
 import numpy as np
+import math
 import warnings
 
 try:
@@ -50,6 +51,36 @@ def auto_text_color(bg):
         return "#000000" if brightness > 150 else "#ffffff"
     except Exception:
         return "#000000"
+
+
+def _compute_nice_dtick(span: float, max_ticks: int = 8):
+    """Return a 'nice' dtick (1/2/5 * 10^n) targeting <= max_ticks labels."""
+    try:
+        span_val = float(span)
+        max_ticks_val = int(max_ticks)
+    except Exception:
+        return None
+
+    if span_val <= 0 or max_ticks_val <= 0:
+        return None
+
+    raw = span_val / max_ticks_val
+    if raw <= 0:
+        return None
+
+    exponent = 10 ** math.floor(math.log10(raw))
+    fraction = raw / exponent
+
+    if fraction <= 1:
+        nice = 1
+    elif fraction <= 2:
+        nice = 2
+    elif fraction <= 5:
+        nice = 5
+    else:
+        nice = 10
+
+    return nice * exponent
 
 
 def format_period_month_year(period_str):
@@ -1746,19 +1777,28 @@ def render_trend_chart(
         if not plot_df.empty
         else True
     )
+    period_label = get_current_period_label()
+    xaxis_title = {
+        "Daily": "Date",
+        "Weekly": "Week",
+        "Monthly": "Period (Month-Year)",
+        "Quarterly": "Quarter",
+        "Yearly": "Year",
+    }.get(period_label, "Period")
 
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        xaxis_title=period_col,
-        yaxis_title=value_col,
+        xaxis_title=xaxis_title,
+        yaxis_title=title,
         xaxis=dict(
             type="category" if is_categorical else None,
             tickangle=-45 if is_categorical else 0,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            automargin=True,
             layer="below traces",
         ),
         yaxis=dict(
@@ -1767,6 +1807,7 @@ def render_trend_chart(
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            automargin=True,
             layer="below traces",
         ),
     )
@@ -1778,10 +1819,31 @@ def render_trend_chart(
 
     is_rate_chart = is_rate_like
     if is_rate_chart:
+        if isinstance(plot_df, pd.DataFrame) and value_col in plot_df.columns:
+            values = pd.to_numeric(plot_df[value_col], errors="coerce")
+        else:
+            values = pd.Series(dtype="float64")
+        y_lower = -0.5
+        y_upper = 100.5
+
+        if not values.empty:
+            y_min = values.min(skipna=True)
+            y_max = values.max(skipna=True)
+
+            if y_min is not None and not pd.isna(y_min) and float(y_min) < y_lower:
+                pad = max(5.0, abs(float(y_min)) * 0.05)
+                y_lower = float(y_min) - pad
+            if y_max is not None and not pd.isna(y_max) and float(y_max) > y_upper:
+                pad = max(5.0, abs(float(y_max)) * 0.05)
+                y_upper = float(y_max) + pad
+
+        span = max(0.0, float(y_upper) - float(y_lower))
+        y_dtick = _compute_nice_dtick(span, max_ticks=7) or 25
+        y_tickformat = ".2f" if span <= 10 else ".0f"
         fig.update_layout(
-            yaxis_tickformat=".2f",
-            yaxis_range=[-0.5, 100.5],
-            yaxis_dtick=25,
+            yaxis_tickformat=y_tickformat,
+            yaxis_range=[y_lower, y_upper],
+            yaxis_dtick=y_dtick,
         )
     if any(k in title for k in ["Deliveries", "Acceptance"]):
         fig.update_layout(yaxis_tickformat=",")
@@ -1808,7 +1870,7 @@ def render_trend_chart(
                 st.metric("Trend", "-")
 
     # Display the chart with reduced height
-    fig.update_layout(height=260, margin=dict(t=20, b=20, l=10, r=10))
+    fig.update_layout(height=260, margin=dict(t=20, b=20, l=60, r=20))
     # Generate unique key for plotly chart
     # Include key_suffix to avoid duplicate plotly keys across chat messages
     suffix_token = key_suffix if key_suffix else "base"
@@ -2215,6 +2277,7 @@ def render_facility_comparison_chart(
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
+            automargin=True,
             layer="below traces",
         ),
         yaxis=dict(
@@ -2223,6 +2286,7 @@ def render_facility_comparison_chart(
             gridcolor="rgba(128,128,128,0.2)",
             zeroline=True,
             zerolinecolor="rgba(128,128,128,0.5)",
+            automargin=True,
             layer="below traces",
         ),
         legend=dict(
@@ -2236,10 +2300,31 @@ def render_facility_comparison_chart(
     )
 
     if is_rate_kpi:
+        if isinstance(comparison_df, pd.DataFrame) and "value" in comparison_df.columns:
+            values = pd.to_numeric(comparison_df["value"], errors="coerce")
+        else:
+            values = pd.Series(dtype="float64")
+        y_lower = -0.5
+        y_upper = 100.5
+
+        if not values.empty:
+            y_min = values.min(skipna=True)
+            y_max = values.max(skipna=True)
+
+            if y_min is not None and not pd.isna(y_min) and float(y_min) < y_lower:
+                pad = max(5.0, abs(float(y_min)) * 0.05)
+                y_lower = float(y_min) - pad
+            if y_max is not None and not pd.isna(y_max) and float(y_max) > y_upper:
+                pad = max(5.0, abs(float(y_max)) * 0.05)
+                y_upper = float(y_max) + pad
+
+        span = max(0.0, float(y_upper) - float(y_lower))
+        y_dtick = _compute_nice_dtick(span, max_ticks=7) or 25
+        y_tickformat = ".2f" if span <= 10 else ".0f"
         fig.update_layout(
-            yaxis_tickformat=".2f",
-            yaxis_range=[-0.5, 100.5],
-            yaxis_dtick=25,
+            yaxis_tickformat=y_tickformat,
+            yaxis_range=[y_lower, y_upper],
+            yaxis_dtick=y_dtick,
         )
 
     # Generate unique key for facility comparison chart
@@ -2560,10 +2645,33 @@ def render_region_comparison_chart(
     )
 
     if is_rate_kpi:
+        if isinstance(comparison_df, pd.DataFrame) and "value" in comparison_df.columns:
+            values = pd.to_numeric(comparison_df["value"], errors="coerce")
+        else:
+            values = pd.Series(dtype="float64")
+        y_lower = -0.5
+        y_upper = 100.5
+
+        if not values.empty:
+            y_min = values.min(skipna=True)
+            y_max = values.max(skipna=True)
+
+            if y_min is not None and not pd.isna(y_min) and float(y_min) < y_lower:
+                pad = max(5.0, abs(float(y_min)) * 0.05)
+                y_lower = float(y_min) - pad
+            if y_max is not None and not pd.isna(y_max) and float(y_max) > y_upper:
+                pad = max(5.0, abs(float(y_max)) * 0.05)
+                y_upper = float(y_max) + pad
+
+        y_dtick = 25
+        if y_upper > 200:
+            y_dtick = 50
+        if y_upper > 500:
+            y_dtick = 100
         fig.update_layout(
             yaxis_tickformat=".2f",
-            yaxis_range=[-0.5, 100.5],
-            yaxis_dtick=25,
+            yaxis_range=[y_lower, y_upper],
+            yaxis_dtick=y_dtick,
         )
 
     # Generate unique key for region comparison chart

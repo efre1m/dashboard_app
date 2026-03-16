@@ -591,6 +591,7 @@ class ChatbotLogic:
             "Outborn Hypothermia Rate (%)": "newborn",
             "Neonatal Mortality Rate (%)": "newborn",
             "Admitted Newborns": "newborn",
+            "Newborn Coverage Rate": "newborn",
             "Birth Weight Rate": "newborn_simplified",
             "KMC Coverage by Birth Weight": "newborn_simplified",
             "General CPAP Coverage": "newborn_simplified",
@@ -2509,7 +2510,10 @@ class ChatbotLogic:
             # If comparison mode, we ignore this initial check and let the loop handle it
             if not parsed.get("comparison_mode"):
                  if prepared_df is None or prepared_df.empty:
-                     return None, f"I found no data for **{kpi_name}** matching your criteria."
+                     # SPECIAL CASE: Newborn Coverage Rate has an external denominator source,
+                     # so we still need to show periods with 0 numerator when denominator exists.
+                     if not (use_newborn_data and active_kpi_name == "Newborn Coverage Rate"):
+                         return None, f"I found no data for **{kpi_name}** matching your criteria."
             
             # Generate Plot
             # Group by period
@@ -2677,76 +2681,368 @@ class ChatbotLogic:
 
             # Loop through Groups and Build Data using MEMORY FILTERING
             chart_data = []
-            
-            for entity_name, entity_uids in comparison_groups:
-                 # Filter this group's data from the batch
-                 if all_data_df.empty:
-                     entity_df = pd.DataFrame()
-                 else:
-                     if "orgUnit" in all_data_df.columns and entity_uids:
-                         entity_df = all_data_df[all_data_df["orgUnit"].isin(entity_uids)].copy()
-                     else:
-                         # Fallback for national/region if specific UID column logic differs
-                         # For now assuming orgUnit is key
-                         if not entity_uids: # Overall
-                             entity_df = all_data_df.copy()
-                         else:
-                             entity_df = pd.DataFrame()
-                 
-                 if entity_df.empty:
-                     continue
 
-                 # Determine Period Order (Already done globally but ensuring display col)
-                 if "period_display" not in entity_df.columns:
-                     if "event_date" in entity_df.columns:
-                        entity_df["period_display"] = entity_df["event_date"].dt.strftime("%b-%y").str.capitalize()
-                        entity_df["period_sort"] = entity_df["event_date"].dt.to_period("M").dt.start_time
-                 
-                 grouped = entity_df.groupby("period_display")
-                 
-                 # Sort groups by period_sort
-                 time_groups = []
-                 for name, group in grouped: 
-                     # Get sort value from first row
-                     sort_val = group['period_sort'].iloc[0] if 'period_sort' in group.columns else (group['event_date'].min() if 'event_date' in group.columns else datetime.min)
-                     time_groups.append((name, group, sort_val))
-                 
-                 # Sort by the extracted sort_val
-                 time_groups.sort(key=lambda x: x[2])
+            # SPECIAL HANDLING: Newborn Coverage Rate should include periods even when numerator is zero.
+            # The denominator comes from an external aggregated admissions file, so months/years with no
+            # patient rows still need to appear as 0% when the denominator exists (>0).
+            coverage_rate_handled = False
+            if use_newborn_data and active_kpi_name == "Newborn Coverage Rate":
+                try:
+                    from newborns_dashboard.kpi_newborn_coverage_rate import (
+                        load_newborn_coverage_denominator,
+                        _sum_denominator_for_regions,
+                        _sum_denominator_for_facilities,
+                        _resolve_facility_names,
+                    )
+                except Exception as e:
+                    logging.error(
+                        f"Failed to load Newborn Coverage Rate denominator utilities: {e}"
+                    )
+                else:
+                    den_long = load_newborn_coverage_denominator()
+                    if den_long is None or den_long.empty:
+                        return None, (
+                            "Newborn Coverage Rate denominator data is missing or empty. "
+                            "Please check `utils/aggregated_admission_newborn.xlsx`."
+                        )
 
-                 for period_name, group_df, sort_val in time_groups:
-                     # Generic KPI calculation fallback
-                     kpi_suffix = self.SPECIALIZED_KPI_MAP.get(active_kpi_name)
-                     
-                     if use_newborn_data:
-                         from newborns_dashboard.dash_co_newborn import get_numerator_denominator_for_newborn_kpi_with_all
-                         numerator, denominator, value = get_numerator_denominator_for_newborn_kpi_with_all(group_df, active_kpi_name, entity_uids, date_range)
-                     elif kpi_suffix and kpi_suffix != "utils":
-                         try:
-                             module = __import__(f"utils.kpi_{kpi_suffix}", fromlist=[f"get_numerator_denominator_for_{kpi_suffix}"])
-                             get_nd_func = getattr(module, f"get_numerator_denominator_for_{kpi_suffix}")
-                             numerator, denominator, value = get_nd_func(group_df, entity_uids, date_range)
-                         except Exception as e:
-                             logging.error(f"Failed to call specialized function for {active_kpi_name}: {e}")
-                             numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(group_df, active_kpi_name, entity_uids, date_range)
-                     else:
-                         # Use standard kpi_utils for "utils" suffix or no suffix
-                         numerator, denominator, value = kpi_utils.get_numerator_denominator_for_kpi(group_df, active_kpi_name, entity_uids, date_range)
-                     
-                     # Resolve Component
-                     plot_value = value
-                     if target_component == "numerator": plot_value = numerator
-                     elif target_component == "denominator": plot_value = denominator
-                     
-                     chart_data.append({
-                         "Period": period_name,
-                         "Entity": entity_name,
-                         "Value": plot_value,
-                         "Numerator": numerator,
-                         "Denominator": denominator,
-                         "SortDate": sort_val,
-                         "orgUnit": entity_uids[0] if entity_uids else None
-                     })
+                    # Only Monthly/Yearly are supported for this KPI (match dashboard behavior)
+                    period_label = parsed.get("period_label") or st.session_state.get(
+                        "period_label", "Monthly"
+                    )
+                    if (
+                        "filters" in st.session_state
+                        and "period_label" in st.session_state.filters
+                    ):
+                        period_label = st.session_state.filters["period_label"]
+                    if period_label not in ["Monthly", "Yearly"]:
+                        period_label = "Monthly"
+
+                    start_date = date_range.get("start_date") if date_range else None
+                    end_date = date_range.get("end_date") if date_range else None
+
+                    month_periods = None
+                    try:
+                        if start_date and end_date:
+                            start_ts = pd.Timestamp(start_date)
+                            end_ts = pd.Timestamp(end_date)
+                            month_periods = pd.period_range(
+                                start=start_ts, end=end_ts, freq="M"
+                            )
+                    except Exception:
+                        month_periods = None
+
+                    if month_periods is None or len(month_periods) == 0:
+                        ym_vals = pd.to_numeric(
+                            den_long.get("yearmonth"), errors="coerce"
+                        ).dropna()
+                        if ym_vals.empty:
+                            return None, (
+                                "No denominator periods available for Newborn Coverage Rate."
+                            )
+                        ym_min = int(ym_vals.min())
+                        ym_max = int(ym_vals.max())
+                        start_ts = pd.Timestamp(
+                            year=ym_min // 100, month=ym_min % 100, day=1
+                        )
+                        end_ts = pd.Timestamp(
+                            year=ym_max // 100, month=ym_max % 100, day=1
+                        )
+                        month_periods = pd.period_range(
+                            start=start_ts, end=end_ts, freq="M"
+                        )
+
+                    period_defs = []
+                    if period_label == "Monthly":
+                        for p in month_periods:
+                            ym = int(p.year * 100 + p.month)
+                            period_defs.append(
+                                {
+                                    "period_display": pd.Timestamp(p.start_time).strftime(
+                                        "%b-%y"
+                                    ),
+                                    "period_sort": pd.Timestamp(p.start_time),
+                                    "yearmonths": [ym],
+                                    "year": int(p.year),
+                                }
+                            )
+                    else:  # Yearly
+                        year_to_yms = {}
+                        for p in month_periods:
+                            ym = int(p.year * 100 + p.month)
+                            year_to_yms.setdefault(int(p.year), []).append(ym)
+                        for year in sorted(year_to_yms.keys()):
+                            period_defs.append(
+                                {
+                                    "period_display": str(year),
+                                    "period_sort": pd.Timestamp(year=year, month=1, day=1),
+                                    "yearmonths": year_to_yms[year],
+                                    "year": year,
+                                }
+                            )
+
+                    # Prepare numerator base (may be empty; still OK)
+                    numerator_base_df = all_data_df.copy()
+                    if not numerator_base_df.empty:
+                        if (
+                            "event_date" not in numerator_base_df.columns
+                            and date_col
+                            and date_col in numerator_base_df.columns
+                        ):
+                            numerator_base_df["event_date"] = pd.to_datetime(
+                                numerator_base_df[date_col], errors="coerce"
+                            )
+                        if "event_date" in numerator_base_df.columns:
+                            numerator_base_df = numerator_base_df[
+                                numerator_base_df["event_date"].notna()
+                            ].copy()
+                            numerator_base_df["_yearmonth"] = (
+                                numerator_base_df["event_date"].dt.year.astype(int) * 100
+                                + numerator_base_df["event_date"].dt.month.astype(int)
+                            )
+                            numerator_base_df["_year"] = (
+                                numerator_base_df["event_date"].dt.year.astype(int)
+                            )
+
+                    # Determine overall denominator scope for non-comparison mode
+                    overall_region_scope = None
+                    overall_facility_scope_names = None
+                    if not comparison_mode:
+                        facility_names_ctx = parsed.get("facility_names") or []
+                        region_names_ctx = [
+                            n.replace(" (Region)", "").strip()
+                            for n in facility_names_ctx
+                            if isinstance(n, str) and n.strip().lower().endswith("(region)")
+                        ]
+
+                        if not facility_uids:
+                            # Interpret empty UIDs as "all accessible" for national/regional/admin
+                            try:
+                                regions_mapping = get_facilities_grouped_by_region(
+                                    self.user
+                                )
+                                if isinstance(regions_mapping, dict) and regions_mapping:
+                                    overall_region_scope = list(regions_mapping.keys())
+                            except Exception:
+                                overall_region_scope = None
+                        elif region_names_ctx:
+                            overall_region_scope = region_names_ctx
+                        else:
+                            # Prefer explicit facility names when they align with UIDs; otherwise resolve.
+                            if (
+                                facility_names_ctx
+                                and facility_uids
+                                and len(facility_names_ctx) == len(facility_uids)
+                                and all(
+                                    "(region)" not in str(n).lower() for n in facility_names_ctx
+                                )
+                            ):
+                                overall_facility_scope_names = list(facility_names_ctx)
+                            else:
+                                overall_facility_scope_names = _resolve_facility_names(
+                                    facility_uids, df=numerator_base_df
+                                )
+
+                    for entity_name, entity_uids in comparison_groups:
+                        # Filter numerator DF for this entity (empty DF is OK)
+                        if numerator_base_df.empty:
+                            entity_num_df = pd.DataFrame()
+                        else:
+                            if entity_uids:
+                                if "orgUnit" in numerator_base_df.columns:
+                                    entity_num_df = numerator_base_df[
+                                        numerator_base_df["orgUnit"].isin(entity_uids)
+                                    ].copy()
+                                else:
+                                    entity_num_df = pd.DataFrame()
+                            else:
+                                entity_num_df = numerator_base_df
+
+                        for pdef in period_defs:
+                            # Numerator
+                            if entity_num_df.empty:
+                                numerator = 0
+                            elif period_label == "Monthly":
+                                period_df = entity_num_df[
+                                    entity_num_df["_yearmonth"] == pdef["yearmonths"][0]
+                                ]
+                                numerator = (
+                                    int(period_df["tei_id"].dropna().nunique())
+                                    if "tei_id" in period_df.columns
+                                    else int(len(period_df))
+                                )
+                            else:  # Yearly
+                                y_df = entity_num_df[entity_num_df["_year"] == pdef["year"]]
+                                numerator = (
+                                    int(y_df["tei_id"].dropna().nunique())
+                                    if "tei_id" in y_df.columns
+                                    else int(len(y_df))
+                                )
+
+                            # Denominator
+                            if comparison_mode and comparison_entity == "region":
+                                denominator = _sum_denominator_for_regions(
+                                    den_long, [entity_name], yearmonths=pdef["yearmonths"]
+                                )
+                            elif comparison_mode and comparison_entity == "facility":
+                                denominator = _sum_denominator_for_facilities(
+                                    den_long, [entity_name], yearmonths=pdef["yearmonths"]
+                                )
+                            else:
+                                if overall_region_scope:
+                                    denominator = _sum_denominator_for_regions(
+                                        den_long,
+                                        overall_region_scope,
+                                        yearmonths=pdef["yearmonths"],
+                                    )
+                                else:
+                                    denominator = _sum_denominator_for_facilities(
+                                        den_long,
+                                        overall_facility_scope_names or [],
+                                        yearmonths=pdef["yearmonths"],
+                                    )
+
+                            value = (
+                                (numerator / denominator * 100) if denominator > 0 else 0.0
+                            )
+                            if np.isnan(value) or np.isinf(value):
+                                value = 0.0
+
+                            # Resolve Component
+                            plot_value = value
+                            if target_component == "numerator":
+                                plot_value = numerator
+                            elif target_component == "denominator":
+                                plot_value = denominator
+
+                            chart_data.append(
+                                {
+                                    "Period": pdef["period_display"],
+                                    "Entity": entity_name,
+                                    "Value": plot_value,
+                                    "Numerator": int(numerator),
+                                    "Denominator": int(denominator),
+                                    "SortDate": pdef["period_sort"],
+                                    "orgUnit": entity_uids[0] if entity_uids else None,
+                                }
+                            )
+
+                    coverage_rate_handled = True
+             
+            if not coverage_rate_handled:
+                for entity_name, entity_uids in comparison_groups:
+                    # Filter this group's data from the batch
+                    if all_data_df.empty:
+                        entity_df = pd.DataFrame()
+                    else:
+                        if "orgUnit" in all_data_df.columns and entity_uids:
+                            entity_df = all_data_df[
+                                all_data_df["orgUnit"].isin(entity_uids)
+                            ].copy()
+                        else:
+                            # Fallback for national/region if specific UID column logic differs
+                            # For now assuming orgUnit is key
+                            if not entity_uids:  # Overall
+                                entity_df = all_data_df.copy()
+                            else:
+                                entity_df = pd.DataFrame()
+
+                    if entity_df.empty:
+                        continue
+
+                    # Determine Period Order (Already done globally but ensuring display col)
+                    if "period_display" not in entity_df.columns:
+                        if "event_date" in entity_df.columns:
+                            entity_df["period_display"] = (
+                                entity_df["event_date"]
+                                .dt.strftime("%b-%y")
+                                .str.capitalize()
+                            )
+                            entity_df["period_sort"] = (
+                                entity_df["event_date"].dt.to_period("M").dt.start_time
+                            )
+
+                    grouped = entity_df.groupby("period_display")
+
+                    # Sort groups by period_sort
+                    time_groups = []
+                    for name, group in grouped:
+                        # Get sort value from first row
+                        sort_val = (
+                            group["period_sort"].iloc[0]
+                            if "period_sort" in group.columns
+                            else (
+                                group["event_date"].min()
+                                if "event_date" in group.columns
+                                else datetime.min
+                            )
+                        )
+                        time_groups.append((name, group, sort_val))
+
+                    # Sort by the extracted sort_val
+                    time_groups.sort(key=lambda x: x[2])
+
+                    for period_name, group_df, sort_val in time_groups:
+                        # Generic KPI calculation fallback
+                        kpi_suffix = self.SPECIALIZED_KPI_MAP.get(active_kpi_name)
+
+                        if use_newborn_data:
+                            from newborns_dashboard.dash_co_newborn import (
+                                get_numerator_denominator_for_newborn_kpi_with_all,
+                            )
+
+                            numerator, denominator, value = (
+                                get_numerator_denominator_for_newborn_kpi_with_all(
+                                    group_df, active_kpi_name, entity_uids, date_range
+                                )
+                            )
+                        elif kpi_suffix and kpi_suffix != "utils":
+                            try:
+                                module = __import__(
+                                    f"utils.kpi_{kpi_suffix}",
+                                    fromlist=[f"get_numerator_denominator_for_{kpi_suffix}"],
+                                )
+                                get_nd_func = getattr(
+                                    module, f"get_numerator_denominator_for_{kpi_suffix}"
+                                )
+                                numerator, denominator, value = get_nd_func(
+                                    group_df, entity_uids, date_range
+                                )
+                            except Exception as e:
+                                logging.error(
+                                    f"Failed to call specialized function for {active_kpi_name}: {e}"
+                                )
+                                numerator, denominator, value = (
+                                    kpi_utils.get_numerator_denominator_for_kpi(
+                                        group_df, active_kpi_name, entity_uids, date_range
+                                    )
+                                )
+                        else:
+                            # Use standard kpi_utils for "utils" suffix or no suffix
+                            numerator, denominator, value = (
+                                kpi_utils.get_numerator_denominator_for_kpi(
+                                    group_df, active_kpi_name, entity_uids, date_range
+                                )
+                            )
+
+                        # Resolve Component
+                        plot_value = value
+                        if target_component == "numerator":
+                            plot_value = numerator
+                        elif target_component == "denominator":
+                            plot_value = denominator
+
+                        chart_data.append(
+                            {
+                                "Period": period_name,
+                                "Entity": entity_name,
+                                "Value": plot_value,
+                                "Numerator": numerator,
+                                "Denominator": denominator,
+                                "SortDate": sort_val,
+                                "orgUnit": entity_uids[0] if entity_uids else None,
+                            }
+                        )
             
             plot_df = pd.DataFrame(chart_data)
             if not plot_df.empty:
@@ -2964,10 +3260,33 @@ class ChatbotLogic:
             
             fig.update_traces(hovertemplate=hover_template)
             if is_rate:
-                if chart_type == "bar" and parsed.get("orientation") == "h":
-                    fig.update_layout(xaxis=dict(range=[-0.5, 100.5], dtick=25))
+                if isinstance(plot_df, pd.DataFrame) and "Value" in plot_df.columns:
+                    values = pd.to_numeric(plot_df["Value"], errors="coerce")
                 else:
-                    fig.update_layout(yaxis=dict(range=[-0.5, 100.5], dtick=25))
+                    values = pd.Series(dtype="float64")
+                y_lower = -0.5
+                y_upper = 100.5
+                if not values.empty:
+                    vmin = values.min(skipna=True)
+                    vmax = values.max(skipna=True)
+
+                    if vmin is not None and not pd.isna(vmin) and float(vmin) < y_lower:
+                        pad = max(5.0, abs(float(vmin)) * 0.05)
+                        y_lower = float(vmin) - pad
+                    if vmax is not None and not pd.isna(vmax) and float(vmax) > y_upper:
+                        pad = max(5.0, abs(float(vmax)) * 0.05)
+                        y_upper = float(vmax) + pad
+
+                y_dtick = 25
+                if y_upper > 200:
+                    y_dtick = 50
+                if y_upper > 500:
+                    y_dtick = 100
+
+                if chart_type == "bar" and parsed.get("orientation") == "h":
+                    fig.update_layout(xaxis=dict(range=[y_lower, y_upper], dtick=y_dtick))
+                else:
+                    fig.update_layout(yaxis=dict(range=[y_lower, y_upper], dtick=y_dtick))
             
             # Refine title
             title_text = f"{kpi_name}"

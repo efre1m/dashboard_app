@@ -53,6 +53,17 @@ NEWBORN_KPI_ALIASES = {
     "newbrons count": "Admitted Newborns",
     "newbron total": "Admitted Newborns",
 
+    # Coverage rate
+    "newborn coverage rate": "Newborn Coverage Rate",
+    "newborn coverage": "Newborn Coverage Rate",
+    "coverage rate": "Newborn Coverage Rate",
+    "admission coverage": "Newborn Coverage Rate",
+    "admissions coverage": "Newborn Coverage Rate",
+    "newborn admission coverage": "Newborn Coverage Rate",
+    "newborn admissions coverage": "Newborn Coverage Rate",
+    "covergae rate": "Newborn Coverage Rate",
+    "newborn covergae rate": "Newborn Coverage Rate",
+
     # Inborn / Outborn
     "inborn": "Inborn Rate (%)",
     "in born": "Inborn Rate (%)",
@@ -299,6 +310,12 @@ NEWBORN_KPI_DEFINITIONS = {
         "value_name": "Admitted Newborns",
         "interpretation": "Tracks newborn inpatient workload and utilization.",
     },
+    "Newborn Coverage Rate": {
+        "description": "The percentage of aggregated newborn admissions (expected/aggregated counts) that are captured in the patient-level newborn admissions dataset.",
+        "numerator": "Admitted Newborns",
+        "denominator": "Aggregated Admissions",
+        "interpretation": "Higher coverage indicates better capture of newborn admissions in the dashboard dataset.",
+    },
     "Birth Weight Rate": {
         "description": "The distribution of admitted newborns across recorded birth weight categories.",
         "value_name": "Percentage of Newborns (%)",
@@ -357,6 +374,7 @@ NEWBORN_KPI_DEFINITIONS = {
 
 NEWBORN_HELP_EXAMPLES = [
     "Plot Admitted Newborns this year",
+    "Plot Newborn Coverage Rate last year",
     "Show Neonatal Mortality Rate for my facility",
     "Compare Hypothermia on Admission Rate for Amhara and Tigray",
     "Define KMC Coverage by Birth Weight",
@@ -398,6 +416,7 @@ def get_newborn_welcome_message(role):
         f"- Hypothermia on Admission Rate (%)\n"
         f"- Neonatal Mortality Rate (%)\n"
         f"- Admitted Newborns\n"
+        f"- Newborn Coverage Rate\n"
         f"- Birth Weight Rate\n"
         f"- KMC Coverage by Birth Weight\n"
         f"- CPAP for RDS\n"

@@ -30,6 +30,7 @@ ALL_CACHES = [
     "kpi_cache_newborn",
     "kpi_cache_newborn_simplified",
     "kpi_cache_newborn_v2",
+    "newborn_coverage_rate_cache",
 ]
 
 # Initialize ALL caches
