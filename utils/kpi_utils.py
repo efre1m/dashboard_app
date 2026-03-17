@@ -1318,6 +1318,14 @@ def get_numerator_denominator_for_kpi(
         return get_numerator_denominator_for_admitted_mothers(
             df, facility_uids, date_range_filters
         )
+    elif kpi_name == "Maternal Coverage Rate":
+        from utils.kpi_maternal_coverage_rate import (
+            get_numerator_denominator_for_maternal_coverage_rate,
+        )
+
+        return get_numerator_denominator_for_maternal_coverage_rate(
+            df, facility_uids, date_range_filters
+        )
 
     elif kpi_name == "Antepartum Complications Rate (%)":
         from utils.kpi_antipartum_compl import get_numerator_denominator_for_antipartum_compl

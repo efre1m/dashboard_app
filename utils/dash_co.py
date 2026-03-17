@@ -214,6 +214,11 @@ KPI_MAPPING = {
         "title": "Total Admitted Mothers",
         "value_name": "Admitted Mothers",
     },
+    "Maternal Coverage Rate": {
+        "title": "Maternal Coverage Rate",
+        "numerator_name": "Admitted Mothers",
+        "denominator_name": "Aggregated Admissions",
+    },
     "Episiotomy Rate (%)": {
         "title": "Episiotomy Rate (%)",
         "numerator_name": "Episiotomy Cases",
@@ -350,6 +355,11 @@ KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
     ],
+    "Maternal Coverage Rate": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+    ],
     "Episiotomy Rate (%)": [
         "orgUnit",
         "tei_id",
@@ -463,6 +473,7 @@ KPI_OPTIONS = [
     "Missing Birth Outcome",
     "Missing Condition of Discharge",
     "Admitted Mothers",
+    "Maternal Coverage Rate",
     "Episiotomy Rate (%)",
     "Antepartum Complications Rate (%)",
     "Postpartum Complications Rate (%)",
@@ -564,6 +575,18 @@ def render_kpi_tab_navigation():
                 type=("primary" if selected_kpi == "Admitted Mothers" else "secondary"),
             ):
                 selected_kpi = "Admitted Mothers"
+        with cols[1]:
+            if st.button(
+                "Coverage Rate",
+                key="maternal_coverage_rate_btn",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_kpi == "Maternal Coverage Rate"
+                    else "secondary"
+                ),
+            ):
+                selected_kpi = "Maternal Coverage Rate"
 
     # 2. Care Tab
     # Order: SVD, Assisted, Episiotomy, C-Section, Postpartum Comp, Uterotonic, FP, PNC, ARV
@@ -822,7 +845,7 @@ def render_trend_chart_section(
     denominator_label = kpi_config.get("denominator_name", "Denominator")
     chart_title = kpi_config.get("title", kpi_selection)
 
-    if kpi_df.empty:
+    if kpi_df.empty and kpi_selection != "Maternal Coverage Rate":
         st.info("⚠️ No data available for trend analysis.")
         return
 
@@ -841,6 +864,210 @@ def render_trend_chart_section(
             "start_date": st.session_state.filters.get("start_date"),
             "end_date": st.session_state.filters.get("end_date"),
         }
+
+    # SPECIAL HANDLING: Maternal Coverage Rate should display periods even when numerator is zero.
+    # The denominator comes from an external aggregated admissions file, so months/years with no
+    # patient rows still need to appear as 0% when the denominator exists (>0).
+    if kpi_selection == "Maternal Coverage Rate":
+        try:
+            from utils.kpi_maternal_coverage_rate import (
+                load_maternal_coverage_denominator,
+                _sum_denominator_for_regions,
+                _sum_denominator_for_facilities,
+                _resolve_facility_names,
+            )
+        except Exception as e:
+            st.error(f"Failed to load Maternal Coverage Rate denominator utilities: {e}")
+            return
+
+        den_long = load_maternal_coverage_denominator()
+        if den_long is None or den_long.empty:
+            st.warning(
+                "⚠️ Maternal Coverage Rate denominator data is missing or empty. "
+                "Please check `utils/aggregated_admission_mothers.xlsx`."
+            )
+            return
+
+        period_label = st.session_state.get("period_label", "Monthly")
+        if "filters" in st.session_state and "period_label" in st.session_state.filters:
+            period_label = st.session_state.filters["period_label"]
+        if period_label not in ["Monthly", "Yearly"]:
+            period_label = "Monthly"
+
+        # Determine the time window from filters; fall back to available denominator range.
+        start_date = date_range_filters.get("start_date") if date_range_filters else None
+        end_date = date_range_filters.get("end_date") if date_range_filters else None
+
+        month_periods = None
+        try:
+            if start_date and end_date:
+                start_ts = pd.Timestamp(start_date)
+                end_ts = pd.Timestamp(end_date)
+                month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
+        except Exception:
+            month_periods = None
+
+        if month_periods is None or len(month_periods) == 0:
+            ym_vals = pd.to_numeric(den_long.get("yearmonth"), errors="coerce").dropna()
+            if ym_vals.empty:
+                st.info("⚠️ No denominator periods available for Maternal Coverage Rate.")
+                return
+            ym_min = int(ym_vals.min())
+            ym_max = int(ym_vals.max())
+            start_ts = pd.Timestamp(year=ym_min // 100, month=ym_min % 100, day=1)
+            end_ts = pd.Timestamp(year=ym_max // 100, month=ym_max % 100, day=1)
+            month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
+
+        # Precompute patient numerator keys (df may be empty; that's OK).
+        numerator_df = working_df.copy()
+        if not numerator_df.empty and "enrollment_date" in numerator_df.columns:
+            numerator_df["enrollment_date"] = pd.to_datetime(
+                numerator_df["enrollment_date"], errors="coerce"
+            )
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                numerator_df = numerator_df[
+                    (numerator_df["enrollment_date"] >= start_dt)
+                    & (numerator_df["enrollment_date"] < end_dt)
+                ].copy()
+            numerator_df = numerator_df[numerator_df["enrollment_date"].notna()].copy()
+            numerator_df["_yearmonth"] = (
+                numerator_df["enrollment_date"].dt.year.astype(int) * 100
+                + numerator_df["enrollment_date"].dt.month.astype(int)
+            )
+            numerator_df["_year"] = numerator_df["enrollment_date"].dt.year.astype(int)
+        else:
+            numerator_df = numerator_df.iloc[0:0].copy()
+
+        # Determine denominator scope (regions vs facilities) based on the current dashboard filter mode.
+        region_scope = None
+        facility_scope_names = None
+
+        if comparison_mode == "region" and region_names:
+            region_scope = list(region_names)
+        elif facilities_by_region and display_names == ["All Facilities"]:
+            region_scope = list(facilities_by_region.keys())
+        elif (
+            comparison_mode == "facility"
+            and display_names
+            and facility_uids
+            and display_names != ["All Facilities"]
+            and len(display_names) == len(facility_uids)
+        ):
+            facility_scope_names = list(display_names)
+        else:
+            facility_scope_names = _resolve_facility_names(
+                facility_uids, df=numerator_df
+            )
+            if not facility_scope_names and facilities_by_region and not facility_uids:
+                region_scope = list(facilities_by_region.keys())
+
+        period_rows = []
+        if period_label == "Monthly":
+            for p in month_periods:
+                ym = int(p.year * 100 + p.month)
+                period_display = pd.Timestamp(p.start_time).strftime("%b-%y")
+                period_sort = pd.Timestamp(p.start_time)
+
+                if numerator_df.empty:
+                    numerator = 0
+                else:
+                    period_df = numerator_df[numerator_df["_yearmonth"] == ym]
+                    numerator = (
+                        int(period_df["tei_id"].dropna().nunique())
+                        if "tei_id" in period_df.columns
+                        else int(len(period_df))
+                    )
+
+                if region_scope:
+                    denominator = _sum_denominator_for_regions(
+                        den_long, region_scope, yearmonths=[ym]
+                    )
+                else:
+                    denominator = _sum_denominator_for_facilities(
+                        den_long, facility_scope_names or [], yearmonths=[ym]
+                    )
+
+                value = (numerator / denominator * 100) if denominator > 0 else 0.0
+                period_rows.append(
+                    {
+                        "period": period_display,
+                        "period_display": period_display,
+                        "period_sort": period_sort,
+                        "value": float(value),
+                        "numerator": int(numerator),
+                        "denominator": int(denominator),
+                    }
+                )
+        else:  # Yearly
+            year_to_yms = {}
+            for p in month_periods:
+                ym = int(p.year * 100 + p.month)
+                year_to_yms.setdefault(int(p.year), []).append(ym)
+
+            for year in sorted(year_to_yms.keys()):
+                yms = year_to_yms[year]
+                period_display = str(year)
+                period_sort = pd.Timestamp(year=year, month=1, day=1)
+
+                if numerator_df.empty:
+                    numerator = 0
+                else:
+                    y_df = numerator_df[numerator_df["_year"] == year]
+                    numerator = (
+                        int(y_df["tei_id"].dropna().nunique())
+                        if "tei_id" in y_df.columns
+                        else int(len(y_df))
+                    )
+
+                if region_scope:
+                    denominator = _sum_denominator_for_regions(
+                        den_long, region_scope, yearmonths=yms
+                    )
+                else:
+                    denominator = _sum_denominator_for_facilities(
+                        den_long, facility_scope_names or [], yearmonths=yms
+                    )
+
+                value = (numerator / denominator * 100) if denominator > 0 else 0.0
+                period_rows.append(
+                    {
+                        "period": period_display,
+                        "period_display": period_display,
+                        "period_sort": period_sort,
+                        "value": float(value),
+                        "numerator": int(numerator),
+                        "denominator": int(denominator),
+                    }
+                )
+
+        if not period_rows:
+            st.info("⚠️ No period data available for Maternal Coverage Rate.")
+            return
+
+        group = pd.DataFrame(period_rows).sort_values("period_sort")
+        try:
+            render_trend_chart(
+                group,
+                "period_display",
+                "value",
+                chart_title,
+                bg_color,
+                text_color,
+                display_names,
+                numerator_label,
+                denominator_label,
+                facility_uids,
+                forecast_enabled=False,
+                forecast_min_points=4,
+                forecast_bounds=(0.0, 100.0),
+                show_markers=False,
+                forecast_show_markers=False,
+            )
+        except Exception as e:
+            st.error(f"Error rendering chart for {kpi_selection}: {str(e)}")
+        return
 
     # CRITICAL FIX: Use prepare_data_for_trend_chart to get data filtered by KPI-specific dates AND date range
     prepared_df, date_column_used = prepare_data_for_trend_chart(
@@ -1267,7 +1494,11 @@ def render_comparison_chart(
 
     df_to_use = filtered_patients if filtered_patients is not None else patient_df
 
-    if df_to_use is None or df_to_use.empty:
+    if df_to_use is None:
+        st.info("⚠️ No data available for comparison.")
+        return
+
+    if df_to_use.empty and kpi_selection != "Maternal Coverage Rate":
         st.info("⚠️ No data available for comparison.")
         return
 
@@ -1305,6 +1536,189 @@ def render_comparison_chart(
 
     if comparison_mode == "facility":
         comparison_data = []
+
+        # SPECIAL HANDLING: Maternal Coverage Rate should include periods even when numerator is zero.
+        if kpi_selection == "Maternal Coverage Rate":
+            try:
+                from utils.kpi_maternal_coverage_rate import (
+                    load_maternal_coverage_denominator,
+                    _sum_denominator_for_facilities,
+                )
+            except Exception as e:
+                st.error(f"Failed to load Maternal Coverage Rate denominator utilities: {e}")
+                return
+
+            den_long = load_maternal_coverage_denominator()
+            if den_long is None or den_long.empty:
+                st.warning(
+                    "⚠️ Maternal Coverage Rate denominator data is missing or empty. "
+                    "Please check `utils/aggregated_admission_mothers.xlsx`."
+                )
+                return
+
+            period_label = st.session_state.get("period_label", "Monthly")
+            if "filters" in st.session_state and "period_label" in st.session_state.filters:
+                period_label = st.session_state.filters["period_label"]
+            if period_label not in ["Monthly", "Yearly"]:
+                period_label = "Monthly"
+
+            start_date = date_range_filters.get("start_date") if date_range_filters else None
+            end_date = date_range_filters.get("end_date") if date_range_filters else None
+
+            month_periods = None
+            try:
+                if start_date and end_date:
+                    start_ts = pd.Timestamp(start_date)
+                    end_ts = pd.Timestamp(end_date)
+                    month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
+            except Exception:
+                month_periods = None
+
+            if month_periods is None or len(month_periods) == 0:
+                ym_vals = pd.to_numeric(den_long.get("yearmonth"), errors="coerce").dropna()
+                if ym_vals.empty:
+                    st.info("⚠️ No denominator periods available for Maternal Coverage Rate.")
+                    return
+                ym_min = int(ym_vals.min())
+                ym_max = int(ym_vals.max())
+                start_ts = pd.Timestamp(year=ym_min // 100, month=ym_min % 100, day=1)
+                end_ts = pd.Timestamp(year=ym_max // 100, month=ym_max % 100, day=1)
+                month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
+
+            period_defs = []
+            if period_label == "Monthly":
+                for p in month_periods:
+                    ym = int(p.year * 100 + p.month)
+                    period_defs.append(
+                        {
+                            "period_display": pd.Timestamp(p.start_time).strftime("%b-%y"),
+                            "period_sort": pd.Timestamp(p.start_time),
+                            "yearmonths": [ym],
+                            "year": int(p.year),
+                        }
+                    )
+            else:
+                year_to_yms = {}
+                for p in month_periods:
+                    ym = int(p.year * 100 + p.month)
+                    year_to_yms.setdefault(int(p.year), []).append(ym)
+                for year in sorted(year_to_yms.keys()):
+                    period_defs.append(
+                        {
+                            "period_display": str(year),
+                            "period_sort": pd.Timestamp(year=year, month=1, day=1),
+                            "yearmonths": year_to_yms[year],
+                            "year": year,
+                        }
+                    )
+
+            for facility_uid, facility_name in zip(facility_uids, display_names):
+                facility_df = df_to_use[df_to_use["orgUnit"] == facility_uid].copy()
+
+                if facility_df.empty or date_column not in facility_df.columns:
+                    facility_df = facility_df.iloc[0:0].copy()
+                else:
+                    facility_df["event_date"] = pd.to_datetime(
+                        facility_df[date_column], errors="coerce"
+                    )
+                    if start_date and end_date:
+                        start_dt = pd.Timestamp(start_date)
+                        end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                        facility_df = facility_df[
+                            (facility_df["event_date"] >= start_dt)
+                            & (facility_df["event_date"] < end_dt)
+                        ].copy()
+                    facility_df = facility_df[facility_df["event_date"].notna()].copy()
+                    facility_df["_yearmonth"] = (
+                        facility_df["event_date"].dt.year.astype(int) * 100
+                        + facility_df["event_date"].dt.month.astype(int)
+                    )
+                    facility_df["_year"] = facility_df["event_date"].dt.year.astype(int)
+
+                for pdef in period_defs:
+                    if facility_df.empty:
+                        numerator = 0
+                    elif period_label == "Monthly":
+                        period_df = facility_df[
+                            facility_df["_yearmonth"] == pdef["yearmonths"][0]
+                        ]
+                        numerator = (
+                            int(period_df["tei_id"].dropna().nunique())
+                            if "tei_id" in period_df.columns
+                            else int(len(period_df))
+                        )
+                    else:
+                        y_df = facility_df[facility_df["_year"] == pdef["year"]]
+                        numerator = (
+                            int(y_df["tei_id"].dropna().nunique())
+                            if "tei_id" in y_df.columns
+                            else int(len(y_df))
+                        )
+
+                    denominator = _sum_denominator_for_facilities(
+                        den_long, [facility_name], yearmonths=pdef["yearmonths"]
+                    )
+                    value = (numerator / denominator * 100) if denominator > 0 else 0.0
+
+                    comparison_data.append(
+                        {
+                            "period_display": pdef["period_display"],
+                            "period_sort": pdef["period_sort"],
+                            "orgUnit": facility_uid,
+                            "orgUnit_name": facility_name,
+                            "value": float(value),
+                            "numerator": int(numerator),
+                            "denominator": int(denominator),
+                        }
+                    )
+
+            if not comparison_data:
+                st.info("⚠️ No comparison data available.")
+                return
+
+            comparison_df = pd.DataFrame(comparison_data)
+            if "orgUnit_name" in comparison_df.columns:
+                comparison_df = comparison_df.rename(columns={"orgUnit_name": "Facility"})
+
+            # Render table-only view if chart suppressed
+            if not show_chart:
+                st.markdown(f"### {chart_title} - Comparison Table")
+
+                cols_to_show = [
+                    "period_display",
+                    "Facility",
+                    "value",
+                    "numerator",
+                    "denominator",
+                ]
+                display_df = comparison_df[cols_to_show].copy()
+                display_df = display_df.rename(
+                    columns={
+                        "period_display": "Period",
+                        "value": "Value (%)"
+                        if "Rate" in kpi_selection or "%" in kpi_selection
+                        else "Value",
+                        "numerator": numerator_label,
+                        "denominator": denominator_label,
+                    }
+                )
+
+                st.dataframe(display_df, use_container_width=True)
+                return
+
+            render_facility_comparison_chart(
+                df=comparison_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                facility_names=display_names,
+                facility_uids=facility_uids,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+            )
+            return
 
         # For each facility, prepare its own trend data
         for facility_uid, facility_name in zip(facility_uids, display_names):
@@ -1660,6 +2074,169 @@ def render_comparison_chart(
             region_facility_mapping[region_name] = [
                 uid for _, uid in facilities_by_region.get(region_name, [])
             ]
+
+        # SPECIAL HANDLING: Maternal Coverage Rate should include periods even when numerator is zero.
+        if kpi_selection == "Maternal Coverage Rate":
+            try:
+                from utils.kpi_maternal_coverage_rate import (
+                    load_maternal_coverage_denominator,
+                    _sum_denominator_for_regions,
+                )
+            except Exception as e:
+                st.error(f"Failed to load Maternal Coverage Rate denominator utilities: {e}")
+                return
+
+            den_long = load_maternal_coverage_denominator()
+            if den_long is None or den_long.empty:
+                st.warning(
+                    "⚠️ Maternal Coverage Rate denominator data is missing or empty. "
+                    "Please check `utils/aggregated_admission_mothers.xlsx`."
+                )
+                return
+
+            period_label = st.session_state.get("period_label", "Monthly")
+            if "filters" in st.session_state and "period_label" in st.session_state.filters:
+                period_label = st.session_state.filters["period_label"]
+            if period_label not in ["Monthly", "Yearly"]:
+                period_label = "Monthly"
+
+            start_date = date_range_filters.get("start_date") if date_range_filters else None
+            end_date = date_range_filters.get("end_date") if date_range_filters else None
+
+            month_periods = None
+            try:
+                if start_date and end_date:
+                    start_ts = pd.Timestamp(start_date)
+                    end_ts = pd.Timestamp(end_date)
+                    month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
+            except Exception:
+                month_periods = None
+
+            if month_periods is None or len(month_periods) == 0:
+                ym_vals = pd.to_numeric(den_long.get("yearmonth"), errors="coerce").dropna()
+                if ym_vals.empty:
+                    st.info("⚠️ No denominator periods available for Maternal Coverage Rate.")
+                    return
+                ym_min = int(ym_vals.min())
+                ym_max = int(ym_vals.max())
+                start_ts = pd.Timestamp(year=ym_min // 100, month=ym_min % 100, day=1)
+                end_ts = pd.Timestamp(year=ym_max // 100, month=ym_max % 100, day=1)
+                month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
+
+            period_defs = []
+            if period_label == "Monthly":
+                for p in month_periods:
+                    ym = int(p.year * 100 + p.month)
+                    period_defs.append(
+                        {
+                            "period_display": pd.Timestamp(p.start_time).strftime("%b-%y"),
+                            "period_sort": pd.Timestamp(p.start_time),
+                            "yearmonths": [ym],
+                            "year": int(p.year),
+                        }
+                    )
+            else:
+                year_to_yms = {}
+                for p in month_periods:
+                    ym = int(p.year * 100 + p.month)
+                    year_to_yms.setdefault(int(p.year), []).append(ym)
+                for year in sorted(year_to_yms.keys()):
+                    period_defs.append(
+                        {
+                            "period_display": str(year),
+                            "period_sort": pd.Timestamp(year=year, month=1, day=1),
+                            "yearmonths": year_to_yms[year],
+                            "year": year,
+                        }
+                    )
+
+            for region_name in region_names:
+                region_facility_uids = region_facility_mapping.get(region_name, [])
+                if not region_facility_uids:
+                    continue
+
+                region_scope_df = df_to_use[
+                    df_to_use["orgUnit"].isin(region_facility_uids)
+                ].copy()
+
+                if region_scope_df.empty or date_column not in region_scope_df.columns:
+                    region_scope_df = region_scope_df.iloc[0:0].copy()
+                else:
+                    region_scope_df["event_date"] = pd.to_datetime(
+                        region_scope_df[date_column], errors="coerce"
+                    )
+                    if start_date and end_date:
+                        start_dt = pd.Timestamp(start_date)
+                        end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                        region_scope_df = region_scope_df[
+                            (region_scope_df["event_date"] >= start_dt)
+                            & (region_scope_df["event_date"] < end_dt)
+                        ].copy()
+                    region_scope_df = region_scope_df[
+                        region_scope_df["event_date"].notna()
+                    ].copy()
+                    region_scope_df["_yearmonth"] = (
+                        region_scope_df["event_date"].dt.year.astype(int) * 100
+                        + region_scope_df["event_date"].dt.month.astype(int)
+                    )
+                    region_scope_df["_year"] = region_scope_df["event_date"].dt.year.astype(int)
+
+                for pdef in period_defs:
+                    if region_scope_df.empty:
+                        numerator = 0
+                    elif period_label == "Monthly":
+                        period_df = region_scope_df[
+                            region_scope_df["_yearmonth"] == pdef["yearmonths"][0]
+                        ]
+                        numerator = (
+                            int(period_df["tei_id"].dropna().nunique())
+                            if "tei_id" in period_df.columns
+                            else int(len(period_df))
+                        )
+                    else:
+                        y_df = region_scope_df[region_scope_df["_year"] == pdef["year"]]
+                        numerator = (
+                            int(y_df["tei_id"].dropna().nunique())
+                            if "tei_id" in y_df.columns
+                            else int(len(y_df))
+                        )
+
+                    denominator = _sum_denominator_for_regions(
+                        den_long, [region_name], yearmonths=pdef["yearmonths"]
+                    )
+                    value = (numerator / denominator * 100) if denominator > 0 else 0.0
+
+                    region_data.append(
+                        {
+                            "period_display": pdef["period_display"],
+                            "period_sort": pdef["period_sort"],
+                            "Region": region_name,
+                            "value": float(value),
+                            "numerator": int(numerator),
+                            "denominator": int(denominator),
+                        }
+                    )
+
+            if not region_data:
+                st.info("⚠️ No comparison data available for regions.")
+                return
+
+            region_df = pd.DataFrame(region_data)
+            render_region_comparison_chart(
+                df=region_df,
+                period_col="period_display",
+                value_col="value",
+                title=chart_title,
+                bg_color=bg_color,
+                text_color=text_color,
+                region_names=region_names,
+                region_mapping=facilities_by_region,
+                facilities_by_region=facilities_by_region,
+                numerator_name=numerator_label,
+                denominator_name=denominator_label,
+                suppress_plot=not show_chart,
+            )
+            return
 
         for region_name in region_names:
             region_facility_uids = region_facility_mapping.get(region_name, [])

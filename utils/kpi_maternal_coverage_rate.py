@@ -1,29 +1,23 @@
-import hashlib
 import difflib
+import hashlib
 import logging
-from pathlib import Path
 import re
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-from newborns_dashboard.kpi_utils_newborn import (
-    auto_text_color,
-    compute_admitted_newborns_count,
-    render_newborn_facility_comparison_chart,
-    render_newborn_region_comparison_chart,
-    render_newborn_trend_chart,
-)
+from utils.kpi_admitted_mothers import compute_admitted_mothers_count
 from utils.queries import get_facility_mapping_for_user
 
 # ---------------- Caching Setup ----------------
-if "newborn_coverage_rate_cache" not in st.session_state:
-    st.session_state.newborn_coverage_rate_cache = {}
+if "maternal_coverage_rate_cache" not in st.session_state:
+    st.session_state.maternal_coverage_rate_cache = {}
 
 
-def get_newborn_coverage_rate_cache_key(df, facility_uids=None, computation_type=""):
-    """Generate a unique cache key for Newborn Coverage Rate computations."""
+def get_maternal_coverage_rate_cache_key(df, facility_uids=None, computation_type=""):
+    """Generate a unique cache key for Maternal Coverage Rate computations."""
     key_data = {
         "computation_type": computation_type,
         "facility_uids": tuple(sorted(facility_uids)) if facility_uids else None,
@@ -33,16 +27,16 @@ def get_newborn_coverage_rate_cache_key(df, facility_uids=None, computation_type
     return str(key_data)
 
 
-def clear_newborn_coverage_rate_cache():
-    """Clear the Newborn Coverage Rate cache."""
-    st.session_state.newborn_coverage_rate_cache = {}
+def clear_maternal_coverage_rate_cache():
+    """Clear the Maternal Coverage Rate cache."""
+    st.session_state.maternal_coverage_rate_cache = {}
 
 
 # ---------------- Denominator Loading ----------------
-DENOMINATOR_CACHE_VERSION = 3
+DENOMINATOR_CACHE_VERSION = 1
 DENOMINATOR_FILENAME_CANDIDATES = (
-    "aggregated_admission_newborn.xlsx",
-    "aggregated admission newborn.xlsx",
+    "aggregated_admission_mothers.xlsx",
+    "aggregated admission mothers.xlsx",
 )
 
 
@@ -72,7 +66,6 @@ def _normalize_facility_key(value):
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     text = " ".join(text.split())
 
-    # Standardize common suffix patterns (abbrev <-> full name)
     suffix_replacements = [
         (r"\bprimary hospital\b", "ph"),
         (r"\bgeneral hospital\b", "gh"),
@@ -109,7 +102,7 @@ def _strip_facility_type_suffix(key: str) -> str:
 
 
 def _get_denominator_file_path():
-    utils_dir = Path(__file__).resolve().parents[1] / "utils"
+    utils_dir = Path(__file__).resolve().parent
     for filename in DENOMINATOR_FILENAME_CANDIDATES:
         candidate = utils_dir / filename
         if candidate.exists():
@@ -147,7 +140,6 @@ def _wide_to_long_denominator(df_wide):
     wide = wide.rename(columns=col_map)
 
     if "region_name" not in wide.columns or "org_unit_name" not in wide.columns:
-        # Try some common alternatives
         alt_region = next(
             (c for c in wide.columns if _normalize_name(c) in {"region", "region name"}),
             None,
@@ -175,14 +167,14 @@ def _wide_to_long_denominator(df_wide):
 
     if "region_name" not in wide.columns or "org_unit_name" not in wide.columns:
         logging.error(
-            "Newborn Coverage Rate: Denominator file missing required columns 'region_name' and/or 'org_unit_name'."
+            "Maternal Coverage Rate: Denominator file missing required columns 'region_name' and/or 'org_unit_name'."
         )
         return pd.DataFrame()
 
     ym_cols = _extract_yearmonth_columns(wide)
     if not ym_cols:
         logging.error(
-            "Newborn Coverage Rate: No YearMonth columns found in denominator file."
+            "Maternal Coverage Rate: No YearMonth columns found in denominator file."
         )
         return pd.DataFrame()
 
@@ -205,9 +197,9 @@ def _wide_to_long_denominator(df_wide):
     return long_df
 
 
-def load_newborn_coverage_denominator():
+def load_maternal_coverage_denominator():
     """
-    Load aggregated newborn admissions (denominator) from utils Excel file.
+    Load aggregated maternal admissions (denominator) from utils Excel file.
     Returns a LONG dataframe with columns:
       - region_name
       - region_name_norm
@@ -217,16 +209,18 @@ def load_newborn_coverage_denominator():
       - year (Int64)
       - denominator (numeric)
     """
-    cache = st.session_state.newborn_coverage_rate_cache
+    cache = st.session_state.maternal_coverage_rate_cache
     path = _get_denominator_file_path()
     if path is None:
         logging.error(
-            "Newborn Coverage Rate: Denominator file not found in utils folder."
+            "Maternal Coverage Rate: Denominator file not found in utils folder."
         )
         return pd.DataFrame()
 
     try:
-        fingerprint = f"{path}:{path.stat().st_mtime_ns}:{path.stat().st_size}:v{DENOMINATOR_CACHE_VERSION}"
+        fingerprint = (
+            f"{path}:{path.stat().st_mtime_ns}:{path.stat().st_size}:v{DENOMINATOR_CACHE_VERSION}"
+        )
     except Exception:
         fingerprint = f"{path}:v{DENOMINATOR_CACHE_VERSION}"
 
@@ -238,7 +232,7 @@ def load_newborn_coverage_denominator():
     try:
         wide = pd.read_excel(path)
     except Exception as e:
-        logging.error(f"Newborn Coverage Rate: Failed to read denominator file: {e}")
+        logging.error(f"Maternal Coverage Rate: Failed to read denominator file: {e}")
         return pd.DataFrame()
 
     long_df = _wide_to_long_denominator(wide)
@@ -248,11 +242,7 @@ def load_newborn_coverage_denominator():
 
 
 def _get_uid_to_facility_name_map():
-    """
-    Resolve UID -> facility name mapping using session_state if available,
-    otherwise fallback to a database-backed lookup (cached in session_state).
-    """
-    cache = st.session_state.newborn_coverage_rate_cache
+    cache = st.session_state.maternal_coverage_rate_cache
 
     # Prefer session_state mappings already loaded by dashboards.
     for key in ("facility_mapping", "facility_mapping_facility"):
@@ -271,7 +261,7 @@ def _get_uid_to_facility_name_map():
         name_to_uid = get_facility_mapping_for_user(user)
     except Exception as e:
         logging.warning(
-            f"Newborn Coverage Rate: Failed to load facility mapping for user: {e}"
+            f"Maternal Coverage Rate: Failed to load facility mapping for user: {e}"
         )
         name_to_uid = {}
 
@@ -326,7 +316,6 @@ def _sum_denominator_for_facilities(den_df, facility_names, yearmonths=None, yea
             missing_keys.append(key)
 
     if missing_keys:
-        # Try base-key matching (strip facility type suffixes such as "ph"/"gh"/"hospital").
         den_base_map = {}
         for dk in den_keys:
             base = _strip_facility_type_suffix(dk)
@@ -341,7 +330,6 @@ def _sum_denominator_for_facilities(den_df, facility_names, yearmonths=None, yea
                 missing_keys.remove(key)
 
     if missing_keys:
-        # Final fallback: fuzzy match (high cutoff to avoid incorrect facility pairing).
         den_key_list = sorted(den_keys)
         for key in missing_keys:
             best = difflib.get_close_matches(key, den_key_list, n=1, cutoff=0.92)
@@ -439,15 +427,15 @@ def _sum_denominator_for_regions(den_df, region_names, yearmonths=None, years=No
     return int(denom)
 
 
-def get_numerator_denominator_for_newborn_coverage_rate(
+def get_numerator_denominator_for_maternal_coverage_rate(
     df, facility_uids=None, date_range_filters=None
 ):
     """
-    Newborn Coverage Rate =
-      total admitted newborns (numerator) / total aggregated newborn admissions (denominator)
+    Maternal Coverage Rate =
+      total admitted mothers (numerator) / total aggregated maternal admissions (denominator)
 
-    - Numerator is computed from patient-level data using kpi_utils_newborn.
-    - Denominator is loaded from utils/aggregated_admission_newborn.xlsx (wide YearMonth format).
+    - Numerator is computed from patient-level data using kpi_admitted_mothers.py
+    - Denominator is loaded from utils/aggregated_admission_mothers.xlsx (wide YearMonth format).
     - Returns: (numerator, denominator, value) where value is percentage (0-100).
     """
     if df is None or df.empty:
@@ -473,7 +461,7 @@ def get_numerator_denominator_for_newborn_coverage_rate(
     if working_df.empty:
         return (0, 0, 0.0)
 
-    numerator = int(compute_admitted_newborns_count(working_df, facility_uids))
+    numerator = int(compute_admitted_mothers_count(working_df, facility_uids))
 
     # Determine aggregation level: only Monthly/Yearly are supported for this KPI.
     period_label = st.session_state.get("period_label", "Monthly")
@@ -492,20 +480,16 @@ def get_numerator_denominator_for_newborn_coverage_rate(
     if dates is None or dates.dropna().empty:
         return (numerator, 0, 0.0)
 
-    # Denominator source is monthly; for Yearly aggregation we sum the months present in the
-    # (already date-filtered) group_df so the denominator stays aligned with the numerator.
     yearmonths = (
         (dates.dropna().dt.year.astype(int) * 100) + (dates.dropna().dt.month.astype(int))
     ).unique().tolist()
     years = None
 
-    den_long = load_newborn_coverage_denominator()
+    den_long = load_maternal_coverage_denominator()
 
     user = st.session_state.get("user", {}) or {}
     role = str(user.get("role") or "").lower()
 
-    # Prefer region-based denominator when the selection is clearly a full-region union
-    # (fixes All Facilities and By Region modes, and enforces role scope for regional users).
     denominator = 0
     if role in {"national", "regional"}:
         try:
@@ -517,9 +501,10 @@ def get_numerator_denominator_for_newborn_coverage_rate(
 
         inferred_regions = None
         if facilities_by_region:
-            inferred_regions = _infer_full_regions_for_selection(facility_uids, facilities_by_region)
+            inferred_regions = _infer_full_regions_for_selection(
+                facility_uids, facilities_by_region
+            )
 
-            # If facility_uids is empty/None, interpret as "all accessible" for national/regional.
             if inferred_regions is None and not facility_uids:
                 inferred_regions = list(facilities_by_region.keys())
 
@@ -542,24 +527,25 @@ def get_numerator_denominator_for_newborn_coverage_rate(
 
 
 # ---------------- Rendering Helpers (Dashboard Integration) ----------------
-def render_newborn_coverage_rate_trend_chart(
+def render_maternal_coverage_rate_trend_chart(
     df,
     period_col="period_display",
     value_col="value",
-    title="Newborn Coverage Rate",
+    title="Maternal Coverage Rate",
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
-    numerator_name="Admitted Newborns",
+    numerator_name="Admitted Mothers",
     denominator_name="Aggregated Admissions",
     facility_uids=None,
     **kwargs,
 ):
-    """Render trend chart for Newborn Coverage Rate using standard newborn chart renderer."""
+    from utils.kpi_utils import auto_text_color, render_trend_chart
+
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    return render_newborn_trend_chart(
+    return render_trend_chart(
         df,
         period_col,
         value_col,
@@ -574,24 +560,25 @@ def render_newborn_coverage_rate_trend_chart(
     )
 
 
-def render_newborn_coverage_rate_facility_comparison_chart(
+def render_maternal_coverage_rate_facility_comparison_chart(
     df,
     period_col="period_display",
     value_col="value",
-    title="Newborn Coverage Rate - Facility Comparison",
+    title="Maternal Coverage Rate - Facility Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     facility_names=None,
     facility_uids=None,
-    numerator_name="Admitted Newborns",
+    numerator_name="Admitted Mothers",
     denominator_name="Aggregated Admissions",
     **kwargs,
 ):
-    """Render facility comparison chart for Newborn Coverage Rate."""
+    from utils.kpi_utils import auto_text_color, render_facility_comparison_chart
+
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    return render_newborn_facility_comparison_chart(
+    return render_facility_comparison_chart(
         df,
         period_col,
         value_col,
@@ -606,31 +593,32 @@ def render_newborn_coverage_rate_facility_comparison_chart(
     )
 
 
-def render_newborn_coverage_rate_region_comparison_chart(
+def render_maternal_coverage_rate_region_comparison_chart(
     df,
     period_col="period_display",
     value_col="value",
-    title="Newborn Coverage Rate - Region Comparison",
+    title="Maternal Coverage Rate - Region Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     region_names=None,
     region_mapping=None,
     facilities_by_region=None,
-    numerator_name="Admitted Newborns",
+    numerator_name="Admitted Mothers",
     denominator_name="Aggregated Admissions",
     **kwargs,
 ):
-    """Render region comparison chart for Newborn Coverage Rate."""
+    from utils.kpi_utils import auto_text_color, render_region_comparison_chart
+
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
-    return render_newborn_region_comparison_chart(
+    return render_region_comparison_chart(
         df,
-        period_col=period_col,
-        value_col=value_col,
-        title=title,
-        bg_color=bg_color,
-        text_color=text_color,
+        period_col,
+        value_col,
+        title,
+        bg_color,
+        text_color,
         region_names=region_names,
         region_mapping=region_mapping,
         facilities_by_region=facilities_by_region,
@@ -638,3 +626,4 @@ def render_newborn_coverage_rate_region_comparison_chart(
         denominator_name=denominator_name,
         **kwargs,
     )
+

@@ -17,6 +17,7 @@ ALL_CACHES = [
     "arv_cache",
     "svd_cache",
     "admitted_mothers_cache",
+    "maternal_coverage_rate_cache",
     "kpi_cache",
     "episiotomy_cache",
     "antipartum_compl_cache",
