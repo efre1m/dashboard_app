@@ -1648,6 +1648,7 @@ def render_trend_chart(
         or "missing" in title.lower()
     )
     is_percent_kpi = bool(is_rate_like and not is_per_100k)
+    line_shape_mode = "linear" if is_per_100k else "spline"
     forecast_payload = None
     if forecast_enabled:
         forecast_payload = _build_next_period_forecast_payload(
@@ -1675,7 +1676,7 @@ def render_trend_chart(
             x=x_axis_col,
             y=value_col,
             markers=show_point_markers,
-            line_shape="spline",
+            line_shape=line_shape_mode,
             title=title,
             height=400,
             custom_data=[numerator_name, denominator_name] if use_hover_data else None,
@@ -1687,8 +1688,11 @@ def render_trend_chart(
             )
         else:
             fig.update_traces(mode="lines")
+        line_kwargs = dict(width=3, shape=line_shape_mode)
+        if line_shape_mode == "spline":
+            line_kwargs["smoothing"] = 0.35
         fig.update_traces(
-            line=dict(width=3, shape="spline", smoothing=0.35),
+            line=line_kwargs,
             connectgaps=True,
             cliponaxis=False,
         )
@@ -1717,7 +1721,7 @@ def render_trend_chart(
             x=x_axis_col,
             y=value_col,
             markers=show_point_markers,
-            line_shape="spline",
+            line_shape=line_shape_mode,
             title=title,
             height=400,
         )
@@ -1728,6 +1732,14 @@ def render_trend_chart(
             )
         else:
             fig.update_traces(mode="lines")
+        line_kwargs = dict(width=3, shape=line_shape_mode)
+        if line_shape_mode == "spline":
+            line_kwargs["smoothing"] = 0.35
+        fig.update_traces(
+            line=line_kwargs,
+            connectgaps=True,
+            cliponaxis=False,
+        )
 
     if forecast_payload:
         forecast_mode = forecast_payload.get("forecast_mode", "next_period_forecast")
@@ -1884,6 +1896,41 @@ def render_trend_chart(
         span = max(0.0, float(y_upper) - float(y_lower))
         y_dtick = _compute_nice_dtick(span, max_ticks=7) or 25
         y_tickformat = ".2f" if span <= 10 else ".0f"
+        fig.update_layout(
+            yaxis_tickformat=y_tickformat,
+            yaxis_range=[y_lower, y_upper],
+            yaxis_dtick=y_dtick,
+        )
+    elif is_per_100k:
+        if isinstance(plot_df, pd.DataFrame) and value_col in plot_df.columns:
+            values = pd.to_numeric(plot_df[value_col], errors="coerce")
+        else:
+            values = pd.Series(dtype="float64")
+        values = values.dropna()
+
+        if values.empty:
+            y_min = 0.0
+            y_max = 0.0
+        else:
+            y_min = float(values.min(skipna=True))
+            y_max = float(values.max(skipna=True))
+
+        span_data = max(0.0, y_max - y_min)
+        pad = max(0.5, span_data * 0.05, abs(y_max) * 0.05)
+        y_lower = min(0.0, y_min) - pad
+        y_upper = max(0.0, y_max) + pad
+
+        span = max(0.0, float(y_upper) - float(y_lower))
+        y_dtick = _compute_nice_dtick(span, max_ticks=7) or 1
+        y_tickformat = ",.2f" if span <= 10 else ",.0f"
+
+        # Keep padding but avoid showing negative tick labels for non-negative KPIs.
+        if y_min >= 0 and y_lower <= -float(y_dtick):
+            y_lower = -0.95 * float(y_dtick)
+            span = max(0.0, float(y_upper) - float(y_lower))
+            y_dtick = _compute_nice_dtick(span, max_ticks=7) or y_dtick
+            y_tickformat = ",.2f" if span <= 10 else ",.0f"
+
         fig.update_layout(
             yaxis_tickformat=y_tickformat,
             yaxis_range=[y_lower, y_upper],
@@ -2287,6 +2334,7 @@ def render_facility_comparison_chart(
         if not comparison_plot_df.empty
         else False
     )
+    line_shape_mode = "linear" if is_per_100k else "spline"
     fig = px.line(
         comparison_plot_df,
         x="period_display",
@@ -2294,7 +2342,7 @@ def render_facility_comparison_chart(
         color="Facility",
         color_discrete_map=facility_color_map,
         markers=single_period,
-        line_shape="spline",
+        line_shape=line_shape_mode,
         title=f"{title} - Facility Comparison",
         height=350,
         category_orders={"period_display": period_order},
@@ -2302,10 +2350,13 @@ def render_facility_comparison_chart(
     )
 
     if single_period:
+        line_kwargs = dict(width=3, shape=line_shape_mode)
+        if line_shape_mode == "spline":
+            line_kwargs["smoothing"] = 0.35
         fig.update_traces(
             mode="lines+markers",
             marker=dict(size=8),
-            line=dict(width=3, shape="spline", smoothing=0.35),
+            line=line_kwargs,
             connectgaps=True,
             cliponaxis=False,
             hovertemplate=get_comparison_hover_template(
@@ -2317,9 +2368,12 @@ def render_facility_comparison_chart(
             ),
         )
     else:
+        line_kwargs = dict(width=3, shape=line_shape_mode)
+        if line_shape_mode == "spline":
+            line_kwargs["smoothing"] = 0.35
         fig.update_traces(
             mode="lines",
-            line=dict(width=3, shape="spline", smoothing=0.35),
+            line=line_kwargs,
             connectgaps=True,
             cliponaxis=False,
             hovertemplate=get_comparison_hover_template(
@@ -2387,6 +2441,37 @@ def render_facility_comparison_chart(
         span = max(0.0, float(y_upper) - float(y_lower))
         y_dtick = _compute_nice_dtick(span, max_ticks=7) or 25
         y_tickformat = ".2f" if span <= 10 else ".0f"
+        fig.update_layout(
+            yaxis_tickformat=y_tickformat,
+            yaxis_range=[y_lower, y_upper],
+            yaxis_dtick=y_dtick,
+        )
+    elif is_per_100k:
+        values = pd.to_numeric(comparison_plot_df["value"], errors="coerce").dropna()
+
+        if values.empty:
+            y_min = 0.0
+            y_max = 0.0
+        else:
+            y_min = float(values.min(skipna=True))
+            y_max = float(values.max(skipna=True))
+
+        span_data = max(0.0, y_max - y_min)
+        pad = max(0.5, span_data * 0.05, abs(y_max) * 0.05)
+        y_lower = min(0.0, y_min) - pad
+        y_upper = max(0.0, y_max) + pad
+
+        span = max(0.0, float(y_upper) - float(y_lower))
+        y_dtick = _compute_nice_dtick(span, max_ticks=7) or 1
+        y_tickformat = ",.2f" if span <= 10 else ",.0f"
+
+        # Keep padding but avoid showing negative tick labels for non-negative KPIs.
+        if y_min >= 0 and y_lower <= -float(y_dtick):
+            y_lower = -0.95 * float(y_dtick)
+            span = max(0.0, float(y_upper) - float(y_lower))
+            y_dtick = _compute_nice_dtick(span, max_ticks=7) or y_dtick
+            y_tickformat = ",.2f" if span <= 10 else ",.0f"
+
         fig.update_layout(
             yaxis_tickformat=y_tickformat,
             yaxis_range=[y_lower, y_upper],
@@ -2656,6 +2741,7 @@ def render_region_comparison_chart(
         if not comparison_plot_df.empty
         else False
     )
+    line_shape_mode = "linear" if is_per_100k else "spline"
     fig = px.line(
         comparison_plot_df,
         x="period_display",
@@ -2663,7 +2749,7 @@ def render_region_comparison_chart(
         color="Region",
         color_discrete_map=region_color_map,
         markers=single_period,
-        line_shape="spline",
+        line_shape=line_shape_mode,
         title=f"{title} - Region Comparison",
         height=350,
         category_orders={"period_display": period_order},
@@ -2671,10 +2757,13 @@ def render_region_comparison_chart(
     )
 
     if single_period:
+        line_kwargs = dict(width=3, shape=line_shape_mode)
+        if line_shape_mode == "spline":
+            line_kwargs["smoothing"] = 0.35
         fig.update_traces(
             mode="lines+markers",
             marker=dict(size=8),
-            line=dict(width=3, shape="spline", smoothing=0.35),
+            line=line_kwargs,
             connectgaps=True,
             cliponaxis=False,
             hovertemplate=get_comparison_hover_template(
@@ -2686,9 +2775,12 @@ def render_region_comparison_chart(
             ),
         )
     else:
+        line_kwargs = dict(width=3, shape=line_shape_mode)
+        if line_shape_mode == "spline":
+            line_kwargs["smoothing"] = 0.35
         fig.update_traces(
             mode="lines",
-            line=dict(width=3, shape="spline", smoothing=0.35),
+            line=line_kwargs,
             connectgaps=True,
             cliponaxis=False,
             hovertemplate=get_comparison_hover_template(
@@ -2758,6 +2850,37 @@ def render_region_comparison_chart(
             y_dtick = 100
         fig.update_layout(
             yaxis_tickformat=".2f",
+            yaxis_range=[y_lower, y_upper],
+            yaxis_dtick=y_dtick,
+        )
+    elif is_per_100k:
+        values = pd.to_numeric(comparison_plot_df["value"], errors="coerce").dropna()
+
+        if values.empty:
+            y_min = 0.0
+            y_max = 0.0
+        else:
+            y_min = float(values.min(skipna=True))
+            y_max = float(values.max(skipna=True))
+
+        span_data = max(0.0, y_max - y_min)
+        pad = max(0.5, span_data * 0.05, abs(y_max) * 0.05)
+        y_lower = min(0.0, y_min) - pad
+        y_upper = max(0.0, y_max) + pad
+
+        span = max(0.0, float(y_upper) - float(y_lower))
+        y_dtick = _compute_nice_dtick(span, max_ticks=7) or 1
+        y_tickformat = ",.2f" if span <= 10 else ",.0f"
+
+        # Keep padding but avoid showing negative tick labels for non-negative KPIs.
+        if y_min >= 0 and y_lower <= -float(y_dtick):
+            y_lower = -0.95 * float(y_dtick)
+            span = max(0.0, float(y_upper) - float(y_lower))
+            y_dtick = _compute_nice_dtick(span, max_ticks=7) or y_dtick
+            y_tickformat = ",.2f" if span <= 10 else ",.0f"
+
+        fig.update_layout(
+            yaxis_tickformat=y_tickformat,
             yaxis_range=[y_lower, y_upper],
             yaxis_dtick=y_dtick,
         )

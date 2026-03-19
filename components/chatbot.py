@@ -135,11 +135,16 @@ MATERNAL_KPI_ALIASES = {
     "total deliveries": "Total Deliveries",
     "deliveries": "Total Deliveries",
     "births": "Total Deliveries",
+    "maternal coverage": "Maternal Coverage Rate",
+    "maternal coverage rate": "Maternal Coverage Rate",
+    "coverage of mothers": "Maternal Coverage Rate",
+    "mothers coverage": "Maternal Coverage Rate",
 }
 
 MATERNAL_HELP_EXAMPLES = [
     "Plot C-Section Rate last year",
     "Show me Admitted Mothers",
+    "Plot Maternal Coverage Rate last year",
     "Compare Admitted Mothers for Adigrat and Suhul",
     "Define PPH rate",
     "List maternal indicators",
@@ -568,6 +573,7 @@ class ChatbotLogic:
             # Maternal Indicators
             "Total Admitted Mothers": "admitted_mothers",
             "Admitted Mothers": "admitted_mothers",
+            "Maternal Coverage Rate": "maternal_coverage_rate",
             "Postpartum Hemorrhage (PPH) Rate (%)": "pph",
             "Normal Vaginal Delivery (SVD) Rate (%)": "svd",
             "ARV Prophylaxis Rate (%)": "arv",
@@ -2510,10 +2516,13 @@ class ChatbotLogic:
             # If comparison mode, we ignore this initial check and let the loop handle it
             if not parsed.get("comparison_mode"):
                  if prepared_df is None or prepared_df.empty:
-                     # SPECIAL CASE: Newborn Coverage Rate has an external denominator source,
+                     # SPECIAL CASE: Coverage-rate KPIs have an external denominator source,
                      # so we still need to show periods with 0 numerator when denominator exists.
-                     if not (use_newborn_data and active_kpi_name == "Newborn Coverage Rate"):
-                         return None, f"I found no data for **{kpi_name}** matching your criteria."
+                     if not (
+                         (use_newborn_data and active_kpi_name == "Newborn Coverage Rate")
+                         or ((not use_newborn_data) and active_kpi_name == "Maternal Coverage Rate")
+                     ):
+                          return None, f"I found no data for **{kpi_name}** matching your criteria."
             
             # Generate Plot
             # Group by period
@@ -2929,6 +2938,261 @@ class ChatbotLogic:
 
                     coverage_rate_handled = True
              
+            # SPECIAL HANDLING: Maternal Coverage Rate should include periods even when numerator is zero.
+            # The denominator comes from an external aggregated admissions file, so months/years with no
+            # patient rows still need to appear as 0% when the denominator exists (>0).
+            if (
+                (not coverage_rate_handled)
+                and (not use_newborn_data)
+                and active_kpi_name == "Maternal Coverage Rate"
+            ):
+                try:
+                    from utils.kpi_maternal_coverage_rate import (
+                        load_maternal_coverage_denominator,
+                        _sum_denominator_for_regions,
+                        _sum_denominator_for_facilities,
+                        _resolve_facility_names,
+                    )
+                except Exception as e:
+                    logging.error(
+                        f"Failed to load Maternal Coverage Rate denominator utilities: {e}"
+                    )
+                else:
+                    den_long = load_maternal_coverage_denominator()
+                    if den_long is None or den_long.empty:
+                        return None, (
+                            "Maternal Coverage Rate denominator data is missing or empty. "
+                            "Please check `utils/aggregated_admission_mothers.xlsx`."
+                        )
+
+                    # Only Monthly/Yearly are supported for this KPI (match dashboard behavior)
+                    period_label = parsed.get("period_label") or st.session_state.get(
+                        "period_label", "Monthly"
+                    )
+                    if (
+                        "filters" in st.session_state
+                        and "period_label" in st.session_state.filters
+                    ):
+                        period_label = st.session_state.filters["period_label"]
+                    if period_label not in ["Monthly", "Yearly"]:
+                        period_label = "Monthly"
+
+                    start_date = date_range.get("start_date") if date_range else None
+                    end_date = date_range.get("end_date") if date_range else None
+
+                    month_periods = None
+                    try:
+                        if start_date and end_date:
+                            start_ts = pd.Timestamp(start_date)
+                            end_ts = pd.Timestamp(end_date)
+                            month_periods = pd.period_range(
+                                start=start_ts, end=end_ts, freq="M"
+                            )
+                    except Exception:
+                        month_periods = None
+
+                    if month_periods is None or len(month_periods) == 0:
+                        ym_vals = pd.to_numeric(
+                            den_long.get("yearmonth"), errors="coerce"
+                        ).dropna()
+                        if ym_vals.empty:
+                            return None, (
+                                "No denominator periods available for Maternal Coverage Rate."
+                            )
+                        ym_min = int(ym_vals.min())
+                        ym_max = int(ym_vals.max())
+                        start_ts = pd.Timestamp(
+                            year=ym_min // 100, month=ym_min % 100, day=1
+                        )
+                        end_ts = pd.Timestamp(
+                            year=ym_max // 100, month=ym_max % 100, day=1
+                        )
+                        month_periods = pd.period_range(
+                            start=start_ts, end=end_ts, freq="M"
+                        )
+
+                    period_defs = []
+                    if period_label == "Monthly":
+                        for p in month_periods:
+                            ym = int(p.year * 100 + p.month)
+                            period_defs.append(
+                                {
+                                    "period_display": pd.Timestamp(p.start_time).strftime(
+                                        "%b-%y"
+                                    ),
+                                    "period_sort": pd.Timestamp(p.start_time),
+                                    "yearmonths": [ym],
+                                    "year": int(p.year),
+                                }
+                            )
+                    else:  # Yearly
+                        year_to_yms = {}
+                        for p in month_periods:
+                            ym = int(p.year * 100 + p.month)
+                            year_to_yms.setdefault(int(p.year), []).append(ym)
+                        for year in sorted(year_to_yms.keys()):
+                            period_defs.append(
+                                {
+                                    "period_display": str(year),
+                                    "period_sort": pd.Timestamp(year=year, month=1, day=1),
+                                    "yearmonths": year_to_yms[year],
+                                    "year": year,
+                                }
+                            )
+
+                    # Prepare numerator base (may be empty; still OK)
+                    numerator_base_df = all_data_df.copy()
+                    if not numerator_base_df.empty:
+                        if (
+                            "event_date" not in numerator_base_df.columns
+                            and date_col
+                            and date_col in numerator_base_df.columns
+                        ):
+                            numerator_base_df["event_date"] = pd.to_datetime(
+                                numerator_base_df[date_col], errors="coerce"
+                            )
+                        if "event_date" in numerator_base_df.columns:
+                            numerator_base_df = numerator_base_df[
+                                numerator_base_df["event_date"].notna()
+                            ].copy()
+                            numerator_base_df["_yearmonth"] = (
+                                numerator_base_df["event_date"].dt.year.astype(int) * 100
+                                + numerator_base_df["event_date"].dt.month.astype(int)
+                            )
+                            numerator_base_df["_year"] = (
+                                numerator_base_df["event_date"].dt.year.astype(int)
+                            )
+
+                    # Determine overall denominator scope for non-comparison mode
+                    overall_region_scope = None
+                    overall_facility_scope_names = None
+                    if not comparison_mode:
+                        facility_names_ctx = parsed.get("facility_names") or []
+                        region_names_ctx = [
+                            n.replace(" (Region)", "").strip()
+                            for n in facility_names_ctx
+                            if isinstance(n, str)
+                            and n.strip().lower().endswith("(region)")
+                        ]
+
+                        if not facility_uids:
+                            # Interpret empty UIDs as "all accessible" for national/regional/admin
+                            try:
+                                regions_mapping = get_facilities_grouped_by_region(
+                                    self.user
+                                )
+                                if (
+                                    isinstance(regions_mapping, dict)
+                                    and regions_mapping
+                                ):
+                                    overall_region_scope = list(regions_mapping.keys())
+                            except Exception:
+                                overall_region_scope = None
+                        elif region_names_ctx:
+                            overall_region_scope = region_names_ctx
+                        else:
+                            # Prefer explicit facility names when they align with UIDs; otherwise resolve.
+                            if (
+                                facility_names_ctx
+                                and facility_uids
+                                and len(facility_names_ctx) == len(facility_uids)
+                                and all(
+                                    "(region)" not in str(n).lower()
+                                    for n in facility_names_ctx
+                                )
+                            ):
+                                overall_facility_scope_names = list(facility_names_ctx)
+                            else:
+                                overall_facility_scope_names = _resolve_facility_names(
+                                    facility_uids, df=numerator_base_df
+                                )
+
+                    for entity_name, entity_uids in comparison_groups:
+                        # Filter numerator DF for this entity (empty DF is OK)
+                        if numerator_base_df.empty:
+                            entity_num_df = pd.DataFrame()
+                        else:
+                            if entity_uids:
+                                if "orgUnit" in numerator_base_df.columns:
+                                    entity_num_df = numerator_base_df[
+                                        numerator_base_df["orgUnit"].isin(entity_uids)
+                                    ].copy()
+                                else:
+                                    entity_num_df = pd.DataFrame()
+                            else:
+                                entity_num_df = numerator_base_df
+
+                        for pdef in period_defs:
+                            # Numerator
+                            if entity_num_df.empty:
+                                numerator = 0
+                            elif period_label == "Monthly":
+                                period_df = entity_num_df[
+                                    entity_num_df["_yearmonth"] == pdef["yearmonths"][0]
+                                ]
+                                numerator = (
+                                    int(period_df["tei_id"].dropna().nunique())
+                                    if "tei_id" in period_df.columns
+                                    else int(len(period_df))
+                                )
+                            else:  # Yearly
+                                y_df = entity_num_df[entity_num_df["_year"] == pdef["year"]]
+                                numerator = (
+                                    int(y_df["tei_id"].dropna().nunique())
+                                    if "tei_id" in y_df.columns
+                                    else int(len(y_df))
+                                )
+
+                            # Denominator
+                            if comparison_mode and comparison_entity == "region":
+                                denominator = _sum_denominator_for_regions(
+                                    den_long, [entity_name], yearmonths=pdef["yearmonths"]
+                                )
+                            elif comparison_mode and comparison_entity == "facility":
+                                denominator = _sum_denominator_for_facilities(
+                                    den_long, [entity_name], yearmonths=pdef["yearmonths"]
+                                )
+                            else:
+                                if overall_region_scope:
+                                    denominator = _sum_denominator_for_regions(
+                                        den_long,
+                                        overall_region_scope,
+                                        yearmonths=pdef["yearmonths"],
+                                    )
+                                else:
+                                    denominator = _sum_denominator_for_facilities(
+                                        den_long,
+                                        overall_facility_scope_names or [],
+                                        yearmonths=pdef["yearmonths"],
+                                    )
+
+                            value = (
+                                (numerator / denominator * 100) if denominator > 0 else 0.0
+                            )
+                            if np.isnan(value) or np.isinf(value):
+                                value = 0.0
+
+                            # Resolve Component
+                            plot_value = value
+                            if target_component == "numerator":
+                                plot_value = numerator
+                            elif target_component == "denominator":
+                                plot_value = denominator
+
+                            chart_data.append(
+                                {
+                                    "Period": pdef["period_display"],
+                                    "Entity": entity_name,
+                                    "Value": plot_value,
+                                    "Numerator": int(numerator),
+                                    "Denominator": int(denominator),
+                                    "SortDate": pdef["period_sort"],
+                                    "orgUnit": entity_uids[0] if entity_uids else None,
+                                }
+                            )
+
+                    coverage_rate_handled = True
+
             if not coverage_rate_handled:
                 for entity_name, entity_uids in comparison_groups:
                     # Filter this group's data from the batch
@@ -3494,6 +3758,7 @@ def render_chatbot():
         "Maternal Death Rate (per 100,000)": "Maternal death refers to the death of a woman while pregnant or within 42 days of termination of pregnancy, from any cause related to or aggravated by the pregnancy or its management but not from accidental or incidental causes. The rate is calculated per 100,000 live births.",
         "Stillbirth Rate (%)": "A stillbirth is the death or loss of a baby before or during delivery. The rate typically measures stillbirths per 1,000 total births, but here it is presented as a percentage.",
         "Early Postnatal Care (PNC) Coverage (%)": "Early Postnatal Care refers to the medical care given to the mother and newborn within the first 24-48 hours after delivery, crucial for detecting complications.",
+        "Maternal Coverage Rate": "Maternal Coverage Rate measures the percentage of admitted mothers captured in the system compared to the aggregated maternal admissions denominator (from `utils/aggregated_admission_mothers.xlsx`).",
         "Admitted Mothers": "The total count of mothers admitted to the facility for delivery or pregnancy-related care.",
         "Total Deliveries": "The total number of delivery events recorded, regardless of the outcome (live birth or stillbirth).",
         # Expanded Definitions
