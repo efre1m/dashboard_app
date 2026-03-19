@@ -1164,11 +1164,14 @@ def render_trend_chart_section(
                 ].copy()
 
             # Compute KPI using date-filtered data - THIS WILL NOW WORK FOR ALL KPIs INCLUDING MISSING MD!
-            numerator, denominator, _ = get_numerator_denominator_for_kpi(
+            numerator, denominator, kpi_value = get_numerator_denominator_for_kpi(
                 period_patient_data, kpi_selection, facility_uids, date_range_filters
             )
             # Calculate value
-            value = (numerator / denominator * 100) if denominator > 0 else 0
+            if "per 100,000" in kpi_selection:
+                value = float(kpi_value)
+            else:
+                value = (numerator / denominator * 100) if denominator > 0 else 0
 
             period_data.append(
                 {
@@ -1798,16 +1801,17 @@ def render_comparison_chart(
                         value = float(numerator)
                     else:
                         # For all other KPIs, use the standard function
-                        numerator, denominator, _ = get_numerator_denominator_for_kpi(
+                        numerator, denominator, kpi_value = get_numerator_denominator_for_kpi(
                             period_data,
                             kpi_selection,
                             [facility_uid],
                             date_range_filters,
                         )
 
-                        value = (
-                            (numerator / denominator * 100) if denominator > 0 else 0
-                        )
+                        if "per 100,000" in kpi_selection:
+                            value = float(kpi_value)
+                        else:
+                            value = (numerator / denominator * 100) if denominator > 0 else 0
 
                     comparison_data.append(
                         {
@@ -2297,16 +2301,17 @@ def render_comparison_chart(
                         value = float(numerator)
                     else:
                         # For all other KPIs, use the standard function
-                        numerator, denominator, _ = get_numerator_denominator_for_kpi(
+                        numerator, denominator, kpi_value = get_numerator_denominator_for_kpi(
                             period_data,
                             kpi_selection,
                             region_facility_uids,
                             date_range_filters,
                         )
 
-                        value = (
-                            (numerator / denominator * 100) if denominator > 0 else 0
-                        )
+                        if "per 100,000" in kpi_selection:
+                            value = float(kpi_value)
+                        else:
+                            value = (numerator / denominator * 100) if denominator > 0 else 0
 
                     region_data.append(
                         {

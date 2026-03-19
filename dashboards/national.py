@@ -678,13 +678,17 @@ def render_summary_dashboard_shared(
 
             # Compute maternal indicators
             maternal_kpis = {}
+            maternal_death_rate_value = 0.0
             if not maternal_patients.empty and "orgUnit" in maternal_patients.columns:
                 filtered_maternal = maternal_patients[
                     maternal_patients["orgUnit"].isin(facility_uids)
                 ].copy()
-                from utils.kpi_utils import compute_kpis
+                from utils.kpi_utils import compute_kpis, compute_maternal_death_rate
 
                 maternal_kpis = compute_kpis(filtered_maternal, facility_uids)
+                maternal_death_rate_value, _, _ = compute_maternal_death_rate(
+                    filtered_maternal, facility_uids
+                )
 
             # Compute newborn indicators - ONLY THE 3 REQUIRED ONES
             newborn_kpis = {}
@@ -780,7 +784,7 @@ def render_summary_dashboard_shared(
             summary_data = {
                 # Maternal indicators (keep as is)
                 "maternal_tei_count": maternal_patient_count,  # Total Admitted Mothers
-                "maternal_death_rate": maternal_kpis.get("maternal_death_rate", 0.0),
+                "maternal_death_rate": maternal_death_rate_value,
                 "stillbirth_rate": maternal_kpis.get("stillbirth_rate", 0.0),
                 "maternal_start_date": maternal_start_date,
                 # Newborn indicators - ONLY 3 REQUIRED:
@@ -860,9 +864,9 @@ def render_summary_dashboard_shared(
         ),
         (
             col2,
-            "Maternal Death Rate",
-            f"{maternal_death_rate:.2f}%",
-            "Maternal mortality rate",
+            "Maternal Death Rate (per 100,000)",
+            f"{maternal_death_rate:,.2f}",
+            "Maternal deaths per 100,000 deliveries",
             "#d62728",
         ),
         (

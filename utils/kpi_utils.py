@@ -53,6 +53,20 @@ def auto_text_color(bg):
         return "#000000"
 
 
+def _is_per_100k_kpi(title) -> bool:
+    try:
+        title_str = str(title).lower()
+    except Exception:
+        return False
+
+    return (
+        "per 100,000" in title_str
+        or "per 100000" in title_str
+        or "100,000" in title_str
+        or "100000" in title_str
+    )
+
+
 def _compute_nice_dtick(span: float, max_ticks: int = 8):
     """Return a 'nice' dtick (1/2/5 * 10^n) targeting <= max_ticks labels."""
     try:
@@ -550,6 +564,14 @@ def get_attractive_hover_template(
     if is_count:
         return f"Date: %{{x}}<br>{kpi_name}: %{{y:,.0f}}<extra></extra>"
 
+    if _is_per_100k_kpi(kpi_name):
+        return (
+            f"Date: %{{x}}<br>"
+            f"{kpi_name}: %{{y:,.2f}}<br>"
+            f"{numerator_name}: %{{customdata[0]:,.0f}}<br>"
+            f"{denominator_name}: %{{customdata[1]:,.0f}}<extra></extra>"
+        )
+
     return (
         f"Date: %{{x}}<br>"
         f"{kpi_name}: %{{y:.2f}}%<br>"
@@ -567,6 +589,15 @@ def get_comparison_hover_template(
             f"Date: %{{x}}<br>"
             f"{entity_label}: %{{fullData.name}}<br>"
             f"{kpi_name}: %{{y:,.0f}}<extra></extra>"
+        )
+
+    if _is_per_100k_kpi(kpi_name):
+        return (
+            f"Date: %{{x}}<br>"
+            f"{entity_label}: %{{fullData.name}}<br>"
+            f"{kpi_name}: %{{y:,.2f}}<br>"
+            f"{numerator_name}: %{{customdata[0]:,.0f}}<br>"
+            f"{denominator_name}: %{{customdata[1]:,.0f}}<extra></extra>"
         )
 
     return (
@@ -1609,9 +1640,14 @@ def render_trend_chart(
         st.info("No valid data to display (denominator is zero for all periods).")
         return
 
+    is_per_100k = _is_per_100k_kpi(title)
     is_rate_like = (
-        "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
+        "Rate" in title
+        or "%" in title
+        or "Missing" in title
+        or "missing" in title.lower()
     )
+    is_percent_kpi = bool(is_rate_like and not is_per_100k)
     forecast_payload = None
     if forecast_enabled:
         forecast_payload = _build_next_period_forecast_payload(
@@ -1718,7 +1754,7 @@ def render_trend_chart(
                 if projecting_current_period
                 else "Date: %{x}<br>Forecast: %{y:.2f}%<extra></extra>"
             )
-            if is_rate_like
+            if is_percent_kpi
             else (
                 "Date: %{x}<br>Projected EOM: %{y:,.2f}<extra></extra>"
                 if projecting_current_period
@@ -1755,7 +1791,7 @@ def render_trend_chart(
             )
         )
 
-        delta_suffix = " pts" if is_rate_like else ""
+        delta_suffix = " pts" if is_percent_kpi else ""
         fig.add_annotation(
             x=forecast_payload["next_x"],
             y=forecast_payload["forecast_y"],
@@ -1825,7 +1861,7 @@ def render_trend_chart(
             categoryarray=forecast_payload["category_order"],
         )
 
-    is_rate_chart = is_rate_like
+    is_rate_chart = is_percent_kpi
     if is_rate_chart:
         if isinstance(plot_df, pd.DataFrame) and value_col in plot_df.columns:
             values = pd.to_numeric(plot_df[value_col], errors="coerce")
@@ -1860,8 +1896,10 @@ def render_trend_chart(
     metrics_df = table_df if use_hover_data else df
     if len(metrics_df) > 0:
         col1, col2, col3 = st.columns(3)
-        val_format = ".2f" if ("Rate" in title or "%" in title) else ",.0f"
-        suffix = "%" if ("Rate" in title or "%" in title) else ""
+        val_format = (
+            ".2f" if is_percent_kpi else (",.2f" if is_per_100k else ",.0f")
+        )
+        suffix = "%" if is_percent_kpi else ""
 
         with col1:
             st.metric("Latest Value", f"{metrics_df[value_col].iloc[-1]:{val_format}}{suffix}")
@@ -1921,8 +1959,10 @@ def render_trend_chart(
         display_df = display_df[table_columns].copy()
 
         # Format numbers
-        if "Rate" in title or "%" in title:
+        if is_percent_kpi:
             display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:.2f}%")
+        elif is_per_100k:
+            display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:,.2f}")
         else:
             display_df[value_col] = display_df[value_col].apply(lambda x: f"{x:,.0f}")
 
@@ -1936,7 +1976,12 @@ def render_trend_chart(
         if "numerator" in overall_source_df.columns and "denominator" in overall_source_df.columns:
             total_numerator = overall_source_df["numerator"].sum()
             total_denominator = overall_source_df["denominator"].sum()
-            overall_value = (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+            overall_scale = 100000 if is_per_100k else 100
+            overall_value = (
+                (total_numerator / total_denominator * overall_scale)
+                if total_denominator > 0
+                else 0
+            )
         else:
             overall_value = overall_source_df[value_col].mean() if not overall_source_df.empty else 0
             total_numerator = overall_source_df[value_col].sum() if not overall_source_df.empty else 0
@@ -1945,7 +1990,11 @@ def render_trend_chart(
         # Create overall row
         overall_row = {
             x_axis_col: "Overall",
-            value_col: f"{overall_value:.2f}%" if ("Rate" in title or "%" in title) else f"{overall_value:,.0f}",
+            value_col: (
+                f"{overall_value:.2f}%"
+                if is_percent_kpi
+                else (f"{overall_value:,.2f}" if is_per_100k else f"{overall_value:,.0f}")
+            ),
         }
 
         if numerator_name in display_df.columns:
@@ -1987,8 +2036,11 @@ def render_trend_chart(
         total_numerator = summary_df[numerator_name].sum()
         total_denominator = summary_df[denominator_name].sum()
 
+        overall_scale = 100000 if is_per_100k else 100
         overall_value = (
-            (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+            (total_numerator / total_denominator * overall_scale)
+            if total_denominator > 0
+            else 0
         )
 
         overall_row = pd.DataFrame(
@@ -2202,19 +2254,25 @@ def render_facility_comparison_chart(
         st.info("⚠️ No valid comparison data available (all facilities have zero data).")
         return
 
+    is_per_100k = _is_per_100k_kpi(title)
+    is_rate_kpi = "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
+    is_percent_kpi = bool(is_rate_kpi and not is_per_100k)
+    overall_scale = 100000 if is_per_100k else 100
+
     # Display Grand Overall Metric at the TOP
     if not comparison_df.empty:
         all_numerators = comparison_df["numerator"].sum()
         all_denominators = comparison_df["denominator"].sum()
-        grand_overall = (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
-        
-        # Determine if this is a rate KPI based on title
-        is_rate_kpi = "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
-        
+        grand_overall = (
+            (all_numerators / all_denominators * overall_scale) if all_denominators > 0 else 0
+        )
+
         col1, col2, col3 = st.columns(3)
         with col1:
-            val_format = ".2f" if is_rate_kpi else ",.0f"
-            suffix = "%" if is_rate_kpi else ""
+            val_format = (
+                ".2f" if is_percent_kpi else (",.2f" if is_per_100k else ",.0f")
+            )
+            suffix = "%" if is_percent_kpi else ""
             st.metric("🌍 Grand Overall Value", f"{grand_overall:{val_format}}{suffix}")
 
     # Create the chart with reduced height
@@ -2307,7 +2365,7 @@ def render_facility_comparison_chart(
         ),
     )
 
-    if is_rate_kpi:
+    if is_percent_kpi:
         if isinstance(comparison_df, pd.DataFrame) and "value" in comparison_df.columns:
             values = pd.to_numeric(comparison_df["value"], errors="coerce")
         else:
@@ -2353,13 +2411,21 @@ def render_facility_comparison_chart(
             if not facility_data.empty:
                 total_numerator = facility_data["numerator"].sum()
                 total_denominator = facility_data["denominator"].sum()
-                overall_value = (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+                overall_value = (
+                    (total_numerator / total_denominator * overall_scale)
+                    if total_denominator > 0
+                    else 0
+                )
 
                 pivot_data.append({
                     "Facility": facility_name,
                     numerator_name: f"{total_numerator:,.0f}",
                     denominator_name: f"{total_denominator:,.0f}",
-                    "Overall Value": f"{overall_value:.2f}%" if is_rate_kpi else f"{overall_value:,.0f}",
+                    "Overall Value": (
+                        f"{overall_value:.2f}%"
+                        if is_percent_kpi
+                        else (f"{overall_value:,.2f}" if is_per_100k else f"{overall_value:,.0f}")
+                    ),
                 })
 
         # Add Overall row
@@ -2368,7 +2434,11 @@ def render_facility_comparison_chart(
                 "Facility": "Overall",
                 numerator_name: f"{all_numerators:,.0f}",
                 denominator_name: f"{all_denominators:,.0f}",
-                "Overall Value": f"{grand_overall:.2f}%" if is_rate_kpi else f"{grand_overall:,.0f}",
+                "Overall Value": (
+                    f"{grand_overall:.2f}%"
+                    if is_percent_kpi
+                    else (f"{grand_overall:,.2f}" if is_per_100k else f"{grand_overall:,.0f}")
+                ),
             })
 
             pivot_df = pd.DataFrame(pivot_data)
@@ -2385,7 +2455,11 @@ def render_facility_comparison_chart(
             columns={"numerator": numerator_name, "denominator": denominator_name}
         )
         csv_df[title] = csv_df["value"].apply(
-            lambda v: f"{float(v):.2f}%" if is_rate_kpi else f"{float(v):,.0f}"
+            lambda v: (
+                f"{float(v):.2f}%"
+                if is_percent_kpi
+                else (f"{float(v):,.2f}" if is_per_100k else f"{float(v):,.0f}")
+            )
         )
         csv_df = csv_df[
             ["Facility", "Time Period", numerator_name, denominator_name, title]
@@ -2549,19 +2623,25 @@ def render_region_comparison_chart(
         st.info("⚠️ No valid comparison data available (all regions have zero data).")
         return
 
+    is_per_100k = _is_per_100k_kpi(title)
+    is_rate_kpi = "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
+    is_percent_kpi = bool(is_rate_kpi and not is_per_100k)
+    overall_scale = 100000 if is_per_100k else 100
+
     # Display Grand Overall Metric at the TOP
     if not comparison_df.empty:
         all_numerators = comparison_df["numerator"].sum()
         all_denominators = comparison_df["denominator"].sum()
-        grand_overall = (all_numerators / all_denominators * 100) if all_denominators > 0 else 0
-        
-        # Determine if this is a rate KPI based on title
-        is_rate_kpi = "Rate" in title or "%" in title or "Missing" in title or "missing" in title.lower()
-        
+        grand_overall = (
+            (all_numerators / all_denominators * overall_scale) if all_denominators > 0 else 0
+        )
+
         col1, col2, col3 = st.columns(3)
         with col1:
-            val_format = ".2f" if is_rate_kpi else ",.0f"
-            suffix = "%" if is_rate_kpi else ""
+            val_format = (
+                ".2f" if is_percent_kpi else (",.2f" if is_per_100k else ",.0f")
+            )
+            suffix = "%" if is_percent_kpi else ""
             st.metric("🌍 Grand Overall Value", f"{grand_overall:{val_format}}{suffix}")
 
     # Create the chart with reduced height
@@ -2652,7 +2732,7 @@ def render_region_comparison_chart(
         ),
     )
 
-    if is_rate_kpi:
+    if is_percent_kpi:
         if isinstance(comparison_df, pd.DataFrame) and "value" in comparison_df.columns:
             values = pd.to_numeric(comparison_df["value"], errors="coerce")
         else:
@@ -2700,13 +2780,21 @@ def render_region_comparison_chart(
             if not region_data.empty:
                 total_numerator = region_data["numerator"].sum()
                 total_denominator = region_data["denominator"].sum()
-                overall_value = (total_numerator / total_denominator * 100) if total_denominator > 0 else 0
+                overall_value = (
+                    (total_numerator / total_denominator * overall_scale)
+                    if total_denominator > 0
+                    else 0
+                )
 
                 pivot_data.append({
                     "Region": region_name,
                     numerator_name: f"{total_numerator:,.0f}",
                     denominator_name: f"{total_denominator:,.0f}",
-                    "Overall Value": f"{overall_value:.2f}%" if is_rate_kpi else f"{overall_value:,.0f}",
+                    "Overall Value": (
+                        f"{overall_value:.2f}%"
+                        if is_percent_kpi
+                        else (f"{overall_value:,.2f}" if is_per_100k else f"{overall_value:,.0f}")
+                    ),
                 })
 
         # Add Overall row
@@ -2715,7 +2803,11 @@ def render_region_comparison_chart(
                 "Region": "Overall",
                 numerator_name: f"{all_numerators:,.0f}",
                 denominator_name: f"{all_denominators:,.0f}",
-                "Overall Value": f"{grand_overall:.2f}%" if is_rate_kpi else f"{grand_overall:,.0f}",
+                "Overall Value": (
+                    f"{grand_overall:.2f}%"
+                    if is_percent_kpi
+                    else (f"{grand_overall:,.2f}" if is_per_100k else f"{grand_overall:,.0f}")
+                ),
             })
 
             pivot_df = pd.DataFrame(pivot_data).reset_index(drop=True)
@@ -2732,7 +2824,11 @@ def render_region_comparison_chart(
             columns={"numerator": numerator_name, "denominator": denominator_name}
         )
         csv_df[title] = csv_df["value"].apply(
-            lambda v: f"{float(v):.2f}%" if is_rate_kpi else f"{float(v):,.0f}"
+            lambda v: (
+                f"{float(v):.2f}%"
+                if is_percent_kpi
+                else (f"{float(v):,.2f}" if is_per_100k else f"{float(v):,.0f}")
+            )
         )
         csv_df = csv_df[
             ["Region", "Time Period", numerator_name, denominator_name, title]
