@@ -8,7 +8,13 @@ import difflib
 import logging
 import calendar
 from datetime import datetime, timedelta
-from utils.llm_utils import query_llm
+from utils.llm_utils import (
+    query_llm,
+    generate_chatbot_insight,
+    get_llm_provider_and_model,
+    format_llm_label,
+)
+from utils.config import settings
 from utils import kpi_utils
 from utils.indicator_definitions import KPI_DEFINITIONS as MATERNAL_KPI_DEFINITIONS
 
@@ -727,6 +733,18 @@ class ChatbotLogic:
         Tries LLM first, falls back to regex.
         """
         query_lower = query.lower()
+
+        llm_enabled = bool(getattr(settings, "CHATBOT_USE_LLM", False))
+        llm_provider, llm_model = get_llm_provider_and_model()
+        self.last_parse_trace = {
+            "enabled": llm_enabled,
+            "provider": llm_provider,
+            "model": llm_model,
+            "parser_mode": str(getattr(settings, "CHATBOT_LLM_PARSER_MODE", "fallback") or "fallback").strip().lower(),
+            "attempted": False,
+            "used": False,
+            "failed": False,
+        }
         
         # --- PRE-PROCESS QUERY (Normalization & Typo Correction) ---
         # Move this to the top so it filters early keyword checks
@@ -751,6 +769,7 @@ class ChatbotLogic:
         selected_facility_uids = []
         selected_facility_names = []
         found_regions = []
+        assistant_response = None
         
         # --- AMBIGUITY RESOLUTION (Numeric Selection) ---
         context = st.session_state.get("chatbot_context", {})
@@ -815,6 +834,7 @@ class ChatbotLogic:
         # PRIORITIZE Facility keyword to avoid "list facilities in Tigray region" matching regions regex first
         entity_type = None
         count_requested = False
+        region_filter = None
         
         if re.search(r'(list|show|shw|sho|display|tell).*(facilities|facility|hospitals?|facilti?yies?|faclities?|units?)', query_norm):
             entity_type = "facility"
@@ -909,13 +929,8 @@ class ChatbotLogic:
         # Facility explicitly mentioned ONLY if a facility name is found
         facility_explicitly_mentioned = bool(greedy_matches or strong_matches)
 
-        # 0. Try LLM Parsing - DISABLED BY USER REQUEST
-        # from utils.llm_utils import query_llm
-        llm_result = None # Force fallback to rule-based logic
-        
-        if llm_result:
-                # ... (existing LLM logic remains the same)
-                pass
+        # Optional LLM fallback is applied near the end of parsing (only to fill missing slots),
+        # keeping facility resolution + access control deterministic.
 
         # --- FALLBACK TO REGEX / FUZZY MATCHING (Existing Logic) ---
         # query_lower is already defined at top of function
@@ -1898,6 +1913,173 @@ class ChatbotLogic:
                  comparison_mode = True
                  comparison_entity = "facility" 
 
+        # --- OPTIONAL LLM ASSIST (Fill Missing KPI/Intent/Date/Facilities) ---
+        llm_mode = self.last_parse_trace.get("parser_mode") or "fallback"
+
+        month_tokens = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+        has_date_hint = (
+            bool(re.search(r"\b(19|20)\d{2}\b", query_lower))
+            or any(tok in query_lower for tok in month_tokens)
+            or any(
+                tok in query_lower
+                for tok in (
+                    "last ",
+                    "this ",
+                    "since ",
+                    "from ",
+                    " to ",
+                    "between ",
+                    "today",
+                    "yesterday",
+                )
+            )
+        )
+
+        excluded_intents_for_llm = (
+            {"clear", "scope_error", "scope_error_hallucination", "chart_options"}
+            if llm_mode == "always"
+            else {
+                "metadata_query",
+                "list_kpis",
+                "clear",
+                "scope_error",
+                "scope_error_hallucination",
+                "chart_options",
+                "chat",
+            }
+        )
+
+        should_try_llm = (
+            llm_enabled
+            and llm_mode in {"always", "fallback"}
+            and assistant_response is None
+            and intent not in excluded_intents_for_llm
+            and (
+                llm_mode == "always"
+                or not selected_kpi
+                or (not start_date and has_date_hint)
+                or (comparison_mode and comparison_entity == "facility" and len(selected_facility_uids) < 2)
+            )
+        )
+
+        if should_try_llm:
+            self.last_parse_trace["attempted"] = True
+            llm_result = query_llm(
+                query,
+                facilities_list=list(self.facility_mapping.items()),
+                kpi_mapping=active_kpi_mapping,
+                program_label=active_config.get("label"),
+            )
+
+            if isinstance(llm_result, dict):
+                self.last_parse_trace["used"] = True
+                llm_primary = llm_mode == "always"
+                llm_intent = llm_result.get("intent")
+                llm_kpi = llm_result.get("kpi")
+
+                if (
+                    isinstance(llm_kpi, str)
+                    and llm_kpi in active_kpi_mapping
+                    and not missing_birth_outcome_lock
+                    and (llm_primary or not selected_kpi)
+                ):
+                    selected_kpi = llm_kpi
+
+                if llm_primary and llm_intent in {
+                    "plot",
+                    "distribution",
+                    "definition",
+                    "text",
+                    "metadata_query",
+                    "chat",
+                    "list_kpis",
+                }:
+                    intent = llm_intent
+                elif intent == "text" and llm_intent in {"plot", "distribution", "definition", "text"}:
+                    intent = llm_intent
+
+                if llm_intent == "list_kpis":
+                    intent = "list_kpis"
+
+                llm_response = llm_result.get("response")
+                if llm_intent == "chat" and isinstance(llm_response, str) and llm_response.strip():
+                    intent = "chat"
+                    assistant_response = llm_response.strip()
+
+                if llm_primary and intent == "metadata_query":
+                    llm_entity_type = llm_result.get("entity_type")
+                    if llm_entity_type in {"facility", "region"}:
+                        entity_type = llm_entity_type
+
+                    llm_count_requested = llm_result.get("count_requested")
+                    if isinstance(llm_count_requested, bool):
+                        count_requested = llm_count_requested
+
+                    llm_region_filter = llm_result.get("region_filter")
+                    if isinstance(llm_region_filter, str) and llm_region_filter.strip():
+                        region_filter = llm_region_filter.strip()
+
+                if not start_date:
+                    llm_date_range = llm_result.get("date_range")
+                    if isinstance(llm_date_range, dict):
+                        llm_start = llm_date_range.get("start_date")
+                        llm_end = llm_date_range.get("end_date")
+                        if isinstance(llm_start, str) and isinstance(llm_end, str):
+                            try:
+                                datetime.strptime(llm_start, "%Y-%m-%d")
+                                datetime.strptime(llm_end, "%Y-%m-%d")
+                                start_date = llm_start
+                                end_date = llm_end
+                            except Exception:
+                                pass
+
+                llm_chart_type = llm_result.get("chart_type")
+                if chart_type == "line" and llm_chart_type in {"line", "bar", "area", "table"}:
+                    chart_type = llm_chart_type
+
+                if not comparison_mode and llm_result.get("comparison_mode") is True:
+                    comparison_mode = True
+                    llm_comp_entity = llm_result.get("comparison_entity")
+                    if llm_comp_entity in {"facility", "region"}:
+                        comparison_entity = llm_comp_entity
+
+                llm_facility_names = llm_result.get("facility_names")
+                should_fill_facilities = not selected_facility_uids or (
+                    comparison_mode and comparison_entity == "facility" and len(selected_facility_uids) < 2
+                )
+                if should_fill_facilities and isinstance(llm_facility_names, list):
+                    seen = set(selected_facility_uids)
+                    norm_candidates = list(self.suffix_blind_mapping.keys())
+
+                    for raw_name in llm_facility_names[:8]:
+                        if len(seen) >= 8:
+                            break
+
+                        candidate = re.sub(r"\s+", " ", str(raw_name or "")).strip().lower()
+                        if not candidate:
+                            continue
+                        if candidate in self.AMBIGUOUS_PREFIXES:
+                            continue
+
+                        official_name = None
+                        if candidate in self.suffix_blind_mapping:
+                            official_name = self.suffix_blind_mapping[candidate]
+                        else:
+                            matches = difflib.get_close_matches(candidate, norm_candidates, n=1, cutoff=0.85)
+                            if matches:
+                                official_name = self.suffix_blind_mapping.get(matches[0])
+
+                        if not official_name:
+                            continue
+
+                        uid = self.universal_facility_mapping.get(official_name)
+                        if uid and uid not in seen:
+                            selected_facility_uids.append(uid)
+                            selected_facility_names.append(official_name)
+                            seen.add(uid)
+            else:
+                self.last_parse_trace["failed"] = True
+
         final_date_range = {"start_date": start_date, "end_date": end_date} if start_date else None
         # Do NOT reuse prior context date range; default to all time unless explicitly provided
         
@@ -1987,12 +2169,13 @@ class ChatbotLogic:
             "period_label": period_label,
             "analysis_type": analysis_type,
             "entity_type": entity_type,
+            "region_filter": region_filter,
             "count_requested": count_requested,
             "comparison_mode": comparison_mode,
             "comparison_entity": comparison_entity,
             "comparison_targets": found_regions if comparison_mode and comparison_entity == "region" and found_regions else [],
             "is_drill_down": is_drill_down,
-            "response": None
+            "response": assistant_response
         }
 
     def _get_cache_key(self, parsed_query, facility_uids=None):
@@ -2068,6 +2251,18 @@ class ChatbotLogic:
 
         active_program_config = self.apply_active_program_globals(selected_program)
         parsed = self.parse_query(query)
+        llm_provider, llm_model = get_llm_provider_and_model()
+        self.last_trace = {
+            "parser": getattr(self, "last_parse_trace", None),
+            "insight": {
+                "enabled": bool(getattr(settings, "CHATBOT_USE_LLM_INSIGHTS", False)),
+                "attempted": False,
+                "used": False,
+                "failed": False,
+                "provider": llm_provider,
+                "model": llm_model,
+            },
+        }
 
         # Guard: if selected program is newborn, prevent maternal-only KPIs from proceeding
         if selected_program == "newborn" and parsed.get("kpi"):
@@ -3559,7 +3754,57 @@ class ChatbotLogic:
                 if len(parsed['facility_names']) > 2: title_text += "..."
             fig.update_layout(title_text=title_text, margin=dict(l=20, r=20, t=40, b=20))
             
-            result = (fig, f"Here is the {chart_type} chart for **{kpi_name}**{context_desc}.{suggestion}{nav_feedback}")
+            response_text = f"Here is the {chart_type} chart for **{kpi_name}**{context_desc}."
+
+            insight = None
+            if settings.CHATBOT_USE_LLM_INSIGHTS:
+                self.last_trace["insight"]["attempted"] = True
+                try:
+                    insight_df = line_plot_df if chart_type == "line" else plot_df
+                    insight_df = insight_df.copy()
+                    if "Value" in insight_df.columns:
+                        insight_df["Value"] = pd.to_numeric(insight_df["Value"], errors="coerce")
+                    insight_df = insight_df.dropna(subset=["Value"]) if "Value" in insight_df.columns else insight_df
+
+                    latest_values = []
+                    if not insight_df.empty and "Entity" in insight_df.columns and "Value" in insight_df.columns:
+                        sort_col = "SortDate" if "SortDate" in insight_df.columns else None
+                        if sort_col:
+                            insight_df = insight_df.sort_values(sort_col)
+                        latest_rows = insight_df.groupby("Entity", as_index=False).tail(1)
+                        for _, row in latest_rows.head(5).iterrows():
+                            latest_values.append(
+                                {
+                                    "entity": str(row.get("Entity")),
+                                    "period": str(row.get("Period")),
+                                    "value": float(row.get("Value")) if pd.notna(row.get("Value")) else None,
+                                }
+                            )
+
+                    kpi_def = (active_program_config.get("kpi_definitions") or {}).get(kpi_name, {})
+                    stats = {
+                        "kpi": kpi_name,
+                        "chart_type": chart_type,
+                        "date_range": date_range,
+                        "entity_count": int(insight_df["Entity"].nunique()) if not insight_df.empty and "Entity" in insight_df.columns else 0,
+                        "period_count": int(insight_df["Period"].nunique()) if not insight_df.empty and "Period" in insight_df.columns else 0,
+                        "latest_values": latest_values,
+                        "definition": kpi_def.get("description"),
+                        "interpretation": kpi_def.get("interpretation"),
+                    }
+                    insight = generate_chatbot_insight(stats=stats, program_label=active_program_config.get("label", "Dashboard"))
+                    if insight:
+                        self.last_trace["insight"]["used"] = True
+                    else:
+                        self.last_trace["insight"]["failed"] = True
+                except Exception:
+                    self.last_trace["insight"]["failed"] = True
+                    insight = None
+
+            if insight:
+                response_text += f"\n\n{insight}"
+
+            result = (fig, response_text + suggestion + nav_feedback)
             self._cache_result(cache_key, result)
             return result
             
@@ -3630,10 +3875,97 @@ class ChatbotLogic:
             if target_component == "value":
                 response_text += f"\n\n(Based on {int(numerator)} cases out of {int(denominator)})"
             
+            insight = None
+            if settings.CHATBOT_USE_LLM_INSIGHTS:
+                self.last_trace["insight"]["attempted"] = True
+                try:
+                    kpi_def = (active_program_config.get("kpi_definitions") or {}).get(kpi_name, {})
+                    stats = {
+                        "kpi": kpi_name,
+                        "value": float(display_value) if isinstance(display_value, (int, float, np.floating)) else str(display_value),
+                        "numerator": int(numerator) if numerator is not None else None,
+                        "denominator": int(denominator) if denominator is not None else None,
+                        "component": target_component,
+                        "date_range": date_range,
+                        "facilities": list(dict.fromkeys(parsed.get("facility_names") or [])),
+                        "definition": kpi_def.get("description"),
+                        "interpretation": kpi_def.get("interpretation"),
+                    }
+                    insight = generate_chatbot_insight(stats=stats, program_label=active_program_config.get("label", "Dashboard"))
+                    if insight:
+                        self.last_trace["insight"]["used"] = True
+                    else:
+                        self.last_trace["insight"]["failed"] = True
+                except Exception:
+                    self.last_trace["insight"]["failed"] = True
+                    insight = None
+
+            if insight:
+                response_text += f"\n\n{insight}"
+
             # Cache result
             result = (None, response_text + suggestion + nav_feedback)
             self._cache_result(cache_key, result)
             return result
+
+
+def _format_llm_trace_caption(trace):
+    if not isinstance(trace, dict):
+        return None
+
+    parser = trace.get("parser")
+    insight = trace.get("insight")
+    if not isinstance(parser, dict):
+        parser = {}
+    if not isinstance(insight, dict):
+        insight = {}
+
+    parts = []
+
+    enabled = bool(parser.get("enabled"))
+    attempted = bool(parser.get("attempted"))
+    used = bool(parser.get("used"))
+    failed = bool(parser.get("failed"))
+    provider = parser.get("provider")
+    model = parser.get("model")
+
+    provider_label = None
+    if provider == "gemini":
+        provider_label = "Gemini"
+    elif provider == "openai":
+        provider_label = "OpenAI"
+    elif isinstance(provider, str) and provider.strip():
+        provider_label = provider.strip()
+
+    model_label = str(model).strip() if isinstance(model, str) and model.strip() else None
+    llm_label = None
+    if provider_label and model_label:
+        llm_label = f"{provider_label} / {model_label}"
+    else:
+        llm_label = provider_label or model_label
+
+    if not enabled:
+        parts.append("Parser: rule-based (LLM off)")
+    else:
+        if used:
+            parts.append(f"Parser: LLM ({llm_label})" if llm_label else "Parser: LLM")
+        elif attempted and failed:
+            parts.append("Parser: rule-based (LLM failed -> fallback)")
+        else:
+            parts.append("Parser: rule-based")
+
+    insight_enabled = bool(insight.get("enabled"))
+    if insight_enabled:
+        insight_attempted = bool(insight.get("attempted"))
+        insight_used = bool(insight.get("used"))
+        insight_failed = bool(insight.get("failed"))
+
+        if insight_used:
+            parts.append("Insight: LLM")
+        elif insight_attempted and insight_failed:
+            parts.append("Insight: off (LLM failed)")
+
+    return " | ".join(parts) if parts else None
 
 
 def render_chatbot():
@@ -3716,9 +4048,31 @@ def render_chatbot():
          st.session_state["chatbot_program"] = None
          st.rerun()
 
+    with st.sidebar.expander("LLM status", expanded=False):
+        llm_label = format_llm_label()
+        if settings.CHATBOT_USE_LLM:
+            st.markdown(f"**Parser:** LLM ({llm_label or 'not configured'})")
+            st.caption(f"Parser mode: {getattr(settings, 'CHATBOT_LLM_PARSER_MODE', 'fallback')}")
+        else:
+            st.markdown("**Parser:** rule-based (LLM off)")
+
+        if settings.CHATBOT_USE_LLM_INSIGHTS:
+            st.markdown("**Insights:** LLM on")
+        else:
+            st.markdown("**Insights:** off")
+
     st.markdown('<div class="main-chat-container">', unsafe_allow_html=True)
     st.markdown('<h1 class="chat-header">🤖 IMNID Chatbot</h1>', unsafe_allow_html=True)
     
+    llm_label = format_llm_label()
+    insights_status = "ON" if settings.CHATBOT_USE_LLM_INSIGHTS else "OFF"
+    if settings.CHATBOT_USE_LLM:
+        st.caption(
+            f"LLM parser: ON ({llm_label or 'not configured'}) | mode: {getattr(settings, 'CHATBOT_LLM_PARSER_MODE', 'fallback')} | insights: {insights_status}"
+        )
+    else:
+        st.caption(f"LLM parser: OFF (rule-based) | insights: {insights_status}")
+
     # Ensure Data Availability
     data = ensure_data_loaded()
     
@@ -3888,6 +4242,10 @@ def render_chatbot():
     # Display chat messages from history on app rerun
     for i, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
+            if message.get("role") == "assistant":
+                hint_text = _format_llm_trace_caption(message.get("trace"))
+                if hint_text:
+                    st.caption(hint_text)
             if "content" in message:
                 st.markdown(message["content"])
             
@@ -3918,29 +4276,37 @@ def render_chatbot():
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
+            hint_placeholder = st.empty()
             message_placeholder = st.empty()
             
             with st.spinner("Analyzing data..."):
                 # Run Logic
                 try:
+                    trace = None
                     # Check for help intent explicitly here or rely on chatbot_logic
                     if prompt.lower().strip() in ["help", "info", "usage"]:
                          user_role = st.session_state.get("user", {}).get("role", "national")
                          selected_program = st.session_state.get("chatbot_program")
                          if selected_program:
-                             response_text = get_program_welcome_message(user_role, selected_program)
+                              response_text = get_program_welcome_message(user_role, selected_program)
                          else:
-                             response_text = get_program_selection_message(user_role)
+                              response_text = get_program_selection_message(user_role)
                          fig = None
                     else:
-                        # Rerurns (fig, text)
-                         fig, response_text = chatbot_logic.generate_response(prompt)
-                         if fig is None and response_text is None:
-                             response_text = "I couldn't parse that yet. Please mention a program (maternal/newborn) and an indicator, or say `help`."
+                         # Rerurns (fig, text)
+                          fig, response_text = chatbot_logic.generate_response(prompt)
+                          trace = getattr(chatbot_logic, "last_trace", None)
+                          if fig is None and response_text is None:
+                              response_text = "I couldn't parse that yet. Please mention a program (maternal/newborn) and an indicator, or say `help`."
                     
+                    hint_text = _format_llm_trace_caption(trace)
+                    if hint_text:
+                        hint_placeholder.caption(hint_text)
                     message_placeholder.markdown(response_text)
                     
                     msg_obj = {"role": "assistant", "content": response_text}
+                    if trace:
+                        msg_obj["trace"] = trace
                     
                     if fig is not None:
                         if isinstance(fig, dict) and fig.get("type") == "specialized":

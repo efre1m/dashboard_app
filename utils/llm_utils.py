@@ -1,37 +1,101 @@
 import requests
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from utils.config import settings
-from utils.dash_co import KPI_MAPPING
-from utils.dash_co import KPI_MAPPING
 
 logging.basicConfig(level=logging.INFO)
 
-def build_system_prompt(facilities_list=None):
+def build_system_prompt_compact(*, facilities_list=None, kpi_mapping=None, program_label=None):
+    """
+    Compact prompt to reduce token usage and avoid program-specific alias noise.
+    """
+    if kpi_mapping is None:
+        # Backward-compatible default (maternal)
+        from utils.dash_co import KPI_MAPPING as kpi_mapping  # local import to avoid import-time cost
+
+    program_label = program_label or "Health"
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    kpi_descriptions = [f"- {kpi}: {details.get('title', kpi)}" for kpi, details in kpi_mapping.items()]
+    kpi_context = "\n".join(kpi_descriptions)
+
+    facility_context = ""
+    if facilities_list:
+        if isinstance(facilities_list, (list, tuple)) and facilities_list and isinstance(facilities_list[0], (list, tuple)):
+            fac_names = [str(f[0]) for f in facilities_list]
+        else:
+            fac_names = [str(f) for f in facilities_list]
+
+        if len(fac_names) > 150:
+            facility_context = f"Available Facilities (first 150): {', '.join(fac_names[:150])}..."
+        else:
+            facility_context = f"Available Facilities: {', '.join(fac_names)}"
+
+    return f"""
+You are an intelligent assistant for a {program_label} Dashboard.
+Convert the user's message into a single JSON object that the dashboard can execute.
+
+Current Date: {today}
+
+VALID KPIs (use exact names; pick one or null):
+{kpi_context}
+
+FACILITY CONTEXT (names only; optional):
+{facility_context}
+
+RULES:
+- Output MUST be valid JSON only (no markdown, no backticks).
+- If the user asks what indicators/KPIs exist -> intent="list_kpis".
+- If the user asks to list/show facilities or regions (or asks "how many") -> intent="metadata_query", set entity_type, set count_requested, and set region_filter when asking for facilities in a specific region.
+- If the user greets / asks for help / asks unrelated questions -> intent="chat" and include a short "response" that redirects to dashboard analysis.
+- If asked about passwords/login/admin access -> intent="chat" and respond that you cannot help with passwords or system administration.
+- If the user asks to reset/clear -> intent="clear".
+- chart_type: "line" | "bar" | "area" | "table" (default "line").
+- date_range: null or {{ "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" }}.
+- comparison_mode: true when the user compares facilities/regions ("compare", "vs", "by facility", "by region").
+
+OUTPUT JSON SCHEMA:
+{{
+  "intent": "plot" | "distribution" | "text" | "definition" | "clear" | "metadata_query" | "chat" | "list_kpis",
+  "kpi": "Exact KPI Name from list" | null,
+  "chart_type": "line" | "bar" | "area" | "table",
+  "facility_names": [string] | [],
+  "date_range": {{ "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" }} | null,
+  "entity_type": "region" | "facility" | null,
+  "count_requested": true | false,
+  "comparison_mode": true | false,
+  "comparison_entity": "region" | "facility" | null,
+  "region_filter": string | null,
+  "response": string | null
+}}
+""".strip()
+
+
+def build_system_prompt(*, facilities_list=None, kpi_mapping=None, program_label=None):
     """
     Constructs the system prompt with domain knowledge.
     """
     
-    # 1. Extract KPI definitions (Strictly Maternal)
-    kpi_descriptions = []
-    
-    # Maternal
-    for kpi, details in KPI_MAPPING.items():
-        kpi_descriptions.append(f"- {kpi}: {details.get('title', kpi)}")
-        
+    if kpi_mapping is None:
+        # Backward-compatible default (maternal)
+        from utils.dash_co import KPI_MAPPING as kpi_mapping  # local import to avoid import-time cost
+
+    program_label = program_label or "Health"
+
+    # 1. Extract KPI definitions
+    kpi_descriptions = [f"- {kpi}: {details.get('title', kpi)}" for kpi, details in kpi_mapping.items()]
+         
     kpi_context = "\n".join(kpi_descriptions)
     
     # 2. Facility Context (Limit to first 50 to avoid token limit if list is huge, usually it's small)
     facility_context = ""
     if facilities_list:
-        fac_names = [f[0] for f in facilities_list] # Assuming list of tuples (name, uid) or just names if list of strings
-        # Check type
-        if fac_names and isinstance(fac_names[0], tuple):
-             fac_names = [f[0] for f in facilities_list]
-        elif fac_names:
-             fac_names = facilities_list
-             
+        if isinstance(facilities_list, (list, tuple)) and facilities_list and isinstance(facilities_list[0], (list, tuple)):
+            fac_names = [str(f[0]) for f in facilities_list]
+        else:
+            fac_names = [str(f) for f in facilities_list]
+              
         if len(fac_names) > 150:
             facility_context = f"Available Facilities (first 150): {', '.join(fac_names[:150])}..."
         else:
@@ -40,10 +104,10 @@ def build_system_prompt(facilities_list=None):
     today = datetime.now().strftime("%Y-%m-%d")
 
     prompt = f"""
-You are an intelligent assistant for a Maternal Health Dashboard.
+You are an intelligent assistant for a {program_label} Dashboard.
 Your job is to parse user queries into structured JSON for the dashboard's data engine.
 
-IMPORTANT: You ONLY have information on Maternal Health indicators. You do NOT have any data on Newborn Care, Programs, or other health areas.
+IMPORTANT: Only use the KPI list provided below. If the user asks for something outside these KPIs, set kpi=null and intent="chat" (with a helpful response) or intent="list_kpis" when appropriate.
 
 Current Date: {today}
 
@@ -59,6 +123,7 @@ INSTRUCTIONS:
    - "plot": for graphs, charts, trends, or specific data values over time.
    - "distribution": for pie charts, breakdowns by category, proportions, or composition (e.g., "what is the breakdown of complications").
    - "text": for single values, summaries, or specific numbers without a chart.
+   - "definition": for questions asking what an indicator means or how it is calculated.
    - "metadata_query": for questions about the *structure* or *entities* of the system (e.g., "how many regions?", "list all facilities", "what hospitals are in [Region]").
    - "list_kpis": for questions asking what health indicators are available.
    - "chat": for general greetings, help requests, or questions NOT related to specific data (including "password", "who are you").
@@ -128,7 +193,7 @@ INSTRUCTIONS:
 
 OUTPUT FORMAT (JSON ONLY):
 {{
-  "intent": "plot" | "distribution" | "text" | "clear" | "metadata_query" | "chat" | "list_kpis",
+  "intent": "plot" | "distribution" | "text" | "definition" | "clear" | "metadata_query" | "chat" | "list_kpis",
   "kpi": "Exact KPI Name from list" | null,
   "chart_type": "line" | "bar" | "area" | "table",
   "facility_names": ["Abiadi", "Adigrat"] | [],
@@ -145,46 +210,251 @@ Do not include markdown formatting like ```json. Just the raw JSON string.
 """
     return prompt
 
-def query_llm(user_query, facilities_list=None):
-    """
-    Sends query to OpenAI API and returns parsed JSON.
-    """
-    if not settings.OPENAI_API_KEY:
-        logging.warning("OPENAI_API_KEY not set. Falling back to regex parser.")
+def _extract_first_json_object(text: str):
+    """Best-effort extraction of the first JSON object in a string."""
+    if not text:
         return None
 
-    system_prompt = build_system_prompt(facilities_list)
-    
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    brace_depth = 0
+    end = None
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth -= 1
+            if brace_depth == 0:
+                end = idx
+                break
+
+    if end is None:
+        return None
+
+    candidate = text[start : end + 1].strip()
+    try:
+        return json.loads(candidate)
+    except Exception:
+        return None
+
+
+def _parse_json_from_model_text(text: str):
+    if not text:
+        return None
+
+    cleaned = str(text).replace("```json", "").replace("```", "").strip()
+    try:
+        parsed = json.loads(cleaned)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        parsed = _extract_first_json_object(cleaned)
+        return parsed if isinstance(parsed, dict) else None
+
+
+def _get_llm_provider():
+    provider = getattr(settings, "LLM_PROVIDER", None)
+    if provider:
+        return str(provider).strip().lower()
+
+    # Auto-detect when provider isn't explicitly configured
+    if getattr(settings, "GEMINI_API_KEY", None):
+        return "gemini"
+    if getattr(settings, "OPENAI_API_KEY", None):
+        return "openai"
+    return None
+
+
+def get_llm_provider_and_model():
+    """
+    Return (provider, model) for the active LLM configuration.
+
+    provider is one of: "gemini", "openai", or None.
+    model is a string (or None if unknown/not configured).
+    """
+    provider = _get_llm_provider()
+    if provider == "gemini":
+        model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.0-flash").strip()
+        return provider, model
+    if provider == "openai":
+        model = (getattr(settings, "OPENAI_MODEL", None) or "gpt-4o-mini").strip()
+        return provider, model
+    return provider, None
+
+
+def format_llm_label():
+    """User-facing label like 'Gemini / gemini-2.0-flash' (or None if not configured)."""
+    provider, model = get_llm_provider_and_model()
+    if not provider:
+        return None
+
+    if provider == "openai":
+        provider_label = "OpenAI"
+    else:
+        provider_label = provider.capitalize()
+
+    if model:
+        return f"{provider_label} / {model}"
+    return provider_label
+
+
+def _query_openai_chat_completions(*, user_query: str, system_prompt: str):
+    api_key = getattr(settings, "OPENAI_API_KEY", None)
+    if not api_key:
+        return None
+
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.OPENAI_API_KEY}"
+        "Authorization": f"Bearer {api_key}",
     }
-    
+
     payload = {
-        "model": settings.OPENAI_MODEL,
+        "model": getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"),
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_query}
+            {"role": "user", "content": user_query},
         ],
-        "temperature": 0.0
+        "temperature": 0.0,
     }
-    
+
     try:
-        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload, timeout=10)
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=getattr(settings, "OPENAI_TIMEOUT", 10),
+        )
         response.raise_for_status()
         result = response.json()
-        
         content = result["choices"][0]["message"]["content"]
-        
-        # Clean potential markdown
-        if "```json" in content:
-            content = content.replace("```json", "").replace("```", "")
-        
-        parsed = json.loads(content.strip())
-        return parsed
-        
-    except Exception as e:
-        # LLM Query errors (like 429 Too Many Requests) can be noisy.
-        # Since we use rule-based logic as a robust primary fallback, we can silence these.
-        # logging.error(f"LLM Query Failed: {e}")
+        return _parse_json_from_model_text(content)
+    except Exception:
         return None
+
+
+def _query_gemini_generate_content(*, user_query: str, system_prompt: str):
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
+    if not api_key:
+        return None
+
+    model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.0-flash").strip()
+    model_resource = model.lstrip("/")
+    if "/" not in model_resource:
+        model_resource = f"models/{model_resource}"
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/{model_resource}:generateContent"
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,
+    }
+
+    payload = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": user_query}],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.0,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=getattr(settings, "GEMINI_TIMEOUT", 10),
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        candidates = result.get("candidates") or []
+        if not candidates:
+            return None
+
+        parts = (candidates[0].get("content") or {}).get("parts") or []
+        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+        return _parse_json_from_model_text(text)
+    except Exception:
+        return None
+
+
+def query_llm_with_prompt(*, user_prompt: str, system_prompt: str):
+    """
+    Provider-agnostic helper that returns a parsed JSON dict (or None).
+    """
+    if not getattr(settings, "CHATBOT_USE_LLM", False):
+        return None
+
+    provider = _get_llm_provider()
+    if provider == "gemini":
+        return _query_gemini_generate_content(user_query=user_prompt, system_prompt=system_prompt)
+    if provider == "openai":
+        return _query_openai_chat_completions(user_query=user_prompt, system_prompt=system_prompt)
+    return None
+
+
+def generate_chatbot_insight(*, stats: dict, program_label: str):
+    """
+    Generate a short, safe narrative insight from already-computed stats.
+
+    Returns a string or None. Never sends raw patient-level data.
+    """
+    if not getattr(settings, "CHATBOT_USE_LLM_INSIGHTS", False):
+        return None
+
+    safe_stats = stats if isinstance(stats, dict) else {"stats": str(stats)}
+
+    system_prompt = f"""
+You are a dashboard assistant for the {program_label} program.
+You will receive computed summary statistics (these are the source of truth).
+Write 1-3 short sentences that describe what the data shows, and suggest 1 useful follow-up question.
+
+Rules:
+- Do NOT invent numbers, facilities, regions, or time periods.
+- Do NOT provide medical advice; keep it to data interpretation and next analysis steps.
+- Keep it concise.
+
+Output JSON only:
+{{"insight": "..."}}
+""".strip()
+
+    user_prompt = json.dumps(safe_stats, ensure_ascii=False)
+    result = query_llm_with_prompt(user_prompt=user_prompt, system_prompt=system_prompt)
+    if not isinstance(result, dict):
+        return None
+
+    insight = result.get("insight")
+    if not isinstance(insight, str):
+        return None
+
+    return insight.strip() or None
+
+
+def query_llm(user_query, facilities_list=None, *, kpi_mapping=None, program_label=None):
+    """
+    Sends query to the configured LLM provider and returns parsed JSON.
+    """
+    if not getattr(settings, "CHATBOT_USE_LLM", False):
+        return None
+
+    system_prompt = build_system_prompt_compact(
+        facilities_list=facilities_list,
+        kpi_mapping=kpi_mapping,
+        program_label=program_label,
+    )
+
+    result = query_llm_with_prompt(user_prompt=user_query, system_prompt=system_prompt)
+    if isinstance(result, dict):
+        return result
+
+    if not getattr(settings, "OPENAI_API_KEY", None) and not getattr(settings, "GEMINI_API_KEY", None):
+        logging.warning("No LLM API key set (OPENAI_API_KEY or GEMINI_API_KEY). Falling back to rule-based parser.")
+    return None

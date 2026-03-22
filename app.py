@@ -56,6 +56,11 @@ for key, default_value in ESSENTIAL_STATES.items():
     if key not in st.session_state:
         st.session_state[key] = default_value
 
+# Load environment variables from .env for local development.
+# (utils/config.py intentionally does not call load_dotenv.)
+from dotenv import load_dotenv
+load_dotenv()
+
 # ====================== NOW IMPORT OTHER MODULES ======================
 # Now it's safe to import modules that might use session state
 
