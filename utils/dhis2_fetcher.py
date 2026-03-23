@@ -3865,6 +3865,12 @@ def run_automated_pipeline():
     Standalone function to run the automated pipeline
     This can be called from a scheduled task or batch file
     """
+    # Load environment variables from the project .env for local/CLI runs.
+    # (utils/config.py intentionally does not call load_dotenv.)
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     print("=" * 80)
     print("DHIS2 AUTOMATED PIPELINE - STANDALONE")
     print("=" * 80)

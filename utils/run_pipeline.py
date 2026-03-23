@@ -8,11 +8,17 @@ import os
 import sys
 from datetime import datetime
 
+from dotenv import load_dotenv
+
 # Add the parent directory to path to import from config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
+    # Load environment variables from the project .env for local/CLI runs.
+    # (utils/config.py intentionally does not call load_dotenv.)
+    load_dotenv()
+
     print("=" * 70)
     print("🤖 DHIS2 AUTOMATED PIPELINE")
     print("=" * 70)
