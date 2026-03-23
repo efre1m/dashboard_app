@@ -1,6 +1,7 @@
 import requests
 import json
 import logging
+import re
 from datetime import datetime
 from utils.config import settings
 
@@ -352,7 +353,8 @@ def _query_gemini_generate_content(*, user_query: str, system_prompt: str):
     }
 
     payload = {
-        "system_instruction": {"parts": [{"text": system_prompt}]},
+        # Gemini API expects camelCase field name.
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [
             {
                 "role": "user",
@@ -384,6 +386,180 @@ def _query_gemini_generate_content(*, user_query: str, system_prompt: str):
         return _parse_json_from_model_text(text)
     except Exception:
         return None
+
+
+def _redact_secrets(text: str):
+    if not text:
+        return text
+
+    redacted = str(text)
+
+    for secret in (getattr(settings, "GEMINI_API_KEY", None), getattr(settings, "OPENAI_API_KEY", None)):
+        if isinstance(secret, str) and secret:
+            redacted = redacted.replace(secret, "<redacted>")
+
+    # Generic patterns (defense-in-depth)
+    redacted = re.sub(r"AIza[0-9A-Za-z\-_]{20,}", "<redacted>", redacted)
+    redacted = re.sub(r"(api_key[:=])\s*[0-9A-Za-z\-_]+", r"\1<redacted>", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(r"(Bearer\s+)[0-9A-Za-z\-_\.]+", r"\1<redacted>", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(r"sk-[0-9A-Za-z]{20,}", "sk-<redacted>", redacted)
+
+    return redacted
+
+
+def _format_http_error(prefix: str, response: requests.Response):
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+
+    message = None
+    if isinstance(payload, dict):
+        err = payload.get("error")
+        if isinstance(err, dict):
+            message = err.get("message") or err.get("status")
+        if not message:
+            message = payload.get("message")
+
+    if not message:
+        message = (response.text or "").strip()
+
+    message = " ".join(str(message).split())
+    message = _redact_secrets(message)
+    if len(message) > 240:
+        message = message[:239] + "…"
+
+    return f"{prefix} (HTTP {response.status_code}): {message}"
+
+
+def _query_openai_chat_completions_detailed(*, user_query: str, system_prompt: str):
+    api_key = getattr(settings, "OPENAI_API_KEY", None)
+    if not api_key:
+        return None, "OPENAI_API_KEY is not set"
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    payload = {
+        "model": getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_query},
+        ],
+        "temperature": 0.0,
+    }
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=getattr(settings, "OPENAI_TIMEOUT", 10),
+        )
+    except Exception as exc:
+        return None, _redact_secrets(f"OpenAI request failed: {exc}")
+
+    if response.status_code >= 400:
+        return None, _format_http_error("OpenAI error", response)
+
+    try:
+        result = response.json()
+        content = result["choices"][0]["message"]["content"]
+    except Exception:
+        return None, "OpenAI response parse error"
+
+    parsed = _parse_json_from_model_text(content)
+    if not isinstance(parsed, dict):
+        return None, "OpenAI returned non-JSON output"
+    return parsed, None
+
+
+def _query_gemini_generate_content_detailed(*, user_query: str, system_prompt: str):
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
+    if not api_key:
+        return None, "GEMINI_API_KEY is not set"
+
+    model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.0-flash").strip()
+    model_resource = model.lstrip("/")
+    if "/" not in model_resource:
+        model_resource = f"models/{model_resource}"
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/{model_resource}:generateContent"
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,
+    }
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": user_query}],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.0,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=getattr(settings, "GEMINI_TIMEOUT", 10),
+        )
+    except Exception as exc:
+        return None, _redact_secrets(f"Gemini request failed: {exc}")
+
+    if response.status_code >= 400:
+        return None, _format_http_error("Gemini error", response)
+
+    try:
+        result = response.json()
+    except Exception:
+        return None, "Gemini response parse error"
+
+    candidates = result.get("candidates") or []
+    if not candidates:
+        return None, "Gemini returned no candidates"
+
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+    parsed = _parse_json_from_model_text(text)
+    if not isinstance(parsed, dict):
+        return None, "Gemini returned non-JSON output"
+
+    return parsed, None
+
+
+def query_llm_detailed(user_query, facilities_list=None, *, kpi_mapping=None, program_label=None):
+    """
+    Sends query to the configured LLM provider and returns (parsed_json, error_message).
+
+    - parsed_json is a dict on success, otherwise None.
+    - error_message is a short string on failure, otherwise None.
+    """
+    if not getattr(settings, "CHATBOT_USE_LLM", False):
+        return None, "CHATBOT_USE_LLM is disabled"
+
+    system_prompt = build_system_prompt_compact(
+        facilities_list=facilities_list,
+        kpi_mapping=kpi_mapping,
+        program_label=program_label,
+    )
+
+    provider = _get_llm_provider()
+    if provider == "gemini":
+        return _query_gemini_generate_content_detailed(user_query=user_query, system_prompt=system_prompt)
+    if provider == "openai":
+        return _query_openai_chat_completions_detailed(user_query=user_query, system_prompt=system_prompt)
+    return None, "No LLM provider configured (set LLM_PROVIDER + API key)"
 
 
 def query_llm_with_prompt(*, user_prompt: str, system_prompt: str):

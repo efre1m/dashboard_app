@@ -10,6 +10,7 @@ import calendar
 from datetime import datetime, timedelta
 from utils.llm_utils import (
     query_llm,
+    query_llm_detailed,
     generate_chatbot_insight,
     get_llm_provider_and_model,
     format_llm_label,
@@ -744,6 +745,7 @@ class ChatbotLogic:
             "attempted": False,
             "used": False,
             "failed": False,
+            "error": None,
         }
         
         # --- PRE-PROCESS QUERY (Normalization & Typo Correction) ---
@@ -1964,14 +1966,17 @@ class ChatbotLogic:
 
         if should_try_llm:
             self.last_parse_trace["attempted"] = True
-            llm_result = query_llm(
+            llm_result, llm_error = query_llm_detailed(
                 query,
                 facilities_list=list(self.facility_mapping.items()),
                 kpi_mapping=active_kpi_mapping,
                 program_label=active_config.get("label"),
             )
 
-            if isinstance(llm_result, dict):
+            if llm_error:
+                self.last_parse_trace["failed"] = True
+                self.last_parse_trace["error"] = llm_error
+            elif isinstance(llm_result, dict):
                 self.last_parse_trace["used"] = True
                 llm_primary = llm_mode == "always"
                 llm_intent = llm_result.get("intent")
@@ -2079,6 +2084,7 @@ class ChatbotLogic:
                             seen.add(uid)
             else:
                 self.last_parse_trace["failed"] = True
+                self.last_parse_trace["error"] = "LLM returned no result"
 
         final_date_range = {"start_date": start_date, "end_date": end_date} if start_date else None
         # Do NOT reuse prior context date range; default to all time unless explicitly provided
@@ -3950,7 +3956,18 @@ def _format_llm_trace_caption(trace):
         if used:
             parts.append(f"Parser: LLM ({llm_label})" if llm_label else "Parser: LLM")
         elif attempted and failed:
-            parts.append("Parser: rule-based (LLM failed -> fallback)")
+            err = parser.get("error")
+            if isinstance(err, str) and err.strip():
+                cleaned = " ".join(err.split())
+                cleaned = re.sub(r"AIza[0-9A-Za-z\-_]{20,}", "<redacted>", cleaned)
+                cleaned = re.sub(r"(api_key[:=])\s*[0-9A-Za-z\-_]+", r"\1<redacted>", cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r"(Bearer\s+)[0-9A-Za-z\-_\.]+", r"\1<redacted>", cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r"sk-[0-9A-Za-z]{20,}", "sk-<redacted>", cleaned)
+                if len(cleaned) > 140:
+                    cleaned = cleaned[:139] + "…"
+                parts.append(f"Parser: rule-based (LLM failed -> fallback: {cleaned})")
+            else:
+                parts.append("Parser: rule-based (LLM failed -> fallback)")
         else:
             parts.append("Parser: rule-based")
 
