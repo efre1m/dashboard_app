@@ -26,9 +26,24 @@ class Settings:
     # NOTE: This module intentionally does NOT call load_dotenv() (per repo requirement).
     # Set environment variables via Streamlit secrets, the process environment, or load .env in the app entrypoint.
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "").strip().lower() or None
-    CHATBOT_USE_LLM = os.getenv("CHATBOT_USE_LLM", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
-    CHATBOT_LLM_PARSER_MODE = os.getenv("CHATBOT_LLM_PARSER_MODE", "fallback").strip().lower()  # off|fallback|always
+
+    _chatbot_use_llm_env = os.getenv("CHATBOT_USE_LLM")
+    if _chatbot_use_llm_env is None:
+        # If an API key is present, default to using the LLM parser.
+        CHATBOT_USE_LLM = bool(os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY"))
+    else:
+        CHATBOT_USE_LLM = _chatbot_use_llm_env.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    CHATBOT_LLM_PARSER_MODE = os.getenv("CHATBOT_LLM_PARSER_MODE", "always").strip().lower()  # off|fallback|always
     CHATBOT_USE_LLM_INSIGHTS = os.getenv("CHATBOT_USE_LLM_INSIGHTS", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    # Chatbot defaults
+    # - scope: "all" uses all accessible facilities unless user specifies a facility/region.
+    #          "dashboard" inherits the current dashboard selection when user doesn't specify a location.
+    # - date_range: "all_time" uses all time unless user specifies dates.
+    #               "dashboard" inherits the current dashboard date filter when user doesn't specify dates.
+    CHATBOT_DEFAULT_SCOPE = os.getenv("CHATBOT_DEFAULT_SCOPE", "all").strip().lower()  # all|dashboard
+    CHATBOT_DEFAULT_DATE_RANGE = os.getenv("CHATBOT_DEFAULT_DATE_RANGE", "all_time").strip().lower()  # all_time|dashboard
 
     # OpenAI (optional)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -37,7 +52,7 @@ class Settings:
 
     # Gemini (optional)
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
     GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", str(OPENAI_TIMEOUT)))
 
 # Single settings instance to import anywhere

@@ -33,6 +33,27 @@ def build_system_prompt_compact(*, facilities_list=None, kpi_mapping=None, progr
         else:
             facility_context = f"Available Facilities: {', '.join(fac_names)}"
 
+    phrase_hints = []
+
+    def _hint(phrase: str, kpi_name: str):
+        if kpi_name in kpi_mapping:
+            phrase_hints.append(f'- "{phrase}" -> "{kpi_name}"')
+
+    # High-value, low-noise hints for the LLM (keep this list short)
+    _hint("c-section / cesarean", "C-Section Rate (%)")
+    _hint("pph", "Postpartum Hemorrhage (PPH) Rate (%)")
+    _hint("stillbirth", "Stillbirth Rate (%)")
+    _hint("pnc", "Early Postnatal Care (PNC) Coverage (%)")
+    _hint("ippcar / family planning", "Immediate Postpartum Contraceptive Acceptance Rate (IPPCAR %)")
+    _hint("cpap coverage", "CPAP Coverage by Birth Weight")
+    _hint("cpap rds", "CPAP for RDS")
+    _hint("kmc coverage", "KMC Coverage by Birth Weight")
+    _hint("birth weight distribution", "Birth Weight Rate")
+
+    hints_section = ""
+    if phrase_hints:
+        hints_section = "COMMON PHRASES (choose the exact KPI name):\n" + "\n".join(phrase_hints)
+
     return f"""
 You are an intelligent assistant for a {program_label} Dashboard.
 Convert the user's message into a single JSON object that the dashboard can execute.
@@ -45,6 +66,8 @@ VALID KPIs (use exact names; pick one or null):
 FACILITY CONTEXT (names only; optional):
 {facility_context}
 
+{hints_section}
+
 RULES:
 - Output MUST be valid JSON only (no markdown, no backticks).
 - If the user asks what indicators/KPIs exist -> intent="list_kpis".
@@ -52,7 +75,13 @@ RULES:
 - If the user greets / asks for help / asks unrelated questions -> intent="chat" and include a short "response" that redirects to dashboard analysis.
 - If asked about passwords/login/admin access -> intent="chat" and respond that you cannot help with passwords or system administration.
 - If the user asks to reset/clear -> intent="clear".
+- If the user asks to see/show/plot/graph/chart/trend/visualize a KPI (or mentions a KPI without asking for a single number) -> intent="plot".
+- If the user asks "what is", "how many", "count", "number", or asks for a single value -> intent="text" (unless they also asked to plot).
+- If the user asks for a definition/meaning/formula -> intent="definition".
 - chart_type: "line" | "bar" | "area" | "table" (default "line").
+- period_label: null or "Daily" | "Weekly" | "Monthly" | "Quarterly" | "Yearly".
+- analysis_type: null or "max" | "min" (highest/lowest). If set, intent should usually be "text".
+- orientation: null or "h" | "v" (use "h" when user asks for a horizontal bar chart).
 - date_range: null or {{ "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" }}.
 - comparison_mode: true when the user compares facilities/regions ("compare", "vs", "by facility", "by region").
 
@@ -63,6 +92,9 @@ OUTPUT JSON SCHEMA:
   "chart_type": "line" | "bar" | "area" | "table",
   "facility_names": [string] | [],
   "date_range": {{ "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" }} | null,
+  "period_label": "Daily" | "Weekly" | "Monthly" | "Quarterly" | "Yearly" | null,
+  "analysis_type": "max" | "min" | null,
+  "orientation": "h" | "v" | null,
   "entity_type": "region" | "facility" | null,
   "count_requested": true | false,
   "comparison_mode": true | false,
@@ -277,7 +309,7 @@ def get_llm_provider_and_model():
     """
     provider = _get_llm_provider()
     if provider == "gemini":
-        model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.0-flash").strip()
+        model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.5-flash-lite").strip()
         return provider, model
     if provider == "openai":
         model = (getattr(settings, "OPENAI_MODEL", None) or "gpt-4o-mini").strip()
@@ -340,7 +372,7 @@ def _query_gemini_generate_content(*, user_query: str, system_prompt: str):
     if not api_key:
         return None
 
-    model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.0-flash").strip()
+    model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.5-flash-lite").strip()
     model_resource = model.lstrip("/")
     if "/" not in model_resource:
         model_resource = f"models/{model_resource}"
@@ -481,7 +513,7 @@ def _query_gemini_generate_content_detailed(*, user_query: str, system_prompt: s
     if not api_key:
         return None, "GEMINI_API_KEY is not set"
 
-    model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.0-flash").strip()
+    model = (getattr(settings, "GEMINI_MODEL", None) or "gemini-2.5-flash-lite").strip()
     model_resource = model.lstrip("/")
     if "/" not in model_resource:
         model_resource = f"models/{model_resource}"

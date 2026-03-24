@@ -502,6 +502,9 @@ class ChatbotLogic:
             "whor": "who",
             "abot": "about",
             "abut": "about",
+            "hte": "the",
+            "eht": "the",
+            "teh": "the",
             "enrollmet": "enrollment",
             "admited": "admitted",
             "admision": "admission",
@@ -815,6 +818,7 @@ class ChatbotLogic:
         selected_facility_uids = []
         selected_facility_names = []
         found_regions = []
+        region_filter = None
         assistant_response = None
         
         # --- AMBIGUITY RESOLUTION (Numeric Selection) ---
@@ -877,42 +881,41 @@ class ChatbotLogic:
         
         
         # Handle explicit list requests - OPTIMIZED FOR PLURALS & VARIATIONS
-        # PRIORITIZE Facility keyword to avoid "list facilities in Tigray region" matching regions regex first
-        entity_type = None
-        count_requested = False
-        region_filter = None
-        
-        if re.search(r'(list|show|shw|sho|display|tell).*(facilities|facility|hospitals?|facilti?yies?|faclities?|units?)', query_norm):
-            entity_type = "facility"
-        elif re.search(r'(list|show|shw|sho|display|tell).*(regions?|reioings?|reigons?|territory|territories)', query_norm):
-            entity_type = "region"
-            
-        # 0.5. PRIORITY CHECK: If KPI is present, do NOT treat as metadata list
+        # NOTE: Do not early-return here; we still want to give the LLM a chance (and avoid
+        # misclassifying KPI queries that mention "region" / "facility").
+        explicit_list_intent = None  # "metadata_query" | "list_kpis" | None
+        explicit_list_entity_type = None  # "region" | "facility" | None
+        explicit_list_count_requested = False
+        explicit_list_region_filter = None
+
+        if re.search(r"(list|show|shw|sho|display|tell).*(facilities|facility|hospitals?|facilti?yies?|faclities?|units?)", query_norm):
+            explicit_list_entity_type = "facility"
+        elif re.search(r"(list|show|shw|sho|display|tell).*(regions?|reioings?|reigons?|territory|territories)", query_norm):
+            explicit_list_entity_type = "region"
+
+        # PRIORITY CHECK: If KPI is present, do NOT treat as metadata list
         # "Show C-Section Rate by facility" -> PLOT intent, not LIST intent
+        active_aliases = active_config.get("kpi_aliases") or {}
         kpi_found_early = (
             any(kpi.lower() in query_norm for kpi in active_kpi_mapping.keys())
             or any(opt.lower() in query_norm for opt in active_kpi_options)
+            or any(str(alias).lower() in query_norm for alias in active_aliases.keys())
             or missing_birth_outcome_lock
         )
-        
-        if entity_type and not kpi_found_early:
-            # Extract Region if mentioned (even in rule-based mode)
+
+        if explicit_list_entity_type and not kpi_found_early:
+            explicit_list_intent = "metadata_query"
+            explicit_list_count_requested = "how many" in query_lower
+
+            # Extract Region if mentioned (for "list facilities in <region>")
             regions_data = get_facilities_grouped_by_region(self.user)
-            region_found = None
             for r_name in regions_data.keys():
                 if r_name.lower() in query_norm:
-                    region_found = r_name
+                    explicit_list_region_filter = r_name
                     break
-            
-            return {
-                "intent": "metadata_query", 
-                "entity_type": entity_type, 
-                "count_requested": False,
-                "region_filter": region_found
-            }
 
-        if re.search(r'(list|show|shw|sho|display|tell).*(indicators?|indicaters?|kpis?|measures?|metrics?)', query_norm):
-            return {"intent": "list_kpis"}
+        if re.search(r"(list|show|shw|sho|display|tell).*(indicators?|indicaters?|kpis?|measures?|metrics?)", query_norm):
+            explicit_list_intent = "list_kpis"
         
         # --- GREEDY FACILITY SCAN (Prioritize Full Names in Query) ---
         # Instead of just relying on the LLM, scan the RAW query for any known facility names
@@ -994,7 +997,21 @@ class ChatbotLogic:
         comparison_entity = None # Initialize to prevent UnboundLocalError
         if any(w in query_lower for x in ["distribution", "breakdown", "pie", "proportion", "dist", "by category", "by group"] for w in [x]):
             intent = "distribution"
-        elif any(w in query_lower for w in ["plot", "graph", "chart", "trend", "visualize", "show me"]):
+        elif any(
+            w in query_lower
+            for w in [
+                "plot",
+                "graph",
+                "chart",
+                "trend",
+                "visualize",
+                "show me",
+                "show",
+                "see",
+                "display",
+                "view",
+            ]
+        ):
             intent = "plot"
         elif any(w in query_lower for w in ["define", "meaning", "definition", "how is", "computed", "calculation", "formula"]):
             intent = "definition"
@@ -1477,12 +1494,15 @@ class ChatbotLogic:
                  end_date = None
 
         # --- Custom Date Range Detection (Must run BEFORE quick ranges) ---
-        # If the user doesn't specify a year, assume 2026 (per requirements).
-        DEFAULT_YEAR_IF_MISSING = 2026
+        # If the user doesn't specify a year, assume the current year.
+        DEFAULT_YEAR_IF_MISSING = today.year
 
         def _parse_day_month_token(token: str):
             t = token.strip().lower().replace(",", " ")
-            t = re.sub(r"\s+", " ", t)
+            # Handle "jan1" / "1jan" style tokens
+            t = re.sub(r"([a-z])(\d)", r"\1 \2", t)
+            t = re.sub(r"(\d)([a-z])", r"\1 \2", t)
+            t = re.sub(r"\s+", " ", t).strip()
             month_map = {
                 "jan": 1,
                 "feb": 2,
@@ -1523,9 +1543,9 @@ class ChatbotLogic:
 
         if not start_date:
             try:
-                date_token = r"(?:\d{1,2}\s+[a-z]{3,}|[a-z]{3,}\s+\d{1,2})(?:\s+\d{4})?"
+                date_token = r"(?:\d{1,2}\s*[a-z]{3,}|[a-z]{3,}\s*\d{1,2})(?:\s+\d{4})?"
                 range_pattern = re.compile(
-                    rf"(?:from\s+)?(?P<d1>{date_token})\s*(?:to|[\-\u2013\u2014])\s*(?P<d2>{date_token})",
+                    rf"(?:(?:from|form)\s+)?(?P<d1>{date_token})\s*(?:to|[\-\u2013\u2014])\s*(?P<d2>{date_token})",
                     re.IGNORECASE,
                 )
                 m = range_pattern.search(query_lower)
@@ -1669,7 +1689,12 @@ class ChatbotLogic:
         if not start_date and "today" in query_lower:
              try:
                  # Clean up typical typos for "to" -> "ot", "too"
-                 cleaned_query_date = query_lower.replace(" ot ", " to ").replace(" too ", " to ").replace(" from ", "")
+                 cleaned_query_date = (
+                     query_lower.replace(" ot ", " to ")
+                     .replace(" too ", " to ")
+                     .replace(" from ", "")
+                     .replace(" form ", " ")
+                 )
                  # Clean up month typos for this specific check
                  for typo, corr in [("jna", "jan"), ("fbe", "feb"), ("mrc", "mar"), ("arp", "apr"), ("my", "may"), ("jnu", "jun"), ("july", "jul"), ("augst", "aug"), ("sept", "sep"), ("octber", "oct"), ("novmber", "nov"), ("dec", "dec")]:
                       if typo in cleaned_query_date:
@@ -1678,14 +1703,14 @@ class ChatbotLogic:
                  today_str = today.strftime("%Y-%m-%d")
                  
                  # Pattern: (Month DD) ... today
-                 pattern_today = re.compile(r"([a-z]{3})\s+(\d{1,2}).*?today", re.IGNORECASE)
+                 pattern_today = re.compile(r"([a-z]{3,})\s*(\d{1,2}).*?today", re.IGNORECASE)
                  match_today = pattern_today.search(cleaned_query_date)
-                 
+                  
                  if match_today:
                       m, d = match_today.groups()
                       # Assume current year first, fallback logic for rollovers could be added
                       y = today.year
-                      start_date = datetime.strptime(f"{m} {d} {y}", "%b %d %Y").strftime("%Y-%m-%d")
+                      start_date = datetime.strptime(f"{m[:3]} {d} {y}", "%b %d %Y").strftime("%Y-%m-%d")
                       end_date = today_str
              except Exception as e:
                   logging.warning(f"Date regex 'today' failed: {e}")
@@ -1752,6 +1777,26 @@ class ChatbotLogic:
              elif is_definition_request:
                  intent = "definition"
 
+        # Default to plotting when the user mentions a KPI without explicitly
+        # asking for a single value/definition.
+        if (
+            intent == "text"
+            and kpi_detected
+            and not analysis_type
+            and not is_definition_request
+            and not any(
+                token in query_lower
+                for token in [
+                    "what is",
+                    "how many",
+                    "value",
+                    "number",
+                    "count",
+                ]
+            )
+        ):
+            intent = "plot"
+
         # Robust List Detection
         if "indicator" in query_lower or "kpi" in query_lower or "all indicators" in query_lower:
             if any(x in query_lower for x in ["what", "list", "show", "available", "options", "help", "how many", "total"]):
@@ -1807,16 +1852,38 @@ class ChatbotLogic:
              # but generate_response handles generic chat well.
             
              
-        # Metadata / Counts Detection Fallback (Regex)
-        # ONLY if no KPI selected, otherwise assume data query
-        if not selected_kpi and ("how many" in query_lower or "list" in query_lower or "show me" in query_lower or "show all" in query_lower):
-            if "region" in query_lower or "reigon" in query_lower or " reg " in query_lower:
+        # Explicit list KPIs/indicators request (keep deterministic even if LLM is enabled)
+        if explicit_list_intent == "list_kpis":
+            intent = "list_kpis"
+
+        # Metadata / Counts Detection (Regex)
+        # ONLY if no KPI selected, otherwise assume data query.
+        # Facility listing must take precedence over region listing when both words exist
+        # (e.g. "list facilities in Tigray region").
+        if not selected_kpi and (
+            explicit_list_intent == "metadata_query"
+            or ("how many" in query_lower or "list" in query_lower or "show me" in query_lower or "show all" in query_lower)
+        ):
+            if explicit_list_intent == "metadata_query":
                 intent = "metadata_query"
-                entity_type = "region"
-                count_requested = "how many" in query_lower
+                entity_type = explicit_list_entity_type
+                count_requested = explicit_list_count_requested
+                if explicit_list_region_filter:
+                    region_filter = explicit_list_region_filter
             elif any(x in query_lower for x in ["facilit", "hospital", " fac ", " failit"]):
                 intent = "metadata_query"
                 entity_type = "facility"
+                count_requested = "how many" in query_lower
+
+                # Try to detect a region focus for facility lists (e.g. "facilities in Tigray")
+                regions_data = get_facilities_grouped_by_region(self.user)
+                for r_name in regions_data.keys():
+                    if r_name.lower() in query_norm:
+                        region_filter = r_name
+                        break
+            elif "region" in query_lower or "reigon" in query_lower or " reg " in query_lower:
+                intent = "metadata_query"
+                entity_type = "region"
                 count_requested = "how many" in query_lower
 
         # --- CONTEXT MERGING ---
@@ -1827,8 +1894,8 @@ class ChatbotLogic:
             context = {}
 
         # Merge KPI
-        # Prevent context merging if intent is list or scope error
-        if intent not in ["list_kpis", "scope_error"] and not selected_kpi:
+        # Prevent context merging for list/meta/system intents
+        if intent not in ["list_kpis", "metadata_query", "scope_error", "chart_options", "clear"] and not selected_kpi:
             if context.get("kpi"):
                 selected_kpi = context.get("kpi")
                 
@@ -1837,6 +1904,8 @@ class ChatbotLogic:
             not selected_facility_uids
             and not region_only_context
             and not facility_requested_but_unresolved
+            and intent != "metadata_query"
+            and intent != "list_kpis"
         ):
              # Only inherit facilities if the user didn't specify any NEW ones.
              if context.get("facility_uids"):
@@ -1995,6 +2064,23 @@ class ChatbotLogic:
             }
         )
 
+        wants_visual = bool(
+            re.search(
+                r"\b(show|see|display|view|plot|graph|chart|trend|visualize)\b",
+                query_lower,
+            )
+        )
+        wants_single_value = any(
+            token in query_lower
+            for token in [
+                "what is",
+                "how many",
+                "value",
+                "number",
+                "count",
+            ]
+        )
+
         should_try_llm = (
             llm_enabled
             and llm_mode in {"always", "fallback"}
@@ -2003,11 +2089,13 @@ class ChatbotLogic:
             and (
                 llm_mode == "always"
                 or not selected_kpi
+                or (intent == "text" and selected_kpi and wants_visual and not wants_single_value)
                 or (not start_date and has_date_hint)
                 or (comparison_mode and comparison_entity == "facility" and len(selected_facility_uids) < 2)
             )
         )
 
+        llm_orientation_hint = None
         if should_try_llm:
             self.last_parse_trace["attempted"] = True
             llm_result, llm_error = query_llm_detailed(
@@ -2026,13 +2114,40 @@ class ChatbotLogic:
                 llm_intent = llm_result.get("intent")
                 llm_kpi = llm_result.get("kpi")
 
+                llm_kpi_resolved = None
+                if isinstance(llm_kpi, str):
+                    raw_candidate = llm_kpi.strip()
+                    if raw_candidate:
+                        if raw_candidate in active_kpi_mapping:
+                            llm_kpi_resolved = raw_candidate
+                        else:
+                            ci_map = {k.lower(): k for k in active_kpi_mapping.keys()}
+                            exact_ci = ci_map.get(raw_candidate.lower())
+                            if exact_ci:
+                                llm_kpi_resolved = exact_ci
+                            else:
+                                matches = difflib.get_close_matches(
+                                    raw_candidate,
+                                    list(active_kpi_mapping.keys()),
+                                    n=1,
+                                    cutoff=0.88,
+                                )
+                                if matches:
+                                    llm_kpi_resolved = matches[0]
+
                 if (
-                    isinstance(llm_kpi, str)
-                    and llm_kpi in active_kpi_mapping
+                    isinstance(llm_kpi_resolved, str)
+                    and llm_kpi_resolved in active_kpi_mapping
                     and not missing_birth_outcome_lock
                     and (llm_primary or not selected_kpi)
                 ):
-                    selected_kpi = llm_kpi
+                    selected_kpi = llm_kpi_resolved
+
+                force_list_kpis = explicit_list_intent == "list_kpis"
+                force_metadata_list = (
+                    explicit_list_intent == "metadata_query"
+                    and not selected_kpi  # no KPI found even after LLM resolution above
+                )
 
                 if llm_primary and llm_intent in {
                     "plot",
@@ -2043,11 +2158,21 @@ class ChatbotLogic:
                     "chat",
                     "list_kpis",
                 }:
-                    intent = llm_intent
+                    if force_list_kpis and llm_intent != "list_kpis":
+                        pass
+                    elif force_metadata_list and llm_intent not in {"metadata_query", "chat"}:
+                        pass
+                    else:
+                        intent = llm_intent
                 elif intent == "text" and llm_intent in {"plot", "distribution", "definition", "text"}:
-                    intent = llm_intent
+                    if force_list_kpis:
+                        pass
+                    elif force_metadata_list and llm_intent not in {"metadata_query", "chat"}:
+                        pass
+                    else:
+                        intent = llm_intent
 
-                if llm_intent == "list_kpis":
+                if llm_intent == "list_kpis" and not force_metadata_list:
                     intent = "list_kpis"
 
                 llm_response = llm_result.get("response")
@@ -2067,6 +2192,25 @@ class ChatbotLogic:
                     llm_region_filter = llm_result.get("region_filter")
                     if isinstance(llm_region_filter, str) and llm_region_filter.strip():
                         region_filter = llm_region_filter.strip()
+
+                llm_period_label = llm_result.get("period_label")
+                if not period_label and llm_period_label in {
+                    "Daily",
+                    "Weekly",
+                    "Monthly",
+                    "Quarterly",
+                    "Yearly",
+                }:
+                    period_label = llm_period_label
+
+                llm_analysis_type = llm_result.get("analysis_type")
+                if not analysis_type and llm_analysis_type in {"max", "min"}:
+                    analysis_type = llm_analysis_type
+                    intent = "text"
+
+                llm_orientation = llm_result.get("orientation")
+                if llm_orientation in {"h", "v"}:
+                    llm_orientation_hint = llm_orientation
 
                 if not start_date:
                     llm_date_range = llm_result.get("date_range")
@@ -2088,6 +2232,10 @@ class ChatbotLogic:
 
                 if not comparison_mode and llm_result.get("comparison_mode") is True:
                     comparison_mode = True
+                    llm_comp_entity = llm_result.get("comparison_entity")
+                    if llm_comp_entity in {"facility", "region"}:
+                        comparison_entity = llm_comp_entity
+                elif llm_primary and comparison_mode and not comparison_entity:
                     llm_comp_entity = llm_result.get("comparison_entity")
                     if llm_comp_entity in {"facility", "region"}:
                         comparison_entity = llm_comp_entity
@@ -2179,7 +2327,11 @@ class ChatbotLogic:
         orientation = "v"
         if "horizontal" in query_lower:
             orientation = "h"
-            if chart_type == "line": chart_type = "bar" # Line cannot be horizontal effectively usually
+        elif llm_orientation_hint in {"h", "v"}:
+            orientation = llm_orientation_hint
+
+        if orientation == "h" and chart_type == "line":
+            chart_type = "bar"  # line charts don't render well horizontally
         
         # Auto-detect Granularity for Short Date Ranges
         # if final_date_range and not period_label:
@@ -2201,11 +2353,28 @@ class ChatbotLogic:
                 # But if we found regions and NO facility UIDs, then region.
                 comparison_entity = "region"
         
-        # If comparison by facility was requested but no facilities resolved, default to all accessible facilities
+        # If comparison by facility was requested but no facilities resolved, only auto-expand to
+        # "all accessible facilities" when the user explicitly asked for an all/by-facility view.
         if comparison_mode and comparison_entity == "facility" and not selected_facility_uids:
-            all_facs = get_all_facilities_flat(self.user)
-            selected_facility_names = [f[0] for f in all_facs]
-            selected_facility_uids = [f[1] for f in all_facs]
+            wants_all_facilities = any(
+                token in query_lower
+                for token in (
+                    "all facilities",
+                    "all facility",
+                    "every facility",
+                    "each facility",
+                    "all hospitals",
+                    "every hospital",
+                    "each hospital",
+                    "by facility",
+                    "per facility",
+                    "breakdown by facility",
+                )
+            )
+            if wants_all_facilities:
+                all_facs = get_all_facilities_flat(self.user)
+                selected_facility_names = [f[0] for f in all_facs]
+                selected_facility_uids = [f[1] for f in all_facs]
 
         return {
             "intent": intent,
@@ -2317,7 +2486,7 @@ class ChatbotLogic:
         # Guard: if selected program is newborn, prevent maternal-only KPIs from proceeding
         if selected_program == "newborn" and parsed.get("kpi"):
             from components.chatbot_newborn import validate_newborn_indicator
-            is_valid, err_msg = validate_newborn_indicator(parsed["kpi"])
+            is_valid, err_msg = validate_newborn_indicator(parsed["kpi"], raw_query=query)
             if not is_valid:
                 return None, err_msg
         # Guard: if selected program is maternal, prevent newborn-only KPIs from proceeding
@@ -2328,6 +2497,118 @@ class ChatbotLogic:
             if "missing birth weight" in query_lower or "missing birthweight" in query_lower:
                 return None, "Missing Birth Weight is tracked in the newborn program. Type `newborn` then ask again, or say `list indicators` to see maternal options."
             return None, "I couldn't match that to a maternal indicator. Say `list indicators` to see maternal options."
+
+        # If the user did not specify a facility/region in their prompt, optionally default to the
+        # selected dashboard scope (so chatbot plots match the manually navigated dashboard views).
+        # Default behavior is "all accessible" unless CHATBOT_DEFAULT_SCOPE="dashboard".
+        default_scope = str(getattr(settings, "CHATBOT_DEFAULT_SCOPE", "all") or "all").strip().lower()
+        if (
+            default_scope == "dashboard"
+            and isinstance(parsed, dict)
+            and parsed.get("intent") not in {"metadata_query", "list_kpis", "clear", "chat"}
+        ):
+            explicit_all_scope = any(
+                token in query_lower
+                for token in (
+                    "all facilities",
+                    "all facility",
+                    "all regions",
+                    "all region",
+                    "every facility",
+                    "every region",
+                    "across all",
+                    "national",
+                    "countrywide",
+                )
+            )
+
+            has_location = bool(
+                parsed.get("facility_uids")
+                or parsed.get("facility_names")
+                or parsed.get("comparison_targets")
+                or parsed.get("region_filter")
+            )
+
+            if not explicit_all_scope and not has_location:
+                filter_mode = str(st.session_state.get("filter_mode") or "").strip()
+                selected_facilities = st.session_state.get("selected_facilities") or []
+                selected_regions = st.session_state.get("selected_regions") or []
+
+                if isinstance(selected_facilities, str):
+                    selected_facilities = [selected_facilities]
+                if isinstance(selected_regions, str):
+                    selected_regions = [selected_regions]
+
+                selected_facilities = [
+                    f
+                    for f in selected_facilities
+                    if isinstance(f, str) and f.strip() and f.strip() != "All Facilities"
+                ]
+                selected_regions = [r for r in selected_regions if isinstance(r, str) and r.strip()]
+
+                def _dedupe_keep_order(values):
+                    seen = set()
+                    result = []
+                    for value in values:
+                        if value in seen:
+                            continue
+                        seen.add(value)
+                        result.append(value)
+                    return result
+
+                def _map_facility_names(names):
+                    resolved_names = []
+                    resolved_uids = []
+                    for name in names:
+                        uid = self.facility_mapping.get(name)
+                        if uid and uid not in resolved_uids:
+                            resolved_uids.append(uid)
+                            resolved_names.append(name)
+                    return resolved_names, resolved_uids
+
+                if parsed.get("comparison_mode"):
+                    if parsed.get("comparison_entity") == "facility" and selected_facilities:
+                        # Regional dashboards typically don't set filter_mode, so treat blank as "By Facility".
+                        if not filter_mode or filter_mode == "By Facility":
+                            fac_names, fac_uids = _map_facility_names(selected_facilities)
+                            if len(fac_uids) >= 2:
+                                parsed["facility_names"] = fac_names
+                                parsed["facility_uids"] = fac_uids
+                    elif (
+                        parsed.get("comparison_entity") == "region"
+                        and selected_regions
+                        and filter_mode == "By Region"
+                    ):
+                        if len(selected_regions) >= 2:
+                            parsed["comparison_targets"] = _dedupe_keep_order(selected_regions)
+                else:
+                    if selected_facilities and (not filter_mode or filter_mode == "By Facility"):
+                        fac_names, fac_uids = _map_facility_names(selected_facilities)
+                        if fac_uids:
+                            parsed["facility_names"] = fac_names
+                            parsed["facility_uids"] = fac_uids
+                    elif filter_mode == "By Region" and selected_regions:
+                        try:
+                            regions_mapping = get_facilities_grouped_by_region(self.user)
+                        except Exception:
+                            regions_mapping = {}
+
+                        flat_uids = []
+                        for region in _dedupe_keep_order(selected_regions):
+                            for fac in regions_mapping.get(region, []) or []:
+                                uid = (
+                                    fac[1]
+                                    if isinstance(fac, (list, tuple)) and len(fac) > 1
+                                    else fac
+                                )
+                                if uid and uid not in flat_uids:
+                                    flat_uids.append(uid)
+
+                if flat_uids:
+                    parsed["facility_uids"] = flat_uids
+                    parsed["facility_names"] = [
+                        f"{r} (Region)" for r in _dedupe_keep_order(selected_regions)
+                    ]
 
         # Guard: if user requested facility comparison but we resolved fewer than 2 facilities, ask to clarify
         if parsed.get("comparison_mode") and parsed.get("comparison_entity") == "facility":
@@ -2595,9 +2876,10 @@ class ChatbotLogic:
         kpi_name = parsed["kpi"]
         facility_uids = parsed["facility_uids"]
         date_range = parsed["date_range"]
-        # If the user did not specify a date range, default to the active dashboard filters (if any)
-        # so chatbot plots match the manually navigated dashboard views.
-        if not date_range:
+        # If the user did not specify a date range, optionally default to the active dashboard filters (if any).
+        # Default behavior is "all time" unless CHATBOT_DEFAULT_DATE_RANGE="dashboard".
+        default_date_range = str(getattr(settings, "CHATBOT_DEFAULT_DATE_RANGE", "all_time") or "all_time").strip().lower()
+        if not date_range and default_date_range == "dashboard":
             explicit_all_time = any(
                 token in query_lower
                 for token in [
@@ -2780,25 +3062,42 @@ class ChatbotLogic:
             # If initial fetch failed, it might be due to filters.
             # If comparison mode, we ignore this initial check and let the loop handle it
             if not parsed.get("comparison_mode"):
-                 if prepared_df is None or prepared_df.empty:
-                     # SPECIAL CASE: Coverage-rate KPIs have an external denominator source,
-                     # so we still need to show periods with 0 numerator when denominator exists.
-                     if not (
-                         (use_newborn_data and active_kpi_name == "Newborn Coverage Rate")
-                         or ((not use_newborn_data) and active_kpi_name == "Maternal Coverage Rate")
-                     ):
-                          return None, f"I found no data for **{kpi_name}** matching your criteria."
-            
+                if prepared_df is None or prepared_df.empty:
+                    # SPECIAL CASE: Coverage-rate KPIs have an external denominator source,
+                    # so we still need to show periods with 0 numerator when denominator exists.
+                    if not (
+                        (use_newborn_data and active_kpi_name == "Newborn Coverage Rate")
+                        or ((not use_newborn_data) and active_kpi_name == "Maternal Coverage Rate")
+                    ):
+                        fac_names = parsed.get("facility_names") or []
+                        if fac_names:
+                            shown = ", ".join(fac_names[:3])
+                            scope_part = f" for **{shown}**" + ("..." if len(fac_names) > 3 else "")
+                        else:
+                            scope_part = " across **all accessible facilities**"
+
+                        if isinstance(date_range, dict) and date_range.get("start_date") and date_range.get("end_date"):
+                            date_part = f" from **{date_range['start_date']}** to **{date_range['end_date']}**"
+                            if not re.search(r"\b(19|20)\d{2}\b", query_lower):
+                                date_part += f" (assumed year {str(date_range['start_date'])[:4]})"
+                        else:
+                            date_part = " for **all time**"
+
+                        return None, (
+                            f"I found no data for **{kpi_name}**{scope_part}{date_part}.\n\n"
+                            "Try widening the date range (e.g. `all time`), checking the facility spelling, or trying a different indicator."
+                        )
+
             # Generate Plot
             # Group by period
             if prepared_df is not None and "period_display" not in prepared_df.columns:
-                 # Logic from render_trend_chart_section
-                  if "event_date" in prepared_df.columns:
-                     prepared_df["period_display"] = prepared_df["event_date"].dt.strftime("%b-%y").str.capitalize()
-                     prepared_df["period"] = prepared_df["period_display"]
-                     # Add Sort Column (Default Monthly logic for chatbot basics)
-                     prepared_df["period_sort"] = prepared_df["event_date"].dt.to_period("M").dt.start_time
-            
+                # Logic from render_trend_chart_section
+                if "event_date" in prepared_df.columns:
+                    prepared_df["period_display"] = prepared_df["event_date"].dt.strftime("%b-%y").str.capitalize()
+                    prepared_df["period"] = prepared_df["period_display"]
+                    # Add Sort Column (Default Monthly logic for chatbot basics)
+                    prepared_df["period_sort"] = prepared_df["event_date"].dt.to_period("M").dt.start_time
+
             # --- COMPARISON MODE LOGIC ---
             comparison_mode = parsed.get("comparison_mode")
             comparison_entity = parsed.get("comparison_entity")
@@ -3686,6 +3985,7 @@ class ChatbotLogic:
                     
                     # Get labels for kpi_utils functions
                     kpi_info = KPI_MAPPING.get(active_kpi_name, {})
+                    chart_title = kpi_info.get("title") or active_kpi_name
                     num_label = kpi_info.get("numerator_name", "Numerator")
                     den_label = kpi_info.get("denominator_name", "Denominator")
                     
@@ -3699,6 +3999,7 @@ class ChatbotLogic:
                         "is_compare_all": is_compare_all,  # Add flag to spec
                         "params": {
                             "active_kpi_name": active_kpi_name,
+                            "chart_title": chart_title,
                             "facility_names": parsed.get("facility_names"),
                             "facility_uids": facility_uids,
                             "all_comparison_uids": all_comparison_uids,
@@ -4284,7 +4585,8 @@ def render_chatbot():
         
         # If comparing all entities, only show the table, not the plot
         suppress_plot = is_compare_all
-        
+        base_title = params.get("chart_title") or params.get("active_kpi_name") or ""
+         
         try:
             if suffix == "utils":
                 module = kpi_utils
@@ -4458,24 +4760,24 @@ def render_chatbot():
                      render_func = getattr(module, func_name)
                     
                      if suffix == "utils":
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                      elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], value_name=params["active_kpi_name"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], params["facility_uids"], value_name=params["active_kpi_name"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                      elif suffix == "newborn":
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                      elif suffix == "newborn_simplified":
                         render_func(render_df, facility_uids=params["all_comparison_uids"], facility_names=params["facility_names"], key_suffix=f"msg_{message_index}")
                      elif suffix == "admitted_mothers":
                         # admitted_mothers has a different signature (no num/den labels)
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], params["facility_uids"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                      else:
                         # All other specialized maternal modules (pph, svd, arv, etc.) use the same signature as utils
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                  else:
                      if suffix == "newborn_simplified":
-                         func_name = f"{func_prefix}_region_comparison"
+                          func_name = f"{func_prefix}_region_comparison"
                      else:
-                         func_name = f"{func_prefix}_region_comparison_chart"
+                          func_name = f"{func_prefix}_region_comparison_chart"
                          
                      render_func = getattr(module, func_name)
                     
@@ -4483,16 +4785,16 @@ def render_chatbot():
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         # FIX: Pass region names (comparison_targets) instead of UIDs
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                      elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, value_name=params["active_kpi_name"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, value_name=params["active_kpi_name"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                      elif suffix == "newborn":
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         # FIX: Pass region names (comparison_targets) instead of UIDs
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                      elif suffix == "newborn_simplified":
                         # FIX: Use region names and region/facility mappings
                         from utils.queries import get_facilities_grouped_by_region
@@ -4501,35 +4803,35 @@ def render_chatbot():
                      elif suffix == "admitted_mothers":
                         # admitted_mothers has a different signature
                         # FIX: Use region names
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["comparison_targets"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
                      else:
                         # All other specialized maternal modules use the same signature as utils
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         # FIX: Pass region names (comparison_targets) instead of UIDs
-                        render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
+                        render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
             else:
                 render_func = getattr(module, f"{func_prefix}_trend_chart")
                 if suffix == "utils":
-                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
+                    render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
                 elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
-                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], value_name=params["active_kpi_name"], facility_uids=params.get("facility_uids"), key_suffix=f"msg_{message_index}")
+                    render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], value_name=params["active_kpi_name"], facility_uids=params.get("facility_uids"), key_suffix=f"msg_{message_index}")
                 elif suffix == "newborn":
-                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=params.get("facility_uids"), key_suffix=f"msg_{message_index}")
+                    render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=params.get("facility_uids"), key_suffix=f"msg_{message_index}")
                 elif suffix == "newborn_simplified":
                      render_func(
                          render_df,
                          period_col="period_display",
-                         title=params.get("chart_title") or params["active_kpi_name"],
+                         title=base_title,
                          facility_uids=params.get("facility_uids"),
                          key_suffix=f"msg_{message_index}",
                      )
                 elif suffix == "admitted_mothers":
                      # admitted_mothers has a different signature
-                     render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
+                     render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
                 else:
                     # All other specialized maternal modules (pph, svd, arv, etc.) use the same signature as utils
-                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
+                    render_func(render_df, "period_display", "value", base_title, "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
         except Exception as e:
             st.error(f"Error rendering specialized content: {e}")
 
