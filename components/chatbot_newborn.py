@@ -1,11 +1,105 @@
 from newborns_dashboard.dash_co_newborn import NEWBORN_KPI_MAPPING, NEWBORN_KPI_OPTIONS
 
+import difflib
+import re
 
-def validate_newborn_indicator(kpi_name: str):
-    """Return (True, None) if KPI is valid for newborn; otherwise (False, msg)."""
-    if kpi_name in NEWBORN_KPI_MAPPING:
+
+def validate_newborn_indicator(kpi_name, *, raw_query: str | None = None):
+    """
+    Return (True, None) if KPI is valid for newborn; otherwise (False, message).
+
+    - Uses exact KPI names from `NEWBORN_KPI_MAPPING`.
+    - Provides smart suggestions when the KPI is unknown.
+    """
+    if isinstance(kpi_name, str) and kpi_name in NEWBORN_KPI_MAPPING:
         return True, None
-    return False, "That looks like a maternal indicator. Type `maternal` to switch programs, or say `list indicators` to see newborn options."
+
+    suggestions: list[str] = []
+
+    # 1) If we got a KPI-like string, fuzzy match to the closest known newborn KPIs.
+    if isinstance(kpi_name, str) and kpi_name.strip():
+        suggestions.extend(
+            difflib.get_close_matches(
+                kpi_name.strip(),
+                list(NEWBORN_KPI_MAPPING.keys()),
+                n=4,
+                cutoff=0.72,
+            )
+        )
+
+    # 2) If we have the raw query, use keyword hints to propose likely KPIs.
+    query = (raw_query or "").lower()
+    if query:
+        # Avoid treating *pure* program-selection inputs as KPI requests.
+        if not kpi_name and query.strip() in {"maternal", "newborn"}:
+            return False, "Type an indicator name (or say `list indicators`) so I can plot it."
+
+        def _add(name: str):
+            if name in NEWBORN_KPI_MAPPING and name not in suggestions:
+                suggestions.append(name)
+
+        if (
+            "birth weight" in query
+            or "birthweight" in query
+            or re.search(r"\bweight\b", query)
+        ):
+            for name in [
+                "Birth Weight Rate",
+                "KMC Coverage by Birth Weight",
+                "CPAP Coverage by Birth Weight",
+                "Missing Birth Weight (%)",
+            ]:
+                _add(name)
+
+        if "kmc" in query or "kangaroo" in query:
+            _add("KMC Coverage by Birth Weight")
+
+        if "cpap" in query or "rds" in query or "respir" in query:
+            _add("CPAP for RDS")
+            _add("CPAP Coverage by Birth Weight")
+
+        if "hypothermia" in query or "cold" in query or "temperature" in query:
+            for name in [
+                "Hypothermia on Admission Rate (%)",
+                "Inborn Hypothermia Rate (%)",
+                "Outborn Hypothermia Rate (%)",
+                "Missing Temperature (%)",
+            ]:
+                _add(name)
+
+        if "mortality" in query or "death" in query or "died" in query:
+            _add("Neonatal Mortality Rate (%)")
+
+        if "coverage" in query:
+            _add("Newborn Coverage Rate")
+
+        if "missing" in query:
+            for name in [
+                "Missing Temperature (%)",
+                "Missing Birth Weight (%)",
+                "Missing Status of Discharge (%)",
+                "Missing Birth Location (%)",
+            ]:
+                _add(name)
+
+        if "admit" in query or "admission" in query:
+            _add("Admitted Newborns")
+
+    if suggestions:
+        suggestion_lines = "\n".join(f"- `{name}`" for name in suggestions[:4])
+        return (
+            False,
+            "I could not match that request to a **Newborn** indicator.\n\n"
+            "Did you mean one of:\n"
+            f"{suggestion_lines}\n\n"
+            "Say `list indicators` to see all newborn indicators, or type `maternal` to switch programs.",
+        )
+
+    return (
+        False,
+        "I could not match that request to a **Newborn** indicator. "
+        "Say `list indicators` to see the available newborn indicators, or type `maternal` to switch programs.",
+    )
 
 
 NEWBORN_KPI_ALIASES = {
@@ -428,19 +522,3 @@ def get_newborn_welcome_message(role):
         f"Try asking:\n{examples}\n\n"
         f"Type `maternal` any time to switch programs."
     )
-
-
-def validate_newborn_indicator(indicator_name):
-    """
-    Validates if an indicator exists in the newborn knowledge base.
-    Enforces the following rules:
-    - Only responds to valid newborn indicators.
-    - Checks if the indicator exists in the knowledge base.
-    - If it does not exist, responds exactly with the required message.
-    - Does not generate random charts or guesses for unknown/maternal indicators.
-    - Never accesses .env files, CSV files, or local/system data.
-    - Keeps responses clear, professional, and helpful.
-    """
-    if not indicator_name or indicator_name not in NEWBORN_KPI_MAPPING:
-        return False, "This indicator is not recognized in newborn mode. Please switch to maternal mode or type 'list indicators' to see available options."
-    return True, None

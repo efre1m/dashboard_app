@@ -34,6 +34,11 @@ def get_cache_key_simplified(df, facility_uids=None, computation_type=""):
     }
     return str(key_data)
 
+def _widget_key(base_key: str, key_suffix=None) -> str:
+    """Create a stable widget key, optionally namespaced by key_suffix."""
+    suffix = str(key_suffix).strip() if key_suffix is not None else ""
+    return f"{base_key}_{suffix}" if suffix else base_key
+
 
 def clear_cache_simplified():
     """Clear the newborn KPI cache"""
@@ -900,7 +905,7 @@ def render_birth_weight_trend_chart(
             "Select Birth Weight Categories:",
             options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
             default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
-            key="birth_weight_category_filter",
+            key=_widget_key("birth_weight_category_filter", kwargs.get("key_suffix")),
         )
 
     filtered_categories = {
@@ -1206,7 +1211,10 @@ def render_birth_weight_facility_comparison(
             "Select Birth Weight Categories:",
             options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
             default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
-            key="birth_weight_facility_comparison_category_filter",
+            key=_widget_key(
+                "birth_weight_facility_comparison_category_filter",
+                kwargs.get("key_suffix"),
+            ),
         )
 
     filtered_categories = {
@@ -1527,7 +1535,10 @@ def render_birth_weight_region_comparison(
             "Select Birth Weight Categories:",
             options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
             default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
-            key="birth_weight_region_comparison_category_filter",
+            key=_widget_key(
+                "birth_weight_region_comparison_category_filter",
+                kwargs.get("key_suffix"),
+            ),
         )
 
     filtered_categories = {
@@ -3024,7 +3035,7 @@ def render_kmc_coverage_trend_chart(
             "Select Birth Weight Categories:",
             options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
             default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
-            key="kmc_category_filter"
+            key=_widget_key("kmc_category_filter", kwargs.get("key_suffix")),
         )
     
     # Filter BIRTH_WEIGHT_CATEGORIES based on selection
@@ -3363,7 +3374,7 @@ def render_cpap_by_weight_trend_chart(
             "Select Birth Weight Categories:",
             options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
             default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
-            key="cpap_category_filter"
+            key=_widget_key("cpap_category_filter", kwargs.get("key_suffix")),
         )
     
     # Filter BIRTH_WEIGHT_CATEGORIES based on selection
@@ -4249,7 +4260,7 @@ def render_kmc_coverage_comparison_chart(
             "Select Birth Weight Categories:",
             options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
             default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
-            key="kmc_comparison_category_filter"
+            key=_widget_key("kmc_comparison_category_filter", kwargs.get("key_suffix")),
         )
     
     # Filter BIRTH_WEIGHT_CATEGORIES based on selection
@@ -4569,7 +4580,7 @@ def render_cpap_by_weight_comparison_chart(
             "Select Birth Weight Categories:",
             options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
             default=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
-            key="cpap_comparison_category_filter"
+            key=_widget_key("cpap_comparison_category_filter", kwargs.get("key_suffix")),
         )
     
     # Filter BIRTH_WEIGHT_CATEGORIES based on selection

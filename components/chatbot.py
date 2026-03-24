@@ -243,38 +243,80 @@ def ensure_data_loaded():
         if hasattr(st.session_state, "cached_shared_data_facility"):
             return st.session_state.cached_shared_data_facility
         
-        # Also check if maternal_patients_df exists (dashboard's filtered data)
-        if hasattr(st.session_state, "maternal_patients_df") and not st.session_state.maternal_patients_df.empty:
+        maternal_df = (
+            st.session_state.maternal_patients_df
+            if hasattr(st.session_state, "maternal_patients_df")
+            and not st.session_state.maternal_patients_df.empty
+            else None
+        )
+        newborn_df = (
+            st.session_state.newborn_patients_df
+            if hasattr(st.session_state, "newborn_patients_df")
+            and not st.session_state.newborn_patients_df.empty
+            else None
+        )
+
+        if maternal_df is not None or newborn_df is not None:
             logging.info("✅ Chatbot: Using dashboard's already-loaded facility data")
-            return {"maternal": {"patients": st.session_state.maternal_patients_df}}
-        if hasattr(st.session_state, "newborn_patients_df") and not st.session_state.newborn_patients_df.empty:
-            logging.info("âœ… Chatbot: Using dashboard's already-loaded facility newborn data")
-            return {"newborn": {"patients": st.session_state.newborn_patients_df}}
+            data = {}
+            if maternal_df is not None:
+                data["maternal"] = {"patients": maternal_df}
+            if newborn_df is not None:
+                data["newborn"] = {"patients": newborn_df}
+            return data
     
     elif role == "regional":
         if hasattr(st.session_state, "cached_shared_data_regional"):
             return st.session_state.cached_shared_data_regional
         
-        # Use regional dashboard's data if available
-        if hasattr(st.session_state, "regional_patients_df") and not st.session_state.regional_patients_df.empty:
+        maternal_df = (
+            st.session_state.regional_patients_df
+            if hasattr(st.session_state, "regional_patients_df")
+            and not st.session_state.regional_patients_df.empty
+            else None
+        )
+        newborn_df = (
+            st.session_state.newborn_patients_df
+            if hasattr(st.session_state, "newborn_patients_df")
+            and not st.session_state.newborn_patients_df.empty
+            else None
+        )
+
+        if maternal_df is not None or newborn_df is not None:
             logging.info("✅ Chatbot: Using dashboard's already-loaded regional data")
-            return {"maternal": {"patients": st.session_state.regional_patients_df}}
-        if hasattr(st.session_state, "newborn_patients_df") and not st.session_state.newborn_patients_df.empty:
-            logging.info("âœ… Chatbot: Using dashboard's already-loaded regional newborn data")
-            return {"newborn": {"patients": st.session_state.newborn_patients_df}}
+            data = {}
+            if maternal_df is not None:
+                data["maternal"] = {"patients": maternal_df}
+            if newborn_df is not None:
+                data["newborn"] = {"patients": newborn_df}
+            return data
     
     elif role == "national":
         if hasattr(st.session_state, "cached_shared_data_national"):
             return st.session_state.cached_shared_data_national
         
-        # Use national dashboard's data if available
-        if hasattr(st.session_state, "maternal_patients_df") and not st.session_state.maternal_patients_df.empty:
+        maternal_df = (
+            st.session_state.maternal_patients_df
+            if hasattr(st.session_state, "maternal_patients_df")
+            and not st.session_state.maternal_patients_df.empty
+            else None
+        )
+        newborn_df = (
+            st.session_state.newborn_patients_df
+            if hasattr(st.session_state, "newborn_patients_df")
+            and not st.session_state.newborn_patients_df.empty
+            else None
+        )
+
+        if maternal_df is not None or newborn_df is not None:
             logging.info("✅ Chatbot: Using dashboard's already-loaded national data")
-            return {"maternal": {"patients": st.session_state.maternal_patients_df}}
-        if hasattr(st.session_state, "newborn_patients_df") and not st.session_state.newborn_patients_df.empty:
-            logging.info("âœ… Chatbot: Using dashboard's already-loaded national newborn data")
-            return {"newborn": {"patients": st.session_state.newborn_patients_df}}
-        elif hasattr(st.session_state, "cached_shared_data"):
+            data = {}
+            if maternal_df is not None:
+                data["maternal"] = {"patients": maternal_df}
+            if newborn_df is not None:
+                data["newborn"] = {"patients": newborn_df}
+            return data
+        if hasattr(st.session_state, "cached_shared_data"):
             return st.session_state.cached_shared_data
     
     # Fallback: load fresh data (should rarely happen)
@@ -613,6 +655,8 @@ class ChatbotLogic:
             "Missing Temperature (%)": "newborn",
             "Missing Birth Weight (%)": "newborn",
             "Missing Discharge Status (%)": "newborn",
+            "Missing Status of Discharge (%)": "newborn",
+            "Missing Birth Location (%)": "newborn",
 
             # Standard KPIs that use kpi_utils
             "C-Section Rate (%)": "utils",
@@ -2515,7 +2559,7 @@ class ChatbotLogic:
             # Enforce newborn strict fallback
             if selected_program == "newborn":
                 from components.chatbot_newborn import validate_newborn_indicator
-                _, msg = validate_newborn_indicator(None)
+                _, msg = validate_newborn_indicator(None, raw_query=query)
                 return None, msg
 
             cross_program = self.detect_cross_program(query, selected_program)
@@ -2551,6 +2595,26 @@ class ChatbotLogic:
         kpi_name = parsed["kpi"]
         facility_uids = parsed["facility_uids"]
         date_range = parsed["date_range"]
+        # If the user did not specify a date range, default to the active dashboard filters (if any)
+        # so chatbot plots match the manually navigated dashboard views.
+        if not date_range:
+            explicit_all_time = any(
+                token in query_lower
+                for token in [
+                    "all time",
+                    "since beginning",
+                    "from start",
+                    "entire period",
+                    "overall",
+                ]
+            )
+            if not explicit_all_time:
+                filters_ctx = st.session_state.get("filters") or {}
+                start_ctx = filters_ctx.get("start_date")
+                end_ctx = filters_ctx.get("end_date")
+                if start_ctx and end_ctx:
+                    date_range = {"start_date": start_ctx, "end_date": end_ctx}
+
         chart_type = parsed.get("chart_type", "line") # Safe get
         
         # Enforce Bar Chart constraint for count indicators if not specified otherwise
@@ -2879,7 +2943,12 @@ class ChatbotLogic:
             if not all_data_df.empty:
                  # Check if period labels needed
                  from utils.time_filter import assign_period
-                 p_label = parsed.get("period_label") or st.session_state.get("period_label", "Monthly")
+                 filters_ctx = st.session_state.get("filters") or {}
+                 p_label = (
+                     parsed.get("period_label")
+                     or filters_ctx.get("period_label")
+                     or st.session_state.get("period_label", "Monthly")
+                 )
                  
                  # Ensure date column exists as datetime
                  if "event_date" not in all_data_df.columns and date_col in all_data_df.columns:
@@ -2888,6 +2957,55 @@ class ChatbotLogic:
                  # Assign period
                  if "event_date" in all_data_df.columns:
                      all_data_df = assign_period(all_data_df, "event_date", p_label)
+
+            # Fast-path: simplified newborn KPIs need patient-level rows (not aggregated num/den values).
+            kpi_suffix = self.SPECIALIZED_KPI_MAP.get(active_kpi_name) or self.SPECIALIZED_KPI_MAP.get(kpi_name)
+            if use_newborn_data and kpi_suffix == "newborn_simplified" and target_component == "value":
+                category_map = {
+                    "Birth Weight Rate": "render_birth_weight",
+                    "KMC Coverage by Birth Weight": "render_kmc_coverage",
+                    "General CPAP Coverage": "render_cpap_general",
+                    "CPAP for RDS": "render_cpap_rds",
+                    "CPAP Coverage by Birth Weight": "render_cpap_by_weight",
+                }
+                func_prefix = category_map.get(active_kpi_name, "render_birth_weight")
+
+                resolved_kpi_name = active_kpi_name
+                if resolved_kpi_name == "Birth Weight Distribution":
+                    resolved_kpi_name = "Birth Weight Rate"
+                chart_title = (
+                    (active_program_config.get("kpi_mapping") or {})
+                    .get(resolved_kpi_name, {})
+                    .get("title", active_kpi_name)
+                )
+
+                render_source_df = all_data_df if comparison_mode else prepared_df
+                if not isinstance(render_source_df, pd.DataFrame):
+                    render_source_df = pd.DataFrame()
+
+                render_df = render_source_df.copy().reset_index(drop=True)
+
+                spec = {
+                    "type": "specialized",
+                    "suffix": kpi_suffix,
+                    "func_prefix": func_prefix,
+                    "comparison_mode": bool(comparison_mode),
+                    "comparison_entity": comparison_entity,
+                    "is_compare_all": is_compare_all,
+                    "params": {
+                        "active_kpi_name": active_kpi_name,
+                        "chart_title": chart_title,
+                        "facility_names": parsed.get("facility_names"),
+                        "facility_uids": facility_uids,
+                        "all_comparison_uids": all_comparison_uids,
+                        "comparison_targets": parsed.get("comparison_targets"),
+                    },
+                    "data": render_df,
+                }
+
+                return spec, (
+                    f"I've rendered the specialized dashboard visualization for **{kpi_name}**{context_desc}.{nav_feedback}"
+                )
 
             # Loop through Groups and Build Data using MEMORY FILTERING
             chart_data = []
@@ -4178,60 +4296,213 @@ def render_chatbot():
                 module = __import__(f"utils.kpi_{suffix}", fromlist=[f"render_{suffix}_trend_chart"])
 
             if comparison_mode:
-                if comparison_entity == "facility":
-                    if suffix == "newborn_simplified":
-                         func_name = f"{func_prefix}_facility_comparison"
-                    else:
+                 # Newborn simplified KPIs need to use the SAME comparison charts as the newborn dashboard
+                 # (and we must ensure widget keys are unique across chat history).
+                 if suffix == "newborn_simplified":
+                     from utils.queries import (
+                         get_facilities_grouped_by_region,
+                         get_all_facilities_flat,
+                     )
+ 
+                     user_ctx = st.session_state.get("user", {}) or {}
+                     regions_mapping = get_facilities_grouped_by_region(user_ctx)
+                     active_kpi = params.get("active_kpi_name")
+                     chart_title = params.get("chart_title") or active_kpi
+                     key_suffix = f"msg_{message_index}"
+ 
+                     if comparison_entity == "facility":
+                         facility_uids = (
+                             params.get("facility_uids")
+                             or params.get("all_comparison_uids")
+                             or []
+                         )
+                         facility_names = params.get("facility_names") or []
+ 
+                         if facility_uids and (
+                             (not facility_names)
+                             or len(facility_names) != len(facility_uids)
+                         ):
+                             uid_to_name = {
+                                 uid: name
+                                 for name, uid in get_all_facilities_flat(user_ctx)
+                             }
+                             facility_names = [
+                                 uid_to_name.get(uid, uid) for uid in facility_uids
+                             ]
+ 
+                         if active_kpi in {"Birth Weight Rate", "Birth Weight Distribution"}:
+                              module.render_birth_weight_facility_comparison(
+                                  render_df,
+                                  period_col="period_display",
+                                  title=f"{chart_title} - Facility Comparison",
+                                  facility_names=facility_names,
+                                  facility_uids=facility_uids,
+                                  key_suffix=key_suffix,
+                              )
+                         elif active_kpi == "KMC Coverage by Birth Weight":
+                              module.render_kmc_coverage_comparison_chart(
+                                  render_df,
+                                  comparison_mode="facility",
+                                  display_names=facility_names,
+                                  facility_uids=facility_uids,
+                                  facilities_by_region=regions_mapping,
+                                  region_names=params.get("comparison_targets"),
+                                  period_col="period_display",
+                                  title=f"{chart_title} - Facility Comparison",
+                                  key_suffix=key_suffix,
+                              )
+                         elif active_kpi == "CPAP for RDS":
+                              module.render_cpap_rds_comparison_line_chart(
+                                  render_df,
+                                  comparison_mode="facility",
+                                  display_names=facility_names,
+                                  facility_uids=facility_uids,
+                                  facilities_by_region=regions_mapping,
+                                  region_names=params.get("comparison_targets"),
+                                  period_col="period_display",
+                                  title=f"{chart_title} - Facility Comparison",
+                                  key_suffix=key_suffix,
+                              )
+                         elif active_kpi in {
+                              "CPAP Coverage by Birth Weight",
+                              "General CPAP Coverage",
+                          }:
+                              module.render_cpap_by_weight_comparison_chart(
+                                  render_df,
+                                  comparison_mode="facility",
+                                  display_names=facility_names,
+                                  facility_uids=facility_uids,
+                                  facilities_by_region=regions_mapping,
+                                  region_names=params.get("comparison_targets"),
+                                  period_col="period_display",
+                                  title=f"{chart_title} - Facility Comparison",
+                                  key_suffix=key_suffix,
+                              )
+                         else:
+                             # Fallback to legacy name pattern if present.
+                             func_name = f"{func_prefix}_facility_comparison"
+                             render_func = getattr(module, func_name)
+                             render_func(
+                                 render_df,
+                                 facility_uids=facility_uids,
+                                 facility_names=facility_names,
+                                 key_suffix=key_suffix,
+                             )
+                     else:
+                         region_names = params.get("comparison_targets") or []
+ 
+                         if active_kpi in {"Birth Weight Rate", "Birth Weight Distribution"}:
+                              module.render_birth_weight_region_comparison(
+                                  render_df,
+                                  period_col="period_display",
+                                  title=f"{chart_title} - Region Comparison",
+                                  region_names=region_names,
+                                  region_mapping=regions_mapping,
+                                  facilities_by_region=regions_mapping,
+                                  key_suffix=key_suffix,
+                              )
+                         elif active_kpi == "KMC Coverage by Birth Weight":
+                              module.render_kmc_coverage_comparison_chart(
+                                  render_df,
+                                  comparison_mode="region",
+                                  display_names=region_names,
+                                  facilities_by_region=regions_mapping,
+                                  region_names=region_names,
+                                  period_col="period_display",
+                                  title=f"{chart_title} - Region Comparison",
+                                  key_suffix=key_suffix,
+                              )
+                         elif active_kpi == "CPAP for RDS":
+                              module.render_cpap_rds_comparison_line_chart(
+                                  render_df,
+                                  comparison_mode="region",
+                                  display_names=region_names,
+                                  facilities_by_region=regions_mapping,
+                                  region_names=region_names,
+                                  period_col="period_display",
+                                  title=f"{chart_title} - Region Comparison",
+                                  key_suffix=key_suffix,
+                              )
+                         elif active_kpi in {
+                              "CPAP Coverage by Birth Weight",
+                              "General CPAP Coverage",
+                          }:
+                              module.render_cpap_by_weight_comparison_chart(
+                                  render_df,
+                                  comparison_mode="region",
+                                  display_names=region_names,
+                                  facilities_by_region=regions_mapping,
+                                  region_names=region_names,
+                                  period_col="period_display",
+                                  title=f"{chart_title} - Region Comparison",
+                                  key_suffix=key_suffix,
+                              )
+                         else:
+                             func_name = f"{func_prefix}_region_comparison"
+                             render_func = getattr(module, func_name)
+                             render_func(
+                                 render_df,
+                                 region_names=region_names,
+                                 region_mapping=regions_mapping,
+                                 facilities_by_region=regions_mapping,
+                                 key_suffix=key_suffix,
+                             )
+ 
+                     return
+                 if comparison_entity == "facility":
+                     if suffix == "newborn_simplified":
+                          func_name = f"{func_prefix}_facility_comparison"
+                     else:
                          func_name = f"{func_prefix}_facility_comparison_chart"
                          
-                    render_func = getattr(module, func_name)
+                     render_func = getattr(module, func_name)
                     
-                    if suffix == "utils":
+                     if suffix == "utils":
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                    elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
+                     elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], value_name=params["active_kpi_name"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                    elif suffix == "newborn":
+                     elif suffix == "newborn":
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                    elif suffix == "newborn_simplified":
+                     elif suffix == "newborn_simplified":
                         render_func(render_df, facility_uids=params["all_comparison_uids"], facility_names=params["facility_names"], key_suffix=f"msg_{message_index}")
-                    elif suffix == "admitted_mothers":
+                     elif suffix == "admitted_mothers":
                         # admitted_mothers has a different signature (no num/den labels)
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                    else:
+                     else:
                         # All other specialized maternal modules (pph, svd, arv, etc.) use the same signature as utils
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["facility_uids"], params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                else:
-                    if suffix == "newborn_simplified":
+                 else:
+                     if suffix == "newborn_simplified":
                          func_name = f"{func_prefix}_region_comparison"
-                    else:
+                     else:
                          func_name = f"{func_prefix}_region_comparison_chart"
                          
-                    render_func = getattr(module, func_name)
+                     render_func = getattr(module, func_name)
                     
-                    if suffix == "utils":
+                     if suffix == "utils":
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         # FIX: Pass region names (comparison_targets) instead of UIDs
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                    elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
+                     elif suffix == "newborn" and func_prefix.startswith("render_admitted_newborns"):
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, value_name=params["active_kpi_name"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                    elif suffix == "newborn":
+                     elif suffix == "newborn":
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         # FIX: Pass region names (comparison_targets) instead of UIDs
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], regions_mapping, regions_mapping, params["num_label"], params["den_label"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                    elif suffix == "newborn_simplified":
+                     elif suffix == "newborn_simplified":
                         # FIX: Use region names and region/facility mappings
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
                         render_func(render_df, region_names=params["comparison_targets"], region_mapping=regions_mapping, facilities_by_region=regions_mapping)
-                    elif suffix == "admitted_mothers":
+                     elif suffix == "admitted_mothers":
                         # admitted_mothers has a different signature
                         # FIX: Use region names
                         render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["comparison_targets"], suppress_plot=suppress_plot, key_suffix=f"msg_{message_index}")
-                    else:
+                     else:
                         # All other specialized maternal modules use the same signature as utils
                         from utils.queries import get_facilities_grouped_by_region
                         regions_mapping = get_facilities_grouped_by_region(st.session_state.get("user", {}))
@@ -4246,10 +4517,16 @@ def render_chatbot():
                 elif suffix == "newborn":
                     render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=params.get("facility_uids"), key_suffix=f"msg_{message_index}")
                 elif suffix == "newborn_simplified":
-                    render_func(render_df, period_col="period_display", title=params["active_kpi_name"], facility_uids=params.get("facility_uids"))
+                     render_func(
+                         render_df,
+                         period_col="period_display",
+                         title=params.get("chart_title") or params["active_kpi_name"],
+                         facility_uids=params.get("facility_uids"),
+                         key_suffix=f"msg_{message_index}",
+                     )
                 elif suffix == "admitted_mothers":
-                    # admitted_mothers has a different signature
-                    render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
+                     # admitted_mothers has a different signature
+                     render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
                 else:
                     # All other specialized maternal modules (pph, svd, arv, etc.) use the same signature as utils
                     render_func(render_df, "period_display", "value", params["active_kpi_name"], "#FFFFFF", None, params["facility_names"], params["num_label"], params["den_label"], facility_uids=[f"msg_{message_index}"], key_suffix=f"msg_{message_index}")
