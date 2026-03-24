@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
+import json
 import re
 import random
 import difflib
@@ -485,6 +486,9 @@ class ChatbotLogic:
             "sitllbirht": "stillbirth",
             "stillbirht": "stillbirth",
             "birht": "birth",
+            "wieght": "weight",
+            "weigth": "weight",
+            "weigt": "weight",
             "mothrs": "mothers",
             "mothr": "mothers",
             "mothres": "mothers",
@@ -517,6 +521,9 @@ class ChatbotLogic:
             "materna": "maternal",
             "materanl": "maternal",
             "matenal": "maternal",
+            "unversity": "university",
+            "univeristy": "university",
+            "hospitel": "hospital",
             "changi": "chagni",
             "dangla": "dangela",
             "plainnig": "planning",
@@ -832,19 +839,77 @@ class ChatbotLogic:
                 selection = selection.replace("option", "").strip()
             if "number" in selection:
                 selection = selection.replace("number", "").strip()
-                
+
+            def _norm_text(val):
+                return re.sub(r"\s+", " ", str(val or "")).strip().lower()
+
+            selected_name = None
             if selection in ambiguity_options:
                 selected_name = ambiguity_options[selection]
-                # Clear ambiguity options
+            else:
+                # Allow the user to reply with the facility name instead of a number
+                sel_norm = _norm_text(query)
+                for opt_name in ambiguity_options.values():
+                    if _norm_text(opt_name) == sel_norm:
+                        selected_name = opt_name
+                        break
+
+            if selected_name:
+                # Clear ambiguity options + pending context (we are fulfilling the original request)
                 st.session_state.chatbot_context["ambiguity_options"] = None
-                
-                # Resolving to the selected facility
+
+                pending_parse = context.get("pending_parse")
+                if not isinstance(pending_parse, dict):
+                    pending_parse = {}
+
+                pending_kpi = pending_parse.get("kpi") or context.get("pending_kpi")
+                if isinstance(pending_kpi, str):
+                    raw_kpi = pending_kpi.strip()
+                    if raw_kpi and raw_kpi not in active_kpi_mapping:
+                        ci_map = {k.lower(): k for k in active_kpi_mapping.keys()}
+                        exact_ci = ci_map.get(raw_kpi.lower())
+                        if exact_ci:
+                            pending_kpi = exact_ci
+                        else:
+                            matches = difflib.get_close_matches(
+                                raw_kpi,
+                                list(active_kpi_mapping.keys()),
+                                n=1,
+                                cutoff=0.85,
+                            )
+                            if matches:
+                                pending_kpi = matches[0]
+
+                uid = self.universal_facility_mapping.get(selected_name)
+
+                # Mark the LLM trace as used if we already parsed the original request via LLM
+                if context.get("pending_llm_used") or pending_parse:
+                    self.last_parse_trace["attempted"] = True
+                    self.last_parse_trace["used"] = True
+
+                for key in ("pending_parse", "pending_kpi", "pending_llm_used", "pending_query"):
+                    if key in st.session_state.chatbot_context:
+                        st.session_state.chatbot_context[key] = None
+
                 return {
-                     "intent": "plot",
-                     "kpi": context.get("pending_kpi"),
-                     "facility_uids": [self.universal_facility_mapping[selected_name]],
-                     "facility_names": [selected_name],
-                     "fulfillment_requested": True
+                    "intent": pending_parse.get("intent") or "plot",
+                    "chart_type": pending_parse.get("chart_type") or "line",
+                    "orientation": pending_parse.get("orientation") or None,
+                    "analysis_type": pending_parse.get("analysis_type") or None,
+                    "kpi": pending_kpi if isinstance(pending_kpi, str) else None,
+                    "facility_uids": [uid] if uid else [],
+                    "facility_names": [selected_name],
+                    "date_range": pending_parse.get("date_range") if isinstance(pending_parse.get("date_range"), dict) else None,
+                    "period_label": pending_parse.get("period_label") if pending_parse.get("period_label") in {"Daily", "Weekly", "Monthly", "Quarterly", "Yearly"} else None,
+                    "entity_type": pending_parse.get("entity_type") if pending_parse.get("entity_type") in {"region", "facility"} else None,
+                    "region_filter": pending_parse.get("region_filter") if isinstance(pending_parse.get("region_filter"), str) else None,
+                    "count_requested": pending_parse.get("count_requested") if isinstance(pending_parse.get("count_requested"), bool) else False,
+                    "comparison_mode": pending_parse.get("comparison_mode") if isinstance(pending_parse.get("comparison_mode"), bool) else False,
+                    "comparison_entity": pending_parse.get("comparison_entity") if pending_parse.get("comparison_entity") in {"region", "facility"} else None,
+                    "comparison_targets": pending_parse.get("comparison_targets") if isinstance(pending_parse.get("comparison_targets"), list) else [],
+                    "is_drill_down": bool(pending_parse.get("is_drill_down")) if isinstance(pending_parse.get("is_drill_down"), bool) else False,
+                    "response": pending_parse.get("response") if isinstance(pending_parse.get("response"), str) else None,
+                    "fulfillment_requested": True,
                 }
         
         # Handle follow-up responses FIRST (before LLM)
@@ -922,7 +987,8 @@ class ChatbotLogic:
 
         # RE-IMPL GREEDY SCAN with Ambiguity Check
         greedy_matches = []
-        q_norm_for_scan = re.sub(r'\s+', ' ', query_lower).strip()
+        # Use normalized query so common typos (e.g. "unversity", "hospitel") still match facilities.
+        q_norm_for_scan = query_norm
         
         for norm_name in self.sorted_scan_names:
             if norm_name in q_norm_for_scan:
@@ -950,13 +1016,77 @@ class ChatbotLogic:
                         # FOUND AMBIGUOUS TERM (e.g. "ambo")
                         options_map = {str(i+1): m for i, m in enumerate(hits[:8])}
                         st.session_state.chatbot_context["ambiguity_options"] = options_map
-                        
+                        st.session_state.chatbot_context["pending_query"] = query
+                        st.session_state.chatbot_context["pending_parse"] = None
+                        st.session_state.chatbot_context["pending_kpi"] = None
+                        st.session_state.chatbot_context["pending_llm_used"] = False
+
+                        # Try to parse the original intent/KPI via LLM so the follow-up selection
+                        # can immediately execute the user's request.
+                        llm_mode_early = self.last_parse_trace.get("parser_mode") or "fallback"
+                        if llm_enabled and llm_mode_early in {"always", "fallback"}:
+                            self.last_parse_trace["attempted"] = True
+                            llm_result, llm_error = query_llm_detailed(
+                                query,
+                                facilities_list=list(self.facility_mapping.items()),
+                                kpi_mapping=active_kpi_mapping,
+                                program_label=active_config.get("label"),
+                            )
+                            if llm_error:
+                                self.last_parse_trace["failed"] = True
+                                self.last_parse_trace["error"] = llm_error
+                            elif isinstance(llm_result, dict):
+                                self.last_parse_trace["used"] = True
+                                st.session_state.chatbot_context["pending_llm_used"] = True
+                                st.session_state.chatbot_context["pending_parse"] = llm_result
+
+                                llm_kpi = llm_result.get("kpi")
+                                if isinstance(llm_kpi, str) and llm_kpi.strip():
+                                    raw_candidate = llm_kpi.strip()
+                                    resolved = None
+                                    if raw_candidate in active_kpi_mapping:
+                                        resolved = raw_candidate
+                                    else:
+                                        ci_map = {k.lower(): k for k in active_kpi_mapping.keys()}
+                                        exact_ci = ci_map.get(raw_candidate.lower())
+                                        if exact_ci:
+                                            resolved = exact_ci
+                                        else:
+                                            matches = difflib.get_close_matches(
+                                                raw_candidate,
+                                                list(active_kpi_mapping.keys()),
+                                                n=1,
+                                                cutoff=0.85,
+                                            )
+                                            if matches:
+                                                resolved = matches[0]
+
+                                    if resolved:
+                                        st.session_state.chatbot_context["pending_kpi"] = resolved
+
+                        # Lightweight fallback KPI detection (aliases) if LLM is off/failed.
+                        if not st.session_state.chatbot_context.get("pending_kpi"):
+                            alias_map = active_config.get("kpi_aliases") or {}
+                            best_alias = None
+                            best_kpi = None
+                            for alias, kpi_name in alias_map.items():
+                                a = str(alias or "").lower()
+                                if a and a in query_norm and (best_alias is None or len(a) > len(best_alias)):
+                                    best_alias = a
+                                    best_kpi = kpi_name
+                            if isinstance(best_kpi, str) and best_kpi in active_kpi_mapping:
+                                st.session_state.chatbot_context["pending_kpi"] = best_kpi
+
                         options_str = "\n".join([f"{i}. {m}" for i, m in options_map.items()])
                         return {
-                              "intent": "chat",
-                              "response": f"Which **{norm_name.capitalize()}** do you mean?\n\n{options_str}",
-                              "pending_kpi": None
-                         }
+                            "intent": "chat",
+                            "response": (
+                                f"Which **{norm_name.capitalize()}** do you mean?\n\n"
+                                f"{options_str}\n\n"
+                                "Reply with a number (e.g. `1`) or type the full facility name."
+                            ),
+                            "pending_kpi": st.session_state.chatbot_context.get("pending_kpi"),
+                        }
                 # AMBIGUITY CHECK END
                 
                 official_name = self.suffix_blind_mapping[norm_name]
@@ -1295,9 +1425,10 @@ class ChatbotLogic:
         specific_location_regex = r'\b(at)\b'
         specific_facility_requested = bool(re.search(specific_location_regex, query_lower))
         
-        # "for", "in", "i " are common, only treat as facility trigger if NO time word present
+        # "for" and "in" are common, only treat as facility trigger if NO time word present.
+        # NOTE: Do NOT treat the pronoun "I" as a location keyword (it caused many false positives).
         if not is_time_query:
-            flexible_location_regex = r'\b(for|in|i)\b'
+            flexible_location_regex = r'\b(for|in)\b'
             if re.search(flexible_location_regex, query_lower):
                 specific_facility_requested = True
 
@@ -2098,8 +2229,26 @@ class ChatbotLogic:
         llm_orientation_hint = None
         if should_try_llm:
             self.last_parse_trace["attempted"] = True
+
+            # Provide lightweight prior context to the LLM for follow-up questions.
+            llm_user_query = query
+            prev_ctx = st.session_state.get("chatbot_context", {})
+            if isinstance(prev_ctx, dict) and prev_ctx.get("source") == active_program:
+                prev_summary = {}
+                if prev_ctx.get("kpi"):
+                    prev_summary["kpi"] = prev_ctx.get("kpi")
+                if prev_ctx.get("facility_names"):
+                    prev_summary["facility_names"] = list(prev_ctx.get("facility_names") or [])[:5]
+                if prev_ctx.get("date_range"):
+                    prev_summary["date_range"] = prev_ctx.get("date_range")
+                if prev_summary:
+                    llm_user_query = (
+                        f"PREVIOUS_CONTEXT: {json.dumps(prev_summary, ensure_ascii=False)}\n\n"
+                        f"USER_QUERY: {query}"
+                    )
+
             llm_result, llm_error = query_llm_detailed(
-                query,
+                llm_user_query,
                 facilities_list=list(self.facility_mapping.items()),
                 kpi_mapping=active_kpi_mapping,
                 program_label=active_config.get("label"),
@@ -2158,21 +2307,36 @@ class ChatbotLogic:
                     "chat",
                     "list_kpis",
                 }:
-                    if force_list_kpis and llm_intent != "list_kpis":
+                    if (
+                        selected_kpi
+                        and llm_intent in {"metadata_query", "list_kpis"}
+                        and not force_list_kpis
+                        and not force_metadata_list
+                    ):
+                        # If we already have a KPI, do not let the LLM derail into listing metadata.
+                        pass
+                    elif force_list_kpis and llm_intent != "list_kpis":
                         pass
                     elif force_metadata_list and llm_intent not in {"metadata_query", "chat"}:
                         pass
                     else:
                         intent = llm_intent
                 elif intent == "text" and llm_intent in {"plot", "distribution", "definition", "text"}:
-                    if force_list_kpis:
+                    if (
+                        selected_kpi
+                        and llm_intent in {"metadata_query", "list_kpis"}
+                        and not force_list_kpis
+                        and not force_metadata_list
+                    ):
+                        pass
+                    elif force_list_kpis:
                         pass
                     elif force_metadata_list and llm_intent not in {"metadata_query", "chat"}:
                         pass
                     else:
                         intent = llm_intent
 
-                if llm_intent == "list_kpis" and not force_metadata_list:
+                if llm_intent == "list_kpis" and not force_metadata_list and not selected_kpi:
                     intent = "list_kpis"
 
                 llm_response = llm_result.get("response")
@@ -4404,6 +4568,33 @@ def _format_llm_trace_caption(trace):
     return " | ".join(parts) if parts else None
 
 
+def _compact_plotly_figure(fig):
+    """
+    Normalize Plotly figure sizing for the chat UI.
+
+    Streamlit renders Plotly figures at their layout height, which can feel oversized in chat.
+    We cap the height to a small, readable default.
+    """
+    try:
+        target_height = int(getattr(settings, "CHATBOT_CHART_HEIGHT", 420) or 420)
+    except Exception:
+        target_height = 420
+
+    try:
+        if fig is None or not hasattr(fig, "update_layout"):
+            return fig
+
+        current_height = getattr(getattr(fig, "layout", None), "height", None)
+        if not isinstance(current_height, (int, float)) or current_height > target_height:
+            fig.update_layout(height=target_height)
+
+        fig.update_layout(margin=dict(l=20, r=20, t=50, b=30))
+    except Exception:
+        return fig
+
+    return fig
+
+
 def render_chatbot():
     """
     Renders an attractive chat bot interface in a single window mode.
@@ -4856,7 +5047,8 @@ def render_chatbot():
                 if isinstance(message["figure"], pd.DataFrame):
                      st.dataframe(message["figure"])
                 else:
-                     st.plotly_chart(message["figure"], use_container_width=True, key=f"chat_chart_{i}")
+                     fig_to_show = _compact_plotly_figure(message["figure"])
+                     st.plotly_chart(fig_to_show, use_container_width=True, key=f"chat_chart_{i}")
 
     # Accept user input
     selected_program = st.session_state.get("chatbot_program")
@@ -4926,8 +5118,9 @@ def render_chatbot():
                             st.dataframe(fig)
                             msg_obj["figure"] = fig
                         else:
-                            st.plotly_chart(fig, use_container_width=True, key=f"chat_chart_new_{len(st.session_state.messages)}")
-                            msg_obj["figure"] = fig
+                            fig_to_show = _compact_plotly_figure(fig)
+                            st.plotly_chart(fig_to_show, use_container_width=True, key=f"chat_chart_new_{len(st.session_state.messages)}")
+                            msg_obj["figure"] = fig_to_show
                         
                     # Save to history
                     st.session_state.messages.append(msg_obj)

@@ -70,6 +70,7 @@ FACILITY CONTEXT (names only; optional):
 
 RULES:
 - Output MUST be valid JSON only (no markdown, no backticks).
+- The user message may include `PREVIOUS_CONTEXT: {...}` then `USER_QUERY: ...`. Use PREVIOUS_CONTEXT only for follow-ups; prioritize USER_QUERY.
 - If the user asks what indicators/KPIs exist -> intent="list_kpis".
 - If the user asks to list/show facilities or regions (or asks "how many") -> intent="metadata_query", set entity_type, set count_requested, and set region_filter when asking for facilities in a specific region.
 - If the user greets / asks for help / asks unrelated questions -> intent="chat" and include a short "response" that redirects to dashboard analysis.

@@ -44,6 +44,7 @@ class Settings:
     #               "dashboard" inherits the current dashboard date filter when user doesn't specify dates.
     CHATBOT_DEFAULT_SCOPE = os.getenv("CHATBOT_DEFAULT_SCOPE", "all").strip().lower()  # all|dashboard
     CHATBOT_DEFAULT_DATE_RANGE = os.getenv("CHATBOT_DEFAULT_DATE_RANGE", "all_time").strip().lower()  # all_time|dashboard
+    CHATBOT_CHART_HEIGHT = int(os.getenv("CHATBOT_CHART_HEIGHT", "380"))
 
     # OpenAI (optional)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
