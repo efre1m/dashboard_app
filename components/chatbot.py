@@ -34,6 +34,12 @@ from components.chatbot_newborn import (
     get_newborn_chatbot_config,
     get_newborn_welcome_message,
 )
+from utils.chatbot_manual import (
+    build_chatbot_manual_markdown,
+    generate_chatbot_manual_doc_bytes,
+    generate_chatbot_manual_pdf_bytes,
+    get_chatbot_manual_sections,
+)
 
 KPI_OPTIONS = MATERNAL_KPI_OPTIONS
 KPI_MAPPING = MATERNAL_KPI_MAPPING
@@ -5733,6 +5739,54 @@ def render_chatbot():
          st.session_state["chatbot_program"] = None
          st.rerun()
 
+    # SIDEBAR: Chatbot manual (view + downloads)
+    with st.sidebar.expander("📘 Chatbot manual", expanded=False):
+        manual_md = build_chatbot_manual_markdown()
+
+        if hasattr(st, "dialog"):
+
+            @st.dialog("IMNID Chatbot Manual")
+            def _show_manual_dialog():
+                sections = get_chatbot_manual_sections()
+                if len(sections) >= 2:
+                    tabs = st.tabs([section.title for section in sections])
+                    for tab, section in zip(tabs, sections):
+                        with tab:
+                            st.markdown(section.markdown)
+                else:
+                    st.markdown(sections[0].markdown)
+
+            if st.button("Open manual", use_container_width=True, key="open_chatbot_manual_btn"):
+                _show_manual_dialog()
+        else:
+            # Fallback for older Streamlit: show inline in the main page.
+            if st.button("Show manual", use_container_width=True, key="show_chatbot_manual_inline_btn"):
+                st.session_state["chatbot_show_manual_inline"] = True
+
+        st.caption("Download (offline use):")
+        pdf_bytes = generate_chatbot_manual_pdf_bytes(manual_md)
+        if pdf_bytes:
+            st.download_button(
+                "Download PDF",
+                data=pdf_bytes,
+                file_name="IMNID_Chatbot_Manual.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="download_chatbot_manual_pdf_btn",
+            )
+        else:
+            st.caption("PDF export unavailable (missing reportlab).")
+
+        doc_bytes = generate_chatbot_manual_doc_bytes(manual_md)
+        st.download_button(
+            "Download Word (.doc)",
+            data=doc_bytes,
+            file_name="IMNID_Chatbot_Manual.doc",
+            mime="application/msword",
+            use_container_width=True,
+            key="download_chatbot_manual_doc_btn",
+        )
+
     with st.sidebar.expander("LLM status", expanded=False):
         llm_label = format_llm_label()
         if settings.CHATBOT_USE_LLM:
@@ -5749,6 +5803,22 @@ def render_chatbot():
     st.markdown('<div class="main-chat-container">', unsafe_allow_html=True)
     st.markdown('<h1 class="chat-header">🤖 IMNID Chatbot</h1>', unsafe_allow_html=True)
     
+    # Fallback inline manual viewer (only used if `st.dialog` is unavailable)
+    if st.session_state.get("chatbot_show_manual_inline"):
+        with st.expander("📘 Chatbot manual", expanded=True):
+            sections = get_chatbot_manual_sections()
+            if len(sections) >= 2:
+                tabs = st.tabs([section.title for section in sections])
+                for tab, section in zip(tabs, sections):
+                    with tab:
+                        st.markdown(section.markdown)
+            else:
+                st.markdown(sections[0].markdown)
+
+            if st.button("Close manual", key="close_chatbot_manual_inline_btn"):
+                st.session_state["chatbot_show_manual_inline"] = False
+                st.rerun()
+
     llm_label = format_llm_label()
     insights_status = "ON" if settings.CHATBOT_USE_LLM_INSIGHTS else "OFF"
     if settings.CHATBOT_USE_LLM:
