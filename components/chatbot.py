@@ -621,6 +621,21 @@ class ChatbotLogic:
             norm_name = re.sub(r'\s+', ' ', full_name).strip().lower()
             if norm_name not in self.suffix_blind_mapping:
                 self.suffix_blind_mapping[norm_name] = full_name
+
+        # Compact index (remove spaces) to handle typos like "abiadi" -> "Abi Adi Hospital".
+        # Values can collide (different facilities compacting to the same key), so we store lists.
+        _compact_tmp: dict[str, set[str]] = {}
+        for k_norm, official in self.suffix_blind_mapping.items():
+            compact = str(k_norm or "").replace(" ", "")
+            if not compact:
+                continue
+            if compact not in _compact_tmp:
+                _compact_tmp[compact] = set()
+            _compact_tmp[compact].add(str(official))
+        self.suffix_blind_compact_index: dict[str, list[str]] = {
+            k: sorted(v) for k, v in _compact_tmp.items()
+        }
+        self.suffix_blind_compact_keys = list(self.suffix_blind_compact_index.keys())
         
         logging.info(f"🏥 Facility Resolution Engine Initialized: {len(self.normalized_facility_mapping)} direct, {len(self.suffix_blind_mapping)} suffix-blind, {len(self.facility_search_index)} index groups.")
 
@@ -692,13 +707,14 @@ class ChatbotLogic:
         self.df = self.newborn_df if config["program_key"] == "newborn" else self.maternal_df
         return config
 
-    def set_selected_program(self, program_key):
+    def set_selected_program(self, program_key, *, clear_context: bool = True):
         if program_key not in PROGRAM_CONFIGS:
             return False
 
         previous_program = self.get_selected_program()
         st.session_state["chatbot_program"] = program_key
-        st.session_state["chatbot_context"] = {}
+        if clear_context:
+            st.session_state["chatbot_context"] = {}
         self.apply_active_program_globals(program_key)
         return previous_program != program_key
 
@@ -891,8 +907,30 @@ class ChatbotLogic:
                     if key in st.session_state.chatbot_context:
                         st.session_state.chatbot_context[key] = None
 
+                resolved_intent = pending_parse.get("intent")
+                if resolved_intent not in {
+                    "plot",
+                    "distribution",
+                    "text",
+                    "definition",
+                    "metadata_query",
+                    "chat",
+                    "list_kpis",
+                    "clear",
+                }:
+                    resolved_intent = None
+
+                # Facility disambiguation is only triggered when we detected a location token.
+                # If we have a KPI (or KPI-like intent), never allow the follow-up selection to derail
+                # into metadata listing.
+                if isinstance(pending_kpi, str) and pending_kpi.strip():
+                    if resolved_intent in {None, "chat", "metadata_query", "list_kpis"}:
+                        resolved_intent = "plot"
+                if resolved_intent is None:
+                    resolved_intent = "plot"
+
                 return {
-                    "intent": pending_parse.get("intent") or "plot",
+                    "intent": resolved_intent,
                     "chart_type": pending_parse.get("chart_type") or "line",
                     "orientation": pending_parse.get("orientation") or None,
                     "analysis_type": pending_parse.get("analysis_type") or None,
@@ -946,16 +984,23 @@ class ChatbotLogic:
         
         
         # Handle explicit list requests - OPTIMIZED FOR PLURALS & VARIATIONS
-        # NOTE: Do not early-return here; we still want to give the LLM a chance (and avoid
-        # misclassifying KPI queries that mention "region" / "facility").
+        # NOTE: Keep this detection STRICT. Users often mention "<region> region" inside KPI
+        # plot requests, so we only treat it as a metadata list when the query explicitly starts
+        # as a list request (e.g., "list regions", "show facilities", "display indicators").
         explicit_list_intent = None  # "metadata_query" | "list_kpis" | None
         explicit_list_entity_type = None  # "region" | "facility" | None
         explicit_list_count_requested = False
         explicit_list_region_filter = None
 
-        if re.search(r"(list|show|shw|sho|display|tell).*(facilities|facility|hospitals?|facilti?yies?|faclities?|units?)", query_norm):
+        if re.search(
+            r"^\s*(please\s+)?(list|show|shw|sho|display|tell)(\s+me)?(\s+all)?\s+(facilities|facility|hospitals?|facilti?yies?|faclities?|units?)\b",
+            query_norm,
+        ):
             explicit_list_entity_type = "facility"
-        elif re.search(r"(list|show|shw|sho|display|tell).*(regions?|reioings?|reigons?|territory|territories)", query_norm):
+        elif re.search(
+            r"^\s*(please\s+)?(list|show|shw|sho|display|tell)(\s+me)?(\s+all)?\s+(regions?|reioings?|reigons?|reginos?|territory|territories)\b",
+            query_norm,
+        ):
             explicit_list_entity_type = "region"
 
         # PRIORITY CHECK: If KPI is present, do NOT treat as metadata list
@@ -979,7 +1024,10 @@ class ChatbotLogic:
                     explicit_list_region_filter = r_name
                     break
 
-        if re.search(r"(list|show|shw|sho|display|tell).*(indicators?|indicaters?|kpis?|measures?|metrics?)", query_norm):
+        if re.search(
+            r"^\s*(please\s+)?(list|show|shw|sho|display|tell)(\s+me)?(\s+all)?\s+(indicators?|indicaters?|kpis?|measures?|metrics?)\b",
+            query_norm,
+        ):
             explicit_list_intent = "list_kpis"
         
         # --- GREEDY FACILITY SCAN (Prioritize Full Names in Query) ---
@@ -1026,9 +1074,16 @@ class ChatbotLogic:
                         llm_mode_early = self.last_parse_trace.get("parser_mode") or "fallback"
                         if llm_enabled and llm_mode_early in {"always", "fallback"}:
                             self.last_parse_trace["attempted"] = True
+                            llm_regions_list = None
+                            try:
+                                llm_regions_list = list(get_facilities_grouped_by_region(self.user).keys())
+                            except Exception:
+                                llm_regions_list = None
+
                             llm_result, llm_error = query_llm_detailed(
                                 query,
                                 facilities_list=list(self.facility_mapping.items()),
+                                regions_list=llm_regions_list,
                                 kpi_mapping=active_kpi_mapping,
                                 program_label=active_config.get("label"),
                             )
@@ -1314,6 +1369,68 @@ class ChatbotLogic:
         filtered_words = [w for w in query_words if w not in stop_words]
         filtered_query = " ".join(filtered_words)
 
+        def _extract_location_candidates(text: str) -> list[str]:
+            cleaned = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+            if not cleaned:
+                return []
+
+            tokens = [t for t in cleaned.split(" ") if t]
+            stop_tokens = {
+                "from",
+                "to",
+                "between",
+                "since",
+                "last",
+                "this",
+                "today",
+                "yesterday",
+                "overall",
+                "all",
+                "compare",
+                "vs",
+                "versus",
+                "by",
+                "per",
+                "as",
+                "with",
+                "and",
+                "or",
+            }
+
+            candidates: list[str] = []
+
+            # "<...> region" (capture up to 3 tokens before "region")
+            for idx, tok in enumerate(tokens):
+                if tok in {"region", "regions"} and idx > 0:
+                    start = max(0, idx - 3)
+                    phrase = " ".join(tokens[start:idx]).strip()
+                    if phrase:
+                        candidates.append(phrase)
+
+            # "for|in|at|within|inside|around|near <phrase>"
+            for idx, tok in enumerate(tokens):
+                if tok in {"for", "in", "at", "within", "inside", "around", "near"} and idx + 1 < len(tokens):
+                    phrase_tokens: list[str] = []
+                    for t in tokens[idx + 1 : idx + 7]:
+                        if t in stop_tokens:
+                            break
+                        phrase_tokens.append(t)
+                    while phrase_tokens and phrase_tokens[-1] in {"region", "regions"}:
+                        phrase_tokens.pop()
+                    if phrase_tokens:
+                        candidates.append(" ".join(phrase_tokens))
+
+            # De-dupe while preserving order
+            seen = set()
+            out: list[str] = []
+            for c in candidates:
+                c = re.sub(r"\s+", " ", str(c or "")).strip().lower()
+                if not c or c in seen:
+                    continue
+                seen.add(c)
+                out.append(c)
+            return out
+
         # Check for direct containment first (using filtered query for better precision)
         # But we must check against 'query_norm' too because some maps have multiple words
         # CRITICAL FIX: If query contains "missing", only match against "missing" KPIs
@@ -1501,6 +1618,70 @@ class ChatbotLogic:
                 seen_uids.add(uid)
                 unique_candidates.append((name, uid))
 
+            # If we found nothing via weak word matching, try fuzzy matching on the extracted
+            # location phrase (helps with general typos, not just hard-coded COMMON_TYPOS).
+            if not unique_candidates:
+                location_candidates = _extract_location_candidates(query_norm)
+
+                # If the candidate looks like a region (even with typos), let the region resolver handle it.
+                try:
+                    regions_data_hint = get_facilities_grouped_by_region(self.user)
+                except Exception:
+                    regions_data_hint = {}
+                region_key_map_hint = {r.lower(): r for r in (regions_data_hint or {}).keys()}
+                region_like = False
+                if region_key_map_hint:
+                    for cand in location_candidates:
+                        if cand in region_key_map_hint:
+                            region_like = True
+                            break
+                        if difflib.get_close_matches(
+                            cand,
+                            list(region_key_map_hint.keys()),
+                            n=1,
+                            cutoff=0.65,
+                        ):
+                            region_like = True
+                            break
+
+                if not region_like and location_candidates:
+                    norm_facility_keys = list(self.suffix_blind_mapping.keys())
+                    fuzzy_hits: list[tuple[str, str]] = []
+                    for cand in location_candidates:
+                        if not cand or cand in self.AMBIGUOUS_PREFIXES:
+                            continue
+
+                        if len(cand) <= 4:
+                            cutoff = 0.90
+                        elif len(cand) <= 6:
+                            cutoff = 0.82
+                        else:
+                            cutoff = 0.75
+
+                        matches = difflib.get_close_matches(
+                            cand,
+                            norm_facility_keys,
+                            n=5,
+                            cutoff=cutoff,
+                        )
+                        for m in matches:
+                            official = self.suffix_blind_mapping.get(m)
+                            uid = (
+                                self.universal_facility_mapping.get(official)
+                                if official
+                                else None
+                            )
+                            if uid:
+                                fuzzy_hits.append((official, uid))
+
+                    # Deduplicate by UID while preserving order
+                    seen_uids = set()
+                    for name, uid in fuzzy_hits:
+                        if uid in seen_uids:
+                            continue
+                        seen_uids.add(uid)
+                        unique_candidates.append((name, uid))
+
             if len(unique_candidates) == 1:
                 name, uid = unique_candidates[0]
                 selected_facility_uids.append(uid)
@@ -1511,7 +1692,59 @@ class ChatbotLogic:
                     str(i + 1): n for i, (n, _) in enumerate(unique_candidates[:8])
                 }
                 st.session_state.chatbot_context["ambiguity_options"] = options_map
+                st.session_state.chatbot_context["pending_query"] = query
+                st.session_state.chatbot_context["pending_parse"] = None
                 st.session_state.chatbot_context["pending_kpi"] = selected_kpi
+                st.session_state.chatbot_context["pending_llm_used"] = False
+
+                # Try to parse the original intent/KPI via LLM so the follow-up selection
+                # can immediately execute the user's request.
+                llm_mode_early = self.last_parse_trace.get("parser_mode") or "fallback"
+                if llm_enabled and llm_mode_early in {"always", "fallback"}:
+                    self.last_parse_trace["attempted"] = True
+
+                    llm_regions_list = None
+                    try:
+                        llm_regions_list = list(get_facilities_grouped_by_region(self.user).keys())
+                    except Exception:
+                        llm_regions_list = None
+
+                    llm_result, llm_error = query_llm_detailed(
+                        query,
+                        facilities_list=list(self.facility_mapping.items()),
+                        regions_list=llm_regions_list,
+                        kpi_mapping=active_kpi_mapping,
+                        program_label=active_config.get("label"),
+                    )
+                    if llm_error:
+                        self.last_parse_trace["failed"] = True
+                        self.last_parse_trace["error"] = llm_error
+                    elif isinstance(llm_result, dict):
+                        st.session_state.chatbot_context["pending_llm_used"] = True
+                        st.session_state.chatbot_context["pending_parse"] = llm_result
+
+                        resolved = None
+                        raw_candidate = llm_result.get("kpi")
+                        if isinstance(raw_candidate, str) and raw_candidate.strip():
+                            raw_candidate = raw_candidate.strip()
+                            if raw_candidate in active_kpi_mapping:
+                                resolved = raw_candidate
+                            else:
+                                ci_map = {k.lower(): k for k in active_kpi_mapping.keys()}
+                                exact_ci = ci_map.get(raw_candidate.lower())
+                                if exact_ci:
+                                    resolved = exact_ci
+                                else:
+                                    matches = difflib.get_close_matches(
+                                        raw_candidate,
+                                        list(active_kpi_mapping.keys()),
+                                        n=1,
+                                        cutoff=0.88,
+                                    )
+                                    if matches:
+                                        resolved = matches[0]
+                        if resolved:
+                            st.session_state.chatbot_context["pending_kpi"] = resolved
 
                 options_str = "\n".join([f"{i}. {n}" for i, n in options_map.items()])
                 return {
@@ -1536,6 +1769,115 @@ class ChatbotLogic:
             for region_name in regions_data.keys():
                 if region_name.lower() in query_norm:
                     found_regions.append(region_name)
+
+            # Candidate-based fuzzy match (handles typos like "tigry" -> "Tigray")
+            if not found_regions and not region_only_context:
+                region_key_map = {r.lower(): r for r in regions_data.keys()}
+                region_compact_map = {
+                    re.sub(r"\s+", "", str(r).strip().lower()): r
+                    for r in regions_data.keys()
+                    if str(r).strip()
+                }
+
+                def _extract_region_candidates(text: str) -> list[str]:
+                    tokens = [t for t in re.sub(r"\s+", " ", str(text or "")).strip().split(" ") if t]
+                    if not tokens:
+                        return []
+
+                    stop_tokens = {
+                        "from",
+                        "to",
+                        "between",
+                        "since",
+                        "last",
+                        "this",
+                        "today",
+                        "yesterday",
+                        "overall",
+                        "all",
+                        "compare",
+                        "vs",
+                        "versus",
+                        "by",
+                        "per",
+                        "as",
+                        "with",
+                        "and",
+                        "or",
+                    }
+
+                    candidates: list[str] = []
+
+                    # "<...> region" (capture up to 3 tokens before "region")
+                    for idx, tok in enumerate(tokens):
+                        if tok in {"region", "regions"} and idx > 0:
+                            start = max(0, idx - 3)
+                            phrase = " ".join(tokens[start:idx]).strip()
+                            if phrase:
+                                candidates.append(phrase)
+
+                    # "for|in|at|within|inside|around|near <phrase>"
+                    for idx, tok in enumerate(tokens):
+                        if tok in {"for", "in", "at", "within", "inside", "around", "near"} and idx + 1 < len(tokens):
+                            phrase_tokens: list[str] = []
+                            for t in tokens[idx + 1 : idx + 7]:
+                                if t in stop_tokens:
+                                    break
+                                phrase_tokens.append(t)
+                            while phrase_tokens and phrase_tokens[-1] in {"region", "regions"}:
+                                phrase_tokens.pop()
+                            if phrase_tokens:
+                                candidates.append(" ".join(phrase_tokens))
+
+                    # De-dupe while preserving order
+                    seen = set()
+                    out: list[str] = []
+                    for c in candidates:
+                        c = c.strip().lower()
+                        if not c or c in seen:
+                            continue
+                        seen.add(c)
+                        out.append(c)
+                    return out
+
+                for cand in _extract_region_candidates(query_norm):
+                    cand = re.sub(r"[^a-z0-9\\s]", " ", str(cand or "").lower())
+                    cand = re.sub(r"\s+", " ", cand).strip()
+                    if not cand:
+                        continue
+
+                    direct = region_key_map.get(cand)
+                    if direct:
+                        found_regions.append(direct)
+                        break
+
+                    cand_compact = cand.replace(" ", "")
+                    if cand_compact and region_compact_map:
+                        direct_compact = region_compact_map.get(cand_compact)
+                        if direct_compact:
+                            found_regions.append(direct_compact)
+                            break
+
+                    r_matches = difflib.get_close_matches(
+                        cand,
+                        list(region_key_map.keys()),
+                        n=1,
+                        cutoff=0.65,
+                    )
+                    if r_matches:
+                        found_regions.append(region_key_map[r_matches[0]])
+                        break
+
+                    if cand_compact and region_compact_map:
+                        cm = difflib.get_close_matches(
+                            cand_compact,
+                            list(region_compact_map.keys()),
+                            n=1,
+                            cutoff=0.65,
+                        )
+                        if cm:
+                            found_regions.append(region_compact_map[cm[0]])
+                            break
 
             # REGION-ONLY CONTEXT: If no regions are explicitly mentioned, select ALL available regions.
             if region_only_context and not found_regions:
@@ -1601,12 +1943,8 @@ class ChatbotLogic:
                     selected_facility_names = list(self.facility_mapping.keys())
                 # For regional/national, if no specific facility, we might mean "overall" or "all"
 
-            # If the user explicitly tried to specify a facility but we couldn't resolve it, return an error.
-            if facility_requested_but_unresolved and not selected_facility_uids:
-                return {
-                    "intent": "chat",
-                    "response": "⚠️ **Facility not found!**\n\nI couldn't find that facility in the system. Please check:\n1. **Spelling** of the facility name\n2. Try saying **'list facilities'** to see all available facilities\n3. Use the full facility name (e.g., 'Adigrat Hospital' not just 'Adigrat')",
-                }
+            # If the user explicitly tried to specify a facility but we couldn't resolve it,
+            # defer the error until after we give the LLM a chance to interpret the location.
         
         # 4. Detect Time Period
         start_date = None
@@ -2017,43 +2355,141 @@ class ChatbotLogic:
                 entity_type = "region"
                 count_requested = "how many" in query_lower
 
-        # --- CONTEXT MERGING ---
-        # If we have a stored context and current query is missing KPI or Facility, use context.
-        context = st.session_state.get("chatbot_context", {})
-        # Drop context if it comes from a different program (prevents maternal KPIs leaking into newborn and vice versa)
-        if context.get("source") and context.get("source") != (self.get_selected_program() or "maternal"):
-            context = {}
+        # --- CONTEXT MERGING (FOLLOW-UP MEMORY) ---
+        # Reuse the previous query's scope/date/plot settings ONLY for follow-up questions.
+        raw_context = st.session_state.get("chatbot_context", {}) or {}
+        if not isinstance(raw_context, dict):
+            raw_context = {}
 
-        # Merge KPI
-        # Prevent context merging for list/meta/system intents
-        if intent not in ["list_kpis", "metadata_query", "scope_error", "chart_options", "clear"] and not selected_kpi:
-            if context.get("kpi"):
-                selected_kpi = context.get("kpi")
-                
-        # Merge Facilities
+        current_program = self.get_selected_program() or "maternal"
+        context_program = raw_context.get("source")
+        cross_program_context = bool(context_program and context_program != current_program)
+
+        # If the previous message came from a different program, keep only program-agnostic context
+        # (location/date/plot prefs). Never carry KPI names across programs.
+        if cross_program_context:
+            context = {
+                "facility_uids": raw_context.get("facility_uids"),
+                "facility_names": raw_context.get("facility_names"),
+                "date_range": raw_context.get("date_range"),
+                "entity_type": raw_context.get("entity_type"),
+                "region_filter": raw_context.get("region_filter"),
+                "comparison_mode": raw_context.get("comparison_mode"),
+                "comparison_entity": raw_context.get("comparison_entity"),
+                "comparison_targets": raw_context.get("comparison_targets"),
+                "intent": raw_context.get("intent"),
+                "chart_type": raw_context.get("chart_type"),
+                "orientation": raw_context.get("orientation"),
+                "period_label": raw_context.get("period_label"),
+                "source": raw_context.get("source"),
+            }
+        else:
+            context = raw_context
+
+        ctx_has_state = bool(
+            isinstance(context, dict)
+            and (
+                context.get("facility_uids")
+                or context.get("facility_names")
+                or context.get("date_range")
+                or context.get("kpi")
+                or context.get("region_filter")
+            )
+        )
+        prev_ctx_intent = context.get("intent") if isinstance(context, dict) else None
+
+        follow_up = False
+        if ctx_has_state:
+            q_follow = query_norm.strip()
+            follow_prefixes = (
+                "what about",
+                "how about",
+                "and",
+                "also",
+                "same",
+                "same for",
+                "instead",
+                "now",
+                "then",
+            )
+            if any(q_follow == p or q_follow.startswith(p + " ") for p in follow_prefixes):
+                follow_up = True
+            elif re.fullmatch(r"(it|that|this|those|them|same|previous|earlier)(\\s+.*)?", q_follow):
+                follow_up = True
+            else:
+                tokens = q_follow.split()
+                if tokens:
+                    # "KPI-only" follow-up like: "admitted mothers"
+                    has_new_scope = bool(
+                        re.search(
+                            r"\b(for|in|at|from|to|between|since|region|facility|hospital)\b",
+                            q_follow,
+                        )
+                    )
+                    has_new_time = bool(
+                        re.search(
+                            r"\b(19|20)\d{2}\b",
+                            q_follow,
+                        )
+                        or any(m in q_follow for m in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])
+                    )
+                    if len(tokens) <= 3 and not has_new_scope and not has_new_time:
+                        follow_up = True
+
+        # Merge KPI (same program only; cross-program context does not include a KPI)
         if (
-            not selected_facility_uids
+            follow_up
+            and intent not in ["list_kpis", "metadata_query", "scope_error", "chart_options", "clear"]
+            and not selected_kpi
+            and isinstance(context, dict)
+            and context.get("kpi")
+        ):
+            selected_kpi = context.get("kpi")
+
+        # Merge Facilities / Region scope (follow-ups only)
+        if (
+            follow_up
+            and not selected_facility_uids
             and not region_only_context
             and not facility_requested_but_unresolved
-            and intent != "metadata_query"
-            and intent != "list_kpis"
+            and intent not in {"metadata_query", "list_kpis"}
+            and isinstance(context, dict)
+            and context.get("facility_uids")
         ):
-             # Only inherit facilities if the user didn't specify any NEW ones.
-             if context.get("facility_uids"):
-                 selected_facility_uids = context.get("facility_uids")
-                 selected_facility_names = context.get("facility_names")
-        
-        # Merge Date Range
-        if not start_date and context.get("date_range"):
-            if reset_date:
-                # User explicitly asked for overall, so we IGNORE context date
-                pass
-            else:
-                # Only inherit if user didn't specify new date AND didn't ask to reset
-                 pass # Logic below uses context.get("date_range")
-        else:
-             # If new date specified, use it.
-             pass 
+            selected_facility_uids = context.get("facility_uids")
+            selected_facility_names = context.get("facility_names")
+
+            prev_region_filter = context.get("region_filter")
+            if isinstance(prev_region_filter, str) and prev_region_filter.strip() and not region_filter:
+                region_filter = prev_region_filter.strip()
+
+        # Merge Date Range (follow-ups only)
+        if follow_up and not start_date and not reset_date and isinstance(context, dict):
+            prev_dr = context.get("date_range")
+            if isinstance(prev_dr, dict):
+                prev_start = prev_dr.get("start_date")
+                prev_end = prev_dr.get("end_date")
+                if isinstance(prev_start, str) and isinstance(prev_end, str):
+                    start_date = prev_start
+                    end_date = prev_end
+
+        # Follow-up intent inheritance: if the user doesn't ask for a single value, keep plotting.
+        if follow_up and intent == "text" and isinstance(context, dict):
+            prev_intent = context.get("intent")
+            explicit_value_question = bool(
+                "what is" in query_lower
+                or re.search(r"\b(how many|count|number|total|value)\b", query_lower)
+            )
+            if prev_intent == "plot" and not explicit_value_question:
+                intent = "plot"
+
+            prev_chart_type = context.get("chart_type")
+            if prev_chart_type in {"line", "bar", "area", "table"} and chart_type == "line":
+                chart_type = prev_chart_type
+
+            prev_period = context.get("period_label")
+            if not period_label and prev_period in {"Daily", "Weekly", "Monthly", "Quarterly", "Yearly"}:
+                period_label = prev_period
              
         # Merge Entity Type (For "Name them" queries)
         if intent == "text" and not selected_kpi and not entity_type:
@@ -2223,6 +2659,7 @@ class ChatbotLogic:
                 or (intent == "text" and selected_kpi and wants_visual and not wants_single_value)
                 or (not start_date and has_date_hint)
                 or (comparison_mode and comparison_entity == "facility" and len(selected_facility_uids) < 2)
+                or (facility_requested_but_unresolved and not selected_facility_uids)
             )
         )
 
@@ -2233,23 +2670,52 @@ class ChatbotLogic:
             # Provide lightweight prior context to the LLM for follow-up questions.
             llm_user_query = query
             prev_ctx = st.session_state.get("chatbot_context", {})
-            if isinstance(prev_ctx, dict) and prev_ctx.get("source") == active_program:
+            if isinstance(prev_ctx, dict) and prev_ctx:
                 prev_summary = {}
-                if prev_ctx.get("kpi"):
-                    prev_summary["kpi"] = prev_ctx.get("kpi")
+                prev_source = prev_ctx.get("source")
+                if isinstance(prev_source, str) and prev_source.strip():
+                    prev_summary["source"] = prev_source.strip()
+
+                # Always include program-agnostic scope/time so follow-ups can inherit even across programs.
                 if prev_ctx.get("facility_names"):
                     prev_summary["facility_names"] = list(prev_ctx.get("facility_names") or [])[:5]
                 if prev_ctx.get("date_range"):
                     prev_summary["date_range"] = prev_ctx.get("date_range")
-                if prev_summary:
+                if prev_ctx.get("region_filter"):
+                    prev_summary["region_filter"] = prev_ctx.get("region_filter")
+                if prev_ctx.get("intent"):
+                    prev_summary["intent"] = prev_ctx.get("intent")
+                if prev_ctx.get("chart_type"):
+                    prev_summary["chart_type"] = prev_ctx.get("chart_type")
+                if prev_ctx.get("period_label"):
+                    prev_summary["period_label"] = prev_ctx.get("period_label")
+                if prev_ctx.get("comparison_mode") is not None:
+                    prev_summary["comparison_mode"] = prev_ctx.get("comparison_mode")
+                if prev_ctx.get("comparison_entity"):
+                    prev_summary["comparison_entity"] = prev_ctx.get("comparison_entity")
+                if prev_ctx.get("comparison_targets"):
+                    prev_summary["comparison_targets"] = list(prev_ctx.get("comparison_targets") or [])[:5]
+
+                # Only carry KPI names when it is the same active program.
+                if prev_source == active_program and prev_ctx.get("kpi"):
+                    prev_summary["kpi"] = prev_ctx.get("kpi")
+
+                if prev_summary and (follow_up or ctx_has_state):
                     llm_user_query = (
                         f"PREVIOUS_CONTEXT: {json.dumps(prev_summary, ensure_ascii=False)}\n\n"
                         f"USER_QUERY: {query}"
                     )
 
+            llm_regions_list = None
+            try:
+                llm_regions_list = list(get_facilities_grouped_by_region(self.user).keys())
+            except Exception:
+                llm_regions_list = None
+
             llm_result, llm_error = query_llm_detailed(
                 llm_user_query,
                 facilities_list=list(self.facility_mapping.items()),
+                regions_list=llm_regions_list,
                 kpi_mapping=active_kpi_mapping,
                 program_label=active_config.get("label"),
             )
@@ -2267,22 +2733,156 @@ class ChatbotLogic:
                 if isinstance(llm_kpi, str):
                     raw_candidate = llm_kpi.strip()
                     if raw_candidate:
+                        resolved = None
                         if raw_candidate in active_kpi_mapping:
-                            llm_kpi_resolved = raw_candidate
+                            resolved = raw_candidate
                         else:
-                            ci_map = {k.lower(): k for k in active_kpi_mapping.keys()}
-                            exact_ci = ci_map.get(raw_candidate.lower())
-                            if exact_ci:
-                                llm_kpi_resolved = exact_ci
-                            else:
+                            def _norm_kpi(val: str) -> str:
+                                text = re.sub(r"[^a-z0-9\\s%]", " ", str(val or "").lower())
+                                return re.sub(r"\s+", " ", text).strip()
+
+                            raw_norm = _norm_kpi(raw_candidate)
+                            raw_compact = raw_norm.replace(" ", "") if raw_norm else ""
+
+                            # Exact (normalized) match against KPI names
+                            kpi_norm_map = {_norm_kpi(k): k for k in active_kpi_mapping.keys()}
+                            if raw_norm:
+                                resolved = kpi_norm_map.get(raw_norm)
+
+                            # Exact alias match (helps if the LLM returns a synonym)
+                            if not resolved and raw_norm:
+                                alias_map = active_config.get("kpi_aliases") or {}
+                                alias_norm_map = {
+                                    _norm_kpi(a): v
+                                    for a, v in (alias_map or {}).items()
+                                    if isinstance(v, str) and v in active_kpi_mapping
+                                }
+                                resolved = alias_norm_map.get(raw_norm)
+
+                            # Compact match (remove spaces / punctuation)
+                            if not resolved and raw_compact:
+                                kpi_compact_map = {
+                                    _norm_kpi(k).replace(" ", ""): k for k in active_kpi_mapping.keys()
+                                }
+                                resolved = kpi_compact_map.get(raw_compact)
+
+                            # Case-insensitive exact match
+                            if not resolved:
+                                ci_map = {k.lower(): k for k in active_kpi_mapping.keys()}
+                                resolved = ci_map.get(raw_candidate.lower())
+
+                            # Fuzzy match (exact KPI keys)
+                            if not resolved:
                                 matches = difflib.get_close_matches(
                                     raw_candidate,
                                     list(active_kpi_mapping.keys()),
                                     n=1,
-                                    cutoff=0.88,
+                                    cutoff=0.82,
                                 )
                                 if matches:
-                                    llm_kpi_resolved = matches[0]
+                                    resolved = matches[0]
+
+                            # Fuzzy match (normalized KPI keys)
+                            if not resolved and raw_norm:
+                                n_matches = difflib.get_close_matches(
+                                    raw_norm,
+                                    list(kpi_norm_map.keys()),
+                                    n=1,
+                                    cutoff=0.72,
+                                )
+                                if n_matches:
+                                    resolved = kpi_norm_map.get(n_matches[0])
+
+                        llm_kpi_resolved = resolved
+
+                # Guardrail: if the user asked "what is <term>" (or similar) and the LLM guessed a KPI
+                # that isn't actually referenced by the term, treat it as a general chat/out-of-scope question.
+                # This prevents cases like: "what is imnid" -> random KPI definition.
+                term_question = bool(
+                    re.search(
+                        r"\b(what is|what's|whats|meaning of|define|definition of)\b",
+                        query_norm,
+                    )
+                )
+                if llm_primary and term_question and isinstance(llm_kpi_resolved, str) and llm_kpi_resolved in active_kpi_mapping:
+                    def _norm_topic(val: str) -> str:
+                        text = re.sub(r"[^a-z0-9\\s%]", " ", str(val or "").lower())
+                        return re.sub(r"\s+", " ", text).strip()
+
+                    def _extract_term_topic(text: str) -> str | None:
+                        q = _norm_topic(text)
+                        if not q:
+                            return None
+                        for pat in (
+                            r"\bwhat is\b\s+(.+)$",
+                            r"\bwhat'?s\b\s+(.+)$",
+                            r"\bmeaning of\b\s+(.+)$",
+                            r"\bdefinition of\b\s+(.+)$",
+                            r"\bdefine\b\s+(.+)$",
+                        ):
+                            m = re.search(pat, q)
+                            if m:
+                                topic = m.group(1).strip()
+                                topic = re.sub(r"\b(in|for|at|from|to|between|by)\b.*$", "", topic).strip()
+                                return topic or None
+                        return None
+
+                    def _topic_matches_kpi(topic: str, kpi_name: str) -> bool:
+                        topic_norm = _norm_topic(topic)
+                        if not topic_norm:
+                            return True
+                        topic_compact = topic_norm.replace(" ", "")
+
+                        kpi_norm = _norm_topic(kpi_name)
+                        kpi_compact = kpi_norm.replace(" ", "") if kpi_norm else ""
+
+                        if kpi_norm and (topic_norm in kpi_norm or kpi_norm in topic_norm):
+                            return True
+                        if kpi_compact and (topic_compact in kpi_compact or kpi_compact in topic_compact):
+                            return True
+
+                        # Alias-based match (tolerant to typos)
+                        alias_map = active_config.get("kpi_aliases") or {}
+                        for alias, mapped in (alias_map or {}).items():
+                            if mapped != kpi_name:
+                                continue
+                            a_norm = _norm_topic(alias)
+                            if not a_norm:
+                                continue
+                            a_compact = a_norm.replace(" ", "")
+                            if a_norm in topic_norm or topic_norm in a_norm:
+                                return True
+                            if topic_compact and a_compact:
+                                if difflib.SequenceMatcher(None, topic_compact, a_compact).ratio() >= 0.70:
+                                    return True
+
+                        # Fuzzy against KPI name as a fallback
+                        if topic_compact and kpi_compact:
+                            if difflib.SequenceMatcher(None, topic_compact, kpi_compact).ratio() >= 0.62:
+                                return True
+
+                        return False
+
+                    topic = _extract_term_topic(query_norm)
+                    if topic and not _topic_matches_kpi(topic, llm_kpi_resolved):
+                        topic_compact = topic.replace(" ", "")
+                        if "imnid" in topic_compact:
+                            assistant_response = (
+                                "**IMNID** is the name of this dashboard/program.\n\n"
+                                "I can help you plot maternal/newborn indicators, or list facilities/regions.\n"
+                                "Try: `list indicators` or `plot PPH rate for Tigray`."
+                            )
+                        else:
+                            assistant_response = (
+                                f"I don't have dashboard knowledge to answer **{topic}**.\n\n"
+                                "I can help you with IMNID dashboard analysis (plot KPIs, list indicators, facilities, regions). "
+                                "Try: `list indicators`."
+                            )
+
+                        intent = "chat"
+                        llm_intent = "chat"
+                        llm_kpi_resolved = None
+                        selected_kpi = None
 
                 if (
                     isinstance(llm_kpi_resolved, str)
@@ -2353,12 +2953,80 @@ class ChatbotLogic:
                     if isinstance(llm_count_requested, bool):
                         count_requested = llm_count_requested
 
-                    llm_region_filter = llm_result.get("region_filter")
-                    if isinstance(llm_region_filter, str) and llm_region_filter.strip():
-                        region_filter = llm_region_filter.strip()
+                # Region filter / region-as-location (works for plot + metadata_query).
+                llm_region_filter_raw = llm_result.get("region_filter")
+                if isinstance(llm_region_filter_raw, str) and llm_region_filter_raw.strip():
+                    try:
+                        llm_regions_mapping = get_facilities_grouped_by_region(self.user)
+                    except Exception:
+                        llm_regions_mapping = {}
+
+                    region_key_map = {r.lower(): r for r in (llm_regions_mapping or {}).keys()}
+                    region_compact_map = {
+                        re.sub(r"\s+", "", str(r).strip().lower()): r
+                        for r in (llm_regions_mapping or {}).keys()
+                        if str(r).strip()
+                    }
+
+                    candidate_region = re.sub(r"\s+", " ", llm_region_filter_raw).strip().lower()
+                    candidate_region = re.sub(r"[^a-z0-9\\s]", " ", candidate_region)
+                    candidate_region = re.sub(r"\s+", " ", candidate_region).strip()
+                    matched_region = None
+
+                    if candidate_region and region_key_map:
+                        matched_region = region_key_map.get(candidate_region)
+                        if not matched_region:
+                            cand_compact = candidate_region.replace(" ", "")
+                            if cand_compact and region_compact_map:
+                                matched_region = region_compact_map.get(cand_compact)
+
+                        if not matched_region:
+                            r_matches = difflib.get_close_matches(
+                                candidate_region,
+                                list(region_key_map.keys()),
+                                n=1,
+                                cutoff=0.65,
+                            )
+                            if r_matches:
+                                matched_region = region_key_map.get(r_matches[0])
+
+                        if not matched_region and region_compact_map:
+                            cand_compact = candidate_region.replace(" ", "")
+                            if cand_compact:
+                                cm = difflib.get_close_matches(
+                                    cand_compact,
+                                    list(region_compact_map.keys()),
+                                    n=1,
+                                    cutoff=0.65,
+                                )
+                                if cm:
+                                    matched_region = region_compact_map.get(cm[0])
+
+                    if matched_region:
+                        region_filter = matched_region
+                        if matched_region not in found_regions:
+                            found_regions.append(matched_region)
+
+                        use_region_scope = (
+                            (llm_primary and not facility_explicitly_mentioned)
+                            or not selected_facility_uids
+                        )
+                        if use_region_scope and (llm_regions_mapping or {}).get(matched_region):
+                            region_uids = []
+                            for fac in llm_regions_mapping.get(matched_region, []) or []:
+                                uid = (
+                                    fac[1]
+                                    if isinstance(fac, (list, tuple)) and len(fac) > 1
+                                    else fac
+                                )
+                                if uid and uid not in region_uids:
+                                    region_uids.append(uid)
+                            selected_facility_uids = region_uids
+                            selected_facility_names = [f"{matched_region} (Region)"]
+                            facility_requested_but_unresolved = False
 
                 llm_period_label = llm_result.get("period_label")
-                if not period_label and llm_period_label in {
+                if (llm_primary or not period_label) and llm_period_label in {
                     "Daily",
                     "Weekly",
                     "Monthly",
@@ -2391,7 +3059,7 @@ class ChatbotLogic:
                                 pass
 
                 llm_chart_type = llm_result.get("chart_type")
-                if chart_type == "line" and llm_chart_type in {"line", "bar", "area", "table"}:
+                if llm_chart_type in {"line", "bar", "area", "table"} and (llm_primary or chart_type == "line"):
                     chart_type = llm_chart_type
 
                 if not comparison_mode and llm_result.get("comparison_mode") is True:
@@ -2412,23 +3080,128 @@ class ChatbotLogic:
                     seen = set(selected_facility_uids)
                     norm_candidates = list(self.suffix_blind_mapping.keys())
 
-                    for raw_name in llm_facility_names[:8]:
-                        if len(seen) >= 8:
-                            break
+                    llm_regions_mapping = {}
+                    region_key_map = {}
+                    try:
+                        llm_regions_mapping = get_facilities_grouped_by_region(self.user)
+                        region_key_map = {r.lower(): r for r in (llm_regions_mapping or {}).keys()}
+                        region_compact_map = {
+                            re.sub(r"\s+", "", str(r).strip().lower()): r
+                            for r in (llm_regions_mapping or {}).keys()
+                            if str(r).strip()
+                        }
+                    except Exception:
+                        llm_regions_mapping = {}
+                        region_key_map = {}
+                        region_compact_map = {}
 
+                    matched_llm_regions: list[str] = []
+
+                    for raw_name in llm_facility_names[:8]:
                         candidate = re.sub(r"\s+", " ", str(raw_name or "")).strip().lower()
+                        candidate = re.sub(r"[^a-z0-9\\s]", " ", candidate)
+                        candidate = re.sub(r"\s+", " ", candidate).strip()
                         if not candidate:
                             continue
                         if candidate in self.AMBIGUOUS_PREFIXES:
                             continue
 
+                        # Allow region names (and typos) in the facility_names list.
+                        if region_key_map:
+                            region_match = region_key_map.get(candidate)
+                            if not region_match:
+                                cand_compact = candidate.replace(" ", "")
+                                if cand_compact and region_compact_map:
+                                    region_match = region_compact_map.get(cand_compact)
+
+                            if not region_match:
+                                r_matches = difflib.get_close_matches(
+                                    candidate,
+                                    list(region_key_map.keys()),
+                                    n=1,
+                                    cutoff=0.65,
+                                )
+                                if r_matches:
+                                    region_match = region_key_map.get(r_matches[0])
+
+                            if not region_match and region_compact_map:
+                                cand_compact = candidate.replace(" ", "")
+                                if cand_compact:
+                                    cm = difflib.get_close_matches(
+                                        cand_compact,
+                                        list(region_compact_map.keys()),
+                                        n=1,
+                                        cutoff=0.65,
+                                    )
+                                    if cm:
+                                        region_match = region_compact_map.get(cm[0])
+
+                            if region_match:
+                                matched_llm_regions.append(region_match)
+                                region_label = f"{region_match} (Region)"
+                                if region_label not in selected_facility_names:
+                                    selected_facility_names.append(region_label)
+
+                                for fac in (llm_regions_mapping or {}).get(region_match, []) or []:
+                                    uid = (
+                                        fac[1]
+                                        if isinstance(fac, (list, tuple)) and len(fac) > 1
+                                        else fac
+                                    )
+                                    if uid and uid not in seen:
+                                        selected_facility_uids.append(uid)
+                                        seen.add(uid)
+
+                                facility_requested_but_unresolved = False
+                                continue
+
                         official_name = None
                         if candidate in self.suffix_blind_mapping:
                             official_name = self.suffix_blind_mapping[candidate]
                         else:
-                            matches = difflib.get_close_matches(candidate, norm_candidates, n=1, cutoff=0.85)
-                            if matches:
-                                official_name = self.suffix_blind_mapping.get(matches[0])
+                            # Handle compact typos (missing spaces) e.g. "abiadi" -> "abi adi"
+                            cand_compact = candidate.replace(" ", "")
+                            if cand_compact:
+                                direct = (self.suffix_blind_compact_index or {}).get(cand_compact)
+                                if direct:
+                                    official_name = direct[0] if isinstance(direct, list) and direct else None
+
+                            # Fuzzy match (dynamic cutoff by length to tolerate typos safely)
+                            if not official_name:
+                                if len(candidate) <= 4:
+                                    cutoff = 0.90
+                                elif len(candidate) <= 6:
+                                    cutoff = 0.82
+                                else:
+                                    cutoff = 0.75
+
+                                matches = difflib.get_close_matches(
+                                    candidate,
+                                    norm_candidates,
+                                    n=1,
+                                    cutoff=cutoff,
+                                )
+                                if matches:
+                                    official_name = self.suffix_blind_mapping.get(matches[0])
+
+                            # Compact fuzzy match as a last resort
+                            if not official_name and cand_compact and getattr(self, "suffix_blind_compact_keys", None):
+                                if len(cand_compact) <= 4:
+                                    cutoff = 0.90
+                                elif len(cand_compact) <= 6:
+                                    cutoff = 0.80
+                                else:
+                                    cutoff = 0.72
+                                cm = difflib.get_close_matches(
+                                    cand_compact,
+                                    self.suffix_blind_compact_keys,
+                                    n=1,
+                                    cutoff=cutoff,
+                                )
+                                if cm:
+                                    opts = (self.suffix_blind_compact_index or {}).get(cm[0]) or []
+                                    if isinstance(opts, list) and opts:
+                                        official_name = opts[0]
 
                         if not official_name:
                             continue
@@ -2438,13 +3211,77 @@ class ChatbotLogic:
                             selected_facility_uids.append(uid)
                             selected_facility_names.append(official_name)
                             seen.add(uid)
+
+                    if matched_llm_regions:
+                        for r_name in matched_llm_regions:
+                            if r_name not in found_regions:
+                                found_regions.append(r_name)
+                        if comparison_mode and comparison_entity in {None, "region"}:
+                            comparison_entity = "region"
             else:
                 self.last_parse_trace["failed"] = True
                 self.last_parse_trace["error"] = "LLM returned no result"
 
+        # Follow-up override (post-LLM): if the last action was a plot and the user asks
+        # "what about <another KPI>" without requesting a single number, keep plotting.
+        if follow_up and prev_ctx_intent == "plot":
+            explicit_value_question = bool(
+                "what is" in query_lower
+                or re.search(r"\b(how many|count|number|total|value)\b", query_lower)
+            )
+            if not explicit_value_question and intent == "text" and not analysis_type:
+                intent = "plot"
+
         final_date_range = {"start_date": start_date, "end_date": end_date} if start_date else None
         # Do NOT reuse prior context date range; default to all time unless explicitly provided
-        
+
+        # Follow-up: if we previously asked the user to specify a KPI, reuse prior filters
+        # (location/date range) when the new message supplies only the indicator.
+        ctx_follow = st.session_state.get("chatbot_context") or {}
+        if isinstance(ctx_follow, dict) and ctx_follow.get("last_question") == "need_kpi":
+            if selected_kpi:
+                if not selected_facility_uids and not region_filter:
+                    prev_uids = ctx_follow.get("facility_uids")
+                    prev_names = ctx_follow.get("facility_names")
+                    if isinstance(prev_uids, list) and prev_uids:
+                        selected_facility_uids = list(prev_uids)
+                    if isinstance(prev_names, list) and prev_names:
+                        selected_facility_names = list(prev_names)
+
+                    prev_region = ctx_follow.get("region_filter")
+                    if isinstance(prev_region, str) and prev_region.strip():
+                        region_filter = prev_region.strip()
+
+                if not final_date_range:
+                    prev_dr = ctx_follow.get("date_range")
+                    if (
+                        isinstance(prev_dr, dict)
+                        and prev_dr.get("start_date")
+                        and prev_dr.get("end_date")
+                    ):
+                        final_date_range = {
+                            "start_date": prev_dr.get("start_date"),
+                            "end_date": prev_dr.get("end_date"),
+                        }
+                        start_date = final_date_range["start_date"]
+                        end_date = final_date_range["end_date"]
+
+                prev_chart_type = ctx_follow.get("chart_type")
+                if prev_chart_type in {"line", "bar", "area", "table"} and chart_type == "line":
+                    chart_type = prev_chart_type
+
+                prev_period = ctx_follow.get("period_label")
+                if (
+                    not period_label
+                    and prev_period in {"Daily", "Weekly", "Monthly", "Quarterly", "Yearly"}
+                ):
+                    period_label = prev_period
+
+                try:
+                    st.session_state.chatbot_context["last_question"] = None
+                except Exception:
+                    pass
+         
         # Merge Entity Type (For "Name them" queries)
         if intent == "text" and not selected_kpi and not entity_type:
              pass 
@@ -2487,6 +3324,145 @@ class ChatbotLogic:
                 "response": f"🚫 **Access Denied**: You do not have permission to view data for: {denied_list_str}.\n\nPlease contact your administrator if you believe this is an error."
             }
 
+        # Final unresolved location guard (after region detection + LLM attempt).
+        if facility_requested_but_unresolved and not selected_facility_uids:
+            location_candidates: list[str] = []
+            try:
+                location_candidates = _extract_location_candidates(query_norm)
+            except Exception:
+                location_candidates = []
+
+            region_suggestions: list[str] = []
+            facility_suggestions: list[str] = []
+
+            try:
+                _regions_mapping = get_facilities_grouped_by_region(self.user)
+            except Exception:
+                _regions_mapping = {}
+
+            region_key_map = {str(r).strip().lower(): r for r in (_regions_mapping or {}).keys()}
+            region_compact_map = {
+                re.sub(r"\s+", "", str(r).strip().lower()): r
+                for r in (_regions_mapping or {}).keys()
+                if str(r).strip()
+            }
+
+            def _norm_loc(val: str) -> str:
+                text = re.sub(r"[^a-z0-9\\s]", " ", str(val or "").lower())
+                return re.sub(r"\s+", " ", text).strip()
+
+            for raw in location_candidates[:3]:
+                cand = _norm_loc(raw)
+                if not cand:
+                    continue
+
+                # Region suggestions (closest match)
+                if region_key_map:
+                    direct = region_key_map.get(cand)
+                    if direct and direct not in region_suggestions:
+                        region_suggestions.append(direct)
+                    else:
+                        cand_compact = cand.replace(" ", "")
+                        direct_c = region_compact_map.get(cand_compact) if cand_compact else None
+                        if direct_c and direct_c not in region_suggestions:
+                            region_suggestions.append(direct_c)
+                        else:
+                            r_matches = difflib.get_close_matches(
+                                cand,
+                                list(region_key_map.keys()),
+                                n=3,
+                                cutoff=0.55,
+                            )
+                            for m in r_matches:
+                                reg = region_key_map.get(m)
+                                if reg and reg not in region_suggestions:
+                                    region_suggestions.append(reg)
+
+                            if cand_compact and region_compact_map:
+                                rc = difflib.get_close_matches(
+                                    cand_compact,
+                                    list(region_compact_map.keys()),
+                                    n=3,
+                                    cutoff=0.55,
+                                )
+                                for m in rc:
+                                    reg = region_compact_map.get(m)
+                                    if reg and reg not in region_suggestions:
+                                        region_suggestions.append(reg)
+
+                # Facility suggestions (closest match)
+                if cand in self.suffix_blind_mapping:
+                    off = self.suffix_blind_mapping.get(cand)
+                    if off and off not in facility_suggestions:
+                        facility_suggestions.append(off)
+                else:
+                    cand_compact = cand.replace(" ", "")
+                    if cand_compact and (self.suffix_blind_compact_index or {}).get(cand_compact):
+                        opts = (self.suffix_blind_compact_index or {}).get(cand_compact) or []
+                        for off in (opts[:3] if isinstance(opts, list) else []):
+                            if off and off not in facility_suggestions:
+                                facility_suggestions.append(off)
+
+                    if len(cand) <= 4:
+                        cutoff = 0.88
+                    elif len(cand) <= 6:
+                        cutoff = 0.80
+                    else:
+                        cutoff = 0.70
+
+                    f_matches = difflib.get_close_matches(
+                        cand,
+                        list(self.suffix_blind_mapping.keys()),
+                        n=5,
+                        cutoff=cutoff,
+                    )
+                    for m in f_matches:
+                        off = self.suffix_blind_mapping.get(m)
+                        if off and off not in facility_suggestions:
+                            facility_suggestions.append(off)
+
+                    if cand_compact and getattr(self, "suffix_blind_compact_keys", None):
+                        if len(cand_compact) <= 4:
+                            cutoff = 0.88
+                        elif len(cand_compact) <= 6:
+                            cutoff = 0.78
+                        else:
+                            cutoff = 0.68
+                        fc = difflib.get_close_matches(
+                            cand_compact,
+                            self.suffix_blind_compact_keys,
+                            n=5,
+                            cutoff=cutoff,
+                        )
+                        for m in fc:
+                            opts = (self.suffix_blind_compact_index or {}).get(m) or []
+                            for off in (opts[:2] if isinstance(opts, list) else []):
+                                if off and off not in facility_suggestions:
+                                    facility_suggestions.append(off)
+
+            suggestion_lines: list[str] = []
+            for r in region_suggestions[:3]:
+                suggestion_lines.append(f"- `{r}` (region)")
+            for f in facility_suggestions[:3]:
+                suggestion_lines.append(f"- `{f}` (facility)")
+
+            suggestion_block = ""
+            if suggestion_lines:
+                suggestion_block = "Closest matches:\n" + "\n".join(suggestion_lines) + "\n\n"
+
+            return {
+                "intent": "chat",
+                "response": (
+                    "⚠️ **Facility/region not found!**\n\n"
+                    "I couldn't match the location you typed to a known **facility** or **region**.\n\n"
+                    f"{suggestion_block}"
+                    "Please try:\n"
+                    "1. Checking the spelling\n"
+                    "2. Using the full facility name (e.g., `Adigrat Hospital`)\n"
+                    "3. Saying `list regions` or `list facilities` to see available options"
+                ),
+            }
+
         # Horizontal Chart Detection
         orientation = "v"
         if "horizontal" in query_lower:
@@ -2509,6 +3485,17 @@ class ChatbotLogic:
         #         pass
 
         # Infer Comparison Entity if not explicitly set (e.g. "by facility" not used)
+        # If multiple regions were identified, treat it as a region comparison even if the user
+        # didn't explicitly say "compare" (e.g., "Tigray and Amhara").
+        if (
+            not comparison_mode
+            and intent in {"plot", "distribution", "text"}
+            and isinstance(found_regions, list)
+            and len(found_regions) >= 2
+        ):
+            comparison_mode = True
+            comparison_entity = "region"
+
         if comparison_mode and not comparison_entity:
             if selected_facility_uids:
                 comparison_entity = "facility"
@@ -2624,12 +3611,17 @@ class ChatbotLogic:
         selected_program = self.get_selected_program()
         detected_program = detect_program_from_text(query)
 
-        # Auto-select program: prefer detected hints; otherwise default to maternal
+        # Auto-select program: prefer detected hints; otherwise default to maternal.
+        #
+        # IMPORTANT: Do NOT clear conversation context on *auto-switch* (this breaks follow-up questions
+        # like "what about admitted mothers" after a newborn plot). Only clear context when the user
+        # explicitly switches programs (selection-only input like "newborn" / "maternal").
         if detected_program and detected_program != selected_program:
-            self.set_selected_program(detected_program)
+            clear_ctx = bool(self.is_program_selection_only(query))
+            self.set_selected_program(detected_program, clear_context=clear_ctx)
             selected_program = detected_program
         if not selected_program:
-            self.set_selected_program(detected_program or "maternal")
+            self.set_selected_program(detected_program or "maternal", clear_context=True)
             selected_program = self.get_selected_program()
 
         active_program_config = self.apply_active_program_globals(selected_program)
@@ -2861,6 +3853,44 @@ class ChatbotLogic:
             response = parsed.get("response")
             
             if response:
+                # If the assistant is asking for an indicator/KPI, persist partial filters so the
+                # next user message can be treated as a follow-up (KPI selection).
+                try:
+                    resp_low = str(response).lower()
+                except Exception:
+                    resp_low = ""
+
+                needs_kpi = bool(
+                    re.search(r"\b(which|specify|choose|select)\b", resp_low)
+                    and re.search(r"\b(kpi|indicator|metric|measure)\b", resp_low)
+                )
+
+                if needs_kpi:
+                    ctx = st.session_state.get("chatbot_context") or {}
+                    if not isinstance(ctx, dict):
+                        ctx = {}
+
+                    ctx["last_question"] = "need_kpi"
+                    ctx["source"] = selected_program
+
+                    for key in (
+                        "facility_uids",
+                        "facility_names",
+                        "date_range",
+                        "region_filter",
+                        "comparison_mode",
+                        "comparison_entity",
+                        "comparison_targets",
+                        "period_label",
+                        "chart_type",
+                        "orientation",
+                    ):
+                        val = parsed.get(key)
+                        if val:
+                            ctx[key] = val
+
+                    st.session_state.chatbot_context = ctx
+
                 return None, response
             
             # Fallback for local detection (e.g. password)
@@ -3022,14 +4052,40 @@ class ChatbotLogic:
         active_df = self.newborn_df if use_newborn_data else self.maternal_df
         
         # Update session state with correct collection
-        st.session_state["chatbot_context"] = {
-            "kpi": parsed["kpi"],
-            "facility_uids": parsed["facility_uids"],
-            "facility_names": parsed["facility_names"],
-            "date_range": parsed["date_range"],
-            "entity_type": parsed.get("entity_type"), # Persist for follow-up
-            "source": "newborn" if use_newborn_data else "maternal"
-        }
+        ctx = st.session_state.get("chatbot_context") or {}
+        if not isinstance(ctx, dict):
+            ctx = {}
+        ctx.update(
+            {
+                "kpi": parsed.get("kpi"),
+                "facility_uids": parsed.get("facility_uids") or [],
+                "facility_names": parsed.get("facility_names") or [],
+                "date_range": parsed.get("date_range"),
+                "entity_type": parsed.get("entity_type"),  # Persist for follow-up
+                "region_filter": parsed.get("region_filter"),
+                "intent": parsed.get("intent"),
+                "chart_type": parsed.get("chart_type"),
+                "orientation": parsed.get("orientation"),
+                "period_label": parsed.get("period_label"),
+                "comparison_mode": parsed.get("comparison_mode"),
+                "comparison_entity": parsed.get("comparison_entity"),
+                "comparison_targets": parsed.get("comparison_targets") or [],
+                "source": "newborn" if use_newborn_data else "maternal",
+                # Successful execution clears pending conversational questions by default.
+                "last_question": None,
+            }
+        )
+        # Drop stale disambiguation state (if present).
+        for key in (
+            "ambiguity_options",
+            "pending_query",
+            "pending_parse",
+            "pending_kpi",
+            "pending_llm_used",
+        ):
+            if key in ctx:
+                ctx[key] = None
+        st.session_state["chatbot_context"] = ctx
         
         # Apply Aggregation Filter
         if parsed.get("period_label"):
@@ -3427,7 +4483,8 @@ class ChatbotLogic:
                 category_map = {
                     "Birth Weight Rate": "render_birth_weight",
                     "KMC Coverage by Birth Weight": "render_kmc_coverage",
-                    "General CPAP Coverage": "render_cpap_general",
+                    # NOTE: The newborn dashboard routes "General CPAP Coverage" to the by-weight visualization.
+                    "General CPAP Coverage": "render_cpap_by_weight",
                     "CPAP for RDS": "render_cpap_rds",
                     "CPAP Coverage by Birth Weight": "render_cpap_by_weight",
                 }
@@ -4116,15 +5173,16 @@ class ChatbotLogic:
                     elif kpi_suffix == "newborn":
                         func_prefix = "render_newborn"
                         if active_kpi_name == "Admitted Newborns":
-                             func_prefix = "render_admitted_newborns"
+                            func_prefix = "render_admitted_newborns"
                     elif kpi_suffix == "newborn_simplified":
                         # Map category for func prefix
                         category_map = {
                             "Birth Weight Rate": "render_birth_weight",
                             "KMC Coverage by Birth Weight": "render_kmc_coverage",
-                            "General CPAP Coverage": "render_cpap_general",
+                            # Keep parity with newborn dashboard behavior (route to by-weight chart).
+                            "General CPAP Coverage": "render_cpap_by_weight",
                             "CPAP for RDS": "render_cpap_rds",
-                            "CPAP Coverage by Birth Weight": "render_cpap_by_weight"
+                            "CPAP Coverage by Birth Weight": "render_cpap_by_weight",
                         }
                         func_prefix = category_map.get(active_kpi_name, "render_birth_weight")
                     else:

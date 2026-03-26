@@ -7,7 +7,7 @@ from utils.config import settings
 
 logging.basicConfig(level=logging.INFO)
 
-def build_system_prompt_compact(*, facilities_list=None, kpi_mapping=None, program_label=None):
+def build_system_prompt_compact(*, facilities_list=None, regions_list=None, kpi_mapping=None, program_label=None):
     """
     Compact prompt to reduce token usage and avoid program-specific alias noise.
     """
@@ -32,6 +32,14 @@ def build_system_prompt_compact(*, facilities_list=None, kpi_mapping=None, progr
             facility_context = f"Available Facilities (first 150): {', '.join(fac_names[:150])}..."
         else:
             facility_context = f"Available Facilities: {', '.join(fac_names)}"
+
+    region_context = ""
+    if regions_list:
+        reg_names = [str(r) for r in regions_list if str(r).strip()]
+        if len(reg_names) > 50:
+            region_context = f"Available Regions (first 50): {', '.join(reg_names[:50])}..."
+        elif reg_names:
+            region_context = f"Available Regions: {', '.join(reg_names)}"
 
     phrase_hints = []
 
@@ -63,23 +71,34 @@ Current Date: {today}
 VALID KPIs (use exact names; pick one or null):
 {kpi_context}
 
-FACILITY CONTEXT (names only; optional):
-{facility_context}
+ FACILITY CONTEXT (names only; optional):
+ {facility_context}
+
+ REGION CONTEXT (names only; optional):
+ {region_context}
 
 {hints_section}
 
-RULES:
-- Output MUST be valid JSON only (no markdown, no backticks).
-- The user message may include `PREVIOUS_CONTEXT: {...}` then `USER_QUERY: ...`. Use PREVIOUS_CONTEXT only for follow-ups; prioritize USER_QUERY.
-- If the user asks what indicators/KPIs exist -> intent="list_kpis".
-- If the user asks to list/show facilities or regions (or asks "how many") -> intent="metadata_query", set entity_type, set count_requested, and set region_filter when asking for facilities in a specific region.
-- If the user greets / asks for help / asks unrelated questions -> intent="chat" and include a short "response" that redirects to dashboard analysis.
-- If asked about passwords/login/admin access -> intent="chat" and respond that you cannot help with passwords or system administration.
-- If the user asks to reset/clear -> intent="clear".
+ RULES:
+ - Output MUST be valid JSON only (no markdown, no backticks).
+ - The user message may include `PREVIOUS_CONTEXT: {...}` then `USER_QUERY: ...`. Use PREVIOUS_CONTEXT only for follow-ups; prioritize USER_QUERY.
+ - For follow-ups (e.g., "what about ...", "and ...", "same ..."), if PREVIOUS_CONTEXT contains location/date/plot settings, reuse them unless USER_QUERY overrides.
+ - If PREVIOUS_CONTEXT.intent is "plot" and USER_QUERY asks for another KPI without explicitly asking for a single number, set intent="plot".
+ - If the user asks what indicators/KPIs exist -> intent="list_kpis".
+ - Use intent="metadata_query" ONLY when the user is asking to list/count facilities or regions themselves (e.g., "list regions", "how many facilities"). If the user mentions a region/facility while asking about a KPI, use intent="plot" or "text" instead.
+ - If the user specifies a region (even with typos), pick the closest region name from REGION CONTEXT.
+ - If the user specifies a facility (even with typos), pick the closest facility name from FACILITY CONTEXT.
+ - Never invent facility/region names that are not present in the provided context lists. If ambiguous, use intent="chat" and ask a short clarification (list up to 4 options).
+ - If the user mentions a region for analysis, prefer setting `region_filter` (and leave `facility_names` empty unless specific facilities are requested).
+ - If the user greets / asks for help / asks unrelated questions -> intent="chat" and include a short "response" that redirects to dashboard analysis.
+ - If asked about passwords/login/admin access -> intent="chat" and respond that you cannot help with passwords or system administration.
+ - If the user asks to reset/clear -> intent="clear".
 - If the user asks to see/show/plot/graph/chart/trend/visualize a KPI (or mentions a KPI without asking for a single number) -> intent="plot".
 - If the user asks "what is", "how many", "count", "number", or asks for a single value -> intent="text" (unless they also asked to plot).
-- If the user asks for a definition/meaning/formula -> intent="definition".
-- chart_type: "line" | "bar" | "area" | "table" (default "line").
+  - If the user asks for a definition/meaning/formula -> intent="definition".
+  - IMPORTANT: Use intent="definition" ONLY when the term being defined is a KPI from the VALID KPIs list (or a clear synonym of one). If the user asks about an unrelated/unknown term (e.g., acronyms like "IMNID"), use intent="chat" and either answer briefly (if it's about the dashboard) or say you don't know and redirect to what the dashboard can do (plot/list KPIs, facilities, regions).
+  - If the user asks "what is IMNID" -> intent="chat" and explain it's the name of this dashboard/program; do NOT pick a random KPI.
+ - chart_type: "line" | "bar" | "area" | "table" (default "line").
 - period_label: null or "Daily" | "Weekly" | "Monthly" | "Quarterly" | "Yearly".
 - analysis_type: null or "max" | "min" (highest/lowest). If set, intent should usually be "text".
 - orientation: null or "h" | "v" (use "h" when user asks for a horizontal bar chart).
@@ -571,7 +590,7 @@ def _query_gemini_generate_content_detailed(*, user_query: str, system_prompt: s
     return parsed, None
 
 
-def query_llm_detailed(user_query, facilities_list=None, *, kpi_mapping=None, program_label=None):
+def query_llm_detailed(user_query, facilities_list=None, regions_list=None, *, kpi_mapping=None, program_label=None):
     """
     Sends query to the configured LLM provider and returns (parsed_json, error_message).
 
@@ -583,6 +602,7 @@ def query_llm_detailed(user_query, facilities_list=None, *, kpi_mapping=None, pr
 
     system_prompt = build_system_prompt_compact(
         facilities_list=facilities_list,
+        regions_list=regions_list,
         kpi_mapping=kpi_mapping,
         program_label=program_label,
     )
@@ -647,7 +667,7 @@ Output JSON only:
     return insight.strip() or None
 
 
-def query_llm(user_query, facilities_list=None, *, kpi_mapping=None, program_label=None):
+def query_llm(user_query, facilities_list=None, regions_list=None, *, kpi_mapping=None, program_label=None):
     """
     Sends query to the configured LLM provider and returns parsed JSON.
     """
@@ -656,6 +676,7 @@ def query_llm(user_query, facilities_list=None, *, kpi_mapping=None, program_lab
 
     system_prompt = build_system_prompt_compact(
         facilities_list=facilities_list,
+        regions_list=regions_list,
         kpi_mapping=kpi_mapping,
         program_label=program_label,
     )
