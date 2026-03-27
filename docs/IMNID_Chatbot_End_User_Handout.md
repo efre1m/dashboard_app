@@ -14,11 +14,10 @@ The IMNID Dashboard Chatbot lets you ask questions in normal language and instan
 ## What AI it uses
 - Uses **Gemini AI** (model: **gemini-2.5-flash-lite**) to understand your message and translate it into the correct dashboard request.
 
-## How to ask (3 simple steps)
-1) Choose a program: type `maternal` or `newborn`  
-2) Say what you want to see:
-   - **What** (indicator) + **Where** (region/facility) + **When** (date range)
-3) Ask follow‑ups without repeating everything (it remembers your last place and dates).
+## How to ask (2 simple steps) 
+1) Say what you want to see:
+   - **Action** (plot/compare/list) **What** (indicator) + **Where** (region/facility) + **When** (date range)
+2) Ask follow‑ups without repeating everything (it remembers your last place and dates).
 
 ## Quick examples to try
 - `plot c-section rate for tigray from jan 1 2026 to mar 23 2026`

@@ -185,23 +185,46 @@ PROGRAM_CONFIGS = {
 
 
 def detect_program_from_text(text):
-    query = re.sub(r"\s+", " ", str(text or "").lower()).strip()
+    query = re.sub(r"[^a-z0-9\\s]", " ", str(text or "").lower())
+    query = re.sub(r"\s+", " ", query).strip()
     if not query:
         return None
 
-    newborn_hit = any(term in query for term in NEWBORN_PROGRAM_HINTS)
-    maternal_hit = any(term in query for term in MATERNAL_PROGRAM_HINTS)
-
-    if newborn_hit and not maternal_hit:
+    # 1) Explicit program terms always win.
+    if any(term in query for term in PROGRAM_SELECTION_TERMS["newborn"]):
         return "newborn"
-    if maternal_hit and not newborn_hit:
+    if any(term in query for term in PROGRAM_SELECTION_TERMS["maternal"]):
         return "maternal"
-    # If both are present, prefer explicit program words over generic KPI aliases
-    if newborn_hit and maternal_hit:
-        if any(term in query for term in PROGRAM_SELECTION_TERMS["newborn"]):
-            return "newborn"
-        if any(term in query for term in PROGRAM_SELECTION_TERMS["maternal"]):
-            return "maternal"
+
+    def _term_in_query(term: str) -> bool:
+        term = str(term or "").strip().lower()
+        if not term:
+            return False
+        if " " in term:
+            return term in query
+        return re.search(rf"\\b{re.escape(term)}\\b", query) is not None
+
+    # 2) Heuristic tie-break: choose the program whose *best* matched hint is more specific (longer).
+    # This prevents generic overlaps (e.g., "admission") from overriding newborn-specific terms
+    # (e.g., "hypothermia") in phrases like "hypothermia on admission".
+    best_newborn = 0
+    for term in NEWBORN_PROGRAM_HINTS:
+        if _term_in_query(term):
+            best_newborn = max(best_newborn, len(term))
+
+    best_maternal = 0
+    for term in MATERNAL_PROGRAM_HINTS:
+        if _term_in_query(term):
+            best_maternal = max(best_maternal, len(term))
+
+    if best_newborn and not best_maternal:
+        return "newborn"
+    if best_maternal and not best_newborn:
+        return "maternal"
+    if best_newborn > best_maternal:
+        return "newborn"
+    if best_maternal > best_newborn:
+        return "maternal"
     return None
 
 
@@ -1776,8 +1799,10 @@ class ChatbotLogic:
                 if region_name.lower() in query_norm:
                     found_regions.append(region_name)
 
-            # Candidate-based fuzzy match (handles typos like "tigry" -> "Tigray")
-            if not found_regions and not region_only_context:
+            # Candidate-based fuzzy match (handles typos like "tigry" -> "Tigray") and supports multiple regions.
+            # Run even when we already have 1 direct hit, so queries like "Amhara and Tigra" can still resolve
+            # the second region via fuzzy matching.
+            if not region_only_context:
                 region_key_map = {r.lower(): r for r in regions_data.keys()}
                 region_compact_map = {
                     re.sub(r"\s+", "", str(r).strip().lower()): r
@@ -1835,6 +1860,30 @@ class ChatbotLogic:
                             if phrase_tokens:
                                 candidates.append(" ".join(phrase_tokens))
 
+                    # Location lists like: "for amhara and tigra" / "in oromia vs amhara"
+                    separators = {"and", "or", "vs", "versus"}
+                    hard_stops = stop_tokens - separators
+                    location_markers = {"for", "in", "at", "within", "inside", "around", "near"}
+                    marker_indexes = [i for i, t in enumerate(tokens) if t in location_markers]
+                    if marker_indexes:
+                        start_idx = marker_indexes[-1] + 1
+                        tail: list[str] = []
+                        for t in tokens[start_idx:]:
+                            if t in hard_stops:
+                                break
+                            tail.append(t)
+
+                        seg: list[str] = []
+                        for t in tail:
+                            if t in separators:
+                                if seg:
+                                    candidates.append(" ".join(seg))
+                                    seg = []
+                                continue
+                            seg.append(t)
+                        if seg:
+                            candidates.append(" ".join(seg))
+
                     # De-dupe while preserving order
                     seen = set()
                     out: list[str] = []
@@ -1846,23 +1895,21 @@ class ChatbotLogic:
                         out.append(c)
                     return out
 
-                for cand in _extract_region_candidates(query_norm):
+                def _resolve_region_candidate(cand: str) -> str | None:
                     cand = re.sub(r"[^a-z0-9\\s]", " ", str(cand or "").lower())
                     cand = re.sub(r"\s+", " ", cand).strip()
                     if not cand:
-                        continue
+                        return None
 
                     direct = region_key_map.get(cand)
                     if direct:
-                        found_regions.append(direct)
-                        break
+                        return direct
 
                     cand_compact = cand.replace(" ", "")
                     if cand_compact and region_compact_map:
                         direct_compact = region_compact_map.get(cand_compact)
                         if direct_compact:
-                            found_regions.append(direct_compact)
-                            break
+                            return direct_compact
 
                     r_matches = difflib.get_close_matches(
                         cand,
@@ -1871,8 +1918,7 @@ class ChatbotLogic:
                         cutoff=0.65,
                     )
                     if r_matches:
-                        found_regions.append(region_key_map[r_matches[0]])
-                        break
+                        return region_key_map[r_matches[0]]
 
                     if cand_compact and region_compact_map:
                         cm = difflib.get_close_matches(
@@ -1882,8 +1928,17 @@ class ChatbotLogic:
                             cutoff=0.65,
                         )
                         if cm:
-                            found_regions.append(region_compact_map[cm[0]])
-                            break
+                            return region_compact_map[cm[0]]
+
+                    return None
+
+                # Add fuzzy matches without wiping direct hits (supports multiple regions).
+                for cand in _extract_region_candidates(query_norm):
+                    resolved = _resolve_region_candidate(cand)
+                    if resolved and resolved not in found_regions:
+                        found_regions.append(resolved)
+                    if len(found_regions) >= 4:
+                        break
 
             # REGION-ONLY CONTEXT: If no regions are explicitly mentioned, select ALL available regions.
             if region_only_context and not found_regions:
@@ -2417,6 +2472,10 @@ class ChatbotLogic:
                 "instead",
                 "now",
                 "then",
+                "but",
+                "please",
+                "i need",
+                "i want",
             )
             if any(q_follow == p or q_follow.startswith(p + " ") for p in follow_prefixes):
                 follow_up = True
@@ -2441,6 +2500,10 @@ class ChatbotLogic:
                     )
                     if len(tokens) <= 3 and not has_new_scope and not has_new_time:
                         follow_up = True
+                    # Longer follow-ups like: "but i need the comparison plot of both"
+                    elif not has_new_scope and not has_new_time:
+                        if re.search(r"\b(both|same|previous|earlier|again|comparison|compare|plot|chart|graph|them|it|that|this)\b", q_follow):
+                            follow_up = True
 
         # Merge KPI (same program only; cross-program context does not include a KPI)
         if (
@@ -2468,6 +2531,29 @@ class ChatbotLogic:
             prev_region_filter = context.get("region_filter")
             if isinstance(prev_region_filter, str) and prev_region_filter.strip() and not region_filter:
                 region_filter = prev_region_filter.strip()
+
+        # Merge comparison context (follow-ups): preserve the previous compare targets/entities when the
+        # user asks a generic follow-up like "show the comparison plot of both".
+        if follow_up and isinstance(context, dict):
+            prev_comp_mode = context.get("comparison_mode")
+            prev_comp_entity = context.get("comparison_entity")
+            prev_comp_targets = context.get("comparison_targets")
+
+            if prev_comp_mode and not comparison_mode:
+                comparison_mode = True
+            if prev_comp_entity and not comparison_entity:
+                comparison_entity = prev_comp_entity
+            if (
+                prev_comp_entity == "region"
+                and isinstance(prev_comp_targets, list)
+                and prev_comp_targets
+                and not found_regions
+            ):
+                found_regions = [
+                    r.strip()
+                    for r in prev_comp_targets
+                    if isinstance(r, str) and r.strip()
+                ][:5]
 
         # Merge Date Range (follow-ups only)
         if follow_up and not start_date and not reset_date and isinstance(context, dict):
@@ -2539,8 +2625,37 @@ class ChatbotLogic:
             elif any(x in query_lower for x in ["by region", "per region", "by reg", "per reg"]):
                 comparison_mode = True
                 comparison_entity = "region"
-        drill_down_phrases = ["by facility", "per facility", "under", "breakdown by facility", "compare facilities", "by region", "per region", "breakdown by region", "by fac", "per fac", "by reg", "per reg"]
-        is_drill_down = any(p in query_lower for p in drill_down_phrases) or comparison_mode
+        drill_down_phrases = [
+            "by facility",
+            "per facility",
+            "under",
+            "breakdown by facility",
+            "compare facilities",
+            "by region",
+            "per region",
+            "breakdown by region",
+            "by fac",
+            "per fac",
+            "by reg",
+            "per reg",
+        ]
+        explicit_drill_down = any(p in query_lower for p in drill_down_phrases)
+
+        # Treat "compare <region> facilities" as a drill-down request even if it doesn't match the exact
+        # phrase "compare facilities". This enables prompts like "Compare Tigray facilities".
+        if (
+            not explicit_drill_down
+            and comparison_mode
+            and found_regions
+            and len(found_regions) == 1
+            and ("facility" in query_lower or "facilities" in query_lower or "hospitals" in query_lower)
+            and not facility_explicitly_mentioned
+        ):
+            explicit_drill_down = True
+
+        # IMPORTANT: do NOT treat every comparison as drill-down; otherwise a typo that leaves only one
+        # region detected will expand to facilities and break region-vs-region comparisons.
+        is_drill_down = explicit_drill_down
         
         if is_drill_down:
              # Force Plot intent unless it's a definition
