@@ -1407,7 +1407,15 @@ def render_newborn_region_comparison_chart(
         ),
         legend=dict(title="Regions", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    st.plotly_chart(fig, use_container_width=True, key=kwargs.get("key_suffix"))
+    # Ensure unique chart key (chatbot renders multiple charts in history)
+    key_suffix = kwargs.get("key_suffix")
+    if key_suffix:
+        chart_key = f"newborn_region_compare_{key_suffix}"
+        download_key = f"newborn_region_summary_{key_suffix}"
+    else:
+        chart_key = f"newborn_region_compare_{title.lower().replace(' ', '_')}_{len(comparison_df)}"
+        download_key = f"newborn_region_summary_{title.lower().replace(' ', '_')}_{len(comparison_df)}"
+    st.plotly_chart(fig, use_container_width=True, key=str(chart_key))
 
     st.markdown("---")
     st.markdown("### Regional Data Summary")
@@ -1435,7 +1443,7 @@ def render_newborn_region_comparison_chart(
         file_name=f"{title.lower().replace(' ', '_')}_region_summary.csv",
         mime="text/csv",
         help="Download overall summary data for region comparison",
-        key=f"newborn_region_summary_{title.lower().replace(' ', '_')}_{len(csv_df)}",
+        key=str(download_key),
     )
     return comparison_df
 
@@ -1456,6 +1464,8 @@ def render_admitted_newborns_trend_chart(
     """Render trend chart for Admitted Newborns - FIXED WITH UNIQUE KEYS"""
 
     import time
+    import uuid
+    import uuid
 
     if text_color is None:
         text_color = auto_text_color(bg_color)
@@ -1568,7 +1578,14 @@ def render_admitted_newborns_trend_chart(
     fig.update_layout(yaxis_tickformat=",")
 
     # Display the chart
-    st.plotly_chart(fig, use_container_width=True, key=kwargs.get("key_suffix"))
+    # Ensure unique chart key (chatbot renders multiple charts in history)
+    key_suffix = kwargs.get("key_suffix")
+    if key_suffix:
+        base_key = str(key_suffix)
+    else:
+        base_key = f"{int(time.time() * 1000)}_{uuid.uuid4().hex}"
+    chart_key = f"newborn_admitted_trend_chart_{base_key}"
+    st.plotly_chart(fig, use_container_width=True, key=str(chart_key))
     if forecast_payload:
         delta = forecast_payload["forecast_y"] - forecast_payload["last_y"]
         forecast_unit = forecast_payload.get("period_unit", "Period")
@@ -1654,7 +1671,7 @@ def render_admitted_newborns_trend_chart(
     csv = summary_table.to_csv(index=False)
 
     # Generate UNIQUE key for newborn download button
-    unique_key = f"newborn_admitted_trend_{int(time.time())}_{hash(str(df))}"
+    download_key = f"newborn_admitted_trend_download_{base_key}"
 
     st.download_button(
         label="📥 Download Chart Data as CSV",
@@ -1662,7 +1679,7 @@ def render_admitted_newborns_trend_chart(
         file_name="admitted_newborns_trend_data.csv",
         mime="text/csv",
         help="Download the exact data shown in the chart",
-        key=unique_key,  # UNIQUE KEY for newborn
+        key=str(download_key),  # UNIQUE KEY for newborn
     )
 
 
@@ -1873,7 +1890,14 @@ def render_admitted_newborns_facility_comparison_chart(
     # Format y-axis as integers with commas
     fig.update_layout(yaxis_tickformat=",")
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Ensure unique chart key to avoid duplicate plotly_chart IDs in chatbot history
+    key_suffix = kwargs.get("key_suffix")
+    if key_suffix:
+        base_key = str(key_suffix)
+    else:
+        base_key = f"{int(time.time() * 1000)}_{uuid.uuid4().hex}"
+    chart_key = f"newborn_admitted_facility_chart_{base_key}"
+    st.plotly_chart(fig, use_container_width=True, key=str(chart_key))
 
     # Display table below graph
     st.markdown("---")
@@ -1919,7 +1943,7 @@ def render_admitted_newborns_facility_comparison_chart(
     )
 
     # Generate UNIQUE key for newborn download button
-    unique_key = f"newborn_admitted_facility_{int(time.time())}_{hash(str(df))}"
+    download_key = f"newborn_admitted_facility_download_{base_key}"
 
     st.download_button(
         label="📥 Download Facility Comparison Data",
@@ -1927,7 +1951,7 @@ def render_admitted_newborns_facility_comparison_chart(
         file_name="admitted_newborns_facility_comparison.csv",
         mime="text/csv",
         help="Download the facility comparison data",
-        key=unique_key,  # UNIQUE KEY for newborn
+        key=str(download_key),  # UNIQUE KEY for newborn
     )
 
 

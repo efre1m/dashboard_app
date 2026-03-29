@@ -2012,6 +2012,7 @@ class ChatbotLogic:
         end_date = None
         today = datetime.now()
         reset_date = False # Initialize to avoid UnboundLocalError
+        date_scope = None  # "range" | "all_time" | None
         
         # Explicitly check for clearing dates
         if any(x in query_lower for x in ["overall", "all time", "since beginning", "from start", "total", "entire period"]):
@@ -2019,9 +2020,10 @@ class ChatbotLogic:
              # "total" is tricky because "total admitted mothers" could mean count for THIS period.
              # So we look for time-bound phrases specifically or "overall"
              if "overall" in query_lower or "all time" in query_lower or "start" in query_lower:
-                 reset_date = True
-                 start_date = None
-                 end_date = None
+                  reset_date = True
+                  start_date = None
+                  end_date = None
+                  date_scope = "all_time"
 
         # --- Custom Date Range Detection (Must run BEFORE quick ranges) ---
         # If the user doesn't specify a year, assume the current year.
@@ -2558,12 +2560,16 @@ class ChatbotLogic:
         # Merge Date Range (follow-ups only)
         if follow_up and not start_date and not reset_date and isinstance(context, dict):
             prev_dr = context.get("date_range")
+            prev_scope = context.get("date_scope")
             if isinstance(prev_dr, dict):
                 prev_start = prev_dr.get("start_date")
                 prev_end = prev_dr.get("end_date")
                 if isinstance(prev_start, str) and isinstance(prev_end, str):
                     start_date = prev_start
                     end_date = prev_end
+                    date_scope = "range"
+            elif prev_scope == "all_time":
+                date_scope = "all_time"
 
         # Follow-up intent inheritance: if the user doesn't ask for a single value, keep plotting.
         if follow_up and intent == "text" and isinstance(context, dict):
@@ -2802,6 +2808,8 @@ class ChatbotLogic:
                     prev_summary["facility_names"] = list(prev_ctx.get("facility_names") or [])[:5]
                 if prev_ctx.get("date_range"):
                     prev_summary["date_range"] = prev_ctx.get("date_range")
+                if prev_ctx.get("date_scope"):
+                    prev_summary["date_scope"] = prev_ctx.get("date_scope")
                 if prev_ctx.get("region_filter"):
                     prev_summary["region_filter"] = prev_ctx.get("region_filter")
                 if prev_ctx.get("intent"):
@@ -3594,6 +3602,79 @@ class ChatbotLogic:
         if orientation == "h" and chart_type == "line":
             chart_type = "bar"  # line charts don't render well horizontally
         
+        # Force comparison mode when user explicitly asks "by facility/region"
+        def _extract_region_labels(names):
+            labels = []
+            for name in (names or []):
+                if isinstance(name, str) and "(region)" in name.lower():
+                    labels.append(name.replace(" (Region)", "").strip())
+            return labels
+
+        force_facility_compare = any(
+            token in query_lower
+            for token in (
+                "by facility",
+                "per facility",
+                "breakdown by facility",
+                "compare facilities",
+                "by fac",
+                "per fac",
+            )
+        )
+        force_region_compare = any(
+            token in query_lower
+            for token in (
+                "by region",
+                "per region",
+                "breakdown by region",
+                "compare regions",
+                "by reg",
+                "per reg",
+            )
+        )
+        if force_facility_compare or force_region_compare:
+            comparison_mode = True
+            # Favor facility when explicitly requested
+            if force_facility_compare:
+                if comparison_entity != "region":
+                    comparison_entity = "facility"
+                # Expand region -> facilities when explicitly requested
+                region_label_candidates = _extract_region_labels(selected_facility_names)
+                region_candidates = list(found_regions) or region_label_candidates
+                if not region_candidates and isinstance(region_filter, str) and region_filter.strip():
+                    region_candidates = [region_filter.strip()]
+
+                should_expand = bool(region_candidates) and (
+                    not selected_facility_uids or bool(region_label_candidates)
+                )
+                if should_expand:
+                    try:
+                        regions_data = get_facilities_grouped_by_region(self.user)
+                    except Exception:
+                        regions_data = {}
+                    new_names = []
+                    new_uids = []
+                    seen_uids = set()
+                    for r_name in region_candidates:
+                        for f_name, f_uid in (regions_data.get(r_name, []) or []):
+                            if f_uid and f_uid not in seen_uids:
+                                new_names.append(f_name)
+                                new_uids.append(f_uid)
+                                seen_uids.add(f_uid)
+                    if new_uids:
+                        selected_facility_names = new_names
+                        selected_facility_uids = new_uids
+                        found_regions = []
+            elif not comparison_entity:
+                comparison_entity = "region"
+                # Preserve region targets when we inferred them via context labels
+                region_label_candidates = _extract_region_labels(selected_facility_names)
+                if not found_regions and region_label_candidates:
+                    found_regions = region_label_candidates
+                if not found_regions and isinstance(region_filter, str) and region_filter.strip():
+                    found_regions = [region_filter.strip()]
+            is_drill_down = True
+
         # Auto-detect Granularity for Short Date Ranges
         # if final_date_range and not period_label:
         #     try:
@@ -3624,10 +3705,43 @@ class ChatbotLogic:
                 # Prioritize Facility if both present? usually facility is more specific.
                 # But if we found regions and NO facility UIDs, then region.
                 comparison_entity = "region"
+
+        if comparison_mode and comparison_entity == "region" and not found_regions:
+            region_label_candidates = _extract_region_labels(selected_facility_names)
+            if region_label_candidates:
+                found_regions = region_label_candidates
+            elif isinstance(region_filter, str) and region_filter.strip():
+                found_regions = [region_filter.strip()]
         
         # If comparison by facility was requested but no facilities resolved, only auto-expand to
         # "all accessible facilities" when the user explicitly asked for an all/by-facility view.
         if comparison_mode and comparison_entity == "facility" and not selected_facility_uids:
+            expanded_from_region = False
+            region_label_candidates = _extract_region_labels(selected_facility_names)
+            region_candidates = list(found_regions) or region_label_candidates
+            if not region_candidates and isinstance(region_filter, str) and region_filter.strip():
+                region_candidates = [region_filter.strip()]
+
+            if region_candidates:
+                try:
+                    regions_data = get_facilities_grouped_by_region(self.user)
+                except Exception:
+                    regions_data = {}
+                new_names = []
+                new_uids = []
+                seen_uids = set()
+                for r_name in region_candidates:
+                    for f_name, f_uid in (regions_data.get(r_name, []) or []):
+                        if f_uid and f_uid not in seen_uids:
+                            new_names.append(f_name)
+                            new_uids.append(f_uid)
+                            seen_uids.add(f_uid)
+                if new_uids:
+                    selected_facility_names = new_names
+                    selected_facility_uids = new_uids
+                    found_regions = []
+                    expanded_from_region = True
+
             wants_all_facilities = any(
                 token in query_lower
                 for token in (
@@ -3643,10 +3757,16 @@ class ChatbotLogic:
                     "breakdown by facility",
                 )
             )
-            if wants_all_facilities:
+            if wants_all_facilities and not expanded_from_region:
                 all_facs = get_all_facilities_flat(self.user)
                 selected_facility_names = [f[0] for f in all_facs]
                 selected_facility_uids = [f[1] for f in all_facs]
+
+        # Normalize date scope after any LLM/follow-up merges
+        if start_date:
+            date_scope = "range"
+        elif reset_date:
+            date_scope = "all_time"
 
         return {
             "intent": intent,
@@ -3657,6 +3777,7 @@ class ChatbotLogic:
             "facility_uids": selected_facility_uids,
             "facility_names": selected_facility_names,
             "date_range": final_date_range,
+            "date_scope": date_scope,
             "period_label": period_label,
             "analysis_type": analysis_type,
             "entity_type": entity_type,
@@ -3998,6 +4119,7 @@ class ChatbotLogic:
                         "facility_uids",
                         "facility_names",
                         "date_range",
+                        "date_scope",
                         "region_filter",
                         "comparison_mode",
                         "comparison_entity",
@@ -4182,6 +4304,7 @@ class ChatbotLogic:
                 "facility_uids": parsed.get("facility_uids") or [],
                 "facility_names": parsed.get("facility_names") or [],
                 "date_range": parsed.get("date_range"),
+                "date_scope": parsed.get("date_scope"),
                 "entity_type": parsed.get("entity_type"),  # Persist for follow-up
                 "region_filter": parsed.get("region_filter"),
                 "intent": parsed.get("intent"),
@@ -4220,7 +4343,8 @@ class ChatbotLogic:
         # If the user did not specify a date range, optionally default to the active dashboard filters (if any).
         # Default behavior is "all time" unless CHATBOT_DEFAULT_DATE_RANGE="dashboard".
         default_date_range = str(getattr(settings, "CHATBOT_DEFAULT_DATE_RANGE", "all_time") or "all_time").strip().lower()
-        if not date_range and default_date_range == "dashboard":
+        date_scope = parsed.get("date_scope")
+        if not date_range and default_date_range == "dashboard" and date_scope != "all_time":
             explicit_all_time = any(
                 token in query_lower
                 for token in [
@@ -4237,6 +4361,19 @@ class ChatbotLogic:
                 end_ctx = filters_ctx.get("end_date")
                 if start_ctx and end_ctx:
                     date_range = {"start_date": start_ctx, "end_date": end_ctx}
+
+        # Persist resolved date scope for follow-ups (after dashboard defaults)
+        try:
+            ctx = st.session_state.get("chatbot_context") or {}
+            if isinstance(ctx, dict):
+                if date_range:
+                    ctx["date_range"] = date_range
+                    ctx["date_scope"] = "range"
+                elif ctx.get("date_scope") is None:
+                    ctx["date_scope"] = "all_time"
+                st.session_state["chatbot_context"] = ctx
+        except Exception:
+            pass
 
         chart_type = parsed.get("chart_type", "line") # Safe get
         
