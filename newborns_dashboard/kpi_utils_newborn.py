@@ -1465,7 +1465,6 @@ def render_admitted_newborns_trend_chart(
 
     import time
     import uuid
-    import uuid
 
     if text_color is None:
         text_color = auto_text_color(bg_color)
@@ -1698,6 +1697,7 @@ def render_admitted_newborns_facility_comparison_chart(
     """Render facility comparison chart for Admitted Newborns - FIXED WITH UNIQUE KEYS"""
 
     import time
+    import uuid
 
     if text_color is None:
         text_color = auto_text_color(bg_color)
