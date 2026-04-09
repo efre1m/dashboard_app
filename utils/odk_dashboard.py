@@ -54,6 +54,30 @@ QI_COACHING_INDICATORS = [
     ),
 ]
 
+CIS_BUNDLE_INDICATORS = [
+    (
+        "cpap_nicu-cpap1nicu",
+        "% CPAP within 1 hour",
+        "bCPAP initiated at L&D or Operation theatre for inborn baby or within one hour of admission for outborn baby",
+        "Started CPAP within 1 hour (Yes)",
+        "Assessed for CPAP within 1 hour (Answered)",
+    ),
+    (
+        "kmc-kmc2",
+        "% KMC within 24 hours",
+        "The baby is skin to skin more than 8hours within 24hrs",
+        "Started KMC within 24 hours (Yes)",
+        "Assessed for KMC within 24 hours (Answered)",
+    ),
+    (
+        "NICU-nicu5",
+        "% Normothermic at admission (36.5–37.5C)",
+        "Baby's body temperature is between 36.5 and 37.5 degree Celsius at admission",
+        "Normal temperature at admission (Yes)",
+        "Admission temperature recorded (Answered)",
+    ),
+]
+
 
 # 🔥 OPTIMIZATION: Cache forms listing for 1 hour
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -109,6 +133,20 @@ def load_merged_qi_coaching_data() -> pd.DataFrame:
             "Run utils/qi_coaching_merge.py to generate it."
         )
     return pd.read_csv(merged_path)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_cis_bundle_data() -> pd.DataFrame:
+    """Load CIS Bundle of Care dataset from local mentorship folder."""
+    cis_path = os.path.join(
+        os.path.dirname(__file__), "mentorship", "CIS_Bundle_of_Care.csv"
+    )
+    if not os.path.exists(cis_path):
+        raise FileNotFoundError(
+            f"CIS Bundle of Care file not found: {cis_path}. "
+            "Ensure CIS_Bundle_of_Care.csv is available in utils/mentorship."
+        )
+    return pd.read_csv(cis_path)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -283,7 +321,14 @@ def render_mentorship_analysis_dashboard():
         unsafe_allow_html=True,
     )
 
-    left_col, right_col = st.columns([4, 1])
+    selected_week = None
+    selected_cis_indicator = None
+    selected_cis_indicator_col = None
+    selected_cis_indicator_question = None
+    selected_cis_numerator_label = None
+    selected_cis_denominator_label = None
+
+    left_col, right_col = st.columns([3, 2])
 
     with right_col:
         with st.container(key="mentorship_filters_card"):
@@ -306,6 +351,7 @@ def render_mentorship_analysis_dashboard():
                     "Quality of Care Data",
                     "QI Coaching Data",
                     "Data Mentorship Data",
+                    "CIS Bundle of Care",
                 ],
                 key="mentorship_analysis_data_choice",
             )
@@ -314,6 +360,7 @@ def render_mentorship_analysis_dashboard():
             is_qi_coaching_analysis = data_choice == "QI Coaching Data"
             is_data_mentorship_analysis = data_choice == "Data Mentorship Data"
             is_bmet_analysis = data_choice == "BMET Data"
+            is_cis_analysis = data_choice == "CIS Bundle of Care"
 
             if is_skill_analysis:
                 try:
@@ -532,6 +579,42 @@ def render_mentorship_analysis_dashboard():
                 ]
                 value_label = "Average Score"
                 value_title = "Average Score per Submission"
+            elif is_cis_analysis:
+                try:
+                    df = load_cis_bundle_data()
+                except FileNotFoundError as exc:
+                    st.error(str(exc))
+                    return
+                except Exception as exc:
+                    st.error(f"Unable to load CIS Bundle of Care data: {exc}")
+                    return
+
+                indicator_source_cols = [spec[0] for spec in CIS_BUNDLE_INDICATORS]
+                required_columns = (
+                    ["reg-region", "reg-hospital", "reg-round", "week", "unit"]
+                    + indicator_source_cols
+                )
+                missing_cols = [c for c in required_columns if c not in df.columns]
+                if missing_cols:
+                    st.error(
+                        "Missing required columns in CIS_Bundle_of_Care.csv: "
+                        f"{missing_cols}"
+                    )
+                    return
+
+                work_df = df.copy()
+                work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
+                work_df["hospital"] = work_df["reg-hospital"].apply(_normalize_entity_text)
+                work_df["round"] = work_df["reg-round"].astype(str).str.strip()
+                work_df["week"] = work_df["week"].apply(_normalize_entity_text)
+                work_df["unit"] = (
+                    work_df["unit"]
+                    .astype(str)
+                    .str.strip()
+                    .replace({"1.0": "1", "2.0": "2"})
+                )
+                value_label = "Percentage"
+                value_title = "Percentage (%)"
             else:
                 try:
                     df = load_merged_bmet_data()
@@ -581,8 +664,24 @@ def render_mentorship_analysis_dashboard():
                     work_df = work_df[work_df["region_code"].isin([str(c) for c in regional_codes])]
                     regional_locked_label = get_region_name_from_database_id(region_id)
 
-            round_options = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
-            if not round_options:
+            if is_cis_analysis:
+                indicator_labels = [spec[1] for spec in CIS_BUNDLE_INDICATORS]
+                selected_cis_indicator = st.selectbox(
+                    "Indicator",
+                    options=indicator_labels,
+                    key="mentorship_cis_indicator",
+                )
+                selected_spec = next(
+                    spec for spec in CIS_BUNDLE_INDICATORS if spec[1] == selected_cis_indicator
+                )
+                selected_cis_indicator_col = selected_spec[0]
+                selected_cis_indicator_question = selected_spec[2]
+                selected_cis_numerator_label = selected_spec[3]
+                selected_cis_denominator_label = selected_spec[4]
+
+            all_rounds_label = "All Rounds"
+            round_values = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
+            if not round_values:
                 if is_skill_analysis:
                     data_file = "merged_skill.csv"
                 elif is_qoc_analysis:
@@ -591,10 +690,13 @@ def render_mentorship_analysis_dashboard():
                     data_file = "merged_qi_coaching.csv"
                 elif is_data_mentorship_analysis:
                     data_file = "merged_data.csv"
+                elif is_cis_analysis:
+                    data_file = "CIS_Bundle_of_Care.csv"
                 else:
                     data_file = "merged_bmet.csv"
                 st.warning(f"No round values found in {data_file}.")
                 return
+            round_options = [all_rounds_label] + round_values
 
             group_mode_options = ["Regional"] if is_regional_user else ["Multi Regional", "Regional"]
             group_mode = st.radio(
@@ -602,29 +704,6 @@ def render_mentorship_analysis_dashboard():
                 options=group_mode_options,
                 key="mentorship_analysis_group_mode",
             )
-
-            selected_round = st.selectbox(
-                "Round",
-                options=round_options,
-                key="mentorship_analysis_round",
-            )
-
-            selected_unit = None
-            if is_qoc_analysis:
-                if work_df.empty:
-                    st.warning("No unit values found in merged_qoc.csv.")
-                    return
-                unit_display_options = ["1 - Labor and Delivery", "2 - NICU/KMC"]
-                selected_unit_display = st.selectbox(
-                    "Unit",
-                    options=unit_display_options,
-                    key="mentorship_analysis_qoc_unit",
-                )
-                reverse_map = {
-                    "1 - Labor and Delivery": "1",
-                    "2 - NICU/KMC": "2",
-                }
-                selected_unit = reverse_map.get(selected_unit_display, selected_unit_display)
 
             selected_region_for_facility = None
             if group_mode == "Multi Regional":
@@ -711,18 +790,76 @@ def render_mentorship_analysis_dashboard():
                     else effective_selected
                 )
 
+            selected_round = st.selectbox(
+                "Round",
+                options=round_options,
+                index=0,
+                key="mentorship_analysis_round",
+            )
+
+            if is_cis_analysis:
+                if selected_round == all_rounds_label:
+                    week_series = work_df["week"]
+                else:
+                    week_series = work_df.loc[work_df["round"] == selected_round, "week"]
+                week_values = sorted(
+                    [w for w in week_series.dropna().unique().tolist() if str(w).strip()],
+                    key=lambda x: int(x) if str(x).isdigit() else str(x),
+                )
+                if not week_values:
+                    st.warning("No week values found for the selected round.")
+                    return
+                all_weeks_label = "All Weeks"
+                week_options = [all_weeks_label] + week_values
+                selected_week = st.selectbox(
+                    "Week",
+                    options=week_options,
+                    index=0,
+                    key="mentorship_cis_week",
+                )
+
+            selected_unit = None
+            if is_qoc_analysis:
+                if work_df.empty:
+                    st.warning("No unit values found in merged_qoc.csv.")
+                    return
+                unit_display_options = ["1 - Labor and Delivery", "2 - NICU/KMC"]
+                selected_unit_display = st.selectbox(
+                    "Unit",
+                    options=unit_display_options,
+                    key="mentorship_analysis_qoc_unit",
+                )
+                reverse_map = {
+                    "1 - Labor and Delivery": "1",
+                    "2 - NICU/KMC": "2",
+                }
+                selected_unit = reverse_map.get(selected_unit_display, selected_unit_display)
+
             st.markdown("</div>", unsafe_allow_html=True)
 
     with left_col:
         qoc_records_df = None
         qoc_sums_df = None
         qoc_non_null_counts_df = None
-        filtered_df = work_df[work_df["round"] == selected_round].copy()
+        filtered_df = work_df.copy()
+        if selected_round != "All Rounds":
+            filtered_df = filtered_df[filtered_df["round"] == selected_round]
         if is_qoc_analysis and selected_unit is not None:
             if selected_unit == "1":
                 filtered_df = filtered_df[filtered_df["unit_has_1"]]
             elif selected_unit == "2":
                 filtered_df = filtered_df[filtered_df["unit_has_2"]]
+        if is_cis_analysis:
+            if selected_week is None or selected_cis_indicator_col is None:
+                st.warning("Select a week and indicator to continue.")
+                return
+            if selected_week != "All Weeks":
+                filtered_df = filtered_df[filtered_df["week"] == selected_week]
+            filtered_df = filtered_df[filtered_df["unit"] == "2"]
+            filtered_df["cis_indicator_value"] = _to_positive_binary_indicator_value(
+                filtered_df[selected_cis_indicator_col]
+            )
+            filtered_df = filtered_df[filtered_df["cis_indicator_value"].notna()].copy()
         if group_mode == "Regional" and selected_region_for_facility:
             filtered_df = filtered_df[
                 filtered_df["region_label"] == selected_region_for_facility
@@ -803,6 +940,25 @@ def render_mentorship_analysis_dashboard():
                         0, pd.NA
                     )
                 ).fillna(0)
+            agg_df = agg_df.sort_values(entity_col)
+        elif is_cis_analysis:
+            grouped = filtered_df.groupby(entity_col, as_index=False)
+            sums_df = (
+                grouped["cis_indicator_value"]
+                .sum(numeric_only=True)
+                .fillna(0)
+                .rename(columns={"cis_indicator_value": "cis_indicator_numerator"})
+            )
+            non_null_counts_df = grouped["cis_indicator_value"].count().rename(
+                columns={"cis_indicator_value": "cis_indicator_denominator"}
+            )
+            agg_df = sums_df.merge(non_null_counts_df, on=entity_col, how="left")
+            agg_df["cis_indicator_value"] = (
+                pd.to_numeric(agg_df["cis_indicator_numerator"], errors="coerce").fillna(0)
+                / pd.to_numeric(
+                    agg_df["cis_indicator_denominator"], errors="coerce"
+                ).replace(0, pd.NA)
+            ).fillna(0) * 100
             agg_df = agg_df.sort_values(entity_col)
         elif is_bmet_analysis:
             grouped = filtered_df.groupby(entity_col, as_index=False)
@@ -1138,6 +1294,57 @@ def render_mentorship_analysis_dashboard():
                 "`part6_project-q604`, `part3_project-q301`, `part3_project-q309`, "
                 "`part4_project-q408`, `part5_project-q504`."
             )
+        elif is_cis_analysis:
+            indicator_label = selected_cis_indicator or "CIS Indicator"
+            numerator_label = selected_cis_numerator_label or "Numerator (Yes)"
+            denominator_label = selected_cis_denominator_label or "Denominator (Answered)"
+            fig = go.Figure()
+            fig.add_bar(
+                y=agg_df[entity_col],
+                x=agg_df["cis_indicator_value"].fillna(0),
+                orientation="h",
+                marker_color=MENTORSHIP_METRIC_COLORS[0],
+                customdata=agg_df[
+                    [entity_col, "cis_indicator_numerator", "cis_indicator_denominator"]
+                ].fillna(0).values,
+                hovertemplate=(
+                    f"{hover_entity_label}: %{{customdata[0]}}"
+                    f"<br>{indicator_label}: %{{x:.2f}}%"
+                    f"<br>{numerator_label}: %{{customdata[1]:.0f}}"
+                    f"<br>{denominator_label}: %{{customdata[2]:.0f}}"
+                    "<extra></extra>"
+                ),
+            )
+            chart_height = max(280, min(600, 56 + len(agg_df) * 16))
+            fig.update_layout(
+                template="plotly_white",
+                height=chart_height,
+                margin=dict(l=8, r=8, t=26, b=8),
+                xaxis_title=value_title,
+                yaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
+                font=dict(size=10),
+                hoverlabel=dict(font_size=11),
+            )
+            fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
+            fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"mentorship_cis_bars_{group_mode}_{selected_round}_{selected_week}",
+            )
+
+            table_df = agg_df.rename(
+                columns={
+                    entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
+                    "cis_indicator_value": indicator_label,
+                    "cis_indicator_numerator": numerator_label,
+                    "cis_indicator_denominator": denominator_label,
+                }
+            ).round(2)
+            st.dataframe(table_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "Computed as `(sum(yes=1 values) / count(non-null submissions for the indicator)) * 100`."
+            )
         elif is_data_mentorship_analysis:
             metric_colors = MENTORSHIP_METRIC_COLORS
             subplot_titles = [
@@ -1307,8 +1514,13 @@ def render_mentorship_analysis_dashboard():
             )
             competency_avg = float(competency_series.mean()) if competency_series.notna().any() else 0.0
             facility_avg = float(facility_series.mean()) if facility_series.notna().any() else 0.0
+            round_summary_label = (
+                "All Rounds"
+                if selected_round == "All Rounds"
+                else f"Round {selected_round}"
+            )
             st.caption(
-                f"Round {selected_round} summary: "
+                f"{round_summary_label} summary: "
                 f"Competency Average = {competency_avg:.2f}, "
                 f"Facility Average = {facility_avg:.2f}."
             )
