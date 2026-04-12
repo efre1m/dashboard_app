@@ -239,6 +239,10 @@ class DHIS2DataFetcher:
         org_unit_uid: str,
         org_unit_mode: str = "DESCENDANTS",
         page_size: int = 1000,
+        program_start_date: Optional[str] = None,
+        program_end_date: Optional[str] = None,
+        last_updated_start_date: Optional[str] = None,
+        last_updated_end_date: Optional[str] = None,
     ) -> Dict:
         """
         Fetch TEI data for a specific program and org unit with pagination
@@ -258,7 +262,20 @@ class DHIS2DataFetcher:
             "totalPages": True,
         }
 
-        logger.info(f"Fetching data for program {program_uid}, org unit {org_unit_uid}")
+        if program_start_date:
+            params["programStartDate"] = program_start_date
+        if program_end_date:
+            params["programEndDate"] = program_end_date
+        if last_updated_start_date:
+            params["lastUpdatedStartDate"] = last_updated_start_date
+        if last_updated_end_date:
+            params["lastUpdatedEndDate"] = last_updated_end_date
+
+        logger.info(
+            f"Fetching data for program {program_uid}, org unit {org_unit_uid} "
+            f"(programStartDate={program_start_date}, programEndDate={program_end_date}, "
+            f"lastUpdatedStartDate={last_updated_start_date}, lastUpdatedEndDate={last_updated_end_date})"
+        )
 
         all_teis = []
         page = 1
