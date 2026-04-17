@@ -321,7 +321,6 @@ def render_mentorship_analysis_dashboard():
         unsafe_allow_html=True,
     )
 
-    selected_week = None
     selected_cis_indicator = None
     selected_cis_indicator_col = None
     selected_cis_indicator_question = None
@@ -797,27 +796,6 @@ def render_mentorship_analysis_dashboard():
                 key="mentorship_analysis_round",
             )
 
-            if is_cis_analysis:
-                if selected_round == all_rounds_label:
-                    week_series = work_df["week"]
-                else:
-                    week_series = work_df.loc[work_df["round"] == selected_round, "week"]
-                week_values = sorted(
-                    [w for w in week_series.dropna().unique().tolist() if str(w).strip()],
-                    key=lambda x: int(x) if str(x).isdigit() else str(x),
-                )
-                if not week_values:
-                    st.warning("No week values found for the selected round.")
-                    return
-                all_weeks_label = "All Weeks"
-                week_options = [all_weeks_label] + week_values
-                selected_week = st.selectbox(
-                    "Week",
-                    options=week_options,
-                    index=0,
-                    key="mentorship_cis_week",
-                )
-
             selected_unit = None
             if is_qoc_analysis:
                 if work_df.empty:
@@ -850,16 +828,16 @@ def render_mentorship_analysis_dashboard():
             elif selected_unit == "2":
                 filtered_df = filtered_df[filtered_df["unit_has_2"]]
         if is_cis_analysis:
-            if selected_week is None or selected_cis_indicator_col is None:
-                st.warning("Select a week and indicator to continue.")
+            if selected_cis_indicator_col is None:
+                st.warning("Select an indicator to continue.")
                 return
-            if selected_week != "All Weeks":
-                filtered_df = filtered_df[filtered_df["week"] == selected_week]
             filtered_df = filtered_df[filtered_df["unit"] == "2"]
             filtered_df["cis_indicator_value"] = _to_positive_binary_indicator_value(
                 filtered_df[selected_cis_indicator_col]
             )
             filtered_df = filtered_df[filtered_df["cis_indicator_value"].notna()].copy()
+            filtered_df["week_value"] = filtered_df["week"].apply(_normalize_entity_text)
+            filtered_df = filtered_df[filtered_df["week_value"] != ""].copy()
         if group_mode == "Regional" and selected_region_for_facility:
             filtered_df = filtered_df[
                 filtered_df["region_label"] == selected_region_for_facility
@@ -942,7 +920,7 @@ def render_mentorship_analysis_dashboard():
                 ).fillna(0)
             agg_df = agg_df.sort_values(entity_col)
         elif is_cis_analysis:
-            grouped = filtered_df.groupby(entity_col, as_index=False)
+            grouped = filtered_df.groupby([entity_col, "week_value"], as_index=False)
             sums_df = (
                 grouped["cis_indicator_value"]
                 .sum(numeric_only=True)
@@ -952,14 +930,19 @@ def render_mentorship_analysis_dashboard():
             non_null_counts_df = grouped["cis_indicator_value"].count().rename(
                 columns={"cis_indicator_value": "cis_indicator_denominator"}
             )
-            agg_df = sums_df.merge(non_null_counts_df, on=entity_col, how="left")
+            agg_df = sums_df.merge(
+                non_null_counts_df, on=[entity_col, "week_value"], how="left"
+            )
             agg_df["cis_indicator_value"] = (
                 pd.to_numeric(agg_df["cis_indicator_numerator"], errors="coerce").fillna(0)
                 / pd.to_numeric(
                     agg_df["cis_indicator_denominator"], errors="coerce"
                 ).replace(0, pd.NA)
             ).fillna(0) * 100
-            agg_df = agg_df.sort_values(entity_col)
+            agg_df["week_sort"] = pd.to_numeric(agg_df["week_value"], errors="coerce")
+            agg_df["week_sort"] = agg_df["week_sort"].fillna(10**9)
+            agg_df["week_display"] = agg_df["week_value"].apply(lambda value: f"Week {value}")
+            agg_df = agg_df.sort_values([entity_col, "week_sort", "week_value"])
         elif is_bmet_analysis:
             grouped = filtered_df.groupby(entity_col, as_index=False)
             sums_df = grouped[score_cols].sum(numeric_only=True).fillna(0)
@@ -1298,52 +1281,90 @@ def render_mentorship_analysis_dashboard():
             indicator_label = selected_cis_indicator or "CIS Indicator"
             numerator_label = selected_cis_numerator_label or "Numerator (Yes)"
             denominator_label = selected_cis_denominator_label or "Denominator (Answered)"
-            fig = go.Figure()
-            fig.add_bar(
-                y=agg_df[entity_col],
-                x=agg_df["cis_indicator_value"].fillna(0),
-                orientation="h",
-                marker_color=MENTORSHIP_METRIC_COLORS[0],
-                customdata=agg_df[
-                    [entity_col, "cis_indicator_numerator", "cis_indicator_denominator"]
-                ].fillna(0).values,
-                hovertemplate=(
-                    f"{hover_entity_label}: %{{customdata[0]}}"
-                    f"<br>{indicator_label}: %{{x:.2f}}%"
-                    f"<br>{numerator_label}: %{{customdata[1]:.0f}}"
-                    f"<br>{denominator_label}: %{{customdata[2]:.0f}}"
-                    "<extra></extra>"
-                ),
+            week_order = (
+                agg_df[["week_display", "week_sort", "week_value"]]
+                .drop_duplicates()
+                .sort_values(["week_sort", "week_value"])["week_display"]
+                .tolist()
             )
-            chart_height = max(280, min(600, 56 + len(agg_df) * 16))
+            fig = go.Figure()
+            unique_entities = agg_df[entity_col].dropna().unique().tolist()
+            for idx, entity_name in enumerate(unique_entities):
+                entity_df = agg_df[agg_df[entity_col] == entity_name].copy()
+                fig.add_trace(
+                    go.Scatter(
+                        x=entity_df["week_display"],
+                        y=entity_df["cis_indicator_value"].fillna(0),
+                        mode="lines+markers",
+                        name=str(entity_name),
+                        marker=dict(size=8),
+                        line=dict(width=3, color=MENTORSHIP_METRIC_COLORS[idx % len(MENTORSHIP_METRIC_COLORS)]),
+                        customdata=entity_df[
+                            [entity_col, "cis_indicator_numerator", "cis_indicator_denominator"]
+                        ].fillna(0).values,
+                        hovertemplate=(
+                            "Week: %{x}"
+                            f"<br>{hover_entity_label}: %{{customdata[0]}}"
+                            f"<br>{indicator_label}: %{{y:.2f}}%"
+                            f"<br>{numerator_label}: %{{customdata[1]:.0f}}"
+                            f"<br>{denominator_label}: %{{customdata[2]:.0f}}"
+                            "<extra></extra>"
+                        ),
+                    )
+                )
+            chart_height = max(340, min(680, 320 + len(unique_entities) * 30))
             fig.update_layout(
                 template="plotly_white",
                 height=chart_height,
                 margin=dict(l=8, r=8, t=26, b=8),
-                xaxis_title=value_title,
-                yaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
+                xaxis_title="Week",
+                yaxis_title=value_title,
                 font=dict(size=10),
                 hoverlabel=dict(font_size=11),
+                legend_title_text="Region" if group_mode == "Multi Regional" else "Facility",
             )
-            fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
-            fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
+            fig.update_xaxes(
+                tickfont=dict(size=9),
+                title_font=dict(size=10),
+                automargin=True,
+                categoryorder="array",
+                categoryarray=week_order,
+            )
+            fig.update_yaxes(
+                tickfont=dict(size=9),
+                title_font=dict(size=10),
+                automargin=True,
+                rangemode="tozero",
+            )
             st.plotly_chart(
                 fig,
                 use_container_width=True,
-                key=f"mentorship_cis_bars_{group_mode}_{selected_round}_{selected_week}",
+                key=f"mentorship_cis_lines_{group_mode}_{selected_round}_{selected_cis_indicator_col}",
             )
 
             table_df = agg_df.rename(
                 columns={
                     entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
+                    "week_display": "Week",
                     "cis_indicator_value": indicator_label,
                     "cis_indicator_numerator": numerator_label,
                     "cis_indicator_denominator": denominator_label,
                 }
             ).round(2)
-            st.dataframe(table_df, use_container_width=True, hide_index=True)
+            table_columns = [
+                "Region" if group_mode == "Multi Regional" else "Facility",
+                "Week",
+                indicator_label,
+                numerator_label,
+                denominator_label,
+            ]
+            st.dataframe(
+                table_df[[col for col in table_columns if col in table_df.columns]],
+                use_container_width=True,
+                hide_index=True,
+            )
             st.caption(
-                "Computed as `(sum(yes=1 values) / count(non-null submissions for the indicator)) * 100`."
+                "Weekly percentage is computed as `(sum(yes=1 values) / count(non-null submissions for the indicator)) * 100`."
             )
         elif is_data_mentorship_analysis:
             metric_colors = MENTORSHIP_METRIC_COLORS

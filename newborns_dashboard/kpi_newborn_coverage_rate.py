@@ -8,6 +8,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from utils.ethiopian_periods import (
+    add_ethiopian_period_metadata,
+    filter_periods_by_overlap,
+    map_gregorian_dates_to_ethiopian_yearmonths,
+)
 from newborns_dashboard.kpi_utils_newborn import (
     auto_text_color,
     compute_admitted_newborns_count,
@@ -39,7 +44,7 @@ def clear_newborn_coverage_rate_cache():
 
 
 # ---------------- Denominator Loading ----------------
-DENOMINATOR_CACHE_VERSION = 3
+DENOMINATOR_CACHE_VERSION = 4
 DENOMINATOR_FILENAME_CANDIDATES = (
     "aggregated_admission_newborn.xlsx",
     "aggregated admission newborn.xlsx",
@@ -202,7 +207,7 @@ def _wide_to_long_denominator(df_wide):
         0
     )
 
-    return long_df
+    return add_ethiopian_period_metadata(long_df)
 
 
 def load_newborn_coverage_denominator():
@@ -473,14 +478,9 @@ def get_numerator_denominator_for_newborn_coverage_rate(
     if working_df.empty:
         return (0, 0, 0.0)
 
-    numerator = int(compute_admitted_newborns_count(working_df, facility_uids))
-
-    # Determine aggregation level: only Monthly/Yearly are supported for this KPI.
-    period_label = st.session_state.get("period_label", "Monthly")
-    if "filters" in st.session_state and "period_label" in st.session_state.filters:
-        period_label = st.session_state.filters["period_label"]
-    if period_label not in {"Monthly", "Yearly"}:
-        period_label = "Monthly"
+    den_long = load_newborn_coverage_denominator()
+    if den_long is None or den_long.empty:
+        return (0, 0, 0.0)
 
     # Derive YearMonth / Year from patient-level dates
     dates = None
@@ -490,16 +490,30 @@ def get_numerator_denominator_for_newborn_coverage_rate(
         dates = pd.to_datetime(working_df["event_date"], errors="coerce")
 
     if dates is None or dates.dropna().empty:
-        return (numerator, 0, 0.0)
+        return (0, 0, 0.0)
 
-    # Denominator source is monthly; for Yearly aggregation we sum the months present in the
-    # (already date-filtered) group_df so the denominator stays aligned with the numerator.
+    available_yearmonths = den_long["yearmonth"].dropna().astype(int).unique().tolist()
+    period_df = filter_periods_by_overlap(
+        den_long[["yearmonth", "gc_start", "gc_end"]].drop_duplicates(),
+        start_date=date_range_filters.get("start_date") if date_range_filters else None,
+        end_date=date_range_filters.get("end_date") if date_range_filters else None,
+    )
+    if not period_df.empty:
+        available_yearmonths = period_df["yearmonth"].dropna().astype(int).tolist()
+
+    working_df = working_df.copy()
+    working_df["_ethiopian_yearmonth"] = map_gregorian_dates_to_ethiopian_yearmonths(
+        dates, available_yearmonths
+    )
+    working_df = working_df[working_df["_ethiopian_yearmonth"].notna()].copy()
+    if working_df.empty:
+        return (0, 0, 0.0)
+
+    numerator = int(compute_admitted_newborns_count(working_df, facility_uids))
     yearmonths = (
-        (dates.dropna().dt.year.astype(int) * 100) + (dates.dropna().dt.month.astype(int))
-    ).unique().tolist()
-    years = None
-
-    den_long = load_newborn_coverage_denominator()
+        working_df["_ethiopian_yearmonth"].dropna().astype("Int64").astype(int).unique().tolist()
+    )
+    years = sorted({int(ym) // 100 for ym in yearmonths})
 
     user = st.session_state.get("user", {}) or {}
     role = str(user.get("role") or "").lower()

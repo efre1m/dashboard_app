@@ -2,15 +2,16 @@
 """
 Incremental DHIS2 pipeline runner.
 
-Fetches only newly-enrolled TEIs since the most recent enrollment_date timestamp
-found in existing national files (or a stored state file), then appends new rows to:
+Fetches TEIs in a recent window and upserts them (inserts new TEIs and refreshes
+existing TEIs), preferring the last successful run timestamp and falling back to
+enrollment-based windows only when no prior run state exists, then writes to:
   - utils/imnid/maternal/national_maternal.csv + regional_*.csv
   - utils/imnid/newborn/national_newborn.csv + regional_*.csv
 
 Notes:
 - If no baseline exists for a program, it will fetch ALL TEIs for that program.
-- Deduplication is done by tei_id against existing national files.
-- Time-aware filtering is applied client-side, even if the API uses date-only filters.
+- Deduplication/upsert is done by tei_id against existing files.
+- Regular incremental runs use lastUpdated windows so delayed offline syncs still refresh stage values.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Set, Tuple
+from typing import Dict, Optional, Set
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -76,6 +77,16 @@ def _format_date_for_api(
     if lookback_days:
         d = d - timedelta(days=lookback_days)
     return d.isoformat()
+
+
+def _format_datetime_for_api(
+    dt: Optional[datetime], lookback_days: int = 0
+) -> Optional[str]:
+    if dt is None:
+        return None
+    if lookback_days:
+        dt = dt - timedelta(days=lookback_days)
+    return dt.replace(microsecond=0).isoformat()
 
 
 def _read_state(path: Path) -> Dict[str, str]:
@@ -140,28 +151,58 @@ def _region_filename(region_name: str, program_type: str) -> str:
     return f"regional_{clean_region}_{program_type}.csv"
 
 
-def _append_rows(
+def _upsert_rows(
     *,
     existing_path: Path,
     new_df: pd.DataFrame,
+    key_col: str,
     drop_region_cols: bool,
     dry_run: bool,
-) -> int:
+) -> tuple[int, int]:
     if new_df.empty:
-        return 0
+        return 0, 0
 
     df_to_add = new_df.copy()
     if drop_region_cols:
-        df_to_add = df_to_add.drop(columns=["region_uid", "region_name"], errors="ignore")
+        df_to_add = df_to_add.drop(
+            columns=["region_uid", "region_name"], errors="ignore"
+        )
+
+    if key_col not in df_to_add.columns:
+        raise KeyError(f"Missing key column {key_col!r} in new_df")
+
+    df_to_add[key_col] = df_to_add[key_col].astype(str).str.strip()
+    new_keys = set(df_to_add[key_col].tolist())
 
     if dry_run:
-        return len(df_to_add)
+        if not existing_path.exists():
+            return len(new_keys), 0
+        try:
+            existing_df = pd.read_csv(existing_path, usecols=[key_col], dtype=str, keep_default_na=False)
+            existing_df[key_col] = existing_df[key_col].astype(str).str.strip()
+            existing_keys = set(existing_df[key_col].tolist())
+        except Exception:
+            existing_keys = set()
+        updated = len(new_keys & existing_keys)
+        inserted = len(new_keys - existing_keys)
+        return inserted, updated
 
     if not existing_path.exists():
         df_to_add.to_csv(existing_path, index=False, encoding="utf-8")
-        return len(df_to_add)
+        return len(new_keys), 0
 
     existing_df = pd.read_csv(existing_path, dtype=str, keep_default_na=False)
+    if key_col not in existing_df.columns:
+        raise KeyError(f"Missing key column {key_col!r} in {existing_path}")
+
+    existing_df[key_col] = existing_df[key_col].astype(str).str.strip()
+    existing_keys = set(existing_df[key_col].tolist())
+    updated = len(new_keys & existing_keys)
+    inserted = len(new_keys - existing_keys)
+
+    # Ensure unique keys before merging (prefer latest occurrence).
+    existing_df = existing_df.drop_duplicates(subset=[key_col], keep="last")
+    df_to_add = df_to_add.drop_duplicates(subset=[key_col], keep="last")
 
     # Union columns, keep existing order first
     existing_cols = list(existing_df.columns)
@@ -171,14 +212,42 @@ def _append_rows(
     existing_df = existing_df.reindex(columns=all_cols, fill_value="N/A")
     df_to_add = df_to_add.reindex(columns=all_cols, fill_value="N/A")
 
-    combined = pd.concat([existing_df, df_to_add], ignore_index=True)
+    def _is_missing(series: pd.Series) -> pd.Series:
+        s = series.astype(str).str.strip().str.lower()
+        return s.isin({"", "n/a", "nan", "none"})
+
+    # Merge without destroying existing values:
+    # - If incoming value is non-missing, overwrite existing.
+    # - If incoming is missing (N/A/empty), keep existing.
+    existing_idx = existing_df.set_index(key_col)
+    incoming_idx = df_to_add.set_index(key_col)
+
+    overlap = existing_idx.index.intersection(incoming_idx.index)
+    new_only = incoming_idx.index.difference(existing_idx.index)
+
+    if not overlap.empty:
+        for col in all_cols:
+            if col == key_col:
+                continue
+            inc = incoming_idx.loc[overlap, col]
+            non_missing = ~_is_missing(inc)
+            existing_idx.loc[overlap, col] = existing_idx.loc[overlap, col].where(
+                ~non_missing, inc
+            )
+
+    combined = (
+        pd.concat([existing_idx, incoming_idx.loc[new_only]], axis=0)
+        .reset_index()
+        .reindex(columns=all_cols, fill_value="N/A")
+    )
     combined.to_csv(existing_path, index=False, encoding="utf-8")
-    return len(df_to_add)
+    return inserted, updated
 
 
 @dataclass
 class ProgramResult:
-    added_rows: int
+    inserted_rows: int
+    updated_rows: int
     max_enrollment_date: Optional[datetime]
 
 
@@ -206,6 +275,7 @@ def _process_program(
     program_name: str,
     program_type: str,
     since_date: Optional[datetime],
+    last_updated_since: Optional[datetime],
     output_dir: Path,
     fetcher: DHIS2DataFetcher,
     orgunit_names: Dict[str, str],
@@ -216,16 +286,37 @@ def _process_program(
     lookback_days: int,
     dry_run: bool,
 ) -> ProgramResult:
-    program_start_date = _format_date_for_api(
-        since_date.date() if since_date else None, lookback_days=lookback_days
-    )
-    if program_start_date:
-        print(f"[{program_name}] programStartDate = {program_start_date}")
-    else:
-        print(f"[{program_name}] No programStartDate filter (full fetch)")
+    program_start_date = None
+    last_updated_start_date = None
 
-    total_added = 0
-    new_chunks = []
+    if last_updated_since is not None:
+        last_updated_start_date = _format_datetime_for_api(
+            last_updated_since, lookback_days=lookback_days
+        )
+        print(f"[{program_name}] lastUpdatedStartDate = {last_updated_start_date}")
+    else:
+        program_start_date = _format_date_for_api(
+            since_date.date() if since_date else None, lookback_days=lookback_days
+        )
+        if program_start_date:
+            print(f"[{program_name}] programStartDate = {program_start_date}")
+        else:
+            print(f"[{program_name}] No incremental filter (full fetch)")
+
+    if last_updated_start_date:
+        print(
+            f"[{program_name}] Using lastUpdated window so recently synced stage values are included"
+        )
+    elif program_start_date:
+        print(
+            f"[{program_name}] Using enrollment window fallback because no previous run timestamp exists"
+        )
+    else:
+        print(f"[{program_name}] No previous state found; fetching all available TEIs")
+
+    total_inserted = 0
+    total_updated = 0
+    changed_chunks = []
 
     for idx, (region_uid, region_name) in enumerate(regions.items(), start=1):
         print(f"[{program_name}] Region {idx}/{len(regions)}: {region_name}")
@@ -236,29 +327,21 @@ def _process_program(
             "DESCENDANTS",
             1000,
             program_start_date=program_start_date,
+            last_updated_start_date=last_updated_start_date,
         )
 
         teis = tei_data.get("trackedEntityInstances", [])
-        if since_date:
-            filtered = []
-            for tei in teis:
-                tei_dt = _tei_enrollment_datetime(tei)
-                # Use >= so we don't miss TEIs that share the same timestamp
-                # as the latest recorded enrollment_date.
-                if tei_dt is None or tei_dt >= since_date:
-                    filtered.append(tei)
-            teis = filtered
-        if existing_teis:
-            teis = [
-                tei
-                for tei in teis
-                if tei.get("trackedEntityInstance") not in existing_teis
-            ]
-            tei_data = {"trackedEntityInstances": teis}
+        tei_data = {"trackedEntityInstances": teis}
 
         if not teis:
-            print(f"[{program_name}]   No new TEIs in {region_name}")
+            print(f"[{program_name}]   No TEIs in window for {region_name}")
             continue
+
+        nested_events = 0
+        for tei in teis:
+            for enrollment in tei.get("enrollments", []) or []:
+                nested_events += len(enrollment.get("events", []) or [])
+        print(f"[{program_name}]   TEIs fetched: {len(teis)} | nested events: {nested_events}")
 
         events_df = CSVIntegration.create_events_dataframe(
             tei_data, program_uid, orgunit_names
@@ -286,48 +369,51 @@ def _process_program(
         patient_df["region_uid"] = region_uid
         patient_df["region_name"] = region_name
 
-        # Deduplicate against existing TEIs again after post-processing
-        new_df = patient_df[
-            ~patient_df["tei_id"].astype(str).str.strip().isin(existing_teis)
-        ]
-
-        if new_df.empty:
-            print(f"[{program_name}]   No new rows after dedupe in {region_name}")
-            continue
-
         region_file = output_dir / _region_filename(region_name, program_type)
-        added = _append_rows(
+        inserted, updated = _upsert_rows(
             existing_path=region_file,
-            new_df=new_df,
+            new_df=patient_df,
+            key_col="tei_id",
             drop_region_cols=True,
             dry_run=dry_run,
         )
-        total_added += added
+        total_inserted += inserted
+        total_updated += updated
 
-        existing_teis.update(new_df["tei_id"].astype(str).str.strip())
-        new_chunks.append(new_df)
+        existing_teis.update(patient_df["tei_id"].astype(str).str.strip())
+        changed_chunks.append(patient_df)
 
-        print(f"[{program_name}]   Added {added} rows to {region_file.name}")
+        print(
+            f"[{program_name}]   Upserted {inserted + updated} rows to {region_file.name} "
+            f"(new={inserted}, updated={updated})"
+        )
 
-    if not new_chunks:
-        return ProgramResult(added_rows=0, max_enrollment_date=None)
+    if not changed_chunks:
+        return ProgramResult(
+            inserted_rows=0, updated_rows=0, max_enrollment_date=None
+        )
 
-    combined_new = pd.concat(new_chunks, ignore_index=True)
+    combined_changed = pd.concat(changed_chunks, ignore_index=True)
     national_file = output_dir / f"national_{program_type}.csv"
-    _append_rows(
+    _upsert_rows(
         existing_path=national_file,
-        new_df=combined_new,
+        new_df=combined_changed,
+        key_col="tei_id",
         drop_region_cols=False,
         dry_run=dry_run,
     )
 
-    max_enrollment = _max_enrollment_dt_from_df(combined_new)
-    return ProgramResult(added_rows=total_added, max_enrollment_date=max_enrollment)
+    max_enrollment = _max_enrollment_dt_from_df(combined_changed)
+    return ProgramResult(
+        inserted_rows=total_inserted,
+        updated_rows=total_updated,
+        max_enrollment_date=max_enrollment,
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Incremental DHIS2 pipeline (append new enrollments only)."
+        description="Incremental DHIS2 pipeline (upsert recent TEIs)."
     )
     parser.add_argument(
         "--output-dir",
@@ -342,7 +428,7 @@ def main() -> int:
     parser.add_argument(
         "--since",
         default=None,
-        help="Override start date for BOTH programs (YYYY-MM-DD).",
+        help="Override incremental start datetime for BOTH programs (ISO format, for example 2026-04-13T10:15:00).",
     )
     parser.add_argument(
         "--state-file",
@@ -352,13 +438,13 @@ def main() -> int:
     parser.add_argument(
         "--lookback-days",
         type=int,
-        default=2,
-        help="Subtract N days from start date to avoid missing late enrollments (default: 2).",
+        default=14,
+        help="Subtract N days from the incremental fetch boundary to catch delayed offline syncs (default: 14).",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Do not write files; only report what would be appended.",
+        help="Do not write files; only report what would be upserted.",
     )
     args = parser.parse_args()
 
@@ -374,18 +460,19 @@ def main() -> int:
     state = _read_state(state_path)
 
     override_since = _parse_iso_datetime(args.since)
-    maternal_since = override_since
-    newborn_since = override_since
+    last_run_since = override_since or _parse_iso_datetime(state.get("last_run_utc"))
+    maternal_since = None
+    newborn_since = None
 
-    if override_since is None:
+    if last_run_since is None:
         maternal_since = _parse_iso_datetime(state.get("maternal_last_enrollment_date"))
         newborn_since = _parse_iso_datetime(state.get("newborn_last_enrollment_date"))
 
-    if maternal_since is None:
+    if maternal_since is None and last_run_since is None:
         maternal_since = _max_enrollment_dt_from_file(
             maternal_dir / "national_maternal.csv"
         )
-    if newborn_since is None:
+    if newborn_since is None and last_run_since is None:
         newborn_since = _max_enrollment_dt_from_file(
             newborn_dir / "national_newborn.csv"
         )
@@ -424,8 +511,9 @@ def main() -> int:
     print("=" * 72)
     print(f"Output dir: {output_dir}")
     print(f"Dry run: {args.dry_run}")
-    print(f"Maternal since: {maternal_since}")
-    print(f"Newborn since: {newborn_since}")
+    print(f"Last run timestamp: {last_run_since}")
+    print(f"Maternal enrollment fallback: {maternal_since}")
+    print(f"Newborn enrollment fallback: {newborn_since}")
     print("=" * 72)
 
     maternal_result = _process_program(
@@ -433,6 +521,7 @@ def main() -> int:
         program_name="MATERNAL",
         program_type="maternal",
         since_date=maternal_since,
+        last_updated_since=last_run_since,
         output_dir=maternal_dir,
         fetcher=fetcher,
         orgunit_names=orgunit_names,
@@ -449,6 +538,7 @@ def main() -> int:
         program_name="NEWBORN",
         program_type="newborn",
         since_date=newborn_since,
+        last_updated_since=last_run_since,
         output_dir=newborn_dir,
         fetcher=fetcher,
         orgunit_names=orgunit_names,
@@ -463,18 +553,28 @@ def main() -> int:
     print("=" * 72)
     print("SUMMARY")
     print("=" * 72)
-    print(f"Maternal added rows: {maternal_result.added_rows}")
-    print(f"Newborn added rows: {newborn_result.added_rows}")
+    print(
+        f"Maternal upserted: {maternal_result.inserted_rows + maternal_result.updated_rows} "
+        f"(new={maternal_result.inserted_rows}, updated={maternal_result.updated_rows})"
+    )
+    print(
+        f"Newborn upserted: {newborn_result.inserted_rows + newborn_result.updated_rows} "
+        f"(new={newborn_result.inserted_rows}, updated={newborn_result.updated_rows})"
+    )
 
     if not args.dry_run:
         if maternal_result.max_enrollment_date:
-            state["maternal_last_enrollment_date"] = (
-                maternal_result.max_enrollment_date.isoformat()
-            )
+            prev = _parse_iso_datetime(state.get("maternal_last_enrollment_date"))
+            if prev is None or maternal_result.max_enrollment_date > prev:
+                state["maternal_last_enrollment_date"] = (
+                    maternal_result.max_enrollment_date.isoformat()
+                )
         if newborn_result.max_enrollment_date:
-            state["newborn_last_enrollment_date"] = (
-                newborn_result.max_enrollment_date.isoformat()
-            )
+            prev = _parse_iso_datetime(state.get("newborn_last_enrollment_date"))
+            if prev is None or newborn_result.max_enrollment_date > prev:
+                state["newborn_last_enrollment_date"] = (
+                    newborn_result.max_enrollment_date.isoformat()
+                )
         state["last_run_utc"] = datetime.utcnow().isoformat() + "Z"
         _write_state(state_path, state)
         print(f"State file updated: {state_path}")

@@ -5,6 +5,10 @@ import streamlit as st
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
 import datetime
 import logging
+from utils.ethiopian_periods import (
+    build_period_definitions_from_denominator,
+    map_gregorian_dates_to_ethiopian_yearmonths,
+)
 
 from newborns_dashboard.kpi_utils_newborn import (
     auto_text_color,
@@ -839,25 +843,15 @@ def render_newborn_trend_chart_section(
         start_date = date_range_filters.get("start_date") if date_range_filters else None
         end_date = date_range_filters.get("end_date") if date_range_filters else None
 
-        month_periods = None
-        try:
-            if start_date and end_date:
-                start_ts = pd.Timestamp(start_date)
-                end_ts = pd.Timestamp(end_date)
-                month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
-        except Exception:
-            month_periods = None
-
-        if month_periods is None or len(month_periods) == 0:
-            ym_vals = pd.to_numeric(den_long.get("yearmonth"), errors="coerce").dropna()
-            if ym_vals.empty:
-                st.info("⚠️ No denominator periods available for Newborn Coverage Rate.")
-                return
-            ym_min = int(ym_vals.min())
-            ym_max = int(ym_vals.max())
-            start_ts = pd.Timestamp(year=ym_min // 100, month=ym_min % 100, day=1)
-            end_ts = pd.Timestamp(year=ym_max // 100, month=ym_max % 100, day=1)
-            month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
+        period_defs = build_period_definitions_from_denominator(
+            den_long,
+            period_label,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if not period_defs:
+            st.info("Warning: No denominator periods available for Newborn Coverage Rate.")
+            return
 
         # Precompute patient numerator keys (df may be empty; that's OK).
         numerator_df = working_df.copy()
@@ -866,11 +860,11 @@ def render_newborn_trend_chart_section(
                 numerator_df["enrollment_date"], errors="coerce"
             )
             numerator_df = numerator_df[numerator_df["enrollment_date"].notna()].copy()
-            numerator_df["_yearmonth"] = (
-                numerator_df["enrollment_date"].dt.year.astype(int) * 100
-                + numerator_df["enrollment_date"].dt.month.astype(int)
+            numerator_df["_ethiopian_yearmonth"] = map_gregorian_dates_to_ethiopian_yearmonths(
+                numerator_df["enrollment_date"],
+                den_long["yearmonth"].dropna().astype(int).unique().tolist(),
             )
-            numerator_df["_year"] = numerator_df["enrollment_date"].dt.year.astype(int)
+            numerator_df = numerator_df[numerator_df["_ethiopian_yearmonth"].notna()].copy()
 
         # Determine denominator scope (regions vs facilities) based on the current dashboard filter mode.
         region_scope = None
@@ -894,83 +888,39 @@ def render_newborn_trend_chart_section(
                 region_scope = list(facilities_by_region.keys())
 
         period_rows = []
-        if period_label == "Monthly":
-            for p in month_periods:
-                ym = int(p.year * 100 + p.month)
-                period_display = pd.Timestamp(p.start_time).strftime("%b-%y")
-                period_sort = pd.Timestamp(p.start_time)
-
-                if numerator_df.empty:
-                    numerator = 0
-                else:
-                    period_df = numerator_df[numerator_df["_yearmonth"] == ym]
-                    numerator = (
-                        int(period_df["tei_id"].dropna().nunique())
-                        if "tei_id" in period_df.columns
-                        else int(len(period_df))
-                    )
-
-                if region_scope:
-                    denominator = _sum_denominator_for_regions(
-                        den_long, region_scope, yearmonths=[ym]
-                    )
-                else:
-                    denominator = _sum_denominator_for_facilities(
-                        den_long, facility_scope_names or [], yearmonths=[ym]
-                    )
-
-                value = (numerator / denominator * 100) if denominator > 0 else 0.0
-                period_rows.append(
-                    {
-                        "period": period_display,
-                        "period_display": period_display,
-                        "period_sort": period_sort,
-                        "value": float(value),
-                        "numerator": int(numerator),
-                        "denominator": int(denominator),
-                    }
+        for pdef in period_defs:
+            if numerator_df.empty:
+                numerator = 0
+            else:
+                period_df = numerator_df[
+                    numerator_df["_ethiopian_yearmonth"].isin(pdef["yearmonths"])
+                ]
+                numerator = (
+                    int(period_df["tei_id"].dropna().nunique())
+                    if "tei_id" in period_df.columns
+                    else int(len(period_df))
                 )
-        else:  # Yearly
-            year_to_yms = {}
-            for p in month_periods:
-                ym = int(p.year * 100 + p.month)
-                year_to_yms.setdefault(int(p.year), []).append(ym)
 
-            for year in sorted(year_to_yms.keys()):
-                yms = year_to_yms[year]
-                period_display = str(year)
-                period_sort = pd.Timestamp(year=year, month=1, day=1)
-
-                if numerator_df.empty:
-                    numerator = 0
-                else:
-                    y_df = numerator_df[numerator_df["_year"] == year]
-                    numerator = (
-                        int(y_df["tei_id"].dropna().nunique())
-                        if "tei_id" in y_df.columns
-                        else int(len(y_df))
-                    )
-
-                if region_scope:
-                    denominator = _sum_denominator_for_regions(
-                        den_long, region_scope, yearmonths=yms
-                    )
-                else:
-                    denominator = _sum_denominator_for_facilities(
-                        den_long, facility_scope_names or [], yearmonths=yms
-                    )
-
-                value = (numerator / denominator * 100) if denominator > 0 else 0.0
-                period_rows.append(
-                    {
-                        "period": period_display,
-                        "period_display": period_display,
-                        "period_sort": period_sort,
-                        "value": float(value),
-                        "numerator": int(numerator),
-                        "denominator": int(denominator),
-                    }
+            if region_scope:
+                denominator = _sum_denominator_for_regions(
+                    den_long, region_scope, yearmonths=pdef["yearmonths"]
                 )
+            else:
+                denominator = _sum_denominator_for_facilities(
+                    den_long, facility_scope_names or [], yearmonths=pdef["yearmonths"]
+                )
+
+            value = (numerator / denominator * 100) if denominator > 0 else 0.0
+            period_rows.append(
+                {
+                    "period": pdef["period_display"],
+                    "period_display": pdef["period_display"],
+                    "period_sort": pdef["period_sort"],
+                    "value": float(value),
+                    "numerator": int(numerator),
+                    "denominator": int(denominator),
+                }
+            )
 
         if not period_rows:
             st.info("⚠️ No period data available for Newborn Coverage Rate.")
@@ -1203,55 +1153,15 @@ def render_newborn_comparison_chart(
             start_date = date_range_filters.get("start_date") if date_range_filters else None
             end_date = date_range_filters.get("end_date") if date_range_filters else None
 
-            month_periods = None
-            try:
-                if start_date and end_date:
-                    start_ts = pd.Timestamp(start_date)
-                    end_ts = pd.Timestamp(end_date)
-                    month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
-            except Exception:
-                month_periods = None
-
-            if month_periods is None or len(month_periods) == 0:
-                ym_vals = pd.to_numeric(den_long.get("yearmonth"), errors="coerce").dropna()
-                if ym_vals.empty:
-                    st.info("⚠️ No denominator periods available for Newborn Coverage Rate.")
-                    return
-                ym_min = int(ym_vals.min())
-                ym_max = int(ym_vals.max())
-                start_ts = pd.Timestamp(year=ym_min // 100, month=ym_min % 100, day=1)
-                end_ts = pd.Timestamp(year=ym_max // 100, month=ym_max % 100, day=1)
-                month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
-
-            # Pre-build period descriptors for stable ordering and yearmonth selection.
-            period_defs = []
-            if period_label == "Monthly":
-                for p in month_periods:
-                    ym = int(p.year * 100 + p.month)
-                    period_defs.append(
-                        {
-                            "period_display": pd.Timestamp(p.start_time).strftime("%b-%y"),
-                            "period_sort": pd.Timestamp(p.start_time),
-                            "yearmonths": [ym],
-                            "year": int(p.year),
-                        }
-                    )
-            else:
-                year_to_yms = {}
-                for p in month_periods:
-                    ym = int(p.year * 100 + p.month)
-                    year_to_yms.setdefault(int(p.year), []).append(ym)
-                for year in sorted(year_to_yms.keys()):
-                    period_defs.append(
-                        {
-                            "period_display": str(year),
-                            "period_sort": pd.Timestamp(year=year, month=1, day=1),
-                            "yearmonths": year_to_yms[year],
-                            "year": year,
-                        }
-                    )
-
-            date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
+            period_defs = build_period_definitions_from_denominator(
+                den_long,
+                period_label,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if not period_defs:
+                st.info("Warning: No denominator periods available for Newborn Coverage Rate.")
+                return
 
             for facility_uid, facility_name in zip(facility_uids, display_names):
                 facility_df = df_to_use[df_to_use["orgUnit"] == facility_uid].copy()
@@ -1270,13 +1180,25 @@ def render_newborn_comparison_chart(
                             & (facility_df["event_date"] < end_dt)
                         ].copy()
                     facility_df = facility_df[facility_df["event_date"].notna()].copy()
-                    facility_df["_yearmonth"] = (
-                        facility_df["event_date"].dt.year.astype(int) * 100
-                        + facility_df["event_date"].dt.month.astype(int)
+                    facility_df["_ethiopian_yearmonth"] = map_gregorian_dates_to_ethiopian_yearmonths(
+                        facility_df["event_date"],
+                        den_long["yearmonth"].dropna().astype(int).unique().tolist(),
                     )
-                    facility_df["_year"] = facility_df["event_date"].dt.year.astype(int)
+                    facility_df = facility_df[facility_df["_ethiopian_yearmonth"].notna()].copy()
 
                 for pdef in period_defs:
+                    if facility_df.empty:
+                        numerator = 0
+                    else:
+                        period_df = facility_df[
+                            facility_df["_ethiopian_yearmonth"].isin(pdef["yearmonths"])
+                        ]
+                        numerator = (
+                            int(period_df["tei_id"].dropna().nunique())
+                            if "tei_id" in period_df.columns
+                            else int(len(period_df))
+                        )
+
                     if facility_df.empty:
                         numerator = 0
                     elif period_label == "Monthly":
@@ -1512,54 +1434,15 @@ def render_newborn_comparison_chart(
             start_date = date_range_filters.get("start_date") if date_range_filters else None
             end_date = date_range_filters.get("end_date") if date_range_filters else None
 
-            month_periods = None
-            try:
-                if start_date and end_date:
-                    start_ts = pd.Timestamp(start_date)
-                    end_ts = pd.Timestamp(end_date)
-                    month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
-            except Exception:
-                month_periods = None
-
-            if month_periods is None or len(month_periods) == 0:
-                ym_vals = pd.to_numeric(den_long.get("yearmonth"), errors="coerce").dropna()
-                if ym_vals.empty:
-                    st.info("⚠️ No denominator periods available for Newborn Coverage Rate.")
-                    return
-                ym_min = int(ym_vals.min())
-                ym_max = int(ym_vals.max())
-                start_ts = pd.Timestamp(year=ym_min // 100, month=ym_min % 100, day=1)
-                end_ts = pd.Timestamp(year=ym_max // 100, month=ym_max % 100, day=1)
-                month_periods = pd.period_range(start=start_ts, end=end_ts, freq="M")
-
-            period_defs = []
-            if period_label == "Monthly":
-                for p in month_periods:
-                    ym = int(p.year * 100 + p.month)
-                    period_defs.append(
-                        {
-                            "period_display": pd.Timestamp(p.start_time).strftime("%b-%y"),
-                            "period_sort": pd.Timestamp(p.start_time),
-                            "yearmonths": [ym],
-                            "year": int(p.year),
-                        }
-                    )
-            else:
-                year_to_yms = {}
-                for p in month_periods:
-                    ym = int(p.year * 100 + p.month)
-                    year_to_yms.setdefault(int(p.year), []).append(ym)
-                for year in sorted(year_to_yms.keys()):
-                    period_defs.append(
-                        {
-                            "period_display": str(year),
-                            "period_sort": pd.Timestamp(year=year, month=1, day=1),
-                            "yearmonths": year_to_yms[year],
-                            "year": year,
-                        }
-                    )
-
-            date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
+            period_defs = build_period_definitions_from_denominator(
+                den_long,
+                period_label,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if not period_defs:
+                st.info("Warning: No denominator periods available for Newborn Coverage Rate.")
+                return
 
             for region_name in region_names:
                 region_facility_uids = region_facility_mapping.get(region_name, [])
@@ -1586,30 +1469,25 @@ def render_newborn_comparison_chart(
                     region_scope_df = region_scope_df[
                         region_scope_df["event_date"].notna()
                     ].copy()
-                    region_scope_df["_yearmonth"] = (
-                        region_scope_df["event_date"].dt.year.astype(int) * 100
-                        + region_scope_df["event_date"].dt.month.astype(int)
+                    region_scope_df["_ethiopian_yearmonth"] = map_gregorian_dates_to_ethiopian_yearmonths(
+                        region_scope_df["event_date"],
+                        den_long["yearmonth"].dropna().astype(int).unique().tolist(),
                     )
-                    region_scope_df["_year"] = region_scope_df["event_date"].dt.year.astype(int)
+                    region_scope_df = region_scope_df[
+                        region_scope_df["_ethiopian_yearmonth"].notna()
+                    ].copy()
 
                 for pdef in period_defs:
                     if region_scope_df.empty:
                         numerator = 0
-                    elif period_label == "Monthly":
+                    else:
                         period_df = region_scope_df[
-                            region_scope_df["_yearmonth"] == pdef["yearmonths"][0]
+                            region_scope_df["_ethiopian_yearmonth"].isin(pdef["yearmonths"])
                         ]
                         numerator = (
                             int(period_df["tei_id"].dropna().nunique())
                             if "tei_id" in period_df.columns
                             else int(len(period_df))
-                        )
-                    else:
-                        y_df = region_scope_df[region_scope_df["_year"] == pdef["year"]]
-                        numerator = (
-                            int(y_df["tei_id"].dropna().nunique())
-                            if "tei_id" in y_df.columns
-                            else int(len(y_df))
                         )
 
                     denominator = _sum_denominator_for_regions(
@@ -2212,8 +2090,18 @@ def render_newborn_patient_filter_controls(
     # Generate unique key suffix
     key_suffix = f"_{context}"
 
+    current_kpi = st.session_state.get("selected_newborn_kpi", "Inborn Rate (%)")
+    is_coverage_rate = current_kpi == "Newborn Coverage Rate"
+
     # Time Period options
     time_options = [
+        "All Time",
+        "Custom Range",
+        "This Month",
+        "Last Month",
+        "This Year",
+        "Last Year",
+    ] if is_coverage_rate else [
         "All Time",
         "Custom Range",
         "Today",
@@ -2295,8 +2183,7 @@ def render_newborn_patient_filter_controls(
         filters["start_date"], filters["end_date"]
     )
 
-    current_kpi = st.session_state.get("selected_newborn_kpi", "Inborn Rate (%)")
-    if current_kpi == "Newborn Coverage Rate":
+    if is_coverage_rate:
         available_aggregations = [
             a for a in available_aggregations if a in ["Monthly", "Yearly"]
         ]
