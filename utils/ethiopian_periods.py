@@ -129,6 +129,18 @@ def map_gregorian_dates_to_ethiopian_yearmonths(dates, available_yearmonths):
     return mapped
 
 
+def format_gregorian_range_label(start_date, end_date):
+    start_ts = pd.Timestamp(start_date)
+    end_ts = pd.Timestamp(end_date)
+
+    if start_ts.year == end_ts.year:
+        if start_ts.month == end_ts.month:
+            return f"{start_ts:%b} {start_ts.day}-{end_ts.day}, {start_ts.year}"
+        return f"{start_ts:%b} {start_ts.day}-{end_ts:%b} {end_ts.day}, {start_ts.year}"
+
+    return f"{start_ts:%b} {start_ts.day}, {start_ts.year}-{end_ts:%b} {end_ts.day}, {end_ts.year}"
+
+
 def build_period_definitions_from_denominator(den_long, period_label, start_date=None, end_date=None):
     if den_long is None or den_long.empty or "yearmonth" not in den_long.columns:
         return []
@@ -146,7 +158,7 @@ def build_period_definitions_from_denominator(den_long, period_label, start_date
             gc_end = group["gc_end"].max()
             period_defs.append(
                 {
-                    "period_display": f"{gc_start:%Y-%m-%d} to {gc_end:%Y-%m-%d}",
+                    "period_display": format_gregorian_range_label(gc_start, gc_end),
                     "period_sort": gc_start,
                     "yearmonths": yms,
                     "year": int(ec_year),
@@ -158,7 +170,7 @@ def build_period_definitions_from_denominator(den_long, period_label, start_date
     for row in period_df.itertuples(index=False):
         period_defs.append(
             {
-                "period_display": f"{row.gc_start:%Y-%m-%d} to {row.gc_end:%Y-%m-%d}",
+                "period_display": format_gregorian_range_label(row.gc_start, row.gc_end),
                 "period_sort": row.gc_start,
                 "yearmonths": [int(row.yearmonth)],
                 "year": int(row.ec_year),
