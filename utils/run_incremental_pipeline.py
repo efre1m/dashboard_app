@@ -43,6 +43,7 @@ from dhis2_fetcher import (  # noqa: E402
 
 
 STATE_FILENAME = ".incremental_state.json"
+DEFAULT_MATERNAL_CSV = "maternal_data_long_format.csv"
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -151,6 +152,59 @@ def _region_filename(region_name: str, program_type: str) -> str:
     return f"regional_{clean_region}_{program_type}.csv"
 
 
+def _reprocess_saved_file(path: Path, dry_run: bool) -> None:
+    if dry_run or not path.exists():
+        return
+    try:
+        df = pd.read_csv(path, dtype=str, keep_default_na=False)
+        if df.empty:
+            return
+        processed = CSVIntegration.post_process_dataframe(df)
+        processed.to_csv(path, index=False, encoding="utf-8")
+    except Exception as exc:
+        print(f"[WARN] Failed to reprocess {path.name}: {exc}")
+
+
+def _log_fetched_event_values(
+    *,
+    program_name: str,
+    region_name: str,
+    events_df: pd.DataFrame,
+    limit: int = 5,
+) -> None:
+    if events_df.empty:
+        print(f"[{program_name}]   No event rows created for {region_name}")
+        return
+
+    actual_rows = events_df.copy()
+    if "has_actual_event" in actual_rows.columns:
+        actual_rows = actual_rows[actual_rows["has_actual_event"] == True]
+
+    if "value" in actual_rows.columns:
+        actual_rows = actual_rows[
+            actual_rows["value"].astype(str).str.strip().ne("")
+        ]
+
+    value_count = len(actual_rows)
+    print(f"[{program_name}]   Event values fetched for {region_name}: {value_count}")
+
+    if value_count == 0:
+        return
+
+    sample_cols = ["tei_id", "programStageName", "dataElementName", "value"]
+    sample = (
+        actual_rows[sample_cols]
+        .drop_duplicates()
+        .head(limit)
+        .fillna("")
+    )
+    for _, row in sample.iterrows():
+        print(
+            f"[{program_name}]     {row['tei_id']} | {row['programStageName']} | "
+            f"{row['dataElementName']} = {row['value']}"
+        )
+
+
 def _upsert_rows(
     *,
     existing_path: Path,
@@ -246,6 +300,7 @@ def _upsert_rows(
 
 @dataclass
 class ProgramResult:
+    fetched_rows: int
     inserted_rows: int
     updated_rows: int
     max_enrollment_date: Optional[datetime]
@@ -316,6 +371,7 @@ def _process_program(
 
     total_inserted = 0
     total_updated = 0
+    total_fetched = 0
     changed_chunks = []
 
     for idx, (region_uid, region_name) in enumerate(regions.items(), start=1):
@@ -337,14 +393,23 @@ def _process_program(
             print(f"[{program_name}]   No TEIs in window for {region_name}")
             continue
 
+        total_fetched += len(teis)
         nested_events = 0
         for tei in teis:
             for enrollment in tei.get("enrollments", []) or []:
                 nested_events += len(enrollment.get("events", []) or [])
-        print(f"[{program_name}]   TEIs fetched: {len(teis)} | nested events: {nested_events}")
+        print(
+            f"[{program_name}]   TEIs fetched from DHIS2 for {region_name}: {len(teis)} "
+            f"| nested events: {nested_events}"
+        )
 
         events_df = CSVIntegration.create_events_dataframe(
             tei_data, program_uid, orgunit_names
+        )
+        _log_fetched_event_values(
+            program_name=program_name,
+            region_name=region_name,
+            events_df=events_df,
         )
 
         if program_uid == MATERNAL_PROGRAM_UID and csv_data is not None:
@@ -379,10 +444,15 @@ def _process_program(
         )
         total_inserted += inserted
         total_updated += updated
+        _reprocess_saved_file(region_file, dry_run)
 
         existing_teis.update(patient_df["tei_id"].astype(str).str.strip())
         changed_chunks.append(patient_df)
 
+        print(
+            f"[{program_name}]   Region summary for {region_name}: fetched={len(teis)}, "
+            f"new={inserted}, updated={updated}"
+        )
         print(
             f"[{program_name}]   Upserted {inserted + updated} rows to {region_file.name} "
             f"(new={inserted}, updated={updated})"
@@ -390,7 +460,10 @@ def _process_program(
 
     if not changed_chunks:
         return ProgramResult(
-            inserted_rows=0, updated_rows=0, max_enrollment_date=None
+            fetched_rows=total_fetched,
+            inserted_rows=0,
+            updated_rows=0,
+            max_enrollment_date=None,
         )
 
     combined_changed = pd.concat(changed_chunks, ignore_index=True)
@@ -402,9 +475,15 @@ def _process_program(
         drop_region_cols=False,
         dry_run=dry_run,
     )
+    _reprocess_saved_file(national_file, dry_run)
 
     max_enrollment = _max_enrollment_dt_from_df(combined_changed)
+    print(
+        f"[{program_name}] TOTAL fetched from DHIS2: {total_fetched} | "
+        f"new={total_inserted} | updated={total_updated}"
+    )
     return ProgramResult(
+        fetched_rows=total_fetched,
         inserted_rows=total_inserted,
         updated_rows=total_updated,
         max_enrollment_date=max_enrollment,
@@ -450,6 +529,10 @@ def main() -> int:
 
     load_dotenv()
 
+    csv_path = args.csv_path
+    if csv_path is None and Path(DEFAULT_MATERNAL_CSV).exists():
+        csv_path = DEFAULT_MATERNAL_CSV
+
     output_dir = Path(args.output_dir or DEFAULT_OUTPUT_DIR).resolve()
     maternal_dir = output_dir / "maternal"
     newborn_dir = output_dir / "newborn"
@@ -481,7 +564,7 @@ def main() -> int:
         base_url=None,
         username=None,
         password=None,
-        csv_path=args.csv_path,
+        csv_path=csv_path,
         output_base_dir=str(output_dir),
     )
     if not pipeline.base_url or not pipeline.username or not pipeline.password:
@@ -491,7 +574,7 @@ def main() -> int:
     fetcher = pipeline.fetcher
 
     # Incremental mode (always)
-    if args.csv_path:
+    if pipeline.csv_path:
         pipeline.load_csv_data()
     orgunit_names = fetcher.fetch_orgunit_names()
     regions = fetcher.fetch_all_regions()
@@ -511,6 +594,7 @@ def main() -> int:
     print("=" * 72)
     print(f"Output dir: {output_dir}")
     print(f"Dry run: {args.dry_run}")
+    print(f"Maternal CSV integration: {pipeline.csv_path or 'disabled'}")
     print(f"Last run timestamp: {last_run_since}")
     print(f"Maternal enrollment fallback: {maternal_since}")
     print(f"Newborn enrollment fallback: {newborn_since}")
@@ -554,12 +638,24 @@ def main() -> int:
     print("SUMMARY")
     print("=" * 72)
     print(
+        f"Maternal fetched from DHIS2: {maternal_result.fetched_rows} "
+        f"(new={maternal_result.inserted_rows}, updated={maternal_result.updated_rows})"
+    )
+    print(
         f"Maternal upserted: {maternal_result.inserted_rows + maternal_result.updated_rows} "
         f"(new={maternal_result.inserted_rows}, updated={maternal_result.updated_rows})"
     )
     print(
+        f"Newborn fetched from DHIS2: {newborn_result.fetched_rows} "
+        f"(new={newborn_result.inserted_rows}, updated={newborn_result.updated_rows})"
+    )
+    print(
         f"Newborn upserted: {newborn_result.inserted_rows + newborn_result.updated_rows} "
         f"(new={newborn_result.inserted_rows}, updated={newborn_result.updated_rows})"
+    )
+    print(
+        f"Grand total fetched from DHIS2: "
+        f"{maternal_result.fetched_rows + newborn_result.fetched_rows}"
     )
 
     if not args.dry_run:
