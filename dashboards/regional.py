@@ -6,6 +6,7 @@ import concurrent.futures
 import time
 from datetime import datetime
 from utils.resource import render_resources_tab
+from dashboards.assessment import render_assessment_tab
 from newborns_dashboard.reginal_newborn import (
     render_newborn_dashboard_shared,
 )
@@ -294,6 +295,7 @@ def initialize_session_state():
         "tab_initialized": {
             "maternal": False,
             "newborn": False,
+            "assessment": False,
             "summary": False,
             "mentorship": False,
             "data_quality": False,
@@ -303,6 +305,7 @@ def initialize_session_state():
         "tab_data_loaded": {
             "maternal": True,
             "newborn": True,
+            "assessment": True,
             "summary": False,
             "mentorship": False,
             "data_quality": True,
@@ -342,6 +345,7 @@ def initialize_session_state():
             st.session_state.tab_initialized[tab] = False
         st.session_state.tab_data_loaded["maternal"] = True
         st.session_state.tab_data_loaded["newborn"] = True
+        st.session_state.tab_data_loaded["assessment"] = True
         st.session_state.tab_data_loaded["summary"] = False
         st.session_state.tab_data_loaded["mentorship"] = False
         st.session_state.tab_data_loaded["data_quality"] = True
@@ -1346,6 +1350,7 @@ def render():
 
     sidebar_tab_label = st.session_state.get("regional_active_tab_selector", "Maternal")
     hide_sidebar_filters = sidebar_tab_label in {
+        "Assessment",
         "Mentorship",
         "Resources",
         "HFA",
@@ -1438,6 +1443,7 @@ def render():
         "Maternal": "maternal",
         "Newborn": "newborn",
         "Summary": "summary",
+        "Assessment": "assessment",
         "Mentorship": "mentorship",
         "Resources": "resources",
         "HFA": "hfa",
@@ -1561,6 +1567,13 @@ def render():
             )
         else:
             st.error("Newborn data not available")
+
+    elif selected_tab == "assessment":
+        render_assessment_tab(
+            user,
+            dashboard_level="regional",
+            selected_facilities=selected_facilities,
+        )
 
     elif selected_tab == "summary":
         render_summary_dashboard_shared(
