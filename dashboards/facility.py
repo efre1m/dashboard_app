@@ -6,7 +6,6 @@ import concurrent.futures
 import time
 from datetime import datetime
 from utils.resource import render_resources_tab
-from dashboards.assessment import render_assessment_tab
 from newborns_dashboard.facility_newborn import (
     render_newborn_dashboard_shared,
 )
@@ -1022,7 +1021,6 @@ def render():
         "Maternal": "maternal",
         "Newborn": "newborn",
         "Summary": "summary",
-        "Assessment": "assessment",
         # "Mentorship": "mentorship",  # Disabled per request (facility dashboard only)
         "Resources": "resources",
     }
@@ -1031,7 +1029,12 @@ def render():
         st.session_state.active_tab, "Maternal"
     )
     selector_key = "facility_active_tab_selector"
-    if selector_key not in st.session_state:
+    if current_tab_label not in tab_options:
+        current_tab_label = "Maternal"
+    if (
+        selector_key not in st.session_state
+        or st.session_state[selector_key] not in tab_options
+    ):
         st.session_state[selector_key] = current_tab_label
 
     st.markdown(
@@ -1149,12 +1152,6 @@ def render():
             )
         else:
             st.error("Newborn data not available")
-
-    elif selected_tab == "assessment":
-        render_assessment_tab(
-            user,
-            dashboard_level="facility",
-        )
 
     elif selected_tab == "summary":
         # Empty selected_facilities list for facility level

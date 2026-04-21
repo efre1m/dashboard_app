@@ -6,7 +6,10 @@ import concurrent.futures
 import time
 from datetime import datetime
 from utils.resource import render_resources_tab
-from dashboards.assessment import render_assessment_tab
+from dashboards.assessment import (
+    quality_assessment_tab_available,
+    render_assessment_tab,
+)
 from newborns_dashboard.reginal_newborn import (
     render_newborn_dashboard_shared,
 )
@@ -1348,8 +1351,13 @@ def render():
             time_elapsed = time.time() - st.session_state[timestamp_key]
             # Sidebar info removed per user request
 
+    quality_assessment_available = quality_assessment_tab_available(
+        user, dashboard_level="regional"
+    )
     sidebar_tab_label = st.session_state.get("regional_active_tab_selector", "Maternal")
     hide_sidebar_filters = sidebar_tab_label in {
+        "Data quality assessment",
+        "Quality assessment",
         "Assessment",
         "Mentorship",
         "Resources",
@@ -1443,18 +1451,28 @@ def render():
         "Maternal": "maternal",
         "Newborn": "newborn",
         "Summary": "summary",
-        "Assessment": "assessment",
-        "Mentorship": "mentorship",
-        "Resources": "resources",
-        "HFA": "hfa",
-        "Usage Tracking": "tracking",
     }
+    if quality_assessment_available:
+        tab_options["Data quality assessment"] = "assessment"
+    tab_options.update(
+        {
+            "Mentorship": "mentorship",
+            "Resources": "resources",
+            "HFA": "hfa",
+            "Usage Tracking": "tracking",
+        }
+    )
     reverse_tab_options = {v: k for k, v in tab_options.items()}
     current_tab_label = reverse_tab_options.get(
         st.session_state.active_tab, "Maternal"
     )
     selector_key = "regional_active_tab_selector"
-    if selector_key not in st.session_state:
+    if current_tab_label not in tab_options:
+        current_tab_label = "Maternal"
+    if (
+        selector_key not in st.session_state
+        or st.session_state[selector_key] not in tab_options
+    ):
         st.session_state[selector_key] = current_tab_label
 
     st.markdown(

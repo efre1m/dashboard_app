@@ -19,6 +19,7 @@ def fetch_usage_logs():
         SELECT u.username, u.first_name, u.last_name, u.role,
                f.facility_name,
                COALESCE(r_user.region_name, r_fac.region_name) AS region_name,
+               COALESCE(u.region_id, f.region_id) AS effective_region_id,
                c.country_name,
                l.login_time, u.region_id, u.facility_id
         FROM login_logs l
@@ -50,8 +51,13 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
     elif user_role == 'regional':
         # Regional sees Facility users in their region
         display_roles = ['facility']
-        if user_region_id:
-            logs = logs[logs['region_id'] == user_region_id]
+        if user_region_id is not None:
+            region_series = pd.to_numeric(logs['effective_region_id'], errors='coerce')
+            target_region = pd.to_numeric(pd.Series([user_region_id]), errors='coerce').iloc[0]
+            if pd.notna(target_region):
+                logs = logs[region_series == target_region]
+            else:
+                logs = logs.iloc[0:0]
     else:
         st.warning("Usage tracking is restricted for your role.")
         return

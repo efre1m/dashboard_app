@@ -311,6 +311,23 @@ def filter_assessment_scope(
     return filtered_df
 
 
+def quality_assessment_tab_available(user: Dict, dashboard_level: str) -> bool:
+    if dashboard_level not in {"national", "regional"}:
+        return False
+
+    try:
+        assessment_df = load_assessment_data()
+    except Exception:
+        return False
+
+    scoped_df = filter_assessment_scope(
+        assessment_df,
+        user=user,
+        dashboard_level=dashboard_level,
+    )
+    return not scoped_df.empty
+
+
 def _format_percent(numerator: int, denominator: int) -> Optional[float]:
     if denominator == 0:
         return None
@@ -370,6 +387,12 @@ def _build_summary_text(row: pd.Series) -> str:
             f"{numerator} records entered on the same day out of "
             f"{denominator} total records reviewed "
             f"({value_display})."
+        )
+
+    if indicator_id.endswith("_consistency_rate"):
+        return (
+            f"{numerator} consistent records out of "
+            f"{denominator} total records reviewed ({value_display})."
         )
 
     if indicator_id.endswith("_missing_in_dhis2_rate"):
@@ -541,7 +564,7 @@ def compute_indicator_rows(df: pd.DataFrame, record_type: str) -> pd.DataFrame:
                 int(total_records),
                 consistency_sort,
                 indicator_sort,
-                "Consistent = 1",
+                "Consistent records",
                 "Total Records Reviewed",
             )
         )
