@@ -1351,6 +1351,7 @@ def render():
             time_elapsed = time.time() - st.session_state[timestamp_key]
             # Sidebar info removed per user request
 
+    user_role = str(user.get("role", "")).strip().lower()
     quality_assessment_available = quality_assessment_tab_available(
         user, dashboard_level="regional"
     )
@@ -1454,14 +1455,22 @@ def render():
     }
     if quality_assessment_available:
         tab_options["Data quality assessment"] = "assessment"
-    tab_options.update(
-        {
-            "Mentorship": "mentorship",
-            "Resources": "resources",
-            "HFA": "hfa",
-            "Usage Tracking": "tracking",
-        }
-    )
+    if user_role == "regional":
+        tab_options.update(
+            {
+                "Mentorship": "mentorship",
+                "Resources": "resources",
+                "HFA": "hfa",
+                "Usage Tracking": "tracking",
+            }
+        )
+    else:
+        tab_options.update(
+            {
+                "Resources": "resources",
+                "Usage Tracking": "tracking",
+            }
+        )
     reverse_tab_options = {v: k for k, v in tab_options.items()}
     current_tab_label = reverse_tab_options.get(
         st.session_state.active_tab, "Maternal"
