@@ -295,7 +295,7 @@ def ensure_data_loaded():
                 data["newborn"] = {"patients": newborn_df}
             return data
     
-    elif role == "regional":
+    elif role in {"regional", "dq_officer"}:
         if hasattr(st.session_state, "cached_shared_data_regional"):
             return st.session_state.cached_shared_data_regional
         
@@ -360,7 +360,7 @@ def ensure_data_loaded():
             st.session_state.cached_shared_data_facility = data
             return data
     
-    elif role == "regional":
+    elif role in {"regional", "dq_officer"}:
         with st.spinner("Initializing chatbot data access..."):
             static_data = regional.get_static_data(user)
             program_uid_map = static_data["program_uid_map"]

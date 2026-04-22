@@ -281,6 +281,12 @@ def filter_assessment_scope(
         if region_norm:
             filtered_df = filtered_df[filtered_df["region_name_norm"] == region_norm]
 
+        assigned_facility_norms = _get_assigned_facility_norms(user)
+        if assigned_facility_norms:
+            filtered_df = filtered_df[
+                filtered_df["facility_name_norm"].isin(assigned_facility_norms)
+            ]
+
         facility_names = [
             facility
             for facility in selected_facilities
@@ -309,6 +315,25 @@ def filter_assessment_scope(
             ]
 
     return filtered_df
+
+
+def _get_assigned_facility_norms(user: Dict) -> set[str]:
+    role = str((user or {}).get("role", "")).lower()
+    if role != "dq_officer":
+        return set()
+
+    try:
+        from utils.queries import get_facilities_for_user
+
+        facilities = get_facilities_for_user(user)
+    except Exception:
+        return set()
+
+    return {
+        _normalize_name(facility_name)
+        for facility_name, *_ in facilities
+        if _normalize_name(facility_name)
+    }
 
 
 def quality_assessment_tab_available(user: Dict, dashboard_level: str) -> bool:

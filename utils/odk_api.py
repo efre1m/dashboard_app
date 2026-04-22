@@ -237,7 +237,7 @@ def fetch_all_forms_as_dataframes(
                     f"Applied regional filtering for database_region_id: {database_region_id}"
                 )
 
-            elif user_role == "facility" and facility_names:
+            elif user_role in {"facility", "dq_officer"} and facility_names:
                 # Filter by specific facilities for facility users
                 df = filter_by_facility(df, facility_names)
                 logging.info(

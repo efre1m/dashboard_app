@@ -44,10 +44,10 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
     # Hierarchical Filtering Logic
     if user_role == 'admin':
         # Admin sees everything
-        display_roles = ['national', 'regional', 'facility', 'admin']
+        display_roles = ['national', 'regional', 'dq_officer', 'facility', 'admin']
     elif user_role == 'national':
         # National sees Regional and Facility
-        display_roles = ['regional', 'facility']
+        display_roles = ['regional', 'dq_officer', 'facility']
     elif user_role == 'regional':
         # Regional sees Facility users in their region
         display_roles = ['facility']
@@ -71,7 +71,7 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
     # Tabs based on available roles for the current user
     tab_list = []
     if any(r in ['national', 'admin'] for r in display_roles): tab_list.append("Country/Admin")
-    if 'regional' in display_roles: tab_list.append("Regional")
+    if any(r in ['regional', 'dq_officer'] for r in display_roles): tab_list.append("Regional")
     if 'facility' in display_roles: tab_list.append("Facility")
     
     tabs = st.tabs(tab_list)
@@ -134,9 +134,9 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
         tab_idx += 1
 
     # 2. Regional Level (Line Chart per Region)
-    if 'regional' in display_roles:
+    if any(r in ['regional', 'dq_officer'] for r in display_roles):
         with tabs[tab_idx]:
-            df = filtered_logs[filtered_logs['role'].str.lower() == 'regional'].copy()
+            df = filtered_logs[filtered_logs['role'].str.lower().isin(['regional', 'dq_officer'])].copy()
             if not df.empty:
                 col_chart, col_tbl = st.columns([3, 2])
                 
@@ -147,7 +147,7 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
                     chart_df = df.groupby(['login_date', 'region_name']).size().reset_index(name='Logins')
                     
                     fig = px.line(chart_df, x='login_date', y='Logins', color='region_name', 
-                                 title="Regional Login Trends",
+                                 title="Regional / DQ Officer Login Trends",
                                  markers=True, line_shape="spline", template="plotly_white")
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
@@ -158,12 +158,12 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
                 with col_tbl:
                     df.insert(0, 'No', range(1, len(df) + 1))
                     if user_role == 'admin':
-                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'login_time']
+                        cols = ['No', 'username', 'first_name', 'last_name', 'role', 'region_name', 'login_time']
                     else:
-                        cols = ['No', 'region_name', 'login_time']
+                        cols = ['No', 'role', 'region_name', 'login_time']
                     render_styled_table(df, cols)
             else:
-                st.info("No Regional activity found.")
+                st.info("No Regional or DQ Officer activity found.")
         tab_idx += 1
 
     # 3. Facility Level (Line Chart per Facility)

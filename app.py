@@ -242,7 +242,7 @@ else:
 
         if role == "facility":
             facility.render()
-        elif role == "regional":
+        elif role in {"regional", "dq_officer"}:
             regional.render()
         elif role == "national":
             national.render()

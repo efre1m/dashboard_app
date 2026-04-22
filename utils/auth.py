@@ -120,7 +120,7 @@ def get_user_display_info(user: dict) -> str:
 
     if role == "facility":
         return f"{user['username']} ({role} - {user.get('facility_name', 'N/A')})"
-    elif role == "regional":
+    elif role in {"regional", "dq_officer"}:
         return f"{user['username']} ({role} - {user.get('region_name', 'N/A')})"
     elif role == "national":
         return f"{user['username']} ({role} - {user.get('country_name', 'N/A')})"

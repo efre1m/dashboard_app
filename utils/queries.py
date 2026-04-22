@@ -7,6 +7,38 @@ import streamlit as st
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
+DQ_OFFICER_ROLE = "dq_officer"
+
+
+def _fetch_assigned_facilities(
+    cur, user_id: Optional[int], region_id: Optional[int] = None
+) -> List[Tuple[int, str, Optional[str], str]]:
+    """Fetch facilities explicitly assigned to a multi-facility user."""
+    if not user_id:
+        return []
+
+    query = """
+        SELECT
+            f.facility_id,
+            f.facility_name,
+            f.dhis2_uid,
+            r.region_name
+        FROM user_facility_access ufa
+        JOIN facilities f ON ufa.facility_id = f.facility_id
+        JOIN regions r ON f.region_id = r.region_id
+        WHERE ufa.user_id = %s
+    """
+    params: List[object] = [user_id]
+
+    if region_id is not None:
+        query += " AND f.region_id = %s"
+        params.append(region_id)
+
+    query += " ORDER BY f.facility_name"
+    cur.execute(query, tuple(params))
+    return cur.fetchall()
+
+
 def get_all_programs() -> List[Dict]:
     """
     Fetch all programs from the database dynamically.
@@ -153,6 +185,12 @@ def get_orgunit_uids_for_user(user: dict) -> List[Tuple[str, str]]:
                 (user["facility_id"],),
             )
             ous = cur.fetchall()
+
+        elif role == DQ_OFFICER_ROLE:
+            assigned = _fetch_assigned_facilities(
+                cur, user.get("user_id"), user.get("region_id")
+            )
+            ous = [(dhis2_uid, facility_name) for _, facility_name, dhis2_uid, _ in assigned]
 
         elif role == "regional" and user.get("region_id"):
             # For regional users, return the regional UID (will use DESCENDANTS mode)
@@ -303,6 +341,11 @@ def get_facilities_for_user(user: dict) -> List[Tuple[str, str]]:
             # National users can see all facilities
             cur.execute("SELECT facility_name, dhis2_uid FROM facilities")
             facilities = cur.fetchall()
+        elif role == DQ_OFFICER_ROLE:
+            assigned = _fetch_assigned_facilities(
+                cur, user.get("user_id"), user.get("region_id")
+            )
+            facilities = [(facility_name, dhis2_uid) for _, facility_name, dhis2_uid, _ in assigned]
         elif role == "regional" and user.get("region_id"):
             # Get all facilities in the user's region
             cur.execute(
@@ -365,6 +408,15 @@ def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, st
                 """
             )
             facilities = cur.fetchall()
+
+        elif role == DQ_OFFICER_ROLE:
+            assigned = _fetch_assigned_facilities(
+                cur, user.get("user_id"), user.get("region_id")
+            )
+            facilities = [
+                (region_name, facility_name, dhis2_uid)
+                for _, facility_name, dhis2_uid, region_name in assigned
+            ]
 
         elif role == "regional" and user.get("region_id"):
             # Regional users see facilities only in their region

@@ -318,9 +318,9 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
         all_files.sort(key=os.path.getmtime, reverse=True)
         return all_files[0]
 
-    elif user_role == "regional":
+    elif user_role in {"regional", "dq_officer"}:
         if not region_name:
-            logging.error("Regional user has no region_name - cannot determine file")
+            logging.error("%s user has no region_name - cannot determine file", user_role)
             return None
 
         normalized_region = normalize_region_name(region_name)
@@ -449,7 +449,7 @@ def get_user_csv_file(user: dict, program_type: str = "maternal") -> str:
     return all_files[0]
 
 
-def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
+def _legacy_filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
     """
     ✅ FIXED: Filter by orgUnit UID instead of facility names.
     Uses 'orgUnit' column which has exact DHIS2 UIDs.
@@ -536,6 +536,52 @@ def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
     else:
         logging.warning(f"Unknown user role '{user_role}' - returning no data")
         return pd.DataFrame()
+
+
+def filter_patient_data_by_user(df: pd.DataFrame, user: dict) -> pd.DataFrame:
+    """
+    Filter patient data by the current user's allowed orgUnit UIDs.
+    """
+    if df.empty:
+        return df
+
+    user_role = user.get("role", "")
+
+    if user_role == "national":
+        logging.info("National user - returning all data")
+        return df
+
+    if user_role in {"regional", "dq_officer", "facility"}:
+        from utils.queries import get_facilities_for_user
+
+        user_facilities_raw = get_facilities_for_user(user)
+        user_facility_uids = [
+            facility[1]
+            for facility in user_facilities_raw
+            if isinstance(facility, (list, tuple)) and len(facility) >= 2 and facility[1]
+        ]
+
+        if not user_facility_uids:
+            logging.warning(
+                "%s user has no facility UIDs - cannot filter data", user_role
+            )
+            return pd.DataFrame()
+
+        if "orgUnit" not in df.columns:
+            logging.warning("DataFrame has no orgUnit column - cannot filter")
+            return pd.DataFrame()
+
+        filtered_df = df[df["orgUnit"].isin(user_facility_uids)]
+        logging.info(
+            "%s user - filtered to %s patients across %s facilities",
+            user_role,
+            len(filtered_df),
+            len(user_facility_uids),
+        )
+        return filtered_df
+
+    logging.warning("Unknown user role '%s' - returning no data", user_role)
+    return pd.DataFrame()
 
 
 def load_patient_data_for_user(
@@ -710,7 +756,7 @@ def fetch_odk_data_for_user(
 
         # Get facility names for filtering if needed
         facility_names = None
-        if user.get("role") == "facility":
+        if user.get("role") in {"facility", "dq_officer"}:
             from utils.queries import get_facilities_for_user
 
             facilities = get_facilities_for_user(user)

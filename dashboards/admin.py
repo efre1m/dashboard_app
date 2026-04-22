@@ -7,6 +7,9 @@ import plotly.express as px
 from utils.db import get_db_connection
 from utils.usage_tracking import render_usage_tracking_shared
 
+DQ_OFFICER_ROLE = "dq_officer"
+ROLE_OPTIONS = ["facility", DQ_OFFICER_ROLE, "regional", "national", "admin"]
+
 # ---------------- Styling ----------------
 def apply_css():
     st.markdown("""
@@ -89,6 +92,22 @@ def fetch_users():
     return df
 
 @st.cache_data(ttl=60)
+def fetch_user_facility_access():
+    conn = get_db_connection()
+    try:
+        df = pd.read_sql("""
+            SELECT ufa.user_id, f.facility_id, f.facility_name, f.region_id
+            FROM user_facility_access ufa
+            JOIN facilities f ON ufa.facility_id = f.facility_id
+            ORDER BY ufa.user_id, f.facility_name
+        """, conn)
+    except Exception:
+        df = pd.DataFrame(columns=["user_id", "facility_id", "facility_name", "region_id"])
+    finally:
+        conn.close()
+    return df
+
+@st.cache_data(ttl=60)
 def fetch_facilities(region_id=None):
     conn = get_db_connection()
     query = """
@@ -142,6 +161,103 @@ def run_query(query, params=()):
     except Exception as e:
         return False, str(e)
 
+
+def _replace_user_facility_access(cur, user_id, role, facility_ids):
+    cur.execute("DELETE FROM user_facility_access WHERE user_id = %s", (user_id,))
+    if role != DQ_OFFICER_ROLE:
+        return
+
+    cleaned_ids = sorted({int(facility_id) for facility_id in facility_ids if facility_id})
+    if not cleaned_ids:
+        return
+
+    cur.executemany(
+        "INSERT INTO user_facility_access (user_id, facility_id) VALUES (%s, %s)",
+        [(int(user_id), facility_id) for facility_id in cleaned_ids],
+    )
+
+
+def create_user_with_access(
+    username,
+    password,
+    first_name,
+    last_name,
+    role,
+    facility_id=None,
+    region_id=None,
+    country_id=None,
+    managed_facility_ids=None,
+):
+    managed_facility_ids = managed_facility_ids or []
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        cur.execute("""
+            INSERT INTO users (username, password_hash, first_name, last_name, role, facility_id, region_id, country_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING user_id
+        """, (username, password_hash, first_name, last_name, role, facility_id, region_id, country_id))
+        user_id = cur.fetchone()[0]
+        _replace_user_facility_access(cur, user_id, role, managed_facility_ids)
+        conn.commit()
+        return True, "User created successfully!"
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return False, str(e)
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def update_user_with_access(
+    user_id,
+    username,
+    first_name,
+    last_name,
+    role,
+    facility_id=None,
+    region_id=None,
+    country_id=None,
+    password=None,
+    managed_facility_ids=None,
+):
+    managed_facility_ids = managed_facility_ids or []
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        update_q = """
+            UPDATE users
+            SET username=%s, first_name=%s, last_name=%s, role=%s, facility_id=%s, region_id=%s, country_id=%s
+        """
+        params = [username, first_name, last_name, role, facility_id, region_id, country_id]
+        if password:
+            update_q += ", password_hash=%s"
+            params.append(bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode())
+        update_q += " WHERE user_id=%s"
+        params.append(int(user_id))
+
+        cur.execute(update_q, tuple(params))
+        _replace_user_facility_access(cur, user_id, role, managed_facility_ids)
+        conn.commit()
+        return True, "User updated!"
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return False, str(e)
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
 # ---------------- Management Components ----------------
 def manage_users():
     st.subheader("User Accounts")
@@ -152,12 +268,25 @@ def manage_users():
         # View Users
         search = st.text_input("🔍 Search Users", placeholder="Enter username or name...", key="view_users_search")
         df = fetch_users()
+        access_df = fetch_user_facility_access()
+        if not access_df.empty:
+            managed_facilities = (
+                access_df.groupby("user_id")["facility_name"]
+                .apply(lambda values: ", ".join(dict.fromkeys(values.tolist())))
+                .to_dict()
+            )
+            df["managed_facilities"] = df["user_id"].map(managed_facilities).fillna("")
+        else:
+            df["managed_facilities"] = ""
         if search:
             df = df[df.apply(lambda row: search.lower() in str(row).lower(), axis=1)]
         
         display_df = df.rename(columns={
-            "facility_name": "Facility", "region_name": "Region", "country_name": "Country"
-        })[["username", "first_name", "last_name", "role", "Facility", "Region", "Country"]]
+            "facility_name": "Facility",
+            "region_name": "Region",
+            "country_name": "Country",
+            "managed_facilities": "Managed Facilities",
+        })[["username", "first_name", "last_name", "role", "Facility", "Managed Facilities", "Region", "Country"]]
         st.dataframe(display_df, use_container_width=True)
 
     with u_tabs[1]:
@@ -165,7 +294,7 @@ def manage_users():
         st.markdown('<div class="form-container">', unsafe_allow_html=True)
         
         # Selectors OUTSIDE the form for reactivity
-        role = st.selectbox("Role*", ["facility", "regional", "national", "admin"], key="add_user_role_select")
+        role = st.selectbox("Role*", ROLE_OPTIONS, key="add_user_role_select")
         
         col_L, col_R = st.columns(2)
         
@@ -173,6 +302,7 @@ def manage_users():
         is_nat = role == "national"
         is_reg = role == "regional"
         is_fac = role == "facility"
+        is_dqo = role == DQ_OFFICER_ROLE
         
         # Country Select
         c_df = fetch_countries()
@@ -184,14 +314,29 @@ def manage_users():
         r_df = fetch_regions()
         region_id = col_R.selectbox("Assign/Filter Region*", list(r_df['region_id']), 
                                     format_func=lambda x: r_df[r_df['region_id']==x]['region_name'].values[0],
-                                    disabled=not (is_reg or is_fac), key="add_user_r_sel")
+                                    disabled=not (is_reg or is_fac or is_dqo), key="add_user_r_sel")
         
         # Facility Select (Filtered by Region)
-        f_df = fetch_facilities(region_id) if is_fac and region_id else fetch_facilities()
+        f_df = fetch_facilities(region_id) if (is_fac or is_dqo) and region_id else fetch_facilities()
+        facility_name_lookup = {
+            int(row["facility_id"]): row["facility_name"] for _, row in f_df.iterrows()
+        }
         f_options = [None] + list(f_df['facility_id'])
         facility_id = st.selectbox("Assign Facility*", f_options, 
                                   format_func=lambda x: f_df[f_df['facility_id']==x]['facility_name'].values[0] if x else "Select Facility",
                                   disabled=not is_fac, key="add_user_f_sel")
+        add_dqo_key = "add_user_dqo_facilities"
+        dqo_options = list(f_df["facility_id"]) if is_dqo and region_id else []
+        existing_add_dqo = st.session_state.get(add_dqo_key, [])
+        st.session_state[add_dqo_key] = [fid for fid in existing_add_dqo if fid in dqo_options]
+        dqo_facility_ids = st.multiselect(
+            "Managed Facilities*",
+            dqo_options,
+            format_func=lambda x: facility_name_lookup.get(x, str(x)),
+            disabled=not is_dqo or not region_id,
+            key=add_dqo_key,
+            help="Select all facilities this Data Quality Officer should be able to manage.",
+        )
 
         with st.form("add_user_credentials_form", clear_on_submit=False):
             c1, c2 = st.columns(2)
@@ -208,17 +353,24 @@ def manage_users():
                 elif is_nat and not country_id: st.error("Country required")
                 elif is_reg and not region_id: st.error("Region required")
                 elif is_fac and not facility_id: st.error("Facility required")
+                elif is_dqo and not region_id: st.error("Region required")
+                elif is_dqo and not dqo_facility_ids: st.error("Select at least one managed facility")
                 else:
-                    hash_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-                    # Final ID cleaning
                     f_out = int(facility_id) if is_fac else None
-                    r_out = int(region_id) if is_reg else None
+                    r_out = int(region_id) if (is_reg or is_dqo) else None
                     c_out = int(country_id) if is_nat else None
                     
-                    ok, msg = run_query("""
-                        INSERT INTO users (username, password_hash, first_name, last_name, role, facility_id, region_id, country_id)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (username, hash_pw, fname, lname, role, f_out, r_out, c_out))
+                    ok, msg = create_user_with_access(
+                        username=username,
+                        password=password,
+                        first_name=fname,
+                        last_name=lname,
+                        role=role,
+                        facility_id=f_out,
+                        region_id=r_out,
+                        country_id=c_out,
+                        managed_facility_ids=dqo_facility_ids if is_dqo else [],
+                    )
                     if ok:
                         st.success("User created successfully!")
                         st.cache_data.clear()
@@ -230,6 +382,7 @@ def manage_users():
     with u_tabs[2]:
         # Edit User
         df = fetch_users()
+        access_df = fetch_user_facility_access()
         user_to_edit = st.selectbox("Select User to Edit", [None] + list(df['user_id']), 
                                    format_func=lambda x: df[df['user_id']==x]['username'].values[0] if x else "Select a User",
                                    key="edit_user_id_loader")
@@ -239,13 +392,14 @@ def manage_users():
             st.markdown('<div class="form-container">', unsafe_allow_html=True)
             
             # Interactive selections OUTSIDE the form
-            new_role = st.selectbox("Role", ["facility", "regional", "national", "admin"], 
-                                  index=["facility", "regional", "national", "admin"].index(row['role']),
+            new_role = st.selectbox("Role", ROLE_OPTIONS, 
+                                  index=ROLE_OPTIONS.index(row['role']),
                                   key=f"edit_role_{user_to_edit}")
             
             is_n = new_role == "national"
             is_r = new_role == "regional"
             is_f = new_role == "facility"
+            is_dqo = new_role == DQ_OFFICER_ROLE
             
             e_col1, e_col2 = st.columns(2)
             
@@ -263,15 +417,41 @@ def manage_users():
             r_idx = r_list.index(row['region_id']) if row['region_id'] in r_list else 0
             new_r_id = e_col2.selectbox("Region", r_list, 
                                        format_func=lambda x: r_df[r_df['region_id']==x]['region_name'].values[0],
-                                       index=r_idx, disabled=not (is_r or is_f), key=f"edit_r_{user_to_edit}")
+                                       index=r_idx, disabled=not (is_r or is_f or is_dqo), key=f"edit_r_{user_to_edit}")
             
             # Facility (Filtered)
-            f_df = fetch_facilities(new_r_id) if is_f else fetch_facilities()
+            f_df = fetch_facilities(new_r_id) if (is_f or is_dqo) and new_r_id else fetch_facilities()
+            facility_name_lookup = {
+                int(facility_id): facility_name
+                for facility_id, facility_name in zip(f_df["facility_id"], f_df["facility_name"])
+            }
             f_list = [None] + list(f_df['facility_id'])
             f_idx = f_list.index(row['facility_id']) if row['facility_id'] in f_list else 0
             new_f_id = st.selectbox("Facility", f_list, 
                                    format_func=lambda x: f_df[f_df['facility_id']==x]['facility_name'].values[0] if x else "None",
                                    index=f_idx, disabled=not is_f, key=f"edit_f_{user_to_edit}")
+            current_dqo_facility_ids = []
+            if not access_df.empty:
+                current_dqo_facility_ids = (
+                    access_df.loc[access_df["user_id"] == user_to_edit, "facility_id"]
+                    .astype(int)
+                    .tolist()
+                )
+            edit_dqo_key = f"edit_dqo_facilities_{user_to_edit}"
+            dqo_options = list(f_df["facility_id"]) if is_dqo and new_r_id else []
+            existing_edit_dqo = st.session_state.get(
+                edit_dqo_key,
+                current_dqo_facility_ids if row["role"] == DQ_OFFICER_ROLE else [],
+            )
+            st.session_state[edit_dqo_key] = [fid for fid in existing_edit_dqo if fid in dqo_options]
+            new_dqo_facility_ids = st.multiselect(
+                "Managed Facilities",
+                dqo_options,
+                format_func=lambda x: facility_name_lookup.get(x, str(x)),
+                disabled=not is_dqo or not new_r_id,
+                key=edit_dqo_key,
+                help="Select all facilities this Data Quality Officer should be able to manage.",
+            )
 
             with st.form(f"edit_user_creds_{user_to_edit}"):
                 c1, c2 = st.columns(2)
@@ -283,24 +463,32 @@ def manage_users():
                 if st.form_submit_button("💾 Save Changes", use_container_width=True):
                     # Clean values
                     f_out = int(new_f_id) if is_f and new_f_id else None
-                    r_out = int(new_r_id) if is_r and new_r_id else None
+                    r_out = int(new_r_id) if (is_r or is_dqo) and new_r_id else None
                     c_out = int(new_c_id) if is_n and new_c_id else None
-                    
-                    update_q = "UPDATE users SET username=%s, first_name=%s, last_name=%s, role=%s, facility_id=%s, region_id=%s, country_id=%s"
-                    params = [u, fn, ln, new_role, f_out, r_out, c_out]
-                    if pw:
-                        update_q += ", password_hash=%s"
-                        params.append(bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode())
-                    update_q += " WHERE user_id=%s"
-                    params.append(int(user_to_edit))
-                    
-                    ok, msg = run_query(update_q, tuple(params))
-                    if ok:
-                        st.success("User updated!")
-                        st.cache_data.clear()
-                        time.sleep(1)
-                        st.rerun()
-                    else: st.error(msg)
+                    if is_dqo and not r_out:
+                        st.error("Region required")
+                    elif is_dqo and not new_dqo_facility_ids:
+                        st.error("Select at least one managed facility")
+                    else:
+                        ok, msg = update_user_with_access(
+                            user_id=user_to_edit,
+                            username=u,
+                            first_name=fn,
+                            last_name=ln,
+                            role=new_role,
+                            facility_id=f_out,
+                            region_id=r_out,
+                            country_id=c_out,
+                            password=pw or None,
+                            managed_facility_ids=new_dqo_facility_ids if is_dqo else [],
+                        )
+                        if ok:
+                            st.success("User updated!")
+                            st.cache_data.clear()
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(msg)
             st.markdown("</div>", unsafe_allow_html=True)
 
     with u_tabs[3]:
