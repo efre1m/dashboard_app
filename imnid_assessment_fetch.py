@@ -4,11 +4,13 @@ Fetch DHIS2 events for the IMNID assessment program and export to CSV with
 region and facility mapping.
 
 Usage (from repo root):
+  python imnid_assessment_fetch.py
   python imnid_assessment_fetch.py --org-unit WWIYKuA6f3s
 
 Defaults:
   program: zXzz681r0Z2
   ouMode: DESCENDANTS
+  orgUnit: DHIS2_ORG_UNIT from .env, or the single level-1 orgUnit auto-detected
 """
 
 from __future__ import annotations
@@ -91,6 +93,49 @@ def load_settings() -> Tuple[str, str, str, int]:
         )
 
     return base_url, username, password, timeout
+
+
+def resolve_org_unit(
+    session: requests.Session, base_url: str, timeout: int, cli_org_unit: str
+) -> str:
+    if cli_org_unit:
+        return cli_org_unit
+
+    env_org_unit = (
+        os.getenv("DHIS2_ORG_UNIT") or os.getenv("IMNID_ASSESSMENT_ORG_UNIT") or ""
+    ).strip()
+    if env_org_unit:
+        return env_org_unit
+
+    url = f"{base_url}/api/organisationUnits.json"
+    params = {
+        "fields": "id,displayName,level",
+        "filter": "level:eq:1",
+        "paging": False,
+    }
+    resp = session.get(url, params=params, timeout=timeout)
+    resp.raise_for_status()
+    roots = resp.json().get("organisationUnits", [])
+
+    if len(roots) == 1:
+        root = roots[0]
+        root_name = root.get("displayName", root["id"])
+        print(f"Using auto-detected root org unit: {root_name} ({root['id']})")
+        return root["id"]
+
+    if not roots:
+        raise RuntimeError(
+            "Could not determine a default org unit. Pass --org-unit explicitly or "
+            "set DHIS2_ORG_UNIT in .env."
+        )
+
+    root_options = ", ".join(
+        f"{ou.get('displayName', ou['id'])} ({ou['id']})" for ou in roots
+    )
+    raise RuntimeError(
+        "Multiple root org units were found. Pass --org-unit explicitly or set "
+        f"DHIS2_ORG_UNIT in .env. Available roots: {root_options}"
+    )
 
 
 def fetch_events(
@@ -237,7 +282,11 @@ def events_to_dataframe(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch IMNID assessment events from DHIS2 to CSV.")
     parser.add_argument("--program", default="zXzz681r0Z2", help="Program UID")
-    parser.add_argument("--org-unit", required=True, help="Root orgUnit UID")
+    parser.add_argument(
+        "--org-unit",
+        default="",
+        help="Root orgUnit UID. If omitted, uses DHIS2_ORG_UNIT from .env or auto-detects the single level-1 orgUnit.",
+    )
     parser.add_argument("--ou-mode", default="DESCENDANTS", help="OrgUnit mode")
     parser.add_argument("--page-size", type=int, default=1000, help="DHIS2 page size")
     parser.add_argument("--out", default="", help="Output CSV path")
@@ -250,12 +299,13 @@ def main() -> int:
     base_url, username, password, timeout = load_settings()
     session = requests.Session()
     session.auth = (username, password)
+    org_unit = resolve_org_unit(session, base_url, timeout, args.org_unit)
 
     events = fetch_events(
         session,
         base_url,
         args.program,
-        args.org_unit,
+        org_unit,
         args.ou_mode,
         args.page_size,
         timeout,
@@ -266,7 +316,7 @@ def main() -> int:
 
     df = events_to_dataframe(events, orgunit_map)
 
-    out_path = args.out or f"imnid_assessment_{args.program}_{args.org_unit}.csv"
+    out_path = args.out or f"imnid_assessment_{args.program}_{org_unit}.csv"
     df.to_csv(out_path, index=False)
 
     print(f"Saved {len(df)} rows to {out_path}")

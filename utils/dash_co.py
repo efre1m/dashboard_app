@@ -1564,25 +1564,6 @@ def render_comparison_chart(
                             else int(len(period_df))
                         )
 
-                    if facility_df.empty:
-                        numerator = 0
-                    elif period_label == "Monthly":
-                        period_df = facility_df[
-                            facility_df["_yearmonth"] == pdef["yearmonths"][0]
-                        ]
-                        numerator = (
-                            int(period_df["tei_id"].dropna().nunique())
-                            if "tei_id" in period_df.columns
-                            else int(len(period_df))
-                        )
-                    else:
-                        y_df = facility_df[facility_df["_year"] == pdef["year"]]
-                        numerator = (
-                            int(y_df["tei_id"].dropna().nunique())
-                            if "tei_id" in y_df.columns
-                            else int(len(y_df))
-                        )
-
                     denominator = _sum_denominator_for_facilities(
                         den_long, [facility_name], yearmonths=pdef["yearmonths"]
                     )

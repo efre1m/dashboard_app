@@ -178,6 +178,64 @@ def format_period_for_download(period_value, period_label):
     return raw
 
 
+def _first_period_sort_value(period_group):
+    if "period_sort" not in period_group.columns:
+        return None
+
+    values = period_group["period_sort"].dropna()
+    if values.empty:
+        return None
+
+    return values.iloc[0]
+
+
+def _sort_comparison_df_by_period(comparison_df, entity_col, period_col="period_display"):
+    result_df = comparison_df.copy()
+    period_order = result_df[period_col].dropna().drop_duplicates().tolist()
+
+    if "period_sort" in result_df.columns and result_df["period_sort"].notna().any():
+        datetime_key = pd.to_datetime(result_df["period_sort"], errors="coerce")
+        if datetime_key.notna().any():
+            result_df["_period_sort_key"] = datetime_key
+        else:
+            numeric_key = pd.to_numeric(result_df["period_sort"], errors="coerce")
+            if numeric_key.notna().any():
+                result_df["_period_sort_key"] = numeric_key
+            else:
+                result_df["_period_sort_key"] = result_df["period_sort"].astype(str)
+
+        result_df = result_df.sort_values(
+            [entity_col, "_period_sort_key", period_col]
+        ).reset_index(drop=True)
+        period_order = (
+            result_df.sort_values("_period_sort_key")[period_col]
+            .dropna()
+            .drop_duplicates()
+            .tolist()
+        )
+        return result_df, period_order
+
+    try:
+        result_df["period_sort"] = result_df[period_col].apply(
+            lambda x: dt.datetime.strptime(x, "%b-%y")
+        )
+        result_df = result_df.sort_values(
+            [entity_col, "period_sort", period_col]
+        ).reset_index(drop=True)
+        period_order = (
+            result_df.sort_values("period_sort")[period_col]
+            .dropna()
+            .drop_duplicates()
+            .tolist()
+        )
+    except Exception:
+        result_df = result_df.sort_values([entity_col, period_col]).reset_index(
+            drop=True
+        )
+
+    return result_df, period_order
+
+
 def build_stable_color_map(labels):
     """Return deterministic color mapping for categorical series labels."""
     palette = (
@@ -2246,9 +2304,11 @@ def render_facility_comparison_chart(
                 if denominator_val <= 0:
                     continue  # Skip periods with no denominator/data
 
+                period_sort = _first_period_sort_value(period_group)
                 comparison_data.append(
                     {
                         "period_display": formatted_period,
+                        "period_sort": period_sort,
                         "Facility": facility_name,
                         "value": float(value_val),
                         "numerator": int(numerator_val),
@@ -2268,18 +2328,9 @@ def render_facility_comparison_chart(
         st.info("No valid comparison data available (denominator is zero for all periods).")
         return
 
-    # Sort periods properly for display
-    try:
-        comparison_df["period_sort"] = comparison_df["period_display"].apply(
-            lambda x: dt.datetime.strptime(x, "%b-%y")
-        )
-        comparison_df = comparison_df.sort_values("period_sort")
-        period_order = sorted(
-            comparison_df["period_display"].unique().tolist(),
-            key=lambda x: dt.datetime.strptime(x, "%b-%y"),
-        )
-    except:
-        pass
+    comparison_df, period_order = _sort_comparison_df_by_period(
+        comparison_df, "Facility"
+    )
 
     # Filter out facilities that have no data (all periods with 0 numerator and denominator)
     facilities_with_data = []
@@ -2394,6 +2445,8 @@ def render_facility_comparison_chart(
         yaxis_title=title,
         xaxis=dict(
             type="category",
+            categoryorder="array",
+            categoryarray=period_order,
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",
@@ -2653,9 +2706,11 @@ def render_region_comparison_chart(
                     continue
 
                 formatted_period = format_period_month_year(period_display)
+                period_sort = _first_period_sort_value(period_group)
                 comparison_data.append(
                     {
                         "period_display": formatted_period,
+                        "period_sort": period_sort,
                         "Region": region_name,
                         "value": float(avg_value),
                         "numerator": int(total_numerator),
@@ -2675,18 +2730,9 @@ def render_region_comparison_chart(
         st.info("No valid comparison data available (denominator is zero for all periods).")
         return
 
-    # Sort periods properly for display
-    try:
-        comparison_df["period_sort"] = comparison_df["period_display"].apply(
-            lambda x: dt.datetime.strptime(x, "%b-%y")
-        )
-        comparison_df = comparison_df.sort_values("period_sort").reset_index(drop=True)
-        period_order = sorted(
-            comparison_df["period_display"].unique().tolist(),
-            key=lambda x: dt.datetime.strptime(x, "%b-%y"),
-        )
-    except:
-        pass
+    comparison_df, period_order = _sort_comparison_df_by_period(
+        comparison_df, "Region"
+    )
 
     # Filter out regions that have no data (all periods with 0 numerator and denominator)
     regions_with_data = []
@@ -2801,6 +2847,8 @@ def render_region_comparison_chart(
         yaxis_title=title,
         xaxis=dict(
             type="category",
+            categoryorder="array",
+            categoryarray=period_order,
             tickangle=-45,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.2)",

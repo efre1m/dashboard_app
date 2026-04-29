@@ -1123,6 +1123,12 @@ def render_newborn_comparison_chart(
             "end_date": st.session_state.filters.get("end_date"),
         }
 
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(kpi_selection)
+    if date_column not in df_to_use.columns:
+        fallback_date_column = get_relevant_date_column_for_newborn_kpi(kpi_selection)
+        if fallback_date_column in df_to_use.columns:
+            date_column = fallback_date_column
+
     if comparison_mode == "facility":
         comparison_data = []
 
@@ -1197,25 +1203,6 @@ def render_newborn_comparison_chart(
                             int(period_df["tei_id"].dropna().nunique())
                             if "tei_id" in period_df.columns
                             else int(len(period_df))
-                        )
-
-                    if facility_df.empty:
-                        numerator = 0
-                    elif period_label == "Monthly":
-                        period_df = facility_df[
-                            facility_df["_yearmonth"] == pdef["yearmonths"][0]
-                        ]
-                        numerator = (
-                            int(period_df["tei_id"].dropna().nunique())
-                            if "tei_id" in period_df.columns
-                            else int(len(period_df))
-                        )
-                    else:
-                        y_df = facility_df[facility_df["_year"] == pdef["year"]]
-                        numerator = (
-                            int(y_df["tei_id"].dropna().nunique())
-                            if "tei_id" in y_df.columns
-                            else int(len(y_df))
                         )
 
                     denominator = _sum_denominator_for_facilities(
