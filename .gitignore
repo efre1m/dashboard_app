@@ -1,8 +1,13 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyc.*
 *.pyo
 *.pyd
+.pycache_tmp/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Environment variables
 .env
@@ -15,6 +20,7 @@ __pycache__/
 .idea/
 
 # Streamlit / temp files
+*.log
 *.db
 *.sqlite
 *.zip
