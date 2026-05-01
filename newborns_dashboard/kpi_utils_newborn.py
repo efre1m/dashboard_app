@@ -1163,6 +1163,7 @@ def render_newborn_facility_comparison_chart(
         facility_uids,
         numerator_name,
         denominator_name,
+        **kwargs,
     )
 
 
@@ -1373,7 +1374,11 @@ def render_newborn_region_comparison_chart(
             pad = max(5.0, abs(float(y_max)) * 0.05)
             y_upper = float(y_max) + pad
 
-    from utils.kpi_utils import _compute_nice_dtick
+    from utils.kpi_utils import (
+        _add_target_goal_line,
+        _compute_nice_dtick,
+        _is_coverage_rate_target_chart,
+    )
 
     span = max(0.0, float(y_upper) - float(y_lower))
     y_dtick = _compute_nice_dtick(span, max_ticks=7) or 25
@@ -1406,6 +1411,17 @@ def render_newborn_region_comparison_chart(
             layer="below traces",
         ),
         legend=dict(title="Regions", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    target_line_y = kwargs.get("target_line_y")
+    if target_line_y is None and _is_coverage_rate_target_chart(title):
+        target_line_y = 80
+
+    _add_target_goal_line(
+        fig,
+        target_line_y=target_line_y,
+        target_line_label=kwargs.get("target_line_label", "Target Goal"),
+        target_line_color=kwargs.get("target_line_color", "#2E7D32"),
+        target_line_width=kwargs.get("target_line_width", 4),
     )
     # Ensure unique chart key (chatbot renders multiple charts in history)
     key_suffix = kwargs.get("key_suffix")

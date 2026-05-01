@@ -5651,7 +5651,10 @@ class ChatbotLogic:
                     fig.update_layout(xaxis=dict(range=[y_lower, y_upper], dtick=y_dtick))
                 else:
                     fig.update_layout(yaxis=dict(range=[y_lower, y_upper], dtick=y_dtick))
-            
+
+            if kpi_utils._is_coverage_rate_target_chart(kpi_name):
+                kpi_utils._add_target_goal_line(fig, target_line_y=80)
+             
             # Refine title
             title_text = f"{kpi_name}"
             if parsed["facility_names"]:

@@ -561,6 +561,9 @@ def render_maternal_coverage_rate_trend_chart(
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
+    kwargs.setdefault("target_line_y", 80)
+    kwargs.setdefault("target_line_label", "Target Goal")
+
     return render_trend_chart(
         df,
         period_col,
@@ -593,6 +596,9 @@ def render_maternal_coverage_rate_facility_comparison_chart(
 
     if text_color is None:
         text_color = auto_text_color(bg_color)
+
+    kwargs.setdefault("target_line_y", 80)
+    kwargs.setdefault("target_line_label", "Target Goal")
 
     return render_facility_comparison_chart(
         df,
@@ -627,6 +633,9 @@ def render_maternal_coverage_rate_region_comparison_chart(
 
     if text_color is None:
         text_color = auto_text_color(bg_color)
+
+    kwargs.setdefault("target_line_y", 80)
+    kwargs.setdefault("target_line_label", "Target Goal")
 
     return render_region_comparison_chart(
         df,

@@ -97,6 +97,53 @@ def _compute_nice_dtick(span: float, max_ticks: int = 8):
     return nice * exponent
 
 
+def _is_coverage_rate_target_chart(title) -> bool:
+    title_text = str(title or "").lower()
+    return (
+        "newborn coverage rate" in title_text
+        or "maternal coverage rate" in title_text
+    )
+
+
+def _add_target_goal_line(
+    fig,
+    target_line_y=None,
+    target_line_label="Target Goal",
+    target_line_color="#2E7D32",
+    target_line_width=4,
+):
+    """Add an optional dashed horizontal KPI target line to a Plotly figure."""
+    if target_line_y is None:
+        return
+
+    try:
+        y_value = float(target_line_y)
+    except (TypeError, ValueError):
+        return
+
+    fig.add_hline(
+        y=y_value,
+        line_dash="dash",
+        line_color=target_line_color,
+        line_width=target_line_width,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="lines",
+            name=target_line_label,
+            line=dict(
+                color=target_line_color,
+                width=target_line_width,
+                dash="dash",
+            ),
+            hoverinfo="skip",
+            showlegend=True,
+        )
+    )
+
+
 def format_period_month_year(period_str):
     """Convert period string to proper month-year format (e.g., Sep-25)"""
     if not isinstance(period_str, str):
@@ -1650,6 +1697,10 @@ def render_trend_chart(
     forecast_bounds=None,
     show_markers=False,
     forecast_show_markers=True,
+    target_line_y=None,
+    target_line_label="Target Goal (80%)",
+    target_line_color="#2E7D32",
+    target_line_width=4,
 ):
     # Create unique key
     if facility_uids:
@@ -1997,6 +2048,17 @@ def render_trend_chart(
     if any(k in title for k in ["Deliveries", "Acceptance"]):
         fig.update_layout(yaxis_tickformat=",")
 
+    if target_line_y is None and _is_coverage_rate_target_chart(title):
+        target_line_y = 80
+
+    _add_target_goal_line(
+        fig,
+        target_line_y=target_line_y,
+        target_line_label=target_line_label,
+        target_line_color=target_line_color,
+        target_line_width=target_line_width,
+    )
+
     # Display metrics at the TOP for immediate visibility
     metrics_df = table_df if use_hover_data else df
     if len(metrics_df) > 0:
@@ -2194,6 +2256,10 @@ def render_facility_comparison_chart(
     denominator_name,
     suppress_plot=False,
     key_suffix="",
+    target_line_y=None,
+    target_line_label="Target Goal (80%)",
+    target_line_color="#2E7D32",
+    target_line_width=4,
 ):
     # Ensure index is clean
     df = df.reset_index(drop=True)
@@ -2531,6 +2597,17 @@ def render_facility_comparison_chart(
             yaxis_dtick=y_dtick,
         )
 
+    if target_line_y is None and _is_coverage_rate_target_chart(title):
+        target_line_y = 80
+
+    _add_target_goal_line(
+        fig,
+        target_line_y=target_line_y,
+        target_line_label=target_line_label,
+        target_line_color=target_line_color,
+        target_line_width=target_line_width,
+    )
+
     # Generate unique key for facility comparison chart
     chart_key = f"facility_comp_{title.replace(' ', '_')}_{len(facility_uids) if facility_uids else 0}_{key_suffix}"
     
@@ -2626,6 +2703,10 @@ def render_region_comparison_chart(
     denominator_name,
     suppress_plot=False,
     key_suffix="",
+    target_line_y=None,
+    target_line_label="Target Goal (80%)",
+    target_line_color="#2E7D32",
+    target_line_width=4,
 ):
     # Ensure index is clean
     df = df.reset_index(drop=True)
@@ -2932,6 +3013,17 @@ def render_region_comparison_chart(
             yaxis_range=[y_lower, y_upper],
             yaxis_dtick=y_dtick,
         )
+
+    if target_line_y is None and _is_coverage_rate_target_chart(title):
+        target_line_y = 80
+
+    _add_target_goal_line(
+        fig,
+        target_line_y=target_line_y,
+        target_line_label=target_line_label,
+        target_line_color=target_line_color,
+        target_line_width=target_line_width,
+    )
 
     # Generate unique key for region comparison chart
     chart_key = f"region_comp_{title.replace(' ', '_')}_{len(region_names) if region_names else 0}_{key_suffix}"

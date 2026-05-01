@@ -1660,7 +1660,7 @@ def display_odk_dashboard(user: dict = None):
 
     section_choice = st.radio(
         "Mentorship Section",
-        options=["Mentorship Data", "Mentorship Data Analysis"],
+        options=["Mentorship Data Analysis", "Mentorship Data"],
         horizontal=True,
         key="mentorship_section_selector",
         label_visibility="collapsed",
