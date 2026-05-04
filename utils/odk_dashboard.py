@@ -1288,6 +1288,11 @@ def render_mentorship_analysis_dashboard():
                 .tolist()
             )
             fig = go.Figure()
+            
+            # Combine multiple plotly qualitative sequences for high distinctiveness
+            import plotly.express as px
+            distinct_colors = px.colors.qualitative.Plotly + px.colors.qualitative.D3 + px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
+            
             unique_entities = agg_df[entity_col].dropna().unique().tolist()
             for idx, entity_name in enumerate(unique_entities):
                 entity_df = agg_df[agg_df[entity_col] == entity_name].copy()
@@ -1298,7 +1303,7 @@ def render_mentorship_analysis_dashboard():
                         mode="lines+markers",
                         name=str(entity_name),
                         marker=dict(size=8),
-                        line=dict(width=3, color=MENTORSHIP_METRIC_COLORS[idx % len(MENTORSHIP_METRIC_COLORS)]),
+                        line=dict(width=3, color=distinct_colors[idx % len(distinct_colors)]),
                         customdata=entity_df[
                             [entity_col, "cis_indicator_numerator", "cis_indicator_denominator"]
                         ].fillna(0).values,

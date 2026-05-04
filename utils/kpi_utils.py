@@ -262,10 +262,17 @@ def _sort_comparison_df_by_period(comparison_df, entity_col, period_col="period_
         )
         return result_df, period_order
 
-    try:
-        result_df["period_sort"] = result_df[period_col].apply(
-            lambda x: dt.datetime.strptime(x, "%b-%y")
-        )
+    def _parse_fallback_date(x):
+        x_str = str(x).strip()
+        if "-" in x_str and len(x_str.split("-")) == 2:
+            try:
+                return dt.datetime.strptime(x_str, "%b-%y")
+            except ValueError:
+                pass
+        return pd.to_datetime(x_str, errors="coerce")
+
+    result_df["period_sort"] = result_df[period_col].apply(_parse_fallback_date)
+    if result_df["period_sort"].notna().any():
         result_df = result_df.sort_values(
             [entity_col, "period_sort", period_col]
         ).reset_index(drop=True)
@@ -275,7 +282,7 @@ def _sort_comparison_df_by_period(comparison_df, entity_col, period_col="period_
             .drop_duplicates()
             .tolist()
         )
-    except Exception:
+    else:
         result_df = result_df.sort_values([entity_col, period_col]).reset_index(
             drop=True
         )
