@@ -42,6 +42,7 @@ from dhis2_fetcher import (  # noqa: E402
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 STATE_FILENAME = ".incremental_state.json"
 DEFAULT_MATERNAL_CSV = "maternal_data_long_format.csv"
 
@@ -527,7 +528,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    load_dotenv()
+    # Always prefer the repo .env for this command-line runner. This avoids
+    # stale process or Windows environment variables shadowing recently edited
+    # DHIS2 credentials.
+    load_dotenv(REPO_ROOT / ".env", override=True)
 
     csv_path = args.csv_path
     if csv_path is None and Path(DEFAULT_MATERNAL_CSV).exists():
@@ -561,9 +565,9 @@ def main() -> int:
         )
 
     pipeline = AutomatedDHIS2Pipeline(
-        base_url=None,
-        username=None,
-        password=None,
+        base_url=os.getenv("DHIS2_BASE_URL"),
+        username=os.getenv("DHIS2_USERNAME"),
+        password=os.getenv("DHIS2_PASSWORD"),
         csv_path=csv_path,
         output_base_dir=str(output_dir),
     )

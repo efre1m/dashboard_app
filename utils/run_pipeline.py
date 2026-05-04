@@ -7,17 +7,19 @@ Place in same folder as dhis2_fetcher.py and config.py
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 # Add the parent directory to path to import from config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
     # Load environment variables from the project .env for local/CLI runs.
     # (utils/config.py intentionally does not call load_dotenv.)
-    load_dotenv()
+    load_dotenv(REPO_ROOT / ".env", override=True)
 
     print("=" * 70)
     print("🤖 DHIS2 AUTOMATED PIPELINE")

@@ -2368,6 +2368,17 @@ class AutomatedDHIS2Pipeline:
             csv_path: Path to maternal CSV file (optional)
             output_base_dir: Base directory for output (optional)
         """
+        env_base_url = os.getenv("DHIS2_BASE_URL")
+        env_username = os.getenv("DHIS2_USERNAME")
+        env_password = os.getenv("DHIS2_PASSWORD")
+        if not all([base_url, username, password]) and all(
+            [env_base_url, env_username, env_password]
+        ):
+            base_url = base_url or env_base_url.rstrip("/")
+            username = username or env_username
+            password = password or env_password
+            logger.info("Using credentials from environment/.env")
+
         # Try to get from config.py if not provided
         if not all([base_url, username, password]):
             try:
