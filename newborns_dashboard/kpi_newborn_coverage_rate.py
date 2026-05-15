@@ -44,7 +44,7 @@ def clear_newborn_coverage_rate_cache():
 
 
 # ---------------- Denominator Loading ----------------
-DENOMINATOR_CACHE_VERSION = 4
+DENOMINATOR_CACHE_VERSION = 5
 DENOMINATOR_FILENAME_CANDIDATES = (
     "aggregated_admission_newborn.xlsx",
     "aggregated admission newborn.xlsx",

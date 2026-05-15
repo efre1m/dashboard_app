@@ -49,11 +49,16 @@ def get_ethiopian_month_range(yearmonth):
     if not 1 <= ec_month <= 13:
         raise ValueError(f"Invalid Ethiopian month in period: {yearmonth}")
 
-    gc_start = get_ethiopian_new_year_start(ec_year) + timedelta(days=(ec_month - 1) * 30)
+    month_start = get_ethiopian_new_year_start(ec_year) + timedelta(days=(ec_month - 1) * 30)
     if ec_month <= 12:
-        gc_end = gc_start + timedelta(days=29)
+        month_end = month_start + timedelta(days=29)
     else:
-        gc_end = gc_start + timedelta(days=5 if is_ethiopian_leap_year(ec_year) else 4)
+        month_end = month_start + timedelta(days=5 if is_ethiopian_leap_year(ec_year) else 4)
+
+    # DHIS2 monthly aggregate periods are interpreted as Ethiopian day 21 -> day 20 windows
+    # (e.g., YYYY08 means Megabit 21 to Miazia 20), not day 1 -> month end.
+    gc_start = month_start - timedelta(days=10)
+    gc_end = month_end - timedelta(days=10)
 
     return pd.Timestamp(gc_start), pd.Timestamp(gc_end)
 

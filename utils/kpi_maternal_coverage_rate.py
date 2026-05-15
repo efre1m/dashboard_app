@@ -38,7 +38,7 @@ def clear_maternal_coverage_rate_cache():
 
 
 # ---------------- Denominator Loading ----------------
-DENOMINATOR_CACHE_VERSION = 2
+DENOMINATOR_CACHE_VERSION = 3
 DENOMINATOR_FILENAME_CANDIDATES = (
     "aggregated_admission_mothers.xlsx",
     "aggregated admission mothers.xlsx",
