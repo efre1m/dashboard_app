@@ -2265,16 +2265,16 @@ def _render_hypothermia_combined_trend_chart(
 
     periods = trend_df["period_display"].tolist()
 
-    # Build 3x2 subplot grid
-    rows, cols = 3, 2
+    # Build 2x3 subplot grid
+    rows, cols = 2, 3
     sorted_indicators = sorted(filtered_indicators, key=lambda x: x["sort_order"])
 
     fig = make_subplots(
         rows=rows,
         cols=cols,
         subplot_titles=[ind["display_name"] for ind in sorted_indicators],
-        vertical_spacing=0.10,
-        horizontal_spacing=0.08,
+        vertical_spacing=0.28,
+        horizontal_spacing=0.10,
     )
 
     for idx, ind in enumerate(sorted_indicators):
@@ -2309,44 +2309,49 @@ def _render_hypothermia_combined_trend_chart(
             col=current_col,
         )
 
+        fig.update_xaxes(
+            row=current_row, col=current_col,
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,
+            tickangle=-45,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+            showticklabels=(current_row == rows),
+        )
+        fig.update_yaxes(
+            row=current_row, col=current_col,
+            range=[-2, 102],
+            dtick=25,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            ticksuffix="%",
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+            title_text=None,
+        )
+
     fig.update_layout(
-        title=chart_title,
-        height=1000,
+        title=dict(text=chart_title, font=dict(size=16)),
+        height=700,
         showlegend=False,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
-        margin=dict(l=60, r=60, t=80, b=60),
+        title_y=0.95,
+        margin=dict(l=50, r=50, t=130, b=80),
     )
-
-    fig.update_xaxes(
-        type="category",
-        categoryorder="array",
-        categoryarray=periods,
-        tickangle=-45,
-        gridcolor="rgba(128,128,128,0.2)",
-        showgrid=True,
-        showline=True,
-        linewidth=2,
-        linecolor="rgba(128,128,128,0.8)",
-        mirror=True,
-    )
-
-    fig.update_yaxes(
-        range=[-2, 102],
-        dtick=25,
-        gridcolor="rgba(128,128,128,0.2)",
-        showgrid=True,
-        zeroline=True,
-        zerolinecolor="rgba(128,128,128,0.5)",
-        ticksuffix="%",
-        showline=True,
-        linewidth=2,
-        linecolor="rgba(128,128,128,0.8)",
-        mirror=True,
-    )
-    fig.update_layout(yaxis_tickformat=".1f")
+    for ann in fig['layout']['annotations']:
+        ann['font'] = dict(size=12)
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -2442,7 +2447,7 @@ def _render_hypothermia_combined_comparison_chart(
     is_national,
     show_chart=True,
 ):
-    """Render combined hypothermia comparison as a simple table"""
+    """Render combined hypothermia comparison with multi-line charts (facility/region comparison)"""
     indicators = HYPO_COMBINED_INDICATORS
 
     # Multiselect filter
@@ -2477,55 +2482,234 @@ def _render_hypothermia_combined_comparison_chart(
         entities = [(r, r) for r in region_names]
         entity_label_col = "Region"
     else:
-        # Single entity mode: show overall aggregated data
-        entities = [("all", "All Selected")]
+        entities = []
         entity_label_col = "Entity"
 
+    if not entities:
+        st.info("No entities available for comparison.")
+        return
+
+    # Prepare date column
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(filtered_indicators[0]["kpi_name"])
+    if date_column not in df_to_use.columns:
+        fallback = get_relevant_date_column_for_newborn_kpi(filtered_indicators[0]["kpi_name"])
+        if fallback in df_to_use.columns:
+            date_column = fallback
+
+    df = df_to_use.copy()
+    df["event_date"] = pd.to_datetime(df[date_column], errors="coerce")
+    df = df[df["event_date"].notna()].copy()
+
+    if df.empty:
+        st.info("No data available for comparison.")
+        return
+
+    # Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+            df = df[(df["event_date"] >= start_dt) & (df["event_date"] < end_dt)].copy()
+
+    if df.empty:
+        st.info("No data available for comparison.")
+        return
+
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        df = assign_period(df, "event_date", period_label)
+    except Exception:
+        st.error("Error assigning periods")
+        return
+
+    # Get unique periods in order
+    unique_periods = df[["period_display", "period_sort"]].drop_duplicates().sort_values("period_sort")
+    period_sort_map = dict(zip(unique_periods["period_display"], unique_periods["period_sort"]))
+    periods = unique_periods["period_display"].tolist()
+    if not periods:
+        st.info("No period data available.")
+        return
+
+    # Build per-entity per-period per-indicator data
     comparison_rows = []
     for uid, name in entities:
-        row = {entity_label_col: name}
-
         if comparison_mode == "facility" and uid != "all":
-            entity_df = df_to_use[df_to_use["orgUnit"] == uid].copy()
+            entity_df = df[df["orgUnit"] == uid].copy()
             entity_facility_uids = [uid]
         elif comparison_mode == "region" and is_national and uid != "all":
             region_facility_uids = [
                 f[1] for f in facilities_by_region.get(uid, [])
             ]
-            entity_df = df_to_use[
-                df_to_use["orgUnit"].isin(region_facility_uids)
-            ].copy()
+            entity_df = df[df["orgUnit"].isin(region_facility_uids)].copy()
             entity_facility_uids = region_facility_uids
         else:
-            entity_df = df_to_use.copy()
+            entity_df = df.copy()
             entity_facility_uids = facility_uids
 
         if entity_df.empty:
-            for ind in filtered_indicators:
-                row[ind["short_name"]] = "-"
-            comparison_rows.append(row)
             continue
 
-        # Compute aggregated value for each indicator
-        for ind in filtered_indicators:
-            numerator, denominator, _ = get_numerator_denominator_for_newborn_kpi_with_all(
-                entity_df, ind["kpi_name"], entity_facility_uids, date_range_filters,
-            )
-            if denominator > 0:
-                value = (numerator / denominator * 100)
-                row[ind["short_name"]] = f"{value:.1f}% ({int(numerator)}/{int(denominator)})"
-            else:
-                row[ind["short_name"]] = "-"
-
-        comparison_rows.append(row)
+        for period_display in periods:
+            period_df = entity_df[entity_df["period_display"] == period_display].copy()
+            if period_df.empty:
+                continue
+            row = {
+                entity_label_col: name,
+                "period_display": period_display,
+                "period_sort": period_sort_map.get(period_display, 0),
+            }
+            for ind in filtered_indicators:
+                numerator, denominator, _ = get_numerator_denominator_for_newborn_kpi_with_all(
+                    period_df, ind["kpi_name"], entity_facility_uids, {},
+                )
+                rate = (numerator / denominator * 100) if denominator > 0 else None
+                row[f"{ind['short_name']}_rate"] = rate
+                row[f"{ind['short_name']}_num"] = int(numerator)
+                row[f"{ind['short_name']}_den"] = int(denominator)
+            comparison_rows.append(row)
 
     if not comparison_rows:
-        st.info("⚠️ No comparison data available.")
+        st.info("No comparison data available.")
         return
 
     comp_df = pd.DataFrame(comparison_rows)
-    st.subheader("📊 Hypothermia Indicators - Comparison")
-    st.dataframe(comp_df, use_container_width=True)
+    comp_df = comp_df.sort_values(["period_sort", entity_label_col])
+
+    # Build 2x3 subplot grid - only for selected indicators
+    n_indicators = len(filtered_indicators)
+    if n_indicators > 0:
+        n_cols = 3
+        n_rows = 2
+        subplot_titles = [ind["display_name"] for ind in filtered_indicators]
+        fig = make_subplots(
+            rows=n_rows, cols=n_cols,
+            subplot_titles=subplot_titles,
+            horizontal_spacing=0.10,
+            vertical_spacing=0.28,
+        )
+
+        entity_names = comp_df[entity_label_col].unique()
+        entity_colors = {}
+        palette = [
+            "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+            "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+        ]
+        for idx, en in enumerate(entity_names):
+            entity_colors[en] = palette[idx % len(palette)]
+
+        for idx, ind in enumerate(filtered_indicators):
+            row_idx = (idx // n_cols) + 1
+            col_idx = (idx % n_cols) + 1
+            rate_col = f"{ind['short_name']}_rate"
+            num_col = f"{ind['short_name']}_num"
+            den_col = f"{ind['short_name']}_den"
+
+            ind_data = comp_df[[entity_label_col, "period_display", "period_sort", rate_col, num_col, den_col]].dropna(subset=[rate_col]).copy()
+
+            for en in entity_names:
+                en_data = ind_data[ind_data[entity_label_col] == en].sort_values("period_sort")
+                if en_data.empty:
+                    continue
+                fig.add_trace(
+                    go.Scatter(
+                        name=en,
+                        x=en_data["period_display"],
+                        y=en_data[rate_col],
+                        mode="lines",
+                        line=dict(color=entity_colors.get(en, "#333333"), width=2),
+                        connectgaps=False,
+                        hovertemplate=(
+                            f"<b>{en}</b><br>"
+                            "Period: %{x}<br>"
+                            f"{ind['display_name']}: %{{y:.1f}}%<br>"
+                            "Numerator: %{customdata[0]}<br>"
+                            "Denominator: %{customdata[1]}<br>"
+                            "<extra></extra>"
+                        ),
+                        customdata=en_data[[num_col, den_col]].values,
+                        showlegend=(idx == 0),
+                    ),
+                    row=row_idx, col=col_idx,
+                )
+
+            fig.update_xaxes(
+                row=row_idx, col=col_idx,
+                type="category",
+                categoryorder="array",
+                categoryarray=periods,
+                tickangle=-45,
+                gridcolor="rgba(128,128,128,0.2)",
+                showline=True,
+                linewidth=1,
+                linecolor="rgba(128,128,128,0.5)",
+                mirror=True,
+                showticklabels=(row_idx == n_rows),
+            )
+            fig.update_yaxes(
+                row=row_idx, col=col_idx,
+                range=[0, 100],
+                dtick=25,
+                gridcolor="rgba(128,128,128,0.2)",
+                zeroline=True,
+                zerolinecolor="rgba(128,128,128,0.3)",
+                showline=True,
+                linewidth=1,
+                linecolor="rgba(128,128,128,0.5)",
+                mirror=True,
+                ticksuffix="%",
+                title_text=None,
+            )
+
+        chart_title = "Hypothermia Indicators - Facility Comparison" if comparison_mode == "facility" else "Hypothermia Indicators - Region Comparison"
+        fig.update_layout(
+            title=dict(text=chart_title, font=dict(size=16)),
+            height=700,
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font_color=text_color,
+            title_font_color=text_color,
+            title_y=0.95,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                font=dict(size=11),
+            ),
+            margin=dict(l=50, r=50, t=130, b=80),
+            hovermode="x unified",
+        )
+        for ann in fig['layout']['annotations']:
+            ann['font'] = dict(size=12)
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Aggregated summary table
+    st.subheader("Aggregated Comparison Table")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+    summary_rows = []
+    for uid, name in entities:
+        row = {entity_label_col: name}
+        entity_comp = comp_df[comp_df[entity_label_col] == name]
+        if entity_comp.empty:
+            for ind in filtered_indicators:
+                row[ind["short_name"]] = "-"
+            summary_rows.append(row)
+            continue
+        for ind in filtered_indicators:
+            total_num = int(entity_comp[f"{ind['short_name']}_num"].sum())
+            total_den = int(entity_comp[f"{ind['short_name']}_den"].sum())
+            overall_pct = (total_num / total_den * 100) if total_den > 0 else 0.0
+            row[ind["short_name"]] = f"{overall_pct:.1f}% ({total_num}/{total_den})" if total_den > 0 else "-"
+        summary_rows.append(row)
+
+    if summary_rows:
+        summary_df = pd.DataFrame(summary_rows)
+        st.dataframe(summary_df, use_container_width=True)
 
 
 TEMP_COL_QOC = "temp_at_admission_nicu_admission_careform"
