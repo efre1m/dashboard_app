@@ -2,6 +2,7 @@
 
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
 import datetime
 import logging
@@ -56,13 +57,13 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Outborn Babies",
         "denominator_name": "Total Admitted Newborns",
     },
-    "Inborn Hypothermia Rate (%)": {
-        "title": "Hypothermia in Inborn Babies (%)",
+    "Inborn Hypothermia at Admission Rate (%)": {
+        "title": "Hypothermia at admission in Inborn Babies (%)",
         "numerator_name": "Inborn Hypothermia Cases",
         "denominator_name": "Total Inborn Babies",
     },
-    "Outborn Hypothermia Rate (%)": {
-        "title": "Hypothermia in Outborn Babies (%)",
+    "Outborn Hypothermia at Admission Rate (%)": {
+        "title": "Hypothermia at admission in Outborn Babies (%)",
         "numerator_name": "Outborn Hypothermia Cases",
         "denominator_name": "Total Outborn Babies",
     },
@@ -71,18 +72,33 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Hypothermia Cases",
         "denominator_name": "Total Admitted Newborns",
     },
+    "Not hypothermic at admission (%)": {
+        "title": "Not hypothermic at admission (%)",
+        "numerator_name": "Not Hypothermic Cases",
+        "denominator_name": "Total Admitted Newborns",
+    },
+    "Not hypothermic at admission inborn (%)": {
+        "title": "Not hypothermic at admission inborn (%)",
+        "numerator_name": "Inborn Not Hypothermic Cases",
+        "denominator_name": "Total Inborn Babies",
+    },
+    "Not hypothermic at admission outborn (%)": {
+        "title": "Not hypothermic at admission outborn (%)",
+        "numerator_name": "Outborn Not Hypothermic Cases",
+        "denominator_name": "Total Outborn Babies",
+    },
     "Neonatal Mortality Rate (%)": {
         "title": "Neonatal Mortality Rate (%)",
         "numerator_name": "Dead Cases",
         "denominator_name": "Total Admitted Newborns",
     },
-    "Inborn Hypothermia Rate (%)": {
-        "title": "Hypothermia in Inborn Babies (%)",
+    "Inborn Hypothermia at Admission Rate (%)": {
+        "title": "Hypothermia at admission in Inborn Babies (%)",
         "numerator_name": "Inborn Hypothermia Cases",
         "denominator_name": "Total Inborn Babies",
     },
-    "Outborn Hypothermia Rate (%)": {
-        "title": "Hypothermia in Outborn Babies (%)",
+    "Outborn Hypothermia at Admission Rate (%)": {
+        "title": "Hypothermia at admission in Outborn Babies (%)",
         "numerator_name": "Outborn Hypothermia Cases",
         "denominator_name": "Total Outborn Babies",
     },
@@ -181,8 +197,11 @@ NEWBORN_KPI_OPTIONS = [
     "Outborn Rate (%)",
     "Hypothermia on Admission Rate (%)",
     "Neonatal Mortality Rate (%)",
-    "Inborn Hypothermia Rate (%)",
-    "Outborn Hypothermia Rate (%)",
+    "Inborn Hypothermia at Admission Rate (%)",
+    "Outborn Hypothermia at Admission Rate (%)",
+    "Not hypothermic at admission (%)",
+    "Not hypothermic at admission inborn (%)",
+    "Not hypothermic at admission outborn (%)",
     "Admitted Newborns",
     "Newborn Coverage Rate",
     # "Antibiotics for Clinical Sepsis (%)",
@@ -212,10 +231,13 @@ NEWBORN_KPI_GROUPS = {
         "Outborn Rate (%)",
         "Birth Weight Rate",
     ],
-    "⚠️ Complication": [
+    "🌡️ Hypothermia": [
         "Hypothermia on Admission Rate (%)",
-        "Inborn Hypothermia Rate (%)",
-        "Outborn Hypothermia Rate (%)",
+        "Inborn Hypothermia at Admission Rate (%)",
+        "Outborn Hypothermia at Admission Rate (%)",
+        "Not hypothermic at admission (%)",
+        "Not hypothermic at admission inborn (%)",
+        "Not hypothermic at admission outborn (%)",
     ],
     "🏥 Intervention": [
         "KMC Coverage by Birth Weight",
@@ -265,7 +287,7 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "newborn_status_at_discharge_n_discharge_care_form",
         "event_date_discharge_care_form",
     ],
-    "Inborn Hypothermia Rate (%)": [
+    "Inborn Hypothermia at Admission Rate (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
@@ -273,7 +295,30 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "temp_at_admission_nicu_admission_careform",
         "event_date_nicu_admission_careform",
     ],
-    "Outborn Hypothermia Rate (%)": [
+    "Outborn Hypothermia at Admission Rate (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "place_of_delivery_nicu_admission_careform",
+        "temp_at_admission_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
+    ],
+    "Not hypothermic at admission (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "temp_at_admission_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
+    ],
+    "Not hypothermic at admission inborn (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "place_of_delivery_nicu_admission_careform",
+        "temp_at_admission_nicu_admission_careform",
+        "event_date_nicu_admission_careform",
+    ],
+    "Not hypothermic at admission outborn (%)": [
         "orgUnit",
         "tei_id",
         "enrollment_date",
@@ -569,12 +614,12 @@ def render_newborn_kpi_tab_navigation():
         st.session_state.selected_newborn_kpi = "Admitted Newborns" # Default to first tab item if appropriate
 
     # Create main KPI group tabs - UPDATED TO 6 TABS & REORDERED
-    # Enrollment -> Birth -> Data Quality -> Complication -> Intervention -> Mortality
-    tab_enrollment, tab_birth, tab_complication, tab_intervention, tab_mortality, tab_dq = st.tabs(
+    # Enrollment -> Birth -> Hypothermia -> Intervention -> Mortality -> Data Quality
+    tab_enrollment, tab_birth, tab_thermal, tab_intervention, tab_mortality, tab_dq = st.tabs(
         [
             "Enrollment",
             "Birth",
-            "Complication",
+            "Hypothermia",
             "Intervention",
             "Mortality",
             "Data Quality",
@@ -635,9 +680,8 @@ def render_newborn_kpi_tab_navigation():
                 selected_kpi = "Missing Birth Location (%)"
 
 
-    with tab_complication:
-        # Complication - 3 buttons
-        # UPDATED: Use columns(3) instead of (5) to give more space for text
+    with tab_thermal:
+        # Hypothermia - 6 buttons
         cols_row1 = st.columns(3)
         with cols_row1[0]:
             # Full name requested: "Hypothermia on Admission"
@@ -645,13 +689,27 @@ def render_newborn_kpi_tab_navigation():
                          type=("primary" if selected_kpi == "Hypothermia on Admission Rate (%)" else "secondary")):
                 selected_kpi = "Hypothermia on Admission Rate (%)"
         with cols_row1[1]:
-            if st.button("Inborn Hypothermia Rate", key="inborn_hypo_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Inborn Hypothermia Rate (%)" else "secondary")):
-                selected_kpi = "Inborn Hypothermia Rate (%)"
+            if st.button("Inborn Hypothermia at Admission", key="inborn_hypo_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Inborn Hypothermia at Admission Rate (%)" else "secondary")):
+                selected_kpi = "Inborn Hypothermia at Admission Rate (%)"
         with cols_row1[2]:
-            if st.button("Outborn Hypothermia Rate", key="outborn_hypo_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Outborn Hypothermia Rate (%)" else "secondary")):
-                selected_kpi = "Outborn Hypothermia Rate (%)"
+            if st.button("Outborn Hypothermia at Admission", key="outborn_hypo_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Outborn Hypothermia at Admission Rate (%)" else "secondary")):
+                selected_kpi = "Outborn Hypothermia at Admission Rate (%)"
+
+        cols_row2 = st.columns(3)
+        with cols_row2[0]:
+            if st.button("Not Hypothermic at Admission", key="not_hypo_admission_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Not hypothermic at admission (%)" else "secondary")):
+                selected_kpi = "Not hypothermic at admission (%)"
+        with cols_row2[1]:
+            if st.button("Not Hypothermic, Inborn", key="not_hypo_inborn_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Not hypothermic at admission inborn (%)" else "secondary")):
+                selected_kpi = "Not hypothermic at admission inborn (%)"
+        with cols_row2[2]:
+            if st.button("Not Hypothermic, Outborn", key="not_hypo_outborn_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "Not hypothermic at admission outborn (%)" else "secondary")):
+                selected_kpi = "Not hypothermic at admission outborn (%)"
 
     with tab_intervention:
         # Intervention - 3 buttons (General CPAP removed)
