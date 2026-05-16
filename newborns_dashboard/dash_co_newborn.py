@@ -3,6 +3,8 @@
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
 import datetime
 import logging
@@ -628,6 +630,12 @@ def render_newborn_kpi_tab_navigation():
 
     selected_kpi = st.session_state.selected_newborn_kpi
 
+    # Migration: replace individual hypothermia KPIs with combined marker
+    hypo_kpis = set(NEWBORN_KPI_GROUPS.get("🌡️ Hypothermia", []))
+    if selected_kpi in hypo_kpis:
+        st.session_state.selected_newborn_kpi = HYPO_COMBINED_MARKER
+        selected_kpi = HYPO_COMBINED_MARKER
+
     with tab_enrollment:
         # Enrollment - 2 buttons
         cols = st.columns(5)
@@ -681,35 +689,11 @@ def render_newborn_kpi_tab_navigation():
 
 
     with tab_thermal:
-        # Hypothermia - 6 buttons
-        cols_row1 = st.columns(3)
-        with cols_row1[0]:
-            # Full name requested: "Hypothermia on Admission"
-            if st.button("Hypothermia on Admission", key="hypo_admission_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Hypothermia on Admission Rate (%)" else "secondary")):
-                selected_kpi = "Hypothermia on Admission Rate (%)"
-        with cols_row1[1]:
-            if st.button("Inborn Hypothermia at Admission", key="inborn_hypo_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Inborn Hypothermia at Admission Rate (%)" else "secondary")):
-                selected_kpi = "Inborn Hypothermia at Admission Rate (%)"
-        with cols_row1[2]:
-            if st.button("Outborn Hypothermia at Admission", key="outborn_hypo_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Outborn Hypothermia at Admission Rate (%)" else "secondary")):
-                selected_kpi = "Outborn Hypothermia at Admission Rate (%)"
-
-        cols_row2 = st.columns(3)
-        with cols_row2[0]:
-            if st.button("Not Hypothermic at Admission", key="not_hypo_admission_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Not hypothermic at admission (%)" else "secondary")):
-                selected_kpi = "Not hypothermic at admission (%)"
-        with cols_row2[1]:
-            if st.button("Not Hypothermic, Inborn", key="not_hypo_inborn_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Not hypothermic at admission inborn (%)" else "secondary")):
-                selected_kpi = "Not hypothermic at admission inborn (%)"
-        with cols_row2[2]:
-            if st.button("Not Hypothermic, Outborn", key="not_hypo_outborn_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "Not hypothermic at admission outborn (%)" else "secondary")):
-                selected_kpi = "Not hypothermic at admission outborn (%)"
+        cols = st.columns(3)
+        with cols[0]:
+            if st.button("Indicator Coverage Run Charts", key="hypo_combined_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == HYPO_COMBINED_MARKER else "secondary")):
+                selected_kpi = HYPO_COMBINED_MARKER
 
     with tab_intervention:
         # Intervention - 3 buttons (General CPAP removed)
@@ -824,6 +808,18 @@ def render_newborn_trend_chart_section(
             kpi_selection,
             working_df,
             chart_title,
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Hypothermia combined view
+    if kpi_selection == HYPO_COMBINED_MARKER:
+        _render_hypothermia_combined_trend_chart(
+            working_df,
+            "Indicator Coverage Run Charts",
             bg_color,
             text_color,
             facility_uids,
@@ -1139,6 +1135,22 @@ def render_newborn_comparison_chart(
     if is_simplified_kpi(kpi_selection):
         _render_simplified_kpi_comparison_chart(
             kpi_selection,
+            df_to_use,
+            comparison_mode,
+            display_names,
+            facility_uids,
+            facilities_by_region,
+            region_names,
+            bg_color,
+            text_color,
+            is_national,
+            show_chart=show_chart,
+        )
+        return
+
+    # SPECIAL HANDLING: Hypothermia combined view
+    if kpi_selection == HYPO_COMBINED_MARKER:
+        _render_hypothermia_combined_comparison_chart(
             df_to_use,
             comparison_mode,
             display_names,
@@ -2068,6 +2080,415 @@ def _render_simplified_kpi_comparison_chart(
         st.warning(f"⚠️ Unsupported comparison type: {comparison_type}")
 
 
+# Hypothermia Combined View - Indicator keys and display names
+HYPO_COMBINED_INDICATORS = [
+    {
+        "kpi_name": "Hypothermia on Admission Rate (%)",
+        "display_name": "Hypothermia on Admission Rate (%)",
+        "short_name": "Hypothermia on Admission",
+        "sort_order": 1,
+    },
+    {
+        "kpi_name": "Inborn Hypothermia at Admission Rate (%)",
+        "display_name": "Inborn Hypothermia at Admission Rate (%)",
+        "short_name": "Inborn Hypothermia",
+        "sort_order": 2,
+    },
+    {
+        "kpi_name": "Outborn Hypothermia at Admission Rate (%)",
+        "display_name": "Outborn Hypothermia at Admission Rate (%)",
+        "short_name": "Outborn Hypothermia",
+        "sort_order": 3,
+    },
+    {
+        "kpi_name": "Not hypothermic at admission (%)",
+        "display_name": "Not hypothermic at admission (%)",
+        "short_name": "Not Hypothermic",
+        "sort_order": 4,
+    },
+    {
+        "kpi_name": "Not hypothermic at admission inborn (%)",
+        "display_name": "Not hypothermic at admission inborn (%)",
+        "short_name": "Not Hypo Inborn",
+        "sort_order": 5,
+    },
+    {
+        "kpi_name": "Not hypothermic at admission outborn (%)",
+        "display_name": "Not hypothermic at admission outborn (%)",
+        "short_name": "Not Hypo Outborn",
+        "sort_order": 6,
+    },
+]
+
+HYPO_COMBINED_MARKER = "__hypothermia_combined__"
+
+
+def _render_hypothermia_combined_trend_chart(
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render combined Hypothermia indicators in a 3x2 multi-panel chart"""
+    indicators = HYPO_COMBINED_INDICATORS
+    all_kpi_names = [ind["kpi_name"] for ind in indicators]
+
+    # Multiselect filter for showing/hiding panels
+    with st.expander("Filter Hypothermia Indicators", expanded=False):
+        selected_display_names = st.multiselect(
+            "Select indicators to display:",
+            options=[ind["display_name"] for ind in indicators],
+            default=[ind["display_name"] for ind in indicators],
+            key="hypo_combined_indicator_filter",
+        )
+
+    filtered_indicators = [
+        ind for ind in indicators if ind["display_name"] in selected_display_names
+    ]
+    if not filtered_indicators:
+        st.warning("No indicators selected.")
+        return
+
+    # Use enrollment_date as date column (same as all hypothermia KPIs)
+    date_column = "enrollment_date"
+
+    if date_column not in working_df.columns:
+        st.warning(f"⚠️ Required date column '{date_column}' not found.")
+        return
+
+    working_df = working_df.copy()
+    working_df["event_date"] = pd.to_datetime(working_df[date_column], errors="coerce")
+
+    # Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+            working_df = working_df[
+                (working_df["event_date"] >= start_dt)
+                & (working_df["event_date"] < end_dt)
+            ].copy()
+
+    working_df = working_df[working_df["event_date"].notna()].copy()
+    if working_df.empty:
+        st.warning("⚠️ No data available for hypothermia indicators.")
+        return
+
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        working_df = assign_period(working_df, "event_date", period_label)
+    except Exception:
+        st.error("Error assigning periods")
+        return
+
+    # Get unique periods in order
+    unique_periods = working_df[["period_display", "period_sort"]].drop_duplicates()
+    unique_periods = unique_periods.sort_values("period_sort")
+
+    # Compute all indicators for each period
+    trend_data = []
+    for _, row_data in unique_periods.iterrows():
+        period_display = row_data["period_display"]
+        period_sort = row_data["period_sort"]
+        period_df = working_df[working_df["period_display"] == period_display]
+
+        if period_df.empty:
+            continue
+
+        period_row = {
+            "period_display": period_display,
+            "period_sort": period_sort,
+        }
+
+        for ind in indicators:
+            kpi_name = ind["kpi_name"]
+            numerator, denominator, _ = get_numerator_denominator_for_newborn_kpi_with_all(
+                period_df, kpi_name, facility_uids, date_range_filters,
+            )
+            value = (numerator / denominator * 100) if denominator > 0 else None
+            period_row[f"{ind['kpi_name']}_value"] = value
+            period_row[f"{ind['kpi_name']}_num"] = int(numerator)
+            period_row[f"{ind['kpi_name']}_den"] = int(denominator)
+
+        trend_data.append(period_row)
+
+    if not trend_data:
+        st.info("⚠️ No period data available for chart.")
+        return
+
+    trend_df = pd.DataFrame(trend_data)
+    trend_df = trend_df.sort_values("period_sort")
+
+    periods = trend_df["period_display"].tolist()
+
+    # Build 3x2 subplot grid
+    rows, cols = 3, 2
+    sorted_indicators = sorted(filtered_indicators, key=lambda x: x["sort_order"])
+
+    fig = make_subplots(
+        rows=rows,
+        cols=cols,
+        subplot_titles=[ind["display_name"] for ind in sorted_indicators],
+        vertical_spacing=0.10,
+        horizontal_spacing=0.08,
+    )
+
+    for idx, ind in enumerate(sorted_indicators):
+        current_row = (idx // cols) + 1
+        current_col = (idx % cols) + 1
+        value_col = f"{ind['kpi_name']}_value"
+        num_col = f"{ind['kpi_name']}_num"
+        den_col = f"{ind['kpi_name']}_den"
+
+        fig.add_trace(
+            go.Scatter(
+                x=trend_df["period_display"],
+                y=trend_df[value_col],
+                name=ind["short_name"],
+                mode="lines",
+                line=dict(color="#1f77b4", width=3, shape="spline", smoothing=0.35),
+                connectgaps=False,
+                cliponaxis=False,
+                hovertemplate=(
+                    f"<b>{ind['display_name']}</b><br>"
+                    "Period: %{x}<br>"
+                    "Rate: %{y:.1f}%<br>"
+                    "Numerator: %{customdata[0]}<br>"
+                    "Denominator: %{customdata[1]}<br>"
+                    "<extra></extra>"
+                ),
+                customdata=np.column_stack(
+                    (trend_df[num_col].values, trend_df[den_col].values)
+                ),
+            ),
+            row=current_row,
+            col=current_col,
+        )
+
+    fig.update_layout(
+        title=chart_title,
+        height=1000,
+        showlegend=False,
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        margin=dict(l=60, r=60, t=80, b=60),
+    )
+
+    fig.update_xaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=periods,
+        tickangle=-45,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        showline=True,
+        linewidth=2,
+        linecolor="rgba(128,128,128,0.8)",
+        mirror=True,
+    )
+
+    fig.update_yaxes(
+        range=[-2, 102],
+        dtick=25,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        zeroline=True,
+        zerolinecolor="rgba(128,128,128,0.5)",
+        ticksuffix="%",
+        showline=True,
+        linewidth=2,
+        linecolor="rgba(128,128,128,0.8)",
+        mirror=True,
+    )
+    fig.update_layout(yaxis_tickformat=".1f")
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Combined table
+    st.subheader("📊 Hypothermia Indicators Table")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+
+    table_data = []
+    for period in periods:
+        period_row_data = trend_df[trend_df["period_display"] == period].iloc[0]
+        row = {"Period": period}
+        for ind in sorted_indicators:
+            num = int(period_row_data[f"{ind['kpi_name']}_num"])
+            den = int(period_row_data[f"{ind['kpi_name']}_den"])
+            val = period_row_data[f"{ind['kpi_name']}_value"]
+            if den > 0:
+                row[ind["short_name"]] = f"{val:.1f}% ({num}/{den})"
+            else:
+                row[ind["short_name"]] = "-"
+        table_data.append(row)
+
+    # Overall row
+    overall_row = {"Period": "Overall"}
+    for ind in sorted_indicators:
+        total_num = int(trend_df[f"{ind['kpi_name']}_num"].sum())
+        total_den = int(trend_df[f"{ind['kpi_name']}_den"].sum())
+        overall_val = (total_num / total_den * 100) if total_den > 0 else 0.0
+        if total_den > 0:
+            overall_row[ind["short_name"]] = f"{overall_val:.1f}% ({total_num}/{total_den})"
+        else:
+            overall_row[ind["short_name"]] = "-"
+    table_data.append(overall_row)
+
+    table_df = pd.DataFrame(table_data)
+    st.dataframe(table_df, use_container_width=True, height=300)
+
+    with st.expander("ℹ️ How each indicator is computed"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <table style="width:100%; border-collapse:collapse;">
+            <tr style="background-color:#1f77b4; color:white;">
+                <th style="padding:8px; text-align:left;">Indicator</th>
+                <th style="padding:8px; text-align:left;">Numerator</th>
+                <th style="padding:8px; text-align:left;">Denominator</th>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Hypothermia on Admission</b></td>
+                <td style="padding:8px;">Newborns with temp &lt; 36.5°C</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Inborn Hypothermia</b></td>
+                <td style="padding:8px;">Inborn newborns with temp &lt; 36.5°C</td>
+                <td style="padding:8px;">Total inborn newborns</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Outborn Hypothermia</b></td>
+                <td style="padding:8px;">Outborn newborns with temp &lt; 36.5°C</td>
+                <td style="padding:8px;">Total outborn newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Not Hypothermic</b></td>
+                <td style="padding:8px;">Newborns with temp ≥ 36.5°C</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Not Hypo Inborn</b></td>
+                <td style="padding:8px;">Inborn newborns with temp ≥ 36.5°C</td>
+                <td style="padding:8px;">Total inborn newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Not Hypo Outborn</b></td>
+                <td style="padding:8px;">Outborn newborns with temp ≥ 36.5°C</td>
+                <td style="padding:8px;">Total outborn newborns</td>
+            </tr>
+            </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _render_hypothermia_combined_comparison_chart(
+    df_to_use,
+    comparison_mode,
+    display_names,
+    facility_uids,
+    facilities_by_region,
+    region_names,
+    bg_color,
+    text_color,
+    is_national,
+    show_chart=True,
+):
+    """Render combined hypothermia comparison as a simple table"""
+    indicators = HYPO_COMBINED_INDICATORS
+
+    # Multiselect filter
+    with st.expander("Filter Hypothermia Indicators", expanded=False):
+        selected_display_names = st.multiselect(
+            "Select indicators to display:",
+            options=[ind["display_name"] for ind in indicators],
+            default=[ind["display_name"] for ind in indicators],
+            key="hypo_combined_comp_indicator_filter",
+        )
+
+    filtered_indicators = [
+        ind for ind in indicators if ind["display_name"] in selected_display_names
+    ]
+    if not filtered_indicators:
+        st.warning("No indicators selected.")
+        return
+
+    # Get date range filters
+    date_range_filters = {}
+    if "filters" in st.session_state:
+        date_range_filters = {
+            "start_date": st.session_state.filters.get("start_date"),
+            "end_date": st.session_state.filters.get("end_date"),
+        }
+
+    # Determine entities
+    if comparison_mode == "facility" and display_names and facility_uids:
+        entities = list(zip(facility_uids, display_names))
+        entity_label_col = "Facility"
+    elif comparison_mode == "region" and is_national and region_names:
+        entities = [(r, r) for r in region_names]
+        entity_label_col = "Region"
+    else:
+        # Single entity mode: show overall aggregated data
+        entities = [("all", "All Selected")]
+        entity_label_col = "Entity"
+
+    comparison_rows = []
+    for uid, name in entities:
+        row = {entity_label_col: name}
+
+        if comparison_mode == "facility" and uid != "all":
+            entity_df = df_to_use[df_to_use["orgUnit"] == uid].copy()
+            entity_facility_uids = [uid]
+        elif comparison_mode == "region" and is_national and uid != "all":
+            region_facility_uids = [
+                f[1] for f in facilities_by_region.get(uid, [])
+            ]
+            entity_df = df_to_use[
+                df_to_use["orgUnit"].isin(region_facility_uids)
+            ].copy()
+            entity_facility_uids = region_facility_uids
+        else:
+            entity_df = df_to_use.copy()
+            entity_facility_uids = facility_uids
+
+        if entity_df.empty:
+            for ind in filtered_indicators:
+                row[ind["short_name"]] = "-"
+            comparison_rows.append(row)
+            continue
+
+        # Compute aggregated value for each indicator
+        for ind in filtered_indicators:
+            numerator, denominator, _ = get_numerator_denominator_for_newborn_kpi_with_all(
+                entity_df, ind["kpi_name"], entity_facility_uids, date_range_filters,
+            )
+            if denominator > 0:
+                value = (numerator / denominator * 100)
+                row[ind["short_name"]] = f"{value:.1f}% ({int(numerator)}/{int(denominator)})"
+            else:
+                row[ind["short_name"]] = "-"
+
+        comparison_rows.append(row)
+
+    if not comparison_rows:
+        st.info("⚠️ No comparison data available.")
+        return
+
+    comp_df = pd.DataFrame(comparison_rows)
+    st.subheader("📊 Hypothermia Indicators - Comparison")
+    st.dataframe(comp_df, use_container_width=True)
+
+
 def render_newborn_additional_analytics(
     kpi_selection, patient_df, facility_uids, bg_color, text_color
 ):
@@ -2523,4 +2944,9 @@ __all__ = [
     "render_cpap_rds_region_comparison",
     "render_kmc_facility_comparison",
     "render_kmc_region_comparison",
+    # Hypothermia combined view
+    "HYPO_COMBINED_MARKER",
+    "HYPO_COMBINED_INDICATORS",
+    "_render_hypothermia_combined_trend_chart",
+    "_render_hypothermia_combined_comparison_chart",
 ]
