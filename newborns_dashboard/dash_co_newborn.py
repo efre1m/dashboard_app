@@ -694,6 +694,10 @@ def render_newborn_kpi_tab_navigation():
             if st.button("Indicator Coverage Run Charts", key="hypo_combined_btn", use_container_width=True,
                          type=("primary" if selected_kpi == HYPO_COMBINED_MARKER else "secondary")):
                 selected_kpi = HYPO_COMBINED_MARKER
+        with cols[1]:
+            if st.button("Quality of Care", key="hypo_qoc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == HYPO_QOC_MARKER else "secondary")):
+                selected_kpi = HYPO_QOC_MARKER
 
     with tab_intervention:
         # Intervention - 3 buttons (General CPAP removed)
@@ -820,6 +824,18 @@ def render_newborn_trend_chart_section(
         _render_hypothermia_combined_trend_chart(
             working_df,
             "Indicator Coverage Run Charts",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Hypothermia Quality of Care stacked chart
+    if kpi_selection == HYPO_QOC_MARKER:
+        _render_hypothermia_qoc_trend_chart(
+            working_df,
+            "Thermal Status at Admission",
             bg_color,
             text_color,
             facility_uids,
@@ -1161,6 +1177,18 @@ def render_newborn_comparison_chart(
             text_color,
             is_national,
             show_chart=show_chart,
+        )
+        return
+
+    # SPECIAL HANDLING: Hypothermia Quality of Care
+    if kpi_selection == HYPO_QOC_MARKER:
+        _render_hypothermia_qoc_trend_chart(
+            df_to_use,
+            "Thermal Status at Admission",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters={},
         )
         return
 
@@ -2121,6 +2149,17 @@ HYPO_COMBINED_INDICATORS = [
 ]
 
 HYPO_COMBINED_MARKER = "__hypothermia_combined__"
+HYPO_QOC_MARKER = "__hypothermia_qoc__"
+
+# Thermal status categories and colors for Quality of Care chart
+THERMAL_CATEGORIES = [
+    ("Fever >37.5\u00b0C", "#9B59B6"),
+    ("Normal 36.5\u201337.4\u00b0C", "#2ECC71"),
+    ("Mild Hypothermia 36.0\u201336.4\u00b0C", "#F1C40F"),
+    ("Moderate Hypothermia 32.0\u201335.9\u00b0C", "#E67E22"),
+    ("Severe Hypothermia <32.0\u00b0C", "#B30000"),
+    ("Missing Temperature", "#7F8C8D"),
+]
 
 
 def _render_hypothermia_combined_trend_chart(
@@ -2487,6 +2526,241 @@ def _render_hypothermia_combined_comparison_chart(
     comp_df = pd.DataFrame(comparison_rows)
     st.subheader("📊 Hypothermia Indicators - Comparison")
     st.dataframe(comp_df, use_container_width=True)
+
+
+TEMP_COL_QOC = "temp_at_admission_nicu_admission_careform"
+
+
+def _get_temp_category(temp_val):
+    if pd.isna(temp_val):
+        return "Missing Temperature"
+    if temp_val > 37.5:
+        return "Fever >37.5\u00b0C"
+    if temp_val >= 36.5:
+        return "Normal 36.5\u201337.4\u00b0C"
+    if temp_val >= 36.0:
+        return "Mild Hypothermia 36.0\u201336.4\u00b0C"
+    if temp_val >= 32.0:
+        return "Moderate Hypothermia 32.0\u201335.9\u00b0C"
+    return "Severe Hypothermia <32.0\u00b0C"
+
+
+def _render_hypothermia_qoc_trend_chart(
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render stacked bar chart for Thermal Status at Admission"""
+    categories = THERMAL_CATEGORIES
+    cat_names = [c[0] for c in categories]
+    cat_colors = [c[1] for c in categories]
+
+    if TEMP_COL_QOC not in working_df.columns:
+        st.warning("\u26a0\ufe0f Required temperature column not found.")
+        return
+
+    working_df = working_df.copy()
+    working_df["event_date"] = pd.to_datetime(
+        working_df["enrollment_date"], errors="coerce"
+    )
+
+    # Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+            working_df = working_df[
+                (working_df["event_date"] >= start_dt)
+                & (working_df["event_date"] < end_dt)
+            ].copy()
+
+    working_df = working_df[working_df["event_date"].notna()].copy()
+    if working_df.empty:
+        st.warning("\u26a0\ufe0f No data available for thermal status chart.")
+        return
+
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        working_df = assign_period(working_df, "event_date", period_label)
+    except Exception:
+        st.error("Error assigning periods")
+        return
+
+    # Categorize temperature
+    working_df["temp_numeric"] = pd.to_numeric(
+        working_df[TEMP_COL_QOC], errors="coerce"
+    )
+    working_df["temp_category"] = working_df["temp_numeric"].apply(_get_temp_category)
+
+    # Get unique periods in order
+    unique_periods = working_df[["period_display", "period_sort"]].drop_duplicates()
+    unique_periods = unique_periods.sort_values("period_sort")
+    periods = unique_periods["period_display"].tolist()
+
+    # Compute counts per period per category
+    all_data = []
+    for _, row_data in unique_periods.iterrows():
+        period_display = row_data["period_display"]
+        period_df = working_df[working_df["period_display"] == period_display]
+        total = len(period_df)
+        row = {"period_display": period_display, "period_sort": row_data["period_sort"], "total": total}
+        for cat_name in cat_names:
+            count = int((period_df["temp_category"] == cat_name).sum())
+            pct = (count / total * 100) if total > 0 else 0.0
+            row[f"{cat_name}_count"] = count
+            row[f"{cat_name}_pct"] = pct
+        all_data.append(row)
+
+    if not all_data:
+        st.info("\u26a0\ufe0f No period data available.")
+        return
+
+    agg_df = pd.DataFrame(all_data)
+    agg_df = agg_df.sort_values("period_sort")
+
+    # Build 100% stacked bar chart
+    fig = go.Figure()
+    for cat_name, cat_color in categories:
+        pct_col = f"{cat_name}_pct"
+        count_col = f"{cat_name}_count"
+        fig.add_trace(go.Bar(
+            name=cat_name,
+            x=agg_df["period_display"],
+            y=agg_df[pct_col],
+            marker_color=cat_color,
+            text=[f"{v:.1f}%" for v in agg_df[pct_col]],
+            textposition="inside",
+            textfont=dict(color="white", size=10),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                f"{cat_name}<br>"
+                "Percentage: %{y:.1f}%%<br>"
+                "Count: %{customdata[0]}<br>"
+                "Total Admissions: %{customdata[1]}<br>"
+                "<extra></extra>"
+            ),
+            customdata=agg_df[[count_col, "total"]].values,
+            cliponaxis=False,
+        ))
+
+    fig.update_layout(
+        title=chart_title,
+        barmode="stack",
+        barnorm="percent",
+        height=500,
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=11),
+        ),
+        margin=dict(l=60, r=60, t=100, b=60),
+        yaxis=dict(
+            title="Percentage (%)",
+            range=[0, 100],
+            dtick=20,
+            ticksuffix="%",
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        ),
+        xaxis=dict(
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,
+            tickangle=-45,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Table
+    st.subheader("\U0001f4ca Thermal Status at Admission Table")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+
+    table_data = []
+    for _, r in agg_df.iterrows():
+        row = {"Period": r["period_display"]}
+        for cat_name in cat_names:
+            cnt = int(r[f"{cat_name}_count"])
+            den = int(r["total"])
+            pct = r[f"{cat_name}_pct"]
+            row[cat_name] = f"{pct:.1f}% ({cnt}/{den})" if den > 0 else "-"
+        table_data.append(row)
+
+    overall_row = {"Period": "Overall"}
+    for cat_name in cat_names:
+        total_cnt = int(agg_df[f"{cat_name}_count"].sum())
+        total_den = int(agg_df["total"].sum())
+        overall_pct = (total_cnt / total_den * 100) if total_den > 0 else 0.0
+        overall_row[cat_name] = f"{overall_pct:.1f}% ({total_cnt}/{total_den})" if total_den > 0 else "-"
+    table_data.append(overall_row)
+
+    table_df = pd.DataFrame(table_data)
+    st.dataframe(table_df, use_container_width=True, height=300)
+
+    with st.expander("\u2139\ufe0f How each thermal category is defined"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <table style="width:100%; border-collapse:collapse;">
+            <tr style="background-color:#1f77b4; color:white;">
+                <th style="padding:8px; text-align:left;">Category</th>
+                <th style="padding:8px; text-align:left;">Temperature Range</th>
+                <th style="padding:8px; text-align:left;">Denominator</th>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><span style="color:#9B59B6;">\u25cf</span> <b>Fever</b></td>
+                <td style="padding:8px;">> 37.5\u00b0C</td>
+                <td style="padding:8px;" rowspan="6">Total admitted newborns in period</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><span style="color:#2ECC71;">\u25cf</span> <b>Normal</b></td>
+                <td style="padding:8px;">36.5 \u2013 37.4\u00b0C</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><span style="color:#F1C40F;">\u25cf</span> <b>Mild Hypothermia</b></td>
+                <td style="padding:8px;">36.0 \u2013 36.4\u00b0C</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><span style="color:#E67E22;">\u25cf</span> <b>Moderate Hypothermia</b></td>
+                <td style="padding:8px;">32.0 \u2013 35.9\u00b0C</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><span style="color:#B30000;">\u25cf</span> <b>Severe Hypothermia</b></td>
+                <td style="padding:8px;">< 32.0\u00b0C</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><span style="color:#7F8C8D;">\u25cf</span> <b>Missing Temperature</b></td>
+                <td style="padding:8px;">No temperature recorded</td>
+            </tr>
+            </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_newborn_additional_analytics(
@@ -2949,4 +3223,8 @@ __all__ = [
     "HYPO_COMBINED_INDICATORS",
     "_render_hypothermia_combined_trend_chart",
     "_render_hypothermia_combined_comparison_chart",
+    # Hypothermia Quality of Care
+    "HYPO_QOC_MARKER",
+    "THERMAL_CATEGORIES",
+    "_render_hypothermia_qoc_trend_chart",
 ]
