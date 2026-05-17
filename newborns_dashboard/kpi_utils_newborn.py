@@ -941,6 +941,14 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     #     filtered_df, facility_uids
     # )
 
+    # VITAL MONITORING KPIs
+    temp_taken_rate, temp_taken_count, total_temp_taken = compute_temperature_taken_at_admission(
+        filtered_df, facility_uids
+    )
+    bw_taken_rate, bw_taken_count, total_bw_taken = compute_birth_weight_taken(
+        filtered_df, facility_uids
+    )
+
     admitted_newborns_count = compute_admitted_newborns_count(
         filtered_df, facility_uids
     )
@@ -990,6 +998,13 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         # "antibiotics_count": int(antibiotics_count),
         # "total_admitted_abx": int(total_admitted_abx),
         "admitted_newborns_count": int(admitted_newborns_count),
+        # VITAL MONITORING
+        "temperature_taken_rate": float(temp_taken_rate),
+        "temperature_taken_count": int(temp_taken_count),
+        "total_temp_taken": int(total_temp_taken),
+        "birth_weight_taken_rate": float(bw_taken_rate),
+        "birth_weight_taken_count": int(bw_taken_count),
+        "total_bw_taken": int(total_bw_taken),
         # DATA QUALITY
         "missing_temperature_rate": float(missing_temp_rate),
         "missing_temperature_count": int(missing_temp_count),
@@ -1207,6 +1222,17 @@ def get_numerator_denominator_for_newborn_kpi(
             "numerator": "missing_birth_location_count",
             "denominator": "total_admitted",
             "value": "missing_birth_location_rate",
+        },
+        # VITAL MONITORING
+        "Temperature Taken at Admission (%)": {
+            "numerator": "temperature_taken_count",
+            "denominator": "total_temp_taken",
+            "value": "temperature_taken_rate",
+        },
+        "Birth Weight Taken (%)": {
+            "numerator": "birth_weight_taken_count",
+            "denominator": "total_bw_taken",
+            "value": "birth_weight_taken_rate",
         },
         # ============== ANTIBIOTICS MAPPING - COMMENTED OUT ==============
         # "Antibiotics for Clinical Sepsis (%)": {
@@ -2224,6 +2250,63 @@ def extract_period_columns_newborn(df, date_column):
     return result_df
 
 
+# ---------------- Vital Monitoring Functions ----------------
+def compute_temperature_taken_at_admission(df, facility_uids=None):
+    """Compute count of newborns with temperature taken at admission"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "temperature_taken")
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+        total_admitted = len(filtered_df)
+        if total_admitted == 0:
+            result = (0.0, 0, 0)
+        elif TEMPERATURE_ON_ADMISSION_COL not in filtered_df.columns:
+            result = (0.0, 0, total_admitted)
+        else:
+            taken_count = filtered_df[TEMPERATURE_ON_ADMISSION_COL].notna().sum()
+            rate = (taken_count / total_admitted * 100)
+            result = (rate, int(taken_count), int(total_admitted))
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
+def compute_birth_weight_taken(df, facility_uids=None):
+    """Compute count of newborns with birth weight taken"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "birth_weight_taken")
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+        total_admitted = len(filtered_df)
+        if total_admitted == 0:
+            result = (0.0, 0, 0)
+        else:
+            from newborns_dashboard.kpi_utils_newborn_simplified import BIRTH_WEIGHT_COL
+            if BIRTH_WEIGHT_COL not in filtered_df.columns:
+                result = (0.0, 0, total_admitted)
+            else:
+                taken_count = filtered_df[BIRTH_WEIGHT_COL].notna().sum()
+                rate = (taken_count / total_admitted * 100)
+                result = (rate, int(taken_count), int(total_admitted))
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
 # ---------------- Export all functions ----------------
 __all__ = [
     # Cache functions
@@ -2275,4 +2358,7 @@ __all__ = [
     "render_admitted_newborns_region_comparison_chart",
     # Period aggregation functions
     "extract_period_columns_newborn",
+    # Vital Monitoring
+    "compute_temperature_taken_at_admission",
+    "compute_birth_weight_taken",
 ]

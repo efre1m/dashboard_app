@@ -191,6 +191,17 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "Patients with Missing Birth Location",
         "denominator_name": "Total Admitted Newborns",
     },
+    # VITAL MONITORING KPIs
+    "Temperature Taken at Admission (%)": {
+        "title": "Temperature Taken at Admission (%)",
+        "numerator_name": "Temp. Taken",
+        "denominator_name": "Total Admitted Newborns",
+    },
+    "Birth Weight Taken (%)": {
+        "title": "Birth Weight Taken (%)",
+        "numerator_name": "BWeight. Taken",
+        "denominator_name": "Total Admitted Newborns",
+    },
 }
 
 # KPI options for newborn dashboard (REMOVED CULTURE KPIs)
@@ -415,6 +426,19 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
     ],
+    # VITAL MONITORING
+    "Temperature Taken at Admission (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "temp_at_admission_nicu_admission_careform",
+    ],
+    "Birth Weight Taken (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "birth_weight_n_nicu_admission_careform",
+    ],
 }
 
 # SIMPLIFIED KPI DATE COLUMN MAPPING - UPDATED WITH DATASET NAMES
@@ -615,13 +639,14 @@ def render_newborn_kpi_tab_navigation():
     if "selected_newborn_kpi" not in st.session_state:
         st.session_state.selected_newborn_kpi = "Admitted Newborns" # Default to first tab item if appropriate
 
-    # Create main KPI group tabs - UPDATED TO 6 TABS & REORDERED
-    # Enrollment -> Birth -> Hypothermia -> Intervention -> Mortality -> Data Quality
-    tab_enrollment, tab_birth, tab_thermal, tab_intervention, tab_mortality, tab_dq = st.tabs(
+    # Create main KPI group tabs - UPDATED TO 7 TABS & REORDERED
+    # Enrollment -> Birth -> Hypothermia -> Vital Monitoring -> Intervention -> Mortality -> Data Quality
+    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_intervention, tab_mortality, tab_dq = st.tabs(
         [
             "Enrollment",
             "Birth",
             "Hypothermia",
+            "Vital Monitoring",
             "Intervention",
             "Mortality",
             "Data Quality",
@@ -698,6 +723,13 @@ def render_newborn_kpi_tab_navigation():
             if st.button("Quality of Care", key="hypo_qoc_btn", use_container_width=True,
                          type=("primary" if selected_kpi == HYPO_QOC_MARKER else "secondary")):
                 selected_kpi = HYPO_QOC_MARKER
+
+    with tab_vital:
+        cols = st.columns(3)
+        with cols[0]:
+            if st.button("Indicator Coverage Run Charts", key="vital_monitoring_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == VITAL_MONITORING_MARKER else "secondary")):
+                selected_kpi = VITAL_MONITORING_MARKER
 
     with tab_intervention:
         # Intervention - 3 buttons (General CPAP removed)
@@ -836,6 +868,18 @@ def render_newborn_trend_chart_section(
         _render_hypothermia_qoc_trend_chart(
             working_df,
             "Thermal Status at Admission",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Vital Monitoring combined chart
+    if kpi_selection == VITAL_MONITORING_MARKER:
+        _render_vital_monitoring_trend_chart(
+            working_df,
+            "Indicator Coverage Run Charts",
             bg_color,
             text_color,
             facility_uids,
@@ -1189,6 +1233,22 @@ def render_newborn_comparison_chart(
             text_color,
             facility_uids,
             date_range_filters={},
+        )
+        return
+
+    # SPECIAL HANDLING: Vital Monitoring
+    if kpi_selection == VITAL_MONITORING_MARKER:
+        _render_vital_monitoring_comparison_chart(
+            df_to_use,
+            comparison_mode,
+            display_names,
+            facility_uids,
+            facilities_by_region,
+            region_names,
+            bg_color,
+            text_color,
+            is_national,
+            show_chart=show_chart,
         )
         return
 
@@ -2151,6 +2211,23 @@ HYPO_COMBINED_INDICATORS = [
 HYPO_COMBINED_MARKER = "__hypothermia_combined__"
 HYPO_QOC_MARKER = "__hypothermia_qoc__"
 
+VITAL_MONITORING_MARKER = "__vital_monitoring__"
+
+VITAL_MONITORING_INDICATORS = [
+    {
+        "kpi_name": "Temperature Taken at Admission (%)",
+        "display_name": "Temperature Taken at Admission (%)",
+        "short_name": "Temp. taken",
+        "sort_order": 1,
+    },
+    {
+        "kpi_name": "Birth Weight Taken (%)",
+        "display_name": "Birth Weight Taken (%)",
+        "short_name": "BWeight. taken",
+        "sort_order": 2,
+    },
+]
+
 # Thermal status categories and colors for Quality of Care chart
 THERMAL_CATEGORIES = [
     ("Fever >37.5\u00b0C", "#9B59B6"),
@@ -2711,6 +2788,52 @@ def _render_hypothermia_combined_comparison_chart(
         summary_df = pd.DataFrame(summary_rows)
         st.dataframe(summary_df, use_container_width=True)
 
+    with st.expander("ℹ️ How each indicator is computed"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <table style="width:100%; border-collapse:collapse;">
+            <tr style="background-color:#1f77b4; color:white;">
+                <th style="padding:8px; text-align:left;">Indicator</th>
+                <th style="padding:8px; text-align:left;">Numerator</th>
+                <th style="padding:8px; text-align:left;">Denominator</th>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Hypothermia on Admission</b></td>
+                <td style="padding:8px;">Newborns with temp &lt; 36.5°C</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Inborn Hypothermia</b></td>
+                <td style="padding:8px;">Inborn newborns with temp &lt; 36.5°C</td>
+                <td style="padding:8px;">Total inborn newborns</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Outborn Hypothermia</b></td>
+                <td style="padding:8px;">Outborn newborns with temp &lt; 36.5°C</td>
+                <td style="padding:8px;">Total outborn newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Not Hypothermic</b></td>
+                <td style="padding:8px;">Newborns with temp ≥ 36.5°C</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Not Hypo Inborn</b></td>
+                <td style="padding:8px;">Inborn newborns with temp ≥ 36.5°C</td>
+                <td style="padding:8px;">Total inborn newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Not Hypo Outborn</b></td>
+                <td style="padding:8px;">Outborn newborns with temp ≥ 36.5°C</td>
+                <td style="padding:8px;">Total outborn newborns</td>
+            </tr>
+            </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 
 TEMP_COL_QOC = "temp_at_admission_nicu_admission_careform"
 
@@ -2939,6 +3062,533 @@ def _render_hypothermia_qoc_trend_chart(
             <tr>
                 <td style="padding:8px;"><span style="color:#7F8C8D;">\u25cf</span> <b>Missing Temperature</b></td>
                 <td style="padding:8px;">No temperature recorded</td>
+            </tr>
+            </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _render_vital_monitoring_trend_chart(
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render combined Vital Monitoring indicators in a 1x2 panel chart"""
+    indicators = VITAL_MONITORING_INDICATORS
+
+    if not indicators:
+        return
+
+    date_column = "enrollment_date"
+
+    if date_column not in working_df.columns:
+        st.warning(f"⚠️ Required date column '{date_column}' not found.")
+        return
+
+    working_df = working_df.copy()
+    working_df["event_date"] = pd.to_datetime(working_df[date_column], errors="coerce")
+
+    # Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+            working_df = working_df[
+                (working_df["event_date"] >= start_dt)
+                & (working_df["event_date"] < end_dt)
+            ].copy()
+
+    working_df = working_df[working_df["event_date"].notna()].copy()
+    if working_df.empty:
+        st.warning("⚠️ No data available for vital monitoring indicators.")
+        return
+
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        working_df = assign_period(working_df, "event_date", period_label)
+    except Exception:
+        st.error("Error assigning periods")
+        return
+
+    # Get unique periods in order
+    unique_periods = working_df[["period_display", "period_sort"]].drop_duplicates()
+    unique_periods = unique_periods.sort_values("period_sort")
+
+    # Compute all indicators for each period
+    trend_data = []
+    for _, row_data in unique_periods.iterrows():
+        period_display = row_data["period_display"]
+        period_sort = row_data["period_sort"]
+        period_df = working_df[working_df["period_display"] == period_display]
+
+        if period_df.empty:
+            continue
+
+        period_row = {
+            "period_display": period_display,
+            "period_sort": period_sort,
+        }
+
+        for ind in indicators:
+            kpi_name = ind["kpi_name"]
+            numerator, denominator, _ = get_numerator_denominator_for_newborn_kpi_with_all(
+                period_df, kpi_name, facility_uids, date_range_filters,
+            )
+            value = (numerator / denominator * 100) if denominator > 0 else None
+            period_row[f"{ind['kpi_name']}_value"] = value
+            period_row[f"{ind['kpi_name']}_num"] = int(numerator)
+            period_row[f"{ind['kpi_name']}_den"] = int(denominator)
+
+        trend_data.append(period_row)
+
+    if not trend_data:
+        st.info("⚠️ No period data available for chart.")
+        return
+
+    trend_df = pd.DataFrame(trend_data)
+    trend_df = trend_df.sort_values("period_sort")
+
+    periods = trend_df["period_display"].tolist()
+
+    # Build 1x2 subplot grid
+    rows, cols = 1, 2
+
+    fig = make_subplots(
+        rows=rows,
+        cols=cols,
+        subplot_titles=[ind["display_name"] for ind in indicators],
+        horizontal_spacing=0.12,
+        vertical_spacing=0.15,
+    )
+
+    for idx, ind in enumerate(indicators):
+        current_col = idx + 1
+        value_col = f"{ind['kpi_name']}_value"
+        num_col = f"{ind['kpi_name']}_num"
+        den_col = f"{ind['kpi_name']}_den"
+
+        fig.add_trace(
+            go.Scatter(
+                x=trend_df["period_display"],
+                y=trend_df[value_col],
+                name=ind["short_name"],
+                mode="lines",
+                line=dict(color="#1f77b4", width=3, shape="spline", smoothing=0.35),
+                connectgaps=False,
+                cliponaxis=False,
+                hovertemplate=(
+                    f"<b>{ind['display_name']}</b><br>"
+                    "Period: %{x}<br>"
+                    "Rate: %{y:.1f}%<br>"
+                    "Numerator: %{customdata[0]}<br>"
+                    "Denominator: %{customdata[1]}<br>"
+                    "<extra></extra>"
+                ),
+                customdata=np.column_stack(
+                    (trend_df[num_col].values, trend_df[den_col].values)
+                ),
+            ),
+            row=1,
+            col=current_col,
+        )
+
+        fig.add_hline(
+            y=100, line_dash="dash", line_color="green", line_width=1.5,
+            row=1, col=current_col,
+        )
+
+        fig.update_xaxes(
+            row=1, col=current_col,
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,
+            tickangle=-45,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        )
+        fig.update_yaxes(
+            row=1, col=current_col,
+            range=[0, 105],
+            dtick=25,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            ticksuffix="%",
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        )
+
+    fig.update_layout(
+        title=dict(text=chart_title, font=dict(size=16)),
+        height=450,
+        showlegend=False,
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        title_y=0.95,
+        margin=dict(l=50, r=50, t=100, b=80),
+    )
+    for ann in fig['layout']['annotations']:
+        ann['font'] = dict(size=12)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Combined table
+    st.subheader("📊 Vital Monitoring Indicators Table")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+
+    table_data = []
+    for period in periods:
+        period_row_data = trend_df[trend_df["period_display"] == period].iloc[0]
+        row = {"Period": period}
+        for ind in indicators:
+            num = int(period_row_data[f"{ind['kpi_name']}_num"])
+            den = int(period_row_data[f"{ind['kpi_name']}_den"])
+            val = period_row_data[f"{ind['kpi_name']}_value"]
+            if den > 0:
+                row[ind["short_name"]] = f"{val:.1f}% ({num}/{den})"
+            else:
+                row[ind["short_name"]] = "-"
+        table_data.append(row)
+
+    # Overall row
+    overall_row = {"Period": "Overall"}
+    for ind in indicators:
+        total_num = int(trend_df[f"{ind['kpi_name']}_num"].sum())
+        total_den = int(trend_df[f"{ind['kpi_name']}_den"].sum())
+        overall_val = (total_num / total_den * 100) if total_den > 0 else 0.0
+        if total_den > 0:
+            overall_row[ind["short_name"]] = f"{overall_val:.1f}% ({total_num}/{total_den})"
+        else:
+            overall_row[ind["short_name"]] = "-"
+    table_data.append(overall_row)
+
+    table_df = pd.DataFrame(table_data)
+    st.dataframe(table_df, use_container_width=True, height=200)
+
+    with st.expander("ℹ️ How each indicator is computed"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <table style="width:100%; border-collapse:collapse;">
+            <tr style="background-color:#1f77b4; color:white;">
+                <th style="padding:8px; text-align:left;">Indicator</th>
+                <th style="padding:8px; text-align:left;">Numerator</th>
+                <th style="padding:8px; text-align:left;">Denominator</th>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Temperature Taken at Admission</b></td>
+                <td style="padding:8px;">Newborns with temperature recorded at admission</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Birth Weight Taken</b></td>
+                <td style="padding:8px;">Newborns with birth weight recorded</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _render_vital_monitoring_comparison_chart(
+    df_to_use,
+    comparison_mode,
+    display_names,
+    facility_uids,
+    facilities_by_region,
+    region_names,
+    bg_color,
+    text_color,
+    is_national,
+    show_chart=True,
+):
+    """Render combined Vital Monitoring comparison with multi-line charts (facility/region comparison)"""
+    indicators = VITAL_MONITORING_INDICATORS
+
+    # Get date range filters
+    date_range_filters = {}
+    if "filters" in st.session_state:
+        date_range_filters = {
+            "start_date": st.session_state.filters.get("start_date"),
+            "end_date": st.session_state.filters.get("end_date"),
+        }
+
+    # Determine entities
+    if comparison_mode == "facility" and display_names and facility_uids:
+        entities = list(zip(facility_uids, display_names))
+        entity_label_col = "Facility"
+    elif comparison_mode == "region" and is_national and region_names:
+        entities = [(r, r) for r in region_names]
+        entity_label_col = "Region"
+    else:
+        entities = []
+        entity_label_col = "Entity"
+
+    if not entities:
+        st.info("No entities available for comparison.")
+        return
+
+    # Prepare date column
+    date_column = get_relevant_date_column_for_newborn_kpi_with_all(indicators[0]["kpi_name"])
+    if date_column not in df_to_use.columns:
+        fallback = get_relevant_date_column_for_newborn_kpi(indicators[0]["kpi_name"])
+        if fallback in df_to_use.columns:
+            date_column = fallback
+
+    df = df_to_use.copy()
+    df["event_date"] = pd.to_datetime(df[date_column], errors="coerce")
+    df = df[df["event_date"].notna()].copy()
+
+    if df.empty:
+        st.info("No data available for comparison.")
+        return
+
+    # Apply date range filtering
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+            df = df[(df["event_date"] >= start_dt) & (df["event_date"] < end_dt)].copy()
+
+    if df.empty:
+        st.info("No data available for comparison.")
+        return
+
+    # Assign periods
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        df = assign_period(df, "event_date", period_label)
+    except Exception:
+        st.error("Error assigning periods")
+        return
+
+    # Get unique periods in order
+    unique_periods = df[["period_display", "period_sort"]].drop_duplicates().sort_values("period_sort")
+    period_sort_map = dict(zip(unique_periods["period_display"], unique_periods["period_sort"]))
+    periods = unique_periods["period_display"].tolist()
+    if not periods:
+        st.info("No period data available.")
+        return
+
+    # Build per-entity per-period per-indicator data
+    comparison_rows = []
+    for uid, name in entities:
+        if comparison_mode == "facility" and uid != "all":
+            entity_df = df[df["orgUnit"] == uid].copy()
+            entity_facility_uids = [uid]
+        elif comparison_mode == "region" and is_national and uid != "all":
+            region_facility_uids = [
+                f[1] for f in facilities_by_region.get(uid, [])
+            ]
+            entity_df = df[df["orgUnit"].isin(region_facility_uids)].copy()
+            entity_facility_uids = region_facility_uids
+        else:
+            entity_df = df.copy()
+            entity_facility_uids = facility_uids
+
+        if entity_df.empty:
+            continue
+
+        for period_display in periods:
+            period_df = entity_df[entity_df["period_display"] == period_display].copy()
+            if period_df.empty:
+                continue
+            row = {
+                entity_label_col: name,
+                "period_display": period_display,
+                "period_sort": period_sort_map.get(period_display, 0),
+            }
+            for ind in indicators:
+                numerator, denominator, _ = get_numerator_denominator_for_newborn_kpi_with_all(
+                    period_df, ind["kpi_name"], entity_facility_uids, {},
+                )
+                rate = (numerator / denominator * 100) if denominator > 0 else None
+                row[f"{ind['short_name']}_rate"] = rate
+                row[f"{ind['short_name']}_num"] = int(numerator)
+                row[f"{ind['short_name']}_den"] = int(denominator)
+            comparison_rows.append(row)
+
+    if not comparison_rows:
+        st.info("No comparison data available.")
+        return
+
+    comp_df = pd.DataFrame(comparison_rows)
+    comp_df = comp_df.sort_values(["period_sort", entity_label_col])
+
+    # Build 1x2 subplot grid
+    n_indicators = len(indicators)
+    if n_indicators > 0:
+        n_cols = 2
+        n_rows = 1
+        subplot_titles = [ind["display_name"] for ind in indicators]
+        fig = make_subplots(
+            rows=n_rows, cols=n_cols,
+            subplot_titles=subplot_titles,
+            horizontal_spacing=0.12,
+        )
+
+        entity_names = comp_df[entity_label_col].unique()
+        entity_colors = {}
+        palette = [
+            "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+            "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+        ]
+        for idx, en in enumerate(entity_names):
+            entity_colors[en] = palette[idx % len(palette)]
+
+        for idx, ind in enumerate(indicators):
+            col_idx = idx + 1
+            rate_col = f"{ind['short_name']}_rate"
+            num_col = f"{ind['short_name']}_num"
+            den_col = f"{ind['short_name']}_den"
+
+            ind_data = comp_df[[entity_label_col, "period_display", "period_sort", rate_col, num_col, den_col]].dropna(subset=[rate_col]).copy()
+
+            for en in entity_names:
+                en_data = ind_data[ind_data[entity_label_col] == en].sort_values("period_sort")
+                if en_data.empty:
+                    continue
+                fig.add_trace(
+                    go.Scatter(
+                        name=en,
+                        x=en_data["period_display"],
+                        y=en_data[rate_col],
+                        mode="lines",
+                        line=dict(color=entity_colors.get(en, "#333333"), width=2),
+                        connectgaps=False,
+                        hovertemplate=(
+                            f"<b>{en}</b><br>"
+                            "Period: %{x}<br>"
+                            f"{ind['display_name']}: %{{y:.1f}}%<br>"
+                            "Numerator: %{customdata[0]}<br>"
+                            "Denominator: %{customdata[1]}<br>"
+                            "<extra></extra>"
+                        ),
+                        customdata=en_data[[num_col, den_col]].values,
+                        showlegend=(idx == 0),
+                    ),
+                    row=1, col=col_idx,
+                )
+
+            fig.add_hline(
+                y=100, line_dash="dash", line_color="green", line_width=1.5,
+                row=1, col=col_idx,
+            )
+
+            fig.update_xaxes(
+                row=1, col=col_idx,
+                type="category",
+                categoryorder="array",
+                categoryarray=periods,
+                tickangle=-45,
+                gridcolor="rgba(128,128,128,0.2)",
+                showline=True,
+                linewidth=1,
+                linecolor="rgba(128,128,128,0.5)",
+                mirror=True,
+            )
+            fig.update_yaxes(
+                row=1, col=col_idx,
+                range=[0, 105],
+                dtick=25,
+                gridcolor="rgba(128,128,128,0.2)",
+                zeroline=True,
+                zerolinecolor="rgba(128,128,128,0.3)",
+                showline=True,
+                linewidth=1,
+                linecolor="rgba(128,128,128,0.5)",
+                mirror=True,
+                ticksuffix="%",
+            )
+
+        chart_title = "Vital Monitoring - Facility Comparison" if comparison_mode == "facility" else "Vital Monitoring - Region Comparison"
+        fig.update_layout(
+            title=dict(text=chart_title, font=dict(size=16)),
+            height=500,
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font_color=text_color,
+            title_font_color=text_color,
+            title_y=0.95,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                font=dict(size=11),
+            ),
+            margin=dict(l=50, r=50, t=100, b=80),
+            hovermode="x unified",
+        )
+        for ann in fig['layout']['annotations']:
+            ann['font'] = dict(size=12)
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Aggregated comparison table
+    st.subheader("Aggregated Comparison Table")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+    summary_rows = []
+    for uid, name in entities:
+        row = {entity_label_col: name}
+        entity_comp = comp_df[comp_df[entity_label_col] == name]
+        if entity_comp.empty:
+            for ind in indicators:
+                row[ind["short_name"]] = "-"
+            summary_rows.append(row)
+            continue
+        for ind in indicators:
+            total_num = int(entity_comp[f"{ind['short_name']}_num"].sum())
+            total_den = int(entity_comp[f"{ind['short_name']}_den"].sum())
+            overall_pct = (total_num / total_den * 100) if total_den > 0 else 0.0
+            row[ind["short_name"]] = f"{overall_pct:.1f}% ({total_num}/{total_den})" if total_den > 0 else "-"
+        summary_rows.append(row)
+
+    if summary_rows:
+        summary_df = pd.DataFrame(summary_rows)
+        st.dataframe(summary_df, use_container_width=True)
+
+    with st.expander("ℹ️ How each indicator is computed"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <table style="width:100%; border-collapse:collapse;">
+            <tr style="background-color:#1f77b4; color:white;">
+                <th style="padding:8px; text-align:left;">Indicator</th>
+                <th style="padding:8px; text-align:left;">Numerator</th>
+                <th style="padding:8px; text-align:left;">Denominator</th>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Temperature Taken at Admission</b></td>
+                <td style="padding:8px;">Newborns with temperature recorded at admission</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Birth Weight Taken</b></td>
+                <td style="padding:8px;">Newborns with birth weight recorded</td>
+                <td style="padding:8px;">Total admitted newborns</td>
             </tr>
             </table>
             </div>
@@ -3411,4 +4061,9 @@ __all__ = [
     "HYPO_QOC_MARKER",
     "THERMAL_CATEGORIES",
     "_render_hypothermia_qoc_trend_chart",
+    # Vital Monitoring
+    "VITAL_MONITORING_MARKER",
+    "VITAL_MONITORING_INDICATORS",
+    "_render_vital_monitoring_trend_chart",
+    "_render_vital_monitoring_comparison_chart",
 ]
