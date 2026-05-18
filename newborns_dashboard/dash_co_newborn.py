@@ -202,6 +202,11 @@ NEWBORN_KPI_MAPPING = {
         "numerator_name": "BWeight. Taken",
         "denominator_name": "Total Admitted Newborns",
     },
+    "Weight Taken at Admission (%)": {
+        "title": "Weight Taken at Admission (%)",
+        "numerator_name": "Weight. Taken",
+        "denominator_name": "Total Admitted Newborns",
+    },
 }
 
 # KPI options for newborn dashboard (REMOVED CULTURE KPIs)
@@ -438,6 +443,12 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "tei_id",
         "enrollment_date",
         "birth_weight_n_nicu_admission_careform",
+    ],
+    "Weight Taken at Admission (%)": [
+        "orgUnit",
+        "tei_id",
+        "enrollment_date",
+        "weight_at_admission_n_nicu_admission_careform",
     ],
 }
 
@@ -2226,6 +2237,12 @@ VITAL_MONITORING_INDICATORS = [
         "short_name": "BWeight. taken",
         "sort_order": 2,
     },
+    {
+        "kpi_name": "Weight Taken at Admission (%)",
+        "display_name": "Weight Taken at Admission (%)",
+        "short_name": "Weight. taken",
+        "sort_order": 3,
+    },
 ]
 
 # Thermal status categories and colors for Quality of Care chart
@@ -3158,8 +3175,9 @@ def _render_vital_monitoring_trend_chart(
 
     periods = trend_df["period_display"].tolist()
 
-    # Build 1x2 subplot grid
-    rows, cols = 1, 2
+    # Build 1xN subplot grid (one row, one column per indicator)
+    cols = len(indicators)
+    rows = 1
 
     fig = make_subplots(
         rows=rows,
@@ -3235,7 +3253,7 @@ def _render_vital_monitoring_trend_chart(
 
     fig.update_layout(
         title=dict(text=chart_title, font=dict(size=16)),
-        height=450,
+        height=400,
         showlegend=False,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -3300,6 +3318,11 @@ def _render_vital_monitoring_trend_chart(
             <tr>
                 <td style="padding:8px;"><b>Birth Weight Taken</b></td>
                 <td style="padding:8px;">Newborns with birth weight recorded</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Weight Taken at Admission</b></td>
+                <td style="padding:8px;">Newborns with weight recorded at NICU admission</td>
                 <td style="padding:8px;">Total admitted newborns</td>
             </tr>
             </table>
@@ -3436,10 +3459,10 @@ def _render_vital_monitoring_comparison_chart(
     comp_df = pd.DataFrame(comparison_rows)
     comp_df = comp_df.sort_values(["period_sort", entity_label_col])
 
-    # Build 1x2 subplot grid
+    # Build 1xN subplot grid
     n_indicators = len(indicators)
     if n_indicators > 0:
-        n_cols = 2
+        n_cols = n_indicators
         n_rows = 1
         subplot_titles = [ind["display_name"] for ind in indicators]
         fig = make_subplots(
@@ -3588,6 +3611,11 @@ def _render_vital_monitoring_comparison_chart(
             <tr>
                 <td style="padding:8px;"><b>Birth Weight Taken</b></td>
                 <td style="padding:8px;">Newborns with birth weight recorded</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Weight Taken at Admission</b></td>
+                <td style="padding:8px;">Newborns with weight recorded at NICU admission</td>
                 <td style="padding:8px;">Total admitted newborns</td>
             </tr>
             </table>

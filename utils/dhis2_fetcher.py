@@ -64,6 +64,7 @@ MATERNAL_HEALTH_ELEMENTS = {
 # NEWBORN CARE FORM DATA ELEMENTS (from second code)
 NEWBORN_HEALTH_ELEMENTS = {
     "MtIwjNsCLYy",  # Place of delivery
+    "qxnUrl2kb9J",  # Weight at admission n
     "RE3wIu5acNt",  # Temp at admission
     "ZiI6RUqXLUl",  # Birth Weight n
     "s9OrsTEv34G",  # Maternal medication during pregnancy and labor
@@ -107,6 +108,7 @@ DATA_ELEMENT_NAMES = {
     
     # Newborn Care Form (FROM SECOND CODE)
     "MtIwjNsCLYy": "Place of delivery",
+    "qxnUrl2kb9J": "Weight at admission n",
     "RE3wIu5acNt": "Temp at admission",
     "ZiI6RUqXLUl": "Birth Weight n",
     "s9OrsTEv34G": "Maternal medication during pregnancy and labor",
@@ -166,6 +168,7 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
     "mv8iC65nP21": {  # NICU Admission Careform
         "data_elements": [
             "MtIwjNsCLYy",  # Place of delivery
+            "qxnUrl2kb9J",  # Weight at admission n
             "RE3wIu5acNt",  # Temp at admission
             "ZiI6RUqXLUl",  # Birth Weight n
             "s9OrsTEv34G",  # Maternal medication during pregnancy and labor

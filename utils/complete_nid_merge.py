@@ -51,6 +51,7 @@ MAPPING = {
     "birth_location_admission_information": "place_of_delivery_nicu_admission_careform",
     "temperature_on_admission_degc_observations_and_nursing_care_1": "temp_at_admission_nicu_admission_careform",
     "birth_weight_grams_maternal_birth_and_infant_details": "birth_weight_n_nicu_admission_careform",
+    "weight_on_admission_admission_information": "weight_at_admission_n_nicu_admission_careform",
     "were_antibiotics_administered?_interventions": "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform",
     # Interventions
     "kmc_administered_interventions": "kmc_done_nurse_followup_sheet",
