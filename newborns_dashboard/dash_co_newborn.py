@@ -700,6 +700,25 @@ def render_newborn_kpi_tab_navigation():
                 selected_kpi = "Birth Weight Rate"
 
     with tab_dq:
+        st.markdown(
+            """
+            <div style="
+                background-color:#FFF4E5;
+                border-left:6px solid #E67E22;
+                padding:14px 16px;
+                border-radius:8px;
+                margin: 0 0 14px 0;
+                font-size:16px;
+                line-height:1.45;
+            ">
+                <strong>To see patients with missing variables, please visit:</strong>
+                <a href="http://143.198.108.241:8082/" target="_blank" style="font-weight:700; color:#B45309; text-decoration:underline;">
+                    Open Missing Variables Patient List
+                </a>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         # Data Quality - 4 buttons
         # Row 1
         cols = st.columns(3)
