@@ -130,17 +130,31 @@ def append_nid_to_newborn(nid_path, newborn_path):
             print(f"  ⚠️ Missing tei_id column")
             return 0, 0
 
-        # Find new patients
-        existing_teis = set(newborn_df["tei_id"].astype(str).str.strip())
-        new_nid_rows = nid_df[
-            ~nid_df["tei_id"].astype(str).str.strip().isin(existing_teis)
-        ]
+        # Find new patients by TEI
+        nid_df["tei_id"] = nid_df["tei_id"].astype(str).str.strip()
+        newborn_df["tei_id"] = newborn_df["tei_id"].astype(str).str.strip()
+
+        existing_teis = set(newborn_df["tei_id"])
+        nid_unique_teis = set(nid_df["tei_id"])
+        missing_teis = nid_unique_teis - existing_teis
+
+        print(f"  🔎 NID unique TEIs: {len(nid_unique_teis)}")
+        print(f"  🔎 Existing newborn TEIs: {len(existing_teis)}")
+        print(f"  🔎 Missing TEIs to append: {len(missing_teis)}")
+
+        # Keep only rows that are truly missing in newborn
+        new_nid_rows = nid_df[nid_df["tei_id"].isin(missing_teis)].copy()
+        # Defensive dedup: one row per TEI
+        new_nid_rows = new_nid_rows.drop_duplicates(subset=["tei_id"], keep="first")
 
         if len(new_nid_rows) == 0:
             print(f"  ⚠️ No new patients to add")
             return 0, 0
 
         print(f"  ➕ Found {len(new_nid_rows)} new patients")
+        if len(new_nid_rows) > 0:
+            sample_teis = new_nid_rows["tei_id"].head(5).tolist()
+            print(f"  🧪 Sample TEIs to append: {sample_teis}")
 
         # Track how many patients have "5" in reason columns
         count_5_to_1 = 0
