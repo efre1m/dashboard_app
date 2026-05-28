@@ -60,6 +60,8 @@ MAPPING = {
     "newborn_status_at_discharge_discharge_and_final_diagnosis": "newborn_status_at_discharge_n_discharge_care_form",
     "discharge_weight_grams_discharge_and_final_diagnosis": "weight_on_discharge_discharge_care_form",
     "sub_categories_of_infection_discharge_and_final_diagnosis": "sub_categories_of_infection_n_discharge_care_form",
+    # Observations & monitoring
+    "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2": "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2",
 }
 
 print(f"\n📋 Basic mapping: {len(MAPPING)} columns")
@@ -102,7 +104,7 @@ def get_reason_value_simple(nid_row):
 
 # ==================== 5. SIMPLE APPEND FUNCTION ====================
 def append_nid_to_newborn(nid_path, newborn_path):
-    """Simple append of new patients from NID to existing newborn file"""
+    """Upsert patients from NID into newborn file (update existing TEIs + add new TEIs)."""
 
     # Check if files exist
     if not os.path.exists(nid_path):
@@ -130,31 +132,30 @@ def append_nid_to_newborn(nid_path, newborn_path):
             print(f"  ⚠️ Missing tei_id column")
             return 0, 0
 
-        # Find new patients by TEI
+        # Prepare TEI sets
         nid_df["tei_id"] = nid_df["tei_id"].astype(str).str.strip()
         newborn_df["tei_id"] = newborn_df["tei_id"].astype(str).str.strip()
 
         existing_teis = set(newborn_df["tei_id"])
         nid_unique_teis = set(nid_df["tei_id"])
         missing_teis = nid_unique_teis - existing_teis
+        overlap_teis = nid_unique_teis.intersection(existing_teis)
 
         print(f"  🔎 NID unique TEIs: {len(nid_unique_teis)}")
         print(f"  🔎 Existing newborn TEIs: {len(existing_teis)}")
         print(f"  🔎 Missing TEIs to append: {len(missing_teis)}")
+        print(f"  🔎 Existing TEIs to update: {len(overlap_teis)}")
 
-        # Keep only rows that are truly missing in newborn
-        new_nid_rows = nid_df[nid_df["tei_id"].isin(missing_teis)].copy()
-        # Defensive dedup: one row per TEI
-        new_nid_rows = new_nid_rows.drop_duplicates(subset=["tei_id"], keep="first")
+        # Use one NID row per TEI for upsert
+        nid_rows_for_upsert = nid_df.drop_duplicates(subset=["tei_id"], keep="first").copy()
 
-        if len(new_nid_rows) == 0:
-            print(f"  ⚠️ No new patients to add")
+        if len(nid_rows_for_upsert) == 0:
+            print(f"  ⚠️ No NID patients available for upsert")
             return 0, 0
 
-        print(f"  ➕ Found {len(new_nid_rows)} new patients")
-        if len(new_nid_rows) > 0:
-            sample_teis = new_nid_rows["tei_id"].head(5).tolist()
-            print(f"  🧪 Sample TEIs to append: {sample_teis}")
+        print(f"  🔄 Processing {len(nid_rows_for_upsert)} NID TEIs for upsert")
+        sample_teis = nid_rows_for_upsert["tei_id"].head(5).tolist()
+        print(f"  🧪 Sample TEIs from NID: {sample_teis}")
 
         # Track how many patients have "5" in reason columns
         count_5_to_1 = 0
@@ -162,7 +163,7 @@ def append_nid_to_newborn(nid_path, newborn_path):
         # Create new rows with mapped values
         new_rows = []
 
-        for _, nid_row in new_nid_rows.iterrows():
+        for _, nid_row in nid_rows_for_upsert.iterrows():
             # Start with empty dictionary
             row_data = {}
 
@@ -192,18 +193,21 @@ def append_nid_to_newborn(nid_path, newborn_path):
         # Show reason column statistics
         print(f"  📊 Reason column stats:")
         print(f"     Patients with '5' → '1': {count_5_to_1:,}")
-        print(f"     Patients with 'N/A': {len(new_nid_rows) - count_5_to_1:,}")
+        print(f"     Patients with 'N/A': {len(nid_rows_for_upsert) - count_5_to_1:,}")
 
         # Create DataFrame for new rows
         if new_rows:
             new_df = pd.DataFrame(new_rows)
 
-            # Make sure new_df has all columns from newborn_df
+            # Make sure both frames share all columns (newborn existing rows get N/A for new columns)
             for col in newborn_df.columns:
                 if col not in new_df.columns:
                     new_df[col] = "N/A"  # Fill missing columns with N/A
+            for col in new_df.columns:
+                if col not in newborn_df.columns:
+                    newborn_df[col] = "N/A"
 
-            # Reorder columns to match newborn_df
+            # Reorder consistently
             new_df = new_df[newborn_df.columns]
 
             # Fill empty event dates with enrollment_date
@@ -227,15 +231,25 @@ def append_nid_to_newborn(nid_path, newborn_path):
                 mask = new_df[col].astype(str).str.strip() == ""
                 new_df.loc[mask, col] = "N/A"
 
-            # Append new rows
-            combined_df = pd.concat([newborn_df, new_df], ignore_index=True)
+            # Upsert:
+            # - keep existing newborn rows not present in NID source
+            # - replace overlapping rows with NID-mapped rows
+            source_teis = set(new_df["tei_id"].astype(str).str.strip())
+            preserved_newborn = newborn_df[
+                ~newborn_df["tei_id"].astype(str).str.strip().isin(source_teis)
+            ].copy()
+            combined_df = pd.concat([preserved_newborn, new_df], ignore_index=True)
+            combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="last")
 
             # Save
             combined_df.to_csv(newborn_path, index=False)
             print(f"  💾 Updated: {os.path.basename(newborn_path)}")
-            print(f"  📈 New total: {len(combined_df)} patients")
+            print(
+                f"  📈 New total: {len(combined_df)} patients "
+                f"(updated {len(overlap_teis):,}, added {len(missing_teis):,})"
+            )
 
-            return len(new_df), count_5_to_1
+            return len(missing_teis), count_5_to_1
 
         return 0, 0
 
