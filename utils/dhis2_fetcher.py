@@ -34,6 +34,25 @@ DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "imnid")
 DEFAULT_MATERNAL_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "maternal")
 DEFAULT_NEWBORN_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "newborn")
 
+
+def _get_dhis2_ssl_verify() -> Union[bool, str]:
+    ca_bundle = os.getenv("DHIS2_CA_BUNDLE") or os.getenv("REQUESTS_CA_BUNDLE")
+    if ca_bundle:
+        return ca_bundle
+
+    verify_ssl = os.getenv("DHIS2_VERIFY_SSL", "true").strip().lower()
+    if verify_ssl in {"0", "false", "no", "n", "off"}:
+        requests.packages.urllib3.disable_warnings(
+            requests.packages.urllib3.exceptions.InsecureRequestWarning
+        )
+        logger.warning(
+            "DHIS2 SSL certificate verification is disabled. "
+            "Use DHIS2_CA_BUNDLE for a trusted certificate fix."
+        )
+        return False
+
+    return True
+
 # Define data element mappings - MATERNAL FROM FIRST CODE, NEWBORN FROM SECOND CODE
 MATERNAL_HEALTH_ELEMENTS = {
     "Q1p7CxWGUoi",
@@ -216,6 +235,7 @@ class DHIS2DataFetcher:
             {"Accept": "application/json", "Content-Type": "application/json"}
         )
         self.session.timeout = 300
+        self.session.verify = _get_dhis2_ssl_verify()
 
     def fetch_all_regions(self) -> Dict[str, str]:
         """Fetch all regions from DHIS2 (level=2 org units)"""
