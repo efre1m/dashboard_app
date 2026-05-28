@@ -1,6 +1,7 @@
 import os
 import sys
 import traceback
+import argparse
 from datetime import datetime
 from typing import Dict, List, Set
 
@@ -8,7 +9,14 @@ import pandas as pd
 from dotenv import load_dotenv
 
 import dhis2_fetcher as core
-from dhis2_fetcher import CSVIntegration, DHIS2DataFetcher, DEFAULT_OUTPUT_DIR, logger
+from dhis2_fetcher import (
+    CSVIntegration,
+    DHIS2DataFetcher,
+    DEFAULT_OUTPUT_DIR,
+    logger,
+    normalize_selection_text,
+    select_facilities_from_cli,
+)
 
 
 NID_PROGRAM_UID = "pLk3Ht2XMKl"
@@ -118,6 +126,24 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
 
 def normalize(text: str) -> str:
     return " ".join(str(text or "").strip().lower().replace("/", " ").split())
+
+
+def regional_output_filename(region_name: str) -> str:
+    clean_region = "".join(ch if ch.isalnum() or ch in " _-" else "" for ch in str(region_name))
+    clean_region = "_".join(clean_region.replace("-", " ").split())
+    return f"regional_{clean_region}_newborn_nid.csv"
+
+
+def build_facility_ids_by_region_from_selection(
+    facilities: List[Dict[str, str]]
+) -> Dict[str, Set[str]]:
+    region_facility_ids: Dict[str, Set[str]] = {}
+    for facility in facilities:
+        region_key = normalize(facility.get("region_name", ""))
+        if not region_key:
+            continue
+        region_facility_ids.setdefault(region_key, set()).add(facility.get("id"))
+    return region_facility_ids
 
 
 def ensure_additional_dataelement_mapping() -> None:
@@ -259,6 +285,8 @@ class AutomatedLearningFacilitiesNIDPipeline:
         username: str = None,
         password: str = None,
         merge_mode: str = "replace",
+        selected_facilities: List[Dict[str, str]] = None,
+        use_all_facilities: bool = False,
     ):
         env_base_url = os.getenv("DHIS2_BASE_URL")
         env_username = os.getenv("DHIS2_USERNAME")
@@ -276,6 +304,8 @@ class AutomatedLearningFacilitiesNIDPipeline:
         self.username = username
         self.password = password
         self.merge_mode = merge_mode
+        self.selected_facilities = selected_facilities or []
+        self.use_all_facilities = use_all_facilities
         self.fetcher = DHIS2DataFetcher(self.base_url, self.username, self.password)
 
     def run_pipeline(self) -> bool:
@@ -305,10 +335,88 @@ class AutomatedLearningFacilitiesNIDPipeline:
 
             region_name_to_uid = {normalize(name): uid for uid, name in regions.items()}
 
-            facility_ids_by_region = build_learning_facility_ids_by_region(self.fetcher)
+            if self.use_all_facilities:
+                logger.info("Facility mode: all facilities")
+                selected_facilities = self.fetcher.fetch_facilities()
+                facility_ids_by_region = build_facility_ids_by_region_from_selection(
+                    selected_facilities
+                )
+            elif self.selected_facilities:
+                logger.info(f"Facility mode: {len(self.selected_facilities)} selected facilities")
+                facility_ids_by_region = build_facility_ids_by_region_from_selection(
+                    self.selected_facilities
+                )
+            else:
+                facility_ids_by_region = build_learning_facility_ids_by_region(self.fetcher)
 
             all_region_patient_dfs: List[pd.DataFrame] = []
             total_fetched_teis = 0
+
+            if self.selected_facilities:
+                for i, facility in enumerate(self.selected_facilities, 1):
+                    facility_uid = facility.get("id")
+                    facility_name = facility.get("name")
+                    region_uid = facility.get("region_uid")
+                    region_name = facility.get("region_name")
+
+                    logger.info("-" * 80)
+                    logger.info(
+                        f"Processing selected facility [{i}/{len(self.selected_facilities)}]: "
+                        f"{facility_name} ({region_name})"
+                    )
+
+                    tei_data = self.fetcher.fetch_program_data(
+                        NID_PROGRAM_UID,
+                        facility_uid,
+                        "SELECTED",
+                        1000,
+                    )
+                    tei_count = len(tei_data.get("trackedEntityInstances", []))
+                    total_fetched_teis += tei_count
+                    logger.info(f"Fetched TEIs from facility scope: {tei_count}")
+
+                    if tei_count == 0:
+                        continue
+
+                    events_df = CSVIntegration.create_events_dataframe(
+                        tei_data,
+                        NID_PROGRAM_UID,
+                        orgunit_names,
+                    )
+                    patient_df = CSVIntegration.transform_events_to_patient_level(
+                        events_df,
+                        NID_PROGRAM_UID,
+                    )
+
+                    if patient_df.empty:
+                        logger.warning(f"No patient-level rows in {facility_name}")
+                        continue
+
+                    patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
+                    patient_df["region_uid"] = region_uid
+                    patient_df["region_name"] = region_name
+
+                    regional_target = os.path.join(
+                        NID_DIR, regional_output_filename(region_name)
+                    )
+                    append_missing_teis(patient_df, regional_target, merge_mode=self.merge_mode)
+                    all_region_patient_dfs.append(patient_df)
+
+                if not all_region_patient_dfs:
+                    logger.warning("No selected facility data found to merge")
+                    return False
+
+                combined_df = pd.concat(all_region_patient_dfs, ignore_index=True)
+                combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="first")
+                national_target = os.path.join(NID_DIR, NATIONAL_OUTPUT_FILE)
+                append_missing_teis(combined_df, national_target, merge_mode=self.merge_mode)
+
+                logger.info("=" * 80)
+                logger.info("SELECTED FACILITIES NID FETCH + MERGE COMPLETE")
+                logger.info(f"Total TEIs fetched from facility scopes: {total_fetched_teis}")
+                logger.info(f"Combined unique TEIs: {combined_df['tei_id'].nunique()}")
+                logger.info("=" * 80)
+                return True
 
             for region_key, facility_ids in facility_ids_by_region.items():
                 if not facility_ids:
@@ -371,7 +479,10 @@ class AutomatedLearningFacilitiesNIDPipeline:
                 patient_df["region_uid"] = region_uid
                 patient_df["region_name"] = regions[region_uid]
 
-                regional_target = os.path.join(NID_DIR, REGIONAL_OUTPUT_FILES[region_key])
+                regional_filename = REGIONAL_OUTPUT_FILES.get(
+                    region_key, regional_output_filename(regions[region_uid])
+                )
+                regional_target = os.path.join(NID_DIR, regional_filename)
                 append_missing_teis(patient_df, regional_target, merge_mode=self.merge_mode)
 
                 all_region_patient_dfs.append(patient_df)
@@ -403,10 +514,22 @@ class AutomatedLearningFacilitiesNIDPipeline:
 
 def main() -> None:
     load_dotenv()
-    # Two choices:
-    # 1 -> replace existing TEIs with freshly fetched values (upsert)
-    # 2 -> fetch and append only new TEIs
-    mode_arg = sys.argv[1].strip().lower() if len(sys.argv) > 1 else ""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        default="",
+        help="1/replace updates existing TEIs; 2/new_only appends only new TEIs.",
+    )
+    parser.add_argument(
+        "--facilities",
+        nargs="?",
+        default=None,
+        help="Use custom facility selection: 'all', comma-separated names/UIDs, or omit value to prompt.",
+    )
+    args = parser.parse_args()
+
+    mode_arg = args.mode.strip().lower()
     if mode_arg in {"1", "replace", "--replace"}:
         merge_mode = "replace"
     elif mode_arg in {"2", "new", "new_only", "--new-only"}:
@@ -417,7 +540,26 @@ def main() -> None:
         ).strip()
         merge_mode = "replace" if choice == "1" else "new_only"
 
-    pipeline = AutomatedLearningFacilitiesNIDPipeline(merge_mode=merge_mode)
+    selected_facilities = []
+    use_all_facilities = False
+    if "--facilities" in sys.argv:
+        selector = args.facilities or ""
+        all_facilities = DHIS2DataFetcher(
+            os.getenv("DHIS2_BASE_URL"),
+            os.getenv("DHIS2_USERNAME"),
+            os.getenv("DHIS2_PASSWORD"),
+        ).fetch_facilities()
+        selected = select_facilities_from_cli(all_facilities, selector)
+        if selected is None:
+            use_all_facilities = True
+        else:
+            selected_facilities = selected
+
+    pipeline = AutomatedLearningFacilitiesNIDPipeline(
+        merge_mode=merge_mode,
+        selected_facilities=selected_facilities,
+        use_all_facilities=use_all_facilities,
+    )
     success = pipeline.run_pipeline()
     raise SystemExit(0 if success else 1)
 

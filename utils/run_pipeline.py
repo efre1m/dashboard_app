@@ -6,6 +6,7 @@ Place in same folder as dhis2_fetcher.py and config.py
 
 import os
 import sys
+import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Run full DHIS2 automated pipeline.")
+    parser.add_argument(
+        "--facilities",
+        nargs="?",
+        default=None,
+        help="Optional facility selection: 'all', comma-separated names/UIDs, or omit value to prompt.",
+    )
+    parser.add_argument(
+        "--merge-mode",
+        choices=["replace", "new_only"],
+        default="replace",
+        help="For facility mode: replace updates existing TEIs; new_only appends only new TEIs.",
+    )
+    args = parser.parse_args()
+
     # Load environment variables from the project .env for local/CLI runs.
     # (utils/config.py intentionally does not call load_dotenv.)
     load_dotenv(REPO_ROOT / ".env", override=True)
@@ -35,8 +51,15 @@ def main():
         print("🚀 Starting pipeline...")
         print()
 
+        facility_selection = args.facilities
+        if "--facilities" in sys.argv and args.facilities is None:
+            facility_selection = ""
+
         # Run the pipeline
-        success = run_automated_pipeline()
+        success = run_automated_pipeline(
+            facility_selection=facility_selection,
+            merge_mode=args.merge_mode,
+        )
 
         print()
         print("=" * 70)

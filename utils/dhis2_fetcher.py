@@ -15,12 +15,125 @@ import time
 import traceback
 import webbrowser
 import re
+import argparse
 
 # Setup logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def normalize_selection_text(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().replace("/", " ").split())
+
+
+def select_facilities_from_cli(
+    facilities: List[Dict[str, str]], selection: Optional[str] = None
+) -> Optional[List[Dict[str, str]]]:
+    """Return selected facilities, or None when the user selects all/default."""
+    if not facilities:
+        return None
+
+    facilities = sorted(
+        facilities,
+        key=lambda f: (normalize_selection_text(f.get("region_name", "")), normalize_selection_text(f.get("name", ""))),
+    )
+
+    if not selection:
+        print("\nAvailable facilities:")
+        for idx, facility in enumerate(facilities, 1):
+            print(
+                f"{idx}. {facility.get('region_name', 'Unknown')} - "
+                f"{facility.get('name', '')} ({facility.get('id', '')})"
+            )
+        selection = input(
+            "\nWhich facilities do you want to fetch? "
+            "Type 'all' or enter numbers/names/UIDs separated by commas: "
+        ).strip()
+
+    if not selection or normalize_selection_text(selection) == "all":
+        return None
+
+    requested = [part.strip() for part in selection.split(",") if part.strip()]
+    selected = []
+    seen = set()
+
+    for item in requested:
+        matched = None
+        if item.isdigit():
+            idx = int(item)
+            if 1 <= idx <= len(facilities):
+                matched = facilities[idx - 1]
+        else:
+            item_norm = normalize_selection_text(item)
+            for facility in facilities:
+                if (
+                    item == facility.get("id")
+                    or item_norm == normalize_selection_text(facility.get("name", ""))
+                    or item_norm in normalize_selection_text(facility.get("name", ""))
+                ):
+                    matched = facility
+                    break
+
+        if matched and matched.get("id") not in seen:
+            selected.append(matched)
+            seen.add(matched.get("id"))
+
+    if not selected:
+        print("No matching facilities found; falling back to all facilities.")
+        return None
+
+    print("\nSelected facilities:")
+    for facility in selected:
+        print(f"- {facility.get('region_name')} - {facility.get('name')} ({facility.get('id')})")
+    return selected
+
+
+def merge_csv_by_tei(existing_path: str, new_df: pd.DataFrame, merge_mode: str = "replace") -> int:
+    """Merge new rows into a CSV by tei_id. replace updates overlapping TEIs; new_only appends only new TEIs."""
+    if new_df.empty:
+        return 0
+
+    new_df = new_df.copy()
+    if "tei_id" not in new_df.columns:
+        new_df.to_csv(existing_path, index=False, encoding="utf-8")
+        return len(new_df)
+
+    new_df["tei_id"] = new_df["tei_id"].astype(str).str.strip()
+    new_df = new_df[new_df["tei_id"] != ""].drop_duplicates(subset=["tei_id"], keep="last")
+
+    if not os.path.exists(existing_path):
+        new_df.to_csv(existing_path, index=False, encoding="utf-8")
+        return len(new_df)
+
+    existing_df = pd.read_csv(existing_path, dtype=str, keep_default_na=False)
+    if "tei_id" not in existing_df.columns:
+        new_df.to_csv(existing_path, index=False, encoding="utf-8")
+        return len(new_df)
+
+    existing_df["tei_id"] = existing_df["tei_id"].astype(str).str.strip()
+    combined_columns = list(existing_df.columns) + [
+        col for col in new_df.columns if col not in existing_df.columns
+    ]
+    existing_df = existing_df.reindex(columns=combined_columns, fill_value="N/A")
+    new_df = new_df.reindex(columns=combined_columns, fill_value="N/A")
+
+    existing_teis = set(existing_df["tei_id"])
+    new_teis = set(new_df["tei_id"])
+
+    if merge_mode == "new_only":
+        rows_to_add = new_df[~new_df["tei_id"].isin(existing_teis)].copy()
+        combined_df = pd.concat([existing_df, rows_to_add], ignore_index=True)
+        changed = len(rows_to_add)
+    else:
+        preserved_df = existing_df[~existing_df["tei_id"].isin(new_teis)].copy()
+        combined_df = pd.concat([preserved_df, new_df], ignore_index=True)
+        changed = len(new_df)
+
+    combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="last")
+    combined_df.to_csv(existing_path, index=False, encoding="utf-8")
+    return changed
 
 # ========== CONFIGURATION ==========
 # Program UIDs
@@ -429,6 +542,38 @@ class DHIS2DataFetcher:
         except Exception as e:
             logger.error(f"Failed to fetch facility-to-region mapping: {e}")
             return {}
+
+    def fetch_facilities(self) -> List[Dict[str, str]]:
+        """Fetch level-3 facilities with their parent region metadata."""
+        url = f"{self.base_url}/api/organisationUnits.json"
+        params = {
+            "level": 3,
+            "fields": "id,displayName,parent[id,name,displayName]",
+            "paging": False,
+        }
+
+        try:
+            response = self.session.get(url, params=params, timeout=120)
+            response.raise_for_status()
+            data = response.json()
+
+            facilities = []
+            for ou in data.get("organisationUnits", []):
+                parent = ou.get("parent") or {}
+                facilities.append(
+                    {
+                        "id": ou.get("id", ""),
+                        "name": ou.get("displayName", ""),
+                        "region_uid": parent.get("id", ""),
+                        "region_name": parent.get("displayName") or parent.get("name") or "",
+                    }
+                )
+
+            logger.info(f"Fetched {len(facilities)} facilities")
+            return facilities
+        except Exception as e:
+            logger.error(f"Failed to fetch facilities: {e}")
+            return []
 
 
 class CSVIntegration:
@@ -2380,6 +2525,8 @@ class AutomatedDHIS2Pipeline:
         password: str = None,
         csv_path: str = None,
         output_base_dir: str = None,
+        selected_facilities: Optional[List[Dict[str, str]]] = None,
+        merge_mode: str = "replace",
     ):
         """
         Initialize automated pipeline
@@ -2424,6 +2571,8 @@ class AutomatedDHIS2Pipeline:
         self.username = username
         self.password = password
         self.csv_path = csv_path
+        self.selected_facilities = selected_facilities or []
+        self.merge_mode = merge_mode
 
         # FIX 1: Set output directories correctly
         if output_base_dir:
@@ -2455,6 +2604,9 @@ class AutomatedDHIS2Pipeline:
         logger.info(f"Output Directory: {self.output_base_dir}")
         logger.info(f"Maternal Directory: {self.maternal_dir}")
         logger.info(f"Newborn Directory: {self.newborn_dir}")
+        if self.selected_facilities:
+            logger.info(f"Facility mode: {len(self.selected_facilities)} selected facilities")
+            logger.info(f"Merge mode: {self.merge_mode}")
         logger.info("=" * 80)
 
         # Log absolute paths for debugging
@@ -2612,6 +2764,103 @@ class AutomatedDHIS2Pipeline:
             logger.error(traceback.format_exc())
             return False
 
+    def process_selected_facilities_program(self, program_uid: str, program_name: str) -> bool:
+        """Process only selected facilities and merge them into existing regional/national files."""
+        if not self.selected_facilities:
+            return self.process_program(program_uid, program_name)
+
+        logger.info("=" * 80)
+        logger.info(f"PROCESSING SELECTED FACILITIES FOR {program_name.upper()}")
+        logger.info("=" * 80)
+
+        try:
+            orgunit_names = self.fetcher.fetch_orgunit_names()
+            all_patient_data = []
+            total_teis_fetched = 0
+
+            for i, facility in enumerate(self.selected_facilities, 1):
+                facility_uid = facility.get("id")
+                facility_name = facility.get("name")
+                region_uid = facility.get("region_uid")
+                region_name = facility.get("region_name")
+
+                logger.info(
+                    f"[{i}/{len(self.selected_facilities)}] Fetching {facility_name} ({region_name})"
+                )
+                tei_data = self.fetcher.fetch_program_data(
+                    program_uid, facility_uid, "SELECTED", 1000
+                )
+                tei_count = len(tei_data.get("trackedEntityInstances", []))
+                total_teis_fetched += tei_count
+                logger.info(f"Found {tei_count} TEIs")
+
+                if tei_count == 0:
+                    continue
+
+                events_df = CSVIntegration.create_events_dataframe(
+                    tei_data, program_uid, orgunit_names
+                )
+
+                if (
+                    program_uid == MATERNAL_PROGRAM_UID
+                    and self.csv_data is not None
+                    and "orgUnit" in self.csv_data.columns
+                ):
+                    facility_csv = self.csv_data[
+                        self.csv_data.get("orgUnit", "").astype(str).str.strip() == facility_uid
+                    ].copy()
+                    if not facility_csv.empty:
+                        events_df = CSVIntegration.integrate_maternal_csv_data_for_region(
+                            events_df, facility_csv, region_name
+                        )
+
+                patient_df = CSVIntegration.transform_events_to_patient_level(
+                    events_df, program_uid
+                )
+                if patient_df.empty:
+                    continue
+
+                patient_df = CSVIntegration.post_process_dataframe(patient_df)
+                patient_df["region_uid"] = region_uid
+                patient_df["region_name"] = region_name
+                all_patient_data.append(patient_df)
+
+            if not all_patient_data:
+                logger.warning(f"No selected-facility data processed for {program_name}")
+                return False
+
+            combined_df = pd.concat(all_patient_data, ignore_index=True)
+            program_type = "maternal" if program_uid == MATERNAL_PROGRAM_UID else "newborn"
+            output_dir = self.maternal_dir if program_type == "maternal" else self.newborn_dir
+
+            regional_files_created = 0
+            for region_name, region_df in combined_df.groupby("region_name", dropna=False):
+                clean_region = re.sub(r"[^\w\s-]", "", str(region_name))
+                clean_region = re.sub(r"[-\s]+", "_", clean_region)
+                regional_file = os.path.join(
+                    output_dir, f"regional_{clean_region}_{program_type}.csv"
+                )
+                save_df = region_df.drop(columns=["region_uid", "region_name"], errors="ignore")
+                changed = merge_csv_by_tei(regional_file, save_df, self.merge_mode)
+                regional_files_created += 1
+                logger.info(f"Merged {changed} rows into {regional_file}")
+
+            national_file = os.path.join(output_dir, f"national_{program_type}.csv")
+            changed = merge_csv_by_tei(national_file, combined_df, self.merge_mode)
+
+            logger.info("=" * 80)
+            logger.info(f"{program_name.upper()} SELECTED-FACILITY PROCESSING COMPLETE")
+            logger.info(f"Total TEIs fetched: {total_teis_fetched}")
+            logger.info(f"Rows merged into national file: {changed}")
+            logger.info(f"Regional files touched: {regional_files_created}")
+            logger.info("=" * 80)
+            return True
+
+        except Exception as e:
+            logger.error(f"Error processing selected facilities for {program_name}: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
+
     def load_csv_data(self):
         """Load and map CSV data for maternal program"""
         if not self.csv_path or not os.path.exists(self.csv_path):
@@ -2710,11 +2959,17 @@ class AutomatedDHIS2Pipeline:
         if self.csv_path:
             self.load_csv_data()
 
+        processor = (
+            self.process_selected_facilities_program
+            if self.selected_facilities
+            else self.process_program
+        )
+
         # Step 3: Process MATERNAL program
-        maternal_success = self.process_program(MATERNAL_PROGRAM_UID, "MATERNAL")
+        maternal_success = processor(MATERNAL_PROGRAM_UID, "MATERNAL")
 
         # Step 4: Process NEWBORN program
-        newborn_success = self.process_program(NEWBORN_PROGRAM_UID, "NEWBORN")
+        newborn_success = processor(NEWBORN_PROGRAM_UID, "NEWBORN")
 
         # Summary
         logger.info("=" * 80)
@@ -3911,7 +4166,7 @@ class DHIS2DataFetcherApp:
 # ========== STANDALONE AUTOMATION SCRIPT ==========
 
 
-def run_automated_pipeline():
+def run_automated_pipeline(facility_selection: Optional[str] = None, merge_mode: str = "replace"):
     """
     Standalone function to run the automated pipeline
     This can be called from a scheduled task or batch file
@@ -3953,6 +4208,15 @@ def run_automated_pipeline():
         print(f"   Output directory: {config['output_base_dir']}")
         print(f"   Absolute output path: {os.path.abspath(config['output_base_dir'])}")
 
+        selected_facilities = None
+        if facility_selection is not None:
+            facility_fetcher = DHIS2DataFetcher(
+                config["base_url"], config["username"], config["password"]
+            )
+            selected_facilities = select_facilities_from_cli(
+                facility_fetcher.fetch_facilities(), facility_selection
+            )
+
         # Create pipeline
         pipeline = AutomatedDHIS2Pipeline(
             base_url=config["base_url"],
@@ -3960,6 +4224,8 @@ def run_automated_pipeline():
             password=config["password"],
             csv_path=config["csv_path"] if os.path.exists(config["csv_path"]) else None,
             output_base_dir=config["output_base_dir"],
+            selected_facilities=selected_facilities,
+            merge_mode=merge_mode,
         )
 
         # Run pipeline
@@ -3990,9 +4256,28 @@ def main():
     """Main function - runs GUI by default, can run automation if specified"""
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "--automate":
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--automate", action="store_true")
+    parser.add_argument(
+        "--facilities",
+        nargs="?",
+        default=None,
+        help="Facility selection for automation: 'all', comma-separated names/UIDs, or omit value to prompt.",
+    )
+    parser.add_argument(
+        "--merge-mode",
+        choices=["replace", "new_only"],
+        default="replace",
+        help="replace updates existing TEIs; new_only appends only TEIs not already present.",
+    )
+    args = parser.parse_args()
+
+    if args.automate:
         # Run automated pipeline
-        run_automated_pipeline()
+        facility_selection = args.facilities
+        if "--facilities" in sys.argv and args.facilities is None:
+            facility_selection = ""
+        run_automated_pipeline(facility_selection, args.merge_mode)
     else:
         # Run GUI
         root = tk.Tk()

@@ -39,6 +39,7 @@ from dhis2_fetcher import (  # noqa: E402
     DHIS2DataFetcher,
     MATERNAL_PROGRAM_UID,
     NEWBORN_PROGRAM_UID,
+    select_facilities_from_cli,
 )
 
 
@@ -341,6 +342,7 @@ def _process_program(
     existing_teis: Set[str],
     lookback_days: int,
     dry_run: bool,
+    selected_facilities: Optional[list] = None,
 ) -> ProgramResult:
     program_start_date = None
     last_updated_start_date = None
@@ -375,13 +377,31 @@ def _process_program(
     total_fetched = 0
     changed_chunks = []
 
-    for idx, (region_uid, region_name) in enumerate(regions.items(), start=1):
-        print(f"[{program_name}] Region {idx}/{len(regions)}: {region_name}")
+    if selected_facilities:
+        processing_units = [
+            (
+                facility.get("id"),
+                facility.get("name"),
+                facility.get("region_uid"),
+                facility.get("region_name"),
+                "SELECTED",
+            )
+            for facility in selected_facilities
+        ]
+    else:
+        processing_units = [
+            (region_uid, region_name, region_uid, region_name, "DESCENDANTS")
+            for region_uid, region_name in regions.items()
+        ]
+
+    for idx, (org_unit_uid, org_unit_name, region_uid, region_name, org_unit_mode) in enumerate(processing_units, start=1):
+        scope_label = "Facility" if selected_facilities else "Region"
+        print(f"[{program_name}] {scope_label} {idx}/{len(processing_units)}: {org_unit_name}")
 
         tei_data = fetcher.fetch_program_data(
             program_uid,
-            region_uid,
-            "DESCENDANTS",
+            org_unit_uid,
+            org_unit_mode,
             1000,
             program_start_date=program_start_date,
             last_updated_start_date=last_updated_start_date,
@@ -526,6 +546,12 @@ def main() -> int:
         action="store_true",
         help="Do not write files; only report what would be upserted.",
     )
+    parser.add_argument(
+        "--facilities",
+        nargs="?",
+        default=None,
+        help="Optional facility selection: 'all', comma-separated names/UIDs, or omit value to prompt.",
+    )
     args = parser.parse_args()
 
     # Always prefer the repo .env for this command-line runner. This avoids
@@ -576,6 +602,7 @@ def main() -> int:
         return 1
 
     fetcher = pipeline.fetcher
+    selected_facilities = None
 
     # Incremental mode (always)
     if pipeline.csv_path:
@@ -585,6 +612,16 @@ def main() -> int:
     if not regions:
         print("No regions found. Check DHIS2 credentials/connection.")
         return 1
+
+    if "--facilities" in sys.argv:
+        facility_selection = args.facilities or ""
+        selected_facilities = select_facilities_from_cli(
+            fetcher.fetch_facilities(), facility_selection
+        )
+        if selected_facilities:
+            print(f"Facility selection enabled: {len(selected_facilities)} facilities")
+        else:
+            print("Facility selection: all facilities/regions")
 
     existing_maternal_teis = _read_existing_tei_ids(
         maternal_dir / "national_maternal.csv"
@@ -619,6 +656,7 @@ def main() -> int:
         existing_teis=existing_maternal_teis,
         lookback_days=args.lookback_days,
         dry_run=args.dry_run,
+        selected_facilities=selected_facilities,
     )
 
     newborn_result = _process_program(
@@ -636,6 +674,7 @@ def main() -> int:
         existing_teis=existing_newborn_teis,
         lookback_days=args.lookback_days,
         dry_run=args.dry_run,
+        selected_facilities=selected_facilities,
     )
 
     print("=" * 72)
@@ -662,7 +701,11 @@ def main() -> int:
         f"{maternal_result.fetched_rows + newborn_result.fetched_rows}"
     )
 
-    if not args.dry_run:
+    if selected_facilities and not args.dry_run:
+        print(
+            "Facility-scoped run: output files were updated, but incremental state was not advanced."
+        )
+    elif not args.dry_run:
         if maternal_result.max_enrollment_date:
             prev = _parse_iso_datetime(state.get("maternal_last_enrollment_date"))
             if prev is None or maternal_result.max_enrollment_date > prev:
