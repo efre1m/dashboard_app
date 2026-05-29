@@ -459,6 +459,21 @@ def get_numerator_denominator_for_newborn_coverage_rate(
         return (0, 0, 0.0)
 
     working_df = df.copy()
+    user = st.session_state.get("user", {}) or {}
+    role = str(user.get("role") or "").lower()
+
+    facility_uids = list(facility_uids or [])
+    if role == "dq_officer" and not facility_uids:
+        try:
+            facility_uids = list(get_facility_mapping_for_user(user).values())
+        except Exception as e:
+            logging.warning(
+                f"Newborn Coverage Rate: Failed to resolve DQ officer facilities: {e}"
+            )
+            facility_uids = []
+
+    if facility_uids and "orgUnit" in working_df.columns:
+        working_df = working_df[working_df["orgUnit"].isin(facility_uids)].copy()
 
     # Optional date range filter (defensive; most callers already filter before grouping)
     if date_range_filters and "enrollment_date" in working_df.columns:
@@ -514,9 +529,6 @@ def get_numerator_denominator_for_newborn_coverage_rate(
         working_df["_ethiopian_yearmonth"].dropna().astype("Int64").astype(int).unique().tolist()
     )
     years = sorted({int(ym) // 100 for ym in yearmonths})
-
-    user = st.session_state.get("user", {}) or {}
-    role = str(user.get("role") or "").lower()
 
     # Prefer region-based denominator when the selection is clearly a full-region union
     # (fixes All Facilities and By Region modes, and enforces role scope for regional users).

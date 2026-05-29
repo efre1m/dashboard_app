@@ -1013,11 +1013,21 @@ def render_newborn_trend_chart_section(
         # Determine denominator scope (regions vs facilities) based on the current dashboard filter mode.
         region_scope = None
         facility_scope_names = None
+        user = st.session_state.get("user", {}) or {}
+        role = str(user.get("role") or "").lower()
 
         if comparison_mode == "region" and region_names:
             region_scope = list(region_names)
         elif facilities_by_region and display_names == ["All Facilities"]:
-            region_scope = list(facilities_by_region.keys())
+            if role == "dq_officer":
+                facility_scope_names = [
+                    facility_name
+                    for facilities in facilities_by_region.values()
+                    for facility_name, _ in facilities
+                    if facility_name
+                ]
+            else:
+                region_scope = list(facilities_by_region.keys())
         elif (
             comparison_mode == "facility"
             and display_names
