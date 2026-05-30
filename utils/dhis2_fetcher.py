@@ -184,8 +184,10 @@ MATERNAL_HEALTH_ELEMENTS = {
     # ADDITIONAL MATERNAL DATA ELEMENTS
     "Hn4o3dCqqyT",  # Obstetric complications
     "nWJf7kvNYRU",  # Episiotomy performed
+    "Q7bsaCac29x",  # Birth Weight (grams) newborn 2
     "BiFmMp0p2CB",  # birth outcome newborn 2
     "ZX1tFRjBAEe",  # birth outcome newborn 3
+    "KAXFg8swcMI",  # Birth Weight (grams) newborn 4
     "htcUfQyftnv",  # birth outcome newborn 4
     "XQr0rrJjjA6",  # Newborn Immunizations and Interventions
     "i1KXYcH5HMx",  # Newborn Immunizations and Interventions newborn 4
@@ -230,8 +232,10 @@ DATA_ELEMENT_NAMES = {
     # ADDITIONAL MATERNAL DATA ELEMENTS
     "Hn4o3dCqqyT": "Obstetric complications",
     "nWJf7kvNYRU": "Episiotomy performed",
+    "Q7bsaCac29x": "Birth Weight (grams) newborn 2",
     "BiFmMp0p2CB": "birth outcome newborn 2",
     "ZX1tFRjBAEe": "birth outcome newborn 3",
+    "KAXFg8swcMI": "Birth Weight (grams) newborn 4",
     "htcUfQyftnv": "birth outcome newborn 4",
     "XQr0rrJjjA6": "Newborn Immunizations and Interventions",
     "i1KXYcH5HMx": "Newborn Immunizations and Interventions newborn 4",
@@ -266,8 +270,10 @@ MATERNAL_PROGRAM_STAGE_MAPPING = {
             "yVRLuRU943e",
             # ADDITIONAL DATA ELEMENTS FOR DELIVERY SUMMARY
             "nWJf7kvNYRU",  # Episiotomy performed
+            "Q7bsaCac29x",  # Birth Weight (grams) newborn 2
             "BiFmMp0p2CB",  # birth outcome newborn 2
             "ZX1tFRjBAEe",  # birth outcome newborn 3
+            "KAXFg8swcMI",  # Birth Weight (grams) newborn 4
             "htcUfQyftnv",  # birth outcome newborn 4
             "XQr0rrJjjA6",  # Newborn Immunizations and Interventions
             "i1KXYcH5HMx",  # Newborn Immunizations and Interventions newborn 4

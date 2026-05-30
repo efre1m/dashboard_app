@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dhis2_fetcher import (  # noqa: E402
     AutomatedDHIS2Pipeline,
     CSVIntegration,
+    DATA_ELEMENT_NAMES,
     DEFAULT_OUTPUT_DIR,
     DHIS2DataFetcher,
     MATERNAL_PROGRAM_UID,
@@ -46,6 +47,11 @@ from dhis2_fetcher import (  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STATE_FILENAME = ".incremental_state.json"
 DEFAULT_MATERNAL_CSV = "maternal_data_long_format.csv"
+DELIVERY_SUMMARY_EXTRA_ELEMENTS = {
+    "Q7bsaCac29x",  # Birth Weight (grams) newborn 2
+    "ZX1tFRjBAEe",  # birth outcome newborn 3
+    "KAXFg8swcMI",  # Birth Weight (grams) newborn 4
+}
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -192,6 +198,22 @@ def _log_fetched_event_values(
 
     if value_count == 0:
         return
+
+    if "dataElement_uid" in actual_rows.columns:
+        watched_rows = actual_rows[
+            actual_rows["dataElement_uid"].isin(DELIVERY_SUMMARY_EXTRA_ELEMENTS)
+        ]
+        if not watched_rows.empty:
+            watched_counts = (
+                watched_rows.groupby("dataElement_uid")["value"]
+                .count()
+                .to_dict()
+            )
+            watched_summary = ", ".join(
+                f"{DATA_ELEMENT_NAMES.get(uid, uid)}={count}"
+                for uid, count in watched_counts.items()
+            )
+            print(f"[{program_name}]   Delivery summary extra values: {watched_summary}")
 
     sample_cols = ["tei_id", "programStageName", "dataElementName", "value"]
     sample = (
