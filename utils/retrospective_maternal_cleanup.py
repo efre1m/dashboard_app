@@ -108,6 +108,7 @@ def _process_csv(
     dry_run: bool,
 ) -> ProcessResult:
     enrollment_idx = _find_col_index(fieldnames, ["enrollment_date", "enrollment date"])
+    source_idx = _find_col_index(fieldnames, ["source"])
     region_idx = None
     if require_region_oromia:
         region_idx = _find_col_index(fieldnames, ["region_name", "region name"])
@@ -130,6 +131,10 @@ def _process_csv(
                 if len(row) < len(fieldnames):
                     row = row + [""] * (len(fieldnames) - len(row))
                 remove_row = False
+                source_val = (row[source_idx] if source_idx is not None else "").strip().lower()
+                if source_val != "dhis":
+                    kept += 1
+                    continue
                 enrollment = _parse_date(row[enrollment_idx])
                 if enrollment is not None and start_date <= enrollment <= end_date:
                     if require_region_oromia:
@@ -154,6 +159,11 @@ def _process_csv(
                     row = row + [""] * (len(fieldnames) - len(row))
 
                 remove_row = False
+                source_val = (row[source_idx] if source_idx is not None else "").strip().lower()
+                if source_val != "dhis":
+                    kept += 1
+                    writer.writerow(row)
+                    continue
                 enrollment = _parse_date(row[enrollment_idx])
                 if enrollment is not None and start_date <= enrollment <= end_date:
                     if require_region_oromia:
