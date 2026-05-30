@@ -150,7 +150,10 @@ def render_newborn_dashboard_shared(
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
         filters = render_newborn_patient_filter_controls(
-            working_df, container=col_ctrl, context="national_newborn"
+            working_df,
+            container=col_ctrl,
+            context="national_newborn",
+            facility_uids=facility_uids,
         )
         st.markdown("</div>", unsafe_allow_html=True)
 

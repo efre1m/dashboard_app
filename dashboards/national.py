@@ -649,7 +649,7 @@ def render_summary_dashboard_shared(
     )
 
     # Create cache key for summary data
-    cache_key = f"summary_{location_name}_{len(facility_uids)}_{len(maternal_patients)}_{len(newborn_patients)}"
+    cache_key = f"summary_all_sources_v2_{location_name}_{len(facility_uids)}_{len(maternal_patients)}_{len(newborn_patients)}"
 
     # Check if we have cached summary data
     if (
@@ -754,17 +754,9 @@ def render_summary_dashboard_shared(
                         maternal_patients["orgUnit"].isin(region_facility_uids)
                     ].copy()
 
-                    # Use Admitted Mothers KPI function
-                    from utils.kpi_admitted_mothers import (
-                        get_numerator_denominator_for_admitted_mothers,
+                    maternal_count = count_unique_patients(
+                        region_maternal_data, region_facility_uids
                     )
-
-                    numerator, denominator, _ = (
-                        get_numerator_denominator_for_admitted_mothers(
-                            region_maternal_data, region_facility_uids, {}
-                        )
-                    )
-                    maternal_count = numerator
 
                 # Newborn count for region - ADMITTED NEWBORNS (from enrollment date)
                 newborn_count = 0
@@ -773,12 +765,7 @@ def render_summary_dashboard_shared(
                         newborn_patients["orgUnit"].isin(region_facility_uids)
                     ].copy()
 
-                    # Count Admitted Newborns using enrollment date
-                    from newborns_dashboard.kpi_utils_newborn import (
-                        compute_admitted_newborns_count,
-                    )
-
-                    newborn_count = compute_admitted_newborns_count(
+                    newborn_count = count_unique_patients(
                         region_newborn_data, region_facility_uids
                     )
 
@@ -795,9 +782,7 @@ def render_summary_dashboard_shared(
                 "stillbirth_rate": maternal_kpis.get("stillbirth_rate", 0.0),
                 "maternal_start_date": maternal_start_date,
                 # Newborn indicators - ONLY 3 REQUIRED:
-                "newborn_tei_count": newborn_kpis.get(
-                    "admitted_newborns_count", 0
-                ),  # 1. Total Admitted Newborns
+                "newborn_tei_count": newborn_patient_count,  # 1. Total Admitted Newborns
                 "neonatal_mortality_rate": newborn_kpis.get(
                     "neonatal_mortality_rate", 0.0
                 ),  # 2. NMR

@@ -4,6 +4,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
+from add_source_column import assign_source_column
 from dhis2_fetcher import CSVIntegration, DHIS2DataFetcher, DEFAULT_OUTPUT_DIR, logger
 
 
@@ -106,6 +107,7 @@ class AutomatedAfarNIDPipeline:
             patient_df["region_name"] = AFAR_REGION_NAME
 
             output_path = os.path.join(self.output_dir, AFAR_OUTPUT_FILE)
+            patient_df = assign_source_column(patient_df)
             patient_df.to_csv(output_path, index=False, encoding="utf-8")
 
             logger.info("=" * 80)

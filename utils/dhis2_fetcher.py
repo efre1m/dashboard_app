@@ -17,6 +17,8 @@ import webbrowser
 import re
 import argparse
 
+from add_source_column import assign_source_column
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -95,7 +97,7 @@ def merge_csv_by_tei(existing_path: str, new_df: pd.DataFrame, merge_mode: str =
     if new_df.empty:
         return 0
 
-    new_df = new_df.copy()
+    new_df = assign_source_column(new_df)
     if "tei_id" not in new_df.columns:
         new_df.to_csv(existing_path, index=False, encoding="utf-8")
         return len(new_df)
@@ -132,6 +134,7 @@ def merge_csv_by_tei(existing_path: str, new_df: pd.DataFrame, merge_mode: str =
         changed = len(new_df)
 
     combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="last")
+    combined_df = assign_source_column(combined_df)
     combined_df.to_csv(existing_path, index=False, encoding="utf-8")
     return changed
 
@@ -2731,7 +2734,7 @@ class AutomatedDHIS2Pipeline:
                 logger.warning(f"⚠️ No data processed for {program_name}")
                 return False
 
-            combined_df = pd.concat(all_patient_data, ignore_index=True)
+            combined_df = assign_source_column(pd.concat(all_patient_data, ignore_index=True))
 
             # Step 5: Save national file to appropriate directory
             program_type = (
@@ -2835,7 +2838,7 @@ class AutomatedDHIS2Pipeline:
                 logger.warning(f"No selected-facility data processed for {program_name}")
                 return False
 
-            combined_df = pd.concat(all_patient_data, ignore_index=True)
+            combined_df = assign_source_column(pd.concat(all_patient_data, ignore_index=True))
             program_type = "maternal" if program_uid == MATERNAL_PROGRAM_UID else "newborn"
             output_dir = self.maternal_dir if program_type == "maternal" else self.newborn_dir
 
@@ -2846,7 +2849,9 @@ class AutomatedDHIS2Pipeline:
                 regional_file = os.path.join(
                     output_dir, f"regional_{clean_region}_{program_type}.csv"
                 )
-                save_df = region_df.drop(columns=["region_uid", "region_name"], errors="ignore")
+                save_df = assign_source_column(
+                    region_df.drop(columns=["region_uid", "region_name"], errors="ignore")
+                )
                 changed = merge_csv_by_tei(regional_file, save_df, self.merge_mode)
                 regional_files_created += 1
                 logger.info(f"Merged {changed} rows into {regional_file}")
@@ -2925,7 +2930,7 @@ class AutomatedDHIS2Pipeline:
             filepath = os.path.join(output_dir, filename)
 
             # Save file (without region columns for cleaner regional files)
-            save_df = patient_df.drop(
+            save_df = assign_source_column(patient_df).drop(
                 columns=["region_uid", "region_name"], errors="ignore"
             )
             save_df.to_csv(filepath, index=False, encoding="utf-8")
@@ -4036,7 +4041,7 @@ class DHIS2DataFetcherApp:
             filepath = os.path.join(self.output_dir.get(), filename)
 
             # Save file (without region columns for cleaner regional files)
-            save_df = patient_df.drop(
+            save_df = assign_source_column(patient_df).drop(
                 columns=["region_uid", "region_name"], errors="ignore"
             )
             save_df.to_csv(filepath, index=False, encoding="utf-8")
@@ -4062,7 +4067,9 @@ class DHIS2DataFetcherApp:
             combined_df = pd.concat(self.national_data, ignore_index=True)
 
             # Post-process
-            combined_df = CSVIntegration.post_process_dataframe(combined_df)
+            combined_df = assign_source_column(
+                CSVIntegration.post_process_dataframe(combined_df)
+            )
 
             # Generate filename
             program_type = (

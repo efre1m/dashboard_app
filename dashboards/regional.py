@@ -582,7 +582,7 @@ def render_summary_dashboard_shared(
     )
 
     # Create cache key for summary data
-    cache_key = f"summary_{location_name}_{len(facility_uids)}_{len(maternal_patients)}_{len(newborn_patients)}"
+    cache_key = f"summary_all_sources_v2_{location_name}_{len(facility_uids)}_{len(maternal_patients)}_{len(newborn_patients)}"
 
     # Check if we have cached summary data
     if (
@@ -698,29 +698,9 @@ def render_summary_dashboard_shared(
                             maternal_patients["orgUnit"] == facility_uid
                         ].copy()
 
-                        # Use the same logic as national level to get Admitted Mothers count
-                        from utils.kpi_admitted_mothers import (
-                            get_numerator_denominator_for_admitted_mothers,
+                        maternal_count = count_unique_patients(
+                            facility_maternal_data, [facility_uid]
                         )
-
-                        # Get date range filters if available
-                        date_range_filters = {}
-                        if "filters" in st.session_state:
-                            date_range_filters = {
-                                "start_date": st.session_state.filters.get(
-                                    "start_date"
-                                ),
-                                "end_date": st.session_state.filters.get("end_date"),
-                            }
-
-                        numerator, denominator, _ = (
-                            get_numerator_denominator_for_admitted_mothers(
-                                facility_maternal_data,
-                                [facility_uid],
-                                date_range_filters,
-                            )
-                        )
-                        maternal_count = numerator
 
                     # Newborn count for facility - ADMITTED NEWBORNS (from enrollment date)
                     newborn_count = 0
@@ -732,12 +712,7 @@ def render_summary_dashboard_shared(
                             newborn_patients["orgUnit"] == facility_uid
                         ].copy()
 
-                        # Count Admitted Newborns using enrollment date
-                        from newborns_dashboard.kpi_utils_newborn import (
-                            compute_admitted_newborns_count,
-                        )
-
-                        newborn_count = compute_admitted_newborns_count(
+                        newborn_count = count_unique_patients(
                             facility_newborn_data, [facility_uid]
                         )
 
@@ -756,9 +731,7 @@ def render_summary_dashboard_shared(
                 "stillbirth_rate": maternal_kpis.get("stillbirth_rate", 0.0),
                 "maternal_start_date": maternal_start_date,
                 # Newborn indicators - ONLY 3 REQUIRED:
-                "newborn_tei_count": newborn_kpis.get(
-                    "admitted_newborns_count", 0
-                ),  # 1. Total Admitted Newborns
+                "newborn_tei_count": newborn_patient_count,  # 1. Total Admitted Newborns
                 "neonatal_mortality_rate": newborn_kpis.get(
                     "neonatal_mortality_rate", 0.0
                 ),  # 2. NMR

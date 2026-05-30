@@ -3,7 +3,7 @@
 Append/fill a final source column for maternal and newborn CSV exports.
 
 Default value: "DHIS"
-Facility override value: "EMR to DHIS"
+Facility override value: "EMR"
 Default folders:
   - utils/imnid/maternal
   - utils/imnid/newborn
@@ -16,16 +16,23 @@ import csv
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import pandas as pd
+
 
 DHIS_SOURCE_VALUE = "DHIS"
-EMR_TO_DHIS_SOURCE_VALUE = "EMR to DHIS"
-EMR_TO_DHIS_FACILITY_UIDS = {
+EMR_SOURCE_VALUE = "EMR"
+EMR_FACILITY_UIDS = {
     "QSD7RkcT8v2",  # Axum Referral Hospital, Tigray
     "Q6ryvdOY3Tj",  # Tula Primary Hospital, Sidama
+    "WNzF8NcSHLu",  # Olenchity Primary Hospital
 }
-EMR_TO_DHIS_FACILITY_NAMES = {
+EMR_FACILITY_NAMES = {
     "axum referral hospital",
+    "axum referal hospital",
+    "axum referal",
+    "axum referral",
     "tula primary hospital",
+    "olenchity primary hospital",
 }
 
 
@@ -38,12 +45,27 @@ def row_source_value(row: dict[str, str], default_source_value: str) -> str:
     org_unit_name = normalize_text(row.get("orgUnit_name") or row.get("facility") or "")
 
     if (
-        org_unit_uid in EMR_TO_DHIS_FACILITY_UIDS
-        or org_unit_name in EMR_TO_DHIS_FACILITY_NAMES
+        org_unit_uid in EMR_FACILITY_UIDS
+        or org_unit_name in EMR_FACILITY_NAMES
     ):
-        return EMR_TO_DHIS_SOURCE_VALUE
+        return EMR_SOURCE_VALUE
 
     return default_source_value
+
+
+def assign_source_column(df: pd.DataFrame, default_source_value: str = DHIS_SOURCE_VALUE) -> pd.DataFrame:
+    """Return a copy with final source column set from facility UID/name rules."""
+    if df is None or df.empty:
+        return df
+
+    result = df.copy()
+    rows = result.to_dict(orient="records")
+    result["source"] = [
+        row_source_value(row, default_source_value) for row in rows
+    ]
+
+    columns = [col for col in result.columns if col != "source"] + ["source"]
+    return result.reindex(columns=columns)
 
 
 def update_csv_source_column(path: Path, source_value: str) -> None:

@@ -8,6 +8,7 @@ from typing import Dict, List, Set
 import pandas as pd
 from dotenv import load_dotenv
 
+from add_source_column import assign_source_column
 import dhis2_fetcher as core
 from dhis2_fetcher import (
     CSVIntegration,
@@ -210,7 +211,7 @@ def build_learning_facility_ids_by_region(
 
 
 def append_missing_teis(source_df: pd.DataFrame, target_path: str, merge_mode: str = "replace") -> int:
-    source_df = source_df.copy()
+    source_df = assign_source_column(source_df)
     source_df.columns = source_df.columns.str.strip()
 
     if "tei_id" not in source_df.columns:
@@ -264,6 +265,8 @@ def append_missing_teis(source_df: pd.DataFrame, target_path: str, merge_mode: s
             combined = pd.concat([target_df, to_add], ignore_index=True)
             combined = combined.drop_duplicates(subset=["tei_id"], keep="first")
             updated_count = 0
+
+        combined = assign_source_column(combined)
         combined.to_csv(target_path, index=False, encoding="utf-8")
 
         mode_label = "Upserted" if merge_mode == "replace" else "Appended new"
@@ -273,6 +276,7 @@ def append_missing_teis(source_df: pd.DataFrame, target_path: str, merge_mode: s
         )
         return updated_count + len(to_add)
 
+    source_df = assign_source_column(source_df)
     source_df.to_csv(target_path, index=False, encoding="utf-8")
     logger.info(f"Created {os.path.basename(target_path)} with {len(source_df)} TEIs")
     return len(source_df)

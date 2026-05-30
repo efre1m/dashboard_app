@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 # Add the parent directory to path to import from config / utils
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from add_source_column import assign_source_column  # noqa: E402
 from dhis2_fetcher import (  # noqa: E402
     AutomatedDHIS2Pipeline,
     CSVIntegration,
@@ -167,7 +168,7 @@ def _reprocess_saved_file(path: Path, dry_run: bool) -> None:
         df = pd.read_csv(path, dtype=str, keep_default_na=False)
         if df.empty:
             return
-        processed = CSVIntegration.post_process_dataframe(df)
+        processed = assign_source_column(CSVIntegration.post_process_dataframe(df))
         processed.to_csv(path, index=False, encoding="utf-8")
     except Exception as exc:
         print(f"[WARN] Failed to reprocess {path.name}: {exc}")
@@ -241,6 +242,7 @@ def _upsert_rows(
         return 0, 0
 
     df_to_add = new_df.copy()
+    df_to_add = assign_source_column(df_to_add)
     if drop_region_cols:
         df_to_add = df_to_add.drop(
             columns=["region_uid", "region_name"], errors="ignore"

@@ -8,6 +8,13 @@ import numpy as np
 from utils.time_filter import get_date_range, assign_period, get_available_aggregations
 import datetime
 import logging
+from utils.dash_co import (
+    SOURCE_DEFAULT_SELECTION,
+    SOURCE_FILTER_ALL,
+    _available_source_options,
+    _normalize_source_value,
+    parse_dashboard_dates,
+)
 from utils.ethiopian_periods import (
     build_period_definitions_from_denominator,
     map_gregorian_dates_to_ethiopian_yearmonths,
@@ -3674,18 +3681,26 @@ def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     # Get current KPI to use the right date column
     current_kpi = st.session_state.get("selected_newborn_kpi", "Inborn Rate (%)")
 
+    source_series = df["source"] if "source" in df.columns else None
+
     # Try enrollment_date first if it exists
     if "enrollment_date" in df.columns:
-        df["enrollment_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
+        df["enrollment_date"] = parse_dashboard_dates(
+            df["enrollment_date"], source_series
+        )
     else:
         # Get the SPECIFIC date column for this KPI
         kpi_date_column = get_relevant_date_column_for_newborn_kpi_with_all(current_kpi)
 
         # Try KPI-specific date column
         if kpi_date_column and kpi_date_column in df.columns:
-            df["enrollment_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
+            df["enrollment_date"] = parse_dashboard_dates(
+                df[kpi_date_column], source_series
+            )
         elif "combined_date" in df.columns:
-            df["enrollment_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
+            df["enrollment_date"] = parse_dashboard_dates(
+                df["combined_date"], source_series
+            )
         else:
             # Look for program stage event dates
             program_stage_date_columns = [
@@ -3696,7 +3711,9 @@ def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
 
             for col in program_stage_date_columns:
                 try:
-                    df["enrollment_date"] = pd.to_datetime(df[col], errors="coerce")
+                    df["enrollment_date"] = parse_dashboard_dates(
+                        df[col], source_series
+                    )
                     if not df["enrollment_date"].isna().all():
                         break
                 except:
@@ -3710,7 +3727,7 @@ def normalize_newborn_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def render_newborn_patient_filter_controls(
-    patient_df, container=None, context="newborn"
+    patient_df, container=None, context="newborn", facility_uids=None
 ):
     """Simple filter controls for newborn patient data"""
     if container is None:
@@ -3757,6 +3774,31 @@ def render_newborn_patient_filter_controls(
         index=time_options.index(current_selection),
         key=f"quick_range{key_suffix}",
     )
+
+    source_options = _available_source_options(patient_df, facility_uids)
+    if source_options:
+        default_sources = [
+            source for source in SOURCE_DEFAULT_SELECTION if source in source_options
+        ] or source_options
+        current_source = st.session_state.get(
+            f"source_filter{key_suffix}", default_sources
+        )
+        if isinstance(current_source, str):
+            current_source = default_sources if current_source == SOURCE_FILTER_ALL else [current_source]
+        current_source = [
+            source for source in current_source if source in source_options
+        ] or default_sources
+
+        filters["source"] = container.multiselect(
+            "Source",
+            source_options,
+            default=current_source,
+            key=f"source_filter{key_suffix}",
+        )
+        filters["source_options"] = source_options
+    else:
+        filters["source"] = source_options or [SOURCE_FILTER_ALL]
+        filters["source_options"] = source_options
 
     # Get REAL VALID dates from patient dataframe
     min_date, max_date = _get_newborn_patient_date_range(patient_df)
@@ -3849,6 +3891,7 @@ def render_newborn_patient_filter_controls(
     st.session_state.filters["period_label"] = filters["period_label"]
     st.session_state.filters["start_date"] = filters["start_date"]
     st.session_state.filters["end_date"] = filters["end_date"]
+    st.session_state.filters["source"] = filters["source"]
 
     # Background Color
     filters["bg_color"] = container.color_picker(
@@ -3912,6 +3955,30 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
             facility_mask = df["orgUnit"].isin(facility_uids)
             df = df[facility_mask].copy()
 
+    selected_sources = filters.get("source", [SOURCE_FILTER_ALL])
+    if isinstance(selected_sources, str):
+        selected_sources = [selected_sources]
+
+    if (
+        "source" in df.columns
+        and filters.get("source_options")
+        and not selected_sources
+    ):
+        df = df.iloc[0:0].copy()
+        logging.info("   - Newborn source filter cleared: 0 patients")
+
+    normalized_sources = {
+        _normalize_source_value(source)
+        for source in selected_sources
+        if source and source != SOURCE_FILTER_ALL
+    }
+    if normalized_sources and "source" in df.columns:
+        source_mask = df["source"].map(_normalize_source_value).isin(normalized_sources)
+        df = df[source_mask].copy()
+        logging.info(
+            f"   - After newborn source filter ({', '.join(sorted(normalized_sources))}): {len(df)} patients"
+        )
+
     # STEP 1: Create a list of possible date columns to check
     date_columns_to_try = []
 
@@ -3950,7 +4017,8 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
         if date_col in df.columns:
             try:
                 # Convert date column to datetime - CORRECT METHOD
-                df["event_date"] = pd.to_datetime(df[date_col], errors="coerce")
+                source_series = df["source"] if "source" in df.columns else None
+                df["event_date"] = parse_dashboard_dates(df[date_col], source_series)
 
                 # Check if we have valid dates
                 valid_dates = df["event_date"].notna().sum()

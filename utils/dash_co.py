@@ -2479,7 +2479,7 @@ def parse_dashboard_dates(series, source_series=None):
 
     if source_series is not None:
         source_mask = source_series.map(_normalize_source_value).isin(
-            {"EMR", "EMR to DHIS"}
+            {"EMR"}
         )
         ec_mask = source_mask & date_text.str.match(r"^20(1[0-8])-\d{2}-\d{2}", na=False)
         if ec_mask.any():
@@ -2553,8 +2553,8 @@ def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
 
 
 SOURCE_FILTER_ALL = "All"
-SOURCE_DISPLAY_ORDER = ["DHIS", "EMR to DHIS", "EMR"]
-SOURCE_DEFAULT_SELECTION = ["DHIS", "EMR to DHIS"]
+SOURCE_DISPLAY_ORDER = ["DHIS", "EMR"]
+SOURCE_DEFAULT_SELECTION = ["DHIS", "EMR"]
 
 
 def _normalize_source_value(value):
@@ -2562,10 +2562,16 @@ def _normalize_source_value(value):
     lookup = normalized.lower()
     if lookup in {"dhis", "dhis2", "dhis tracker"}:
         return "DHIS"
-    if lookup in {"emr", "emr only"}:
+    if lookup in {
+        "emr",
+        "emr only",
+        "emr to dhis",
+        "emr-to-dhis",
+        "emr dhis",
+        "dhis to emr",
+        "dhsi to emr",
+    }:
         return "EMR"
-    if lookup in {"emr to dhis", "emr-to-dhis", "emr dhis", "dhis to emr", "dhsi to emr"}:
-        return "EMR to DHIS"
     return normalized
 
 
@@ -2592,6 +2598,8 @@ def _available_source_options(patient_df, facility_uids=None):
         return []
 
     scoped_df = _scope_dataframe_by_facilities(patient_df, facility_uids)
+    if scoped_df.empty and not patient_df.empty:
+        scoped_df = patient_df
     if scoped_df.empty:
         return []
 
@@ -2658,7 +2666,7 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
     )
 
     source_options = _available_source_options(patient_df, facility_uids)
-    if len(source_options) > 1:
+    if source_options:
         default_sources = [
             source for source in SOURCE_DEFAULT_SELECTION if source in source_options
         ] or source_options
@@ -2677,8 +2685,10 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
             default=current_source,
             key=f"source_filter{key_suffix}",
         )
+        filters["source_options"] = source_options
     else:
         filters["source"] = source_options or [SOURCE_FILTER_ALL]
+        filters["source_options"] = source_options
 
     # Get REAL VALID dates from patient dataframe
     min_date, max_date = _get_patient_date_range(patient_df)
@@ -2865,6 +2875,14 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
     selected_sources = filters.get("source", [SOURCE_FILTER_ALL])
     if isinstance(selected_sources, str):
         selected_sources = [selected_sources]
+
+    if (
+        "source" in df.columns
+        and filters.get("source_options")
+        and not selected_sources
+    ):
+        df = df.iloc[0:0].copy()
+        logging.info("   - Source filter cleared: 0 patients")
 
     normalized_sources = {
         _normalize_source_value(source)
