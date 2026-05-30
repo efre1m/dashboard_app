@@ -2447,6 +2447,47 @@ def render_additional_analytics(
                 )
                 st.plotly_chart(fig, use_container_width=True, key="fp_viz")
 
+def _convert_ec_string_to_gc_timestamp(value):
+    if not isinstance(value, str) or not value.strip():
+        return pd.NaT
+
+    raw_date = value.strip().split("T")[0].split(" ")[0]
+    parts = raw_date.split("-")
+    if len(parts) != 3:
+        return pd.NaT
+
+    try:
+        ec_year, ec_month, ec_day = [int(part) for part in parts]
+        if not (2010 <= ec_year <= 2018 and 1 <= ec_month <= 13 and 1 <= ec_day <= 30):
+            return pd.NaT
+
+        gc_year_start = ec_year + 7
+        start_day = 12 if (ec_year - 1) % 4 == 3 else 11
+        gc_start = datetime.date(gc_year_start, 9, start_day)
+        gc_date = gc_start + datetime.timedelta(days=(ec_month - 1) * 30 + ec_day - 1)
+        return pd.Timestamp(gc_date)
+    except Exception:
+        return pd.NaT
+
+
+def parse_dashboard_dates(series, source_series=None):
+    date_text = series.astype(str).str.strip()
+    date_text = date_text.str.replace(r"([+-]\d{2}):?(\d{2})$", "", regex=True)
+    date_text = date_text.str.replace(r"Z$", "", regex=True)
+
+    parsed = pd.to_datetime(date_text, errors="coerce")
+
+    if source_series is not None:
+        source_mask = source_series.map(_normalize_source_value).isin(
+            {"EMR", "EMR to DHIS"}
+        )
+        ec_mask = source_mask & date_text.str.match(r"^20(1[0-8])-\d{2}-\d{2}", na=False)
+        if ec_mask.any():
+            converted = date_text[ec_mask].map(_convert_ec_string_to_gc_timestamp)
+            parsed.loc[ec_mask] = converted.where(converted.notna(), parsed.loc[ec_mask])
+
+    return parsed
+
 
 def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure a single datetime column 'enrollment_date' exists for patient data"""
@@ -2464,18 +2505,23 @@ def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     from utils.kpi_utils import get_relevant_date_column_for_kpi
 
     kpi_date_column = get_relevant_date_column_for_kpi(current_kpi)
+    source_series = df["source"] if "source" in df.columns else None
 
     # Try KPI-specific date column first
     if "enrollment_date" in df.columns:
-        df["enrollment_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
+        df["enrollment_date"] = parse_dashboard_dates(
+            df["enrollment_date"], source_series
+        )
         logging.info("✅ normalize_patient_dates: Using enrollment_date")
     elif kpi_date_column and kpi_date_column in df.columns:
-        df["enrollment_date"] = pd.to_datetime(df[kpi_date_column], errors="coerce")
+        df["enrollment_date"] = parse_dashboard_dates(
+            df[kpi_date_column], source_series
+        )
         logging.info(
             f"✅ normalize_patient_dates: Using KPI-specific '{kpi_date_column}'"
         )
     elif "combined_date" in df.columns:
-        df["enrollment_date"] = pd.to_datetime(df["combined_date"], errors="coerce")
+        df["enrollment_date"] = parse_dashboard_dates(df["combined_date"], source_series)
         logging.info("✅ normalize_patient_dates: Using combined_date")
     else:
         # Look for program stage event dates
@@ -2487,7 +2533,7 @@ def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
 
         for col in program_stage_date_columns:
             try:
-                df["enrollment_date"] = pd.to_datetime(df[col], errors="coerce")
+                df["enrollment_date"] = parse_dashboard_dates(df[col], source_series)
                 if not df["enrollment_date"].isna().all():
                     logging.info(
                         f"✅ normalize_patient_dates: Using {col} for enrollment_date"
@@ -2506,7 +2552,63 @@ def normalize_patient_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def render_patient_filter_controls(patient_df, container=None, context="default"):
+SOURCE_FILTER_ALL = "All"
+SOURCE_DISPLAY_ORDER = ["DHIS", "EMR to DHIS", "EMR"]
+SOURCE_DEFAULT_SELECTION = ["DHIS", "EMR to DHIS"]
+
+
+def _normalize_source_value(value):
+    normalized = " ".join(str(value or "").strip().split())
+    lookup = normalized.lower()
+    if lookup in {"dhis", "dhis2", "dhis tracker"}:
+        return "DHIS"
+    if lookup in {"emr", "emr only"}:
+        return "EMR"
+    if lookup in {"emr to dhis", "emr-to-dhis", "emr dhis", "dhis to emr", "dhsi to emr"}:
+        return "EMR to DHIS"
+    return normalized
+
+
+def _scope_dataframe_by_facilities(df, facility_uids=None):
+    if df.empty or not facility_uids or "orgUnit" not in df.columns:
+        return df
+
+    if not isinstance(facility_uids, list):
+        facility_uids = [facility_uids]
+
+    is_all_facilities = (
+        len(facility_uids) == 0
+        or facility_uids == ["All Facilities"]
+        or (len(facility_uids) == 1 and facility_uids[0] == "All Facilities")
+    )
+    if is_all_facilities:
+        return df
+
+    return df[df["orgUnit"].isin(facility_uids)].copy()
+
+
+def _available_source_options(patient_df, facility_uids=None):
+    if patient_df.empty or "source" not in patient_df.columns:
+        return []
+
+    scoped_df = _scope_dataframe_by_facilities(patient_df, facility_uids)
+    if scoped_df.empty:
+        return []
+
+    sources = (
+        scoped_df["source"]
+        .dropna()
+        .map(_normalize_source_value)
+        .astype(str)
+        .str.strip()
+    )
+    sources = sorted({source for source in sources if source and source.lower() != "nan"})
+    return [source for source in SOURCE_DISPLAY_ORDER if source in sources] + [
+        source for source in sources if source not in SOURCE_DISPLAY_ORDER
+    ]
+
+
+def render_patient_filter_controls(patient_df, container=None, context="default", facility_uids=None):
     """Simple filter controls for patient data"""
     if container is None:
         container = st
@@ -2554,6 +2656,29 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
         index=time_options.index(current_selection),
         key=f"quick_range{key_suffix}",
     )
+
+    source_options = _available_source_options(patient_df, facility_uids)
+    if len(source_options) > 1:
+        default_sources = [
+            source for source in SOURCE_DEFAULT_SELECTION if source in source_options
+        ] or source_options
+        current_source = st.session_state.get(
+            f"source_filter{key_suffix}", default_sources
+        )
+        if isinstance(current_source, str):
+            current_source = default_sources if current_source == SOURCE_FILTER_ALL else [current_source]
+        current_source = [
+            source for source in current_source if source in source_options
+        ] or default_sources
+
+        filters["source"] = container.multiselect(
+            "Source",
+            source_options,
+            default=current_source,
+            key=f"source_filter{key_suffix}",
+        )
+    else:
+        filters["source"] = source_options or [SOURCE_FILTER_ALL]
 
     # Get REAL VALID dates from patient dataframe
     min_date, max_date = _get_patient_date_range(patient_df)
@@ -2648,6 +2773,7 @@ def render_patient_filter_controls(patient_df, container=None, context="default"
     st.session_state.filters["period_label"] = filters["period_label"]
     st.session_state.filters["start_date"] = filters["start_date"]
     st.session_state.filters["end_date"] = filters["end_date"]
+    st.session_state.filters["source"] = filters["source"]
 
     # Background Color
     filters["bg_color"] = container.color_picker(
@@ -2736,6 +2862,22 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
     else:
         logging.info("   - No facility filter applied")
 
+    selected_sources = filters.get("source", [SOURCE_FILTER_ALL])
+    if isinstance(selected_sources, str):
+        selected_sources = [selected_sources]
+
+    normalized_sources = {
+        _normalize_source_value(source)
+        for source in selected_sources
+        if source and source != SOURCE_FILTER_ALL
+    }
+    if normalized_sources and "source" in df.columns:
+        source_mask = df["source"].map(_normalize_source_value).isin(normalized_sources)
+        df = df[source_mask].copy()
+        logging.info(
+            f"   - After source filter ({', '.join(sorted(normalized_sources))}): {len(df)} patients"
+        )
+
     # CRITICAL FIX: Always use normalize_patient_dates for consistency
     # This ensures we have a proper enrollment_date column
     df = normalize_patient_dates(df)
@@ -2773,8 +2915,9 @@ def apply_patient_filters(patient_df, filters, facility_uids=None):
             # STEP 4: Apply the date filter
             if date_column_to_use and enrollment_dates_valid > 0:
                 # Make sure the date column is properly formatted as datetime
-                df[date_column_to_use] = pd.to_datetime(
-                    df[date_column_to_use], errors="coerce"
+                source_series = df["source"] if "source" in df.columns else None
+                df[date_column_to_use] = parse_dashboard_dates(
+                    df[date_column_to_use], source_series
                 )
 
                 # Create a mask: keep rows where date is between start_date and end_date

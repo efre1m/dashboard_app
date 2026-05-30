@@ -1192,7 +1192,10 @@ def render_maternal_dashboard_shared(
     with col_ctrl:
         st.markdown('<div class="filter-box">', unsafe_allow_html=True)
         filters = render_patient_filter_controls(
-            working_df, container=col_ctrl, context="national_maternal"
+            working_df,
+            container=col_ctrl,
+            context="national_maternal",
+            facility_uids=facility_uids,
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
