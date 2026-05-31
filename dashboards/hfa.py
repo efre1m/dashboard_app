@@ -261,7 +261,7 @@ def render_hfa_tab(user: Dict, *, key_prefix: str = "hfa") -> None:
 
         facility_options = facilities_for_region(region)
         facility = st.selectbox(
-            "Facility (DHIS2 name)",
+            "Facility Name",
             facility_options,
             index=0 if len(facility_options) == 1 else None,
             key=f"{key_prefix}_facility",
