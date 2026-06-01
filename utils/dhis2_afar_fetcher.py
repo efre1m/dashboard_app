@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from add_source_column import assign_source_column
 from dhis2_fetcher import CSVIntegration, DHIS2DataFetcher, DEFAULT_OUTPUT_DIR, logger
+from dhis2_learning_facilities_nid_fetcher import ensure_additional_dataelement_mapping
 
 
 AFAR_REGION_UID = "aXRko1WzDtt"
@@ -67,6 +68,8 @@ class AutomatedAfarNIDPipeline:
             if not all([self.base_url, self.username, self.password]):
                 logger.error("Missing DHIS2 credentials (DHIS2_BASE_URL, DHIS2_USERNAME, DHIS2_PASSWORD)")
                 return False
+
+            ensure_additional_dataelement_mapping()
 
             logger.info("Fetching orgUnit names...")
             orgunit_names = self.fetcher.fetch_orgunit_names()
