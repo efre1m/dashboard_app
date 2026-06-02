@@ -75,6 +75,8 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
             "OpHw2X58x5i",
             "gJH6PkYI6IV",
             "aK5txmRYpVX",
+            "p2GxXHvzlnC",
+            "K5hp1PVB5l4",
         ],
         "program_stage_name": "Admission Information",
     },
@@ -87,7 +89,7 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Observations And Nursing Care 1",
     },
     "ed8ErpgTCwx": {
-        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd"],
+        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk"],
         "program_stage_name": "Interventions",
     },
     "TOicTEwzSGj": {
@@ -121,6 +123,10 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     "wn0tHaHcceW": "Sub-Categories of Infection",
     "A94ibeuO9GL": "Blood culture for suspected sepsis",
     "CzIgD0rsk52": "Birth weight (grams)",
+    "p2GxXHvzlnC": "Time of Birth",
+    "K5hp1PVB5l4": "Time of Admission",
+    "yVNrsnUo7AR": "CPAP (1) Start Date",
+    "Ul6aAlFy5Kk": "CPAP (1) Start Time",
     ADDITIONAL_O2_DATAELEMENT_UID: ADDITIONAL_O2_DATAELEMENT_NAME,
 }
 

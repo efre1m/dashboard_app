@@ -243,6 +243,13 @@ O2_SAT_COLUMNS = [
 ]
 O2_THRESHOLD = 90
 
+# CPAP Timing columns - time from admission to CPAP initiation for 1000-1999g
+CPAP_TIMING_ADM_DATE_COL = "date_of_admission_n_nicu_admission_careform"
+CPAP_TIMING_ADM_TIME_COL = "time_of_admission_admission_information"
+CPAP_TIMING_CPAP_DATE_COL = "cpap_1_start_date_interventions"
+CPAP_TIMING_CPAP_TIME_COL = "cpap_1_start_time_interventions"
+CPAP_TIMING_BIRTH_COL = "time_of_birth_admission_information"
+
 # ---------------- HELPER FUNCTIONS ----------------
 def safe_convert_numeric(value, default=0):
     """Safely convert value to numeric"""
@@ -4385,6 +4392,8 @@ __all__ = [
     # NEW COMPARISON FUNCTIONS WITH 3x2 GRID
     "render_kmc_coverage_comparison_chart",
     "render_cpap_by_weight_comparison_chart",
+    # CPAP Timing
+    "compute_cpap_timing_data",
     "render_cpap_rds_comparison_line_chart",
     # Constants - UPDATED with exact dataset names
     "BIRTH_WEIGHT_CATEGORIES",
@@ -4396,6 +4405,12 @@ __all__ = [
     "CPAP_YES_CODE",
     "RDS_DIAGNOSIS_COL",  # Exact column name from dataset
     "RDS_YES_CODE",
+    # CPAP Timing columns
+    "CPAP_TIMING_ADM_DATE_COL",
+    "CPAP_TIMING_ADM_TIME_COL",
+    "CPAP_TIMING_CPAP_DATE_COL",
+    "CPAP_TIMING_CPAP_TIME_COL",
+    "CPAP_TIMING_BIRTH_COL",
 ]
 # Comparison chart functions for KMC and CPAP with 3x2 grid layout
 
@@ -5232,3 +5247,102 @@ def _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_reg
     edf = pd.DataFrame(eligible_rows) if eligible_rows else None
     sdf = pd.DataFrame(symptomatic_rows) if symptomatic_rows else None
     return edf, sdf
+
+
+def compute_cpap_timing_data(df, timing_type="admission"):
+    """
+    Compute CPAP timing categories for babies who received CPAP.
+
+    Parameters:
+        timing_type: "admission" for admission→CPAP, "birth" for birth→CPAP
+
+    Returns DataFrame with columns: tei_id, cpap_timing_category
+    Returns empty DataFrame if no qualifying data or required columns are missing.
+    """
+    if df is None or df.empty or "tei_id" not in df.columns:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    # CPAP flag — all babies who received CPAP (no birth weight filter)
+    cpap_col = CPAP_ADMINISTERED_COL
+    if cpap_col in df.columns:
+        df["has_cpap"] = (
+            pd.to_numeric(
+                df[cpap_col].astype(str).str.split(".").str[0],
+                errors="coerce",
+            )
+            == float(CPAP_YES_CODE)
+        )
+    else:
+        df["has_cpap"] = False
+
+    cpap_df = df[df["has_cpap"]].copy()
+
+    if cpap_df.empty:
+        return pd.DataFrame()
+
+    # Parse datetime helpers
+    def _parse_dt(date_val, time_val):
+        if pd.isna(date_val) or pd.isna(time_val):
+            return pd.NaT
+        try:
+            return pd.to_datetime(f"{date_val} {time_val}", errors="coerce")
+        except Exception:
+            return pd.NaT
+
+    cpap_date_col = CPAP_TIMING_CPAP_DATE_COL
+    cpap_time_col = CPAP_TIMING_CPAP_TIME_COL
+
+    # CPAP start datetime (shared across both timing types)
+    if cpap_date_col in cpap_df.columns and cpap_time_col in cpap_df.columns:
+        cpap_df["cpap_start_dt"] = cpap_df.apply(
+            lambda r: _parse_dt(r.get(cpap_date_col), r.get(cpap_time_col)),
+            axis=1,
+        )
+    else:
+        cpap_df["cpap_start_dt"] = pd.NaT
+
+    if timing_type == "admission":
+        # Admission → CPAP: Date of Admission + Time of Admission
+        date_col = CPAP_TIMING_ADM_DATE_COL
+        time_col = CPAP_TIMING_ADM_TIME_COL
+        cpap_df["ref_dt"] = cpap_df.apply(
+            lambda r: _parse_dt(r.get(date_col), r.get(time_col)),
+            axis=1,
+        )
+    else:
+        # Birth → CPAP: Date of Admission (proxy for birth date) + Time of Birth
+        date_col = CPAP_TIMING_ADM_DATE_COL
+        time_col = CPAP_TIMING_BIRTH_COL
+        cpap_df["ref_dt"] = cpap_df.apply(
+            lambda r: _parse_dt(r.get(date_col), r.get(time_col)),
+            axis=1,
+        )
+
+    # Compute hours between reference and CPAP start
+    cpap_df["cpap_hours"] = (
+        cpap_df["cpap_start_dt"] - cpap_df["ref_dt"]
+    ).dt.total_seconds() / 3600.0
+
+    # Bucket into timing categories
+    def _bucket(hours):
+        if pd.isna(hours):
+            return "Missing CPAP Timing"
+        if hours <= 1:
+            return "CPAP within 1h"
+        if hours <= 4:
+            return "CPAP 1-4h"
+        if hours <= 12:
+            return "CPAP 4-12h"
+        if hours <= 24:
+            return "CPAP 12-24h"
+        return "CPAP after 24h"
+
+    cpap_df["cpap_timing_category"] = cpap_df["cpap_hours"].apply(_bucket)
+
+    # If either datetime is missing, categorize as Missing
+    missing_mask = cpap_df["ref_dt"].isna() | cpap_df["cpap_start_dt"].isna()
+    cpap_df.loc[missing_mask, "cpap_timing_category"] = "Missing CPAP Timing"
+
+    return cpap_df[["tei_id", "cpap_timing_category"]]

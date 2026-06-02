@@ -51,7 +51,9 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     render_kmc_facility_comparison,
     render_kmc_region_comparison,
     # render_cpap_facility_comparison,
-
+    # CPAP timing computation
+    compute_cpap_timing_data,
+    CPAP_TIMING_BIRTH_COL,
 )
 
 # KPI mapping for newborn comparison charts
@@ -264,11 +266,12 @@ NEWBORN_KPI_GROUPS = {
         "Not hypothermic at admission inborn (%)",
         "Not hypothermic at admission outborn (%)",
     ],
-    "🏥 Intervention": [
-        "KMC Coverage by Birth Weight",
-        # "General CPAP Coverage", # Commented out
+    "🏥 CPAP": [
         "CPAP for RDS",
         "CPAP Coverage by Birth Weight",
+    ],
+    "👶 KMC": [
+        "KMC Coverage by Birth Weight",
     ],
     "📉 Mortality": [
         "Neonatal Mortality Rate (%)",
@@ -666,13 +669,14 @@ def render_newborn_kpi_tab_navigation():
 
     # Create main KPI group tabs - UPDATED TO 7 TABS & REORDERED
     # Enrollment -> Birth -> Hypothermia -> Vital Monitoring -> Intervention -> Mortality -> Data Quality
-    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_intervention, tab_mortality, tab_dq = st.tabs(
+    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_mortality, tab_dq = st.tabs(
         [
             "Enrollment",
             "Birth",
             "Hypothermia",
             "Vital Monitoring",
-            "Intervention",
+            "CPAP",
+            "KMC",
             "Mortality",
             "Data Quality",
         ]
@@ -775,25 +779,29 @@ def render_newborn_kpi_tab_navigation():
                          type=("primary" if selected_kpi == VITAL_MONITORING_MARKER else "secondary")):
                 selected_kpi = VITAL_MONITORING_MARKER
 
-    with tab_intervention:
-        # Intervention - 3 buttons (General CPAP removed)
+    with tab_cpap:
+        # CPAP - 3 buttons (General CPAP removed)
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("CPAP Coverage", key="cpap_rds_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "CPAP for RDS" else "secondary")):
+                selected_kpi = "CPAP for RDS"
+        with cols[1]:
+            if st.button("CPAP by Weight", key="cpap_by_weight_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == "CPAP Coverage by Birth Weight" else "secondary")):
+                selected_kpi = "CPAP Coverage by Birth Weight"
+        with cols[2]:
+            if st.button("Quality of Care", key="cpap_timing_qoc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == CPAP_TIMING_QOC_MARKER else "secondary")):
+                selected_kpi = CPAP_TIMING_QOC_MARKER
+
+    with tab_kmc:
+        # KMC - 1 button
         cols = st.columns(5)
         with cols[0]:
             if st.button("KMC Coverage", key="kmc_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "KMC Coverage by Birth Weight" else "secondary")):
                 selected_kpi = "KMC Coverage by Birth Weight"
-        # with cols[1]:
-        #     if st.button("General CPAP", key="cpap_general_btn", use_container_width=True,
-        #                  type=("primary" if selected_kpi == "General CPAP Coverage" else "secondary")):
-        #         selected_kpi = "General CPAP Coverage"
-        with cols[1]:
-            if st.button("CPAP Coverage", key="cpap_rds_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "CPAP for RDS" else "secondary")):
-                selected_kpi = "CPAP for RDS"
-        with cols[2]:
-            if st.button("CPAP by Weight", key="cpap_by_weight_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == "CPAP Coverage by Birth Weight" else "secondary")):
-                selected_kpi = "CPAP Coverage by Birth Weight"
 
     with tab_mortality:
         # Mortality - 1 button
@@ -912,6 +920,18 @@ def render_newborn_trend_chart_section(
         _render_hypothermia_qoc_trend_chart(
             working_df,
             "Thermal Status at Admission",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: CPAP Timing Quality of Care stacked chart
+    if kpi_selection == CPAP_TIMING_QOC_MARKER:
+        _render_cpap_timing_qoc_trend_chart(
+            working_df,
+            "CPAP Quality of Care",
             bg_color,
             text_color,
             facility_uids,
@@ -1283,6 +1303,18 @@ def render_newborn_comparison_chart(
         _render_hypothermia_qoc_trend_chart(
             df_to_use,
             "Thermal Status at Admission",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters={},
+        )
+        return
+
+    # SPECIAL HANDLING: CPAP Timing QOC
+    if kpi_selection == CPAP_TIMING_QOC_MARKER:
+        _render_cpap_timing_qoc_trend_chart(
+            df_to_use,
+            "CPAP Quality of Care",
             bg_color,
             text_color,
             facility_uids,
@@ -2265,6 +2297,19 @@ HYPO_COMBINED_INDICATORS = [
 HYPO_COMBINED_MARKER = "__hypothermia_combined__"
 HYPO_QOC_MARKER = "__hypothermia_qoc__"
 
+# CPAP Timing - Time from Admission/ Birth to CPAP initiation for 1000-1999g babies
+CPAP_TIMING_QOC_MARKER = "__cpap_timing_qoc__"
+
+# CPAP Timing categories (for QOC stacked bar) - green→yellow→red gradient
+CPAP_TIMING_CATEGORIES = [
+    ("CPAP within 1h", "#27AE60"),
+    ("CPAP 1-4h", "#2ECC71"),
+    ("CPAP 4-12h", "#F1C40F"),
+    ("CPAP 12-24h", "#E67E22"),
+    ("CPAP after 24h", "#E74C3C"),
+    ("Missing CPAP Timing", "#7F8C8D"),
+]
+
 VITAL_MONITORING_MARKER = "__vital_monitoring__"
 
 VITAL_MONITORING_INDICATORS = [
@@ -3128,6 +3173,315 @@ def _render_hypothermia_qoc_trend_chart(
             """,
             unsafe_allow_html=True,
         )
+
+
+# ==================== CPAP TIMING RENDER FUNCTIONS ====================
+
+# CPAP Timing column constants (must match kpi_utils_newborn_simplified.py)
+_CPAP_TIMING_BW_COL = "birth_weight_n_nicu_admission_careform"
+_CPAP_TIMING_ADM_DATE_COL = "date_of_admission_n_nicu_admission_careform"
+_CPAP_TIMING_ADM_TIME_COL = "time_of_admission_admission_information"
+_CPAP_TIMING_CPAP_DATE_COL = "cpap_1_start_date_interventions"
+_CPAP_TIMING_CPAP_TIME_COL = "cpap_1_start_time_interventions"
+_CPAP_TIMING_CPAP_COL = "baby_placed_on_cpap_neonatal_referral_form"
+_CPAP_TIMING_BIRTH_COL = "time_of_birth_admission_information"
+
+
+def _render_cpap_timing_combined_trend_chart(
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """(Removed) Combined run-chart has been replaced by QOC stacked bar charts"""
+    st.info("CPAP Timing Coverage has been replaced by the stacked bar charts above.")
+    return
+
+
+def _render_cpap_timing_qoc_trend_chart(
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render two 100% stacked bar charts side-by-side: Admission→CPAP and Birth→CPAP"""
+    categories = CPAP_TIMING_CATEGORIES
+    cat_names = [c[0] for c in categories]
+    cat_colors = [c[1] for c in categories]
+
+    # Compute both timing types
+    admission_timing = compute_cpap_timing_data(working_df, timing_type="admission")
+    birth_timing = compute_cpap_timing_data(working_df, timing_type="birth")
+
+    if admission_timing.empty and birth_timing.empty:
+        st.warning("No CPAP timing data available for babies who received CPAP.")
+        return
+
+    def _build_agg_df(timing_df):
+        """Build per-period aggregated dataframe for one timing type (admission or birth)."""
+        if timing_df.empty:
+            return None
+        df = working_df[["tei_id", "enrollment_date", "orgUnit"]].drop_duplicates(subset=["tei_id"]).copy()
+        df = df.merge(timing_df, on="tei_id", how="inner")
+        df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
+
+        if date_range_filters:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                df = df[(df["event_date"] >= start_dt) & (df["event_date"] < end_dt)].copy()
+
+        df = df[df["event_date"].notna()].copy()
+        if df.empty:
+            return None
+
+        period_label = st.session_state.get("period_label", "Monthly")
+        try:
+            df = assign_period(df, "event_date", period_label)
+        except Exception:
+            return None
+
+        unique_periods = df[["period_display", "period_sort"]].drop_duplicates().sort_values("period_sort")
+        all_data = []
+        for _, row_data in unique_periods.iterrows():
+            period_display = row_data["period_display"]
+            period_df = df[df["period_display"] == period_display]
+            total = len(period_df)
+            row = {"period_display": period_display, "period_sort": row_data["period_sort"], "total": total}
+            for cat_name in cat_names:
+                count = int((period_df["cpap_timing_category"] == cat_name).sum())
+                pct = (count / total * 100) if total > 0 else 0.0
+                row[f"{cat_name}_count"] = count
+                row[f"{cat_name}_pct"] = pct
+            all_data.append(row)
+
+        if not all_data:
+            return None
+        agg_df = pd.DataFrame(all_data)
+        agg_df = agg_df.sort_values("period_sort")
+        return agg_df
+
+    admission_agg = _build_agg_df(admission_timing)
+    birth_agg = _build_agg_df(birth_timing)
+
+    def _build_stacked_bar(agg_df, title_suffix, periods):
+        """Build a 100% stacked bar figure."""
+        fig = go.Figure()
+        for cat_name, cat_color in categories:
+            pct_col = f"{cat_name}_pct"
+            count_col = f"{cat_name}_count"
+            fig.add_trace(go.Bar(
+                name=cat_name,
+                x=agg_df["period_display"],
+                y=agg_df[pct_col],
+                marker_color=cat_color,
+                text=[f"{v:.1f}%" for v in agg_df[pct_col]],
+                textposition="inside",
+                textfont=dict(color="white", size=10),
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    f"{cat_name}<br>"
+                    "Percentage: %{y:.1f}%%<br>"
+                    "Count: %{customdata[0]}<br>"
+                    "Total with CPAP: %{customdata[1]}<br>"
+                    "<extra></extra>"
+                ),
+                customdata=agg_df[[count_col, "total"]].values,
+                cliponaxis=False,
+            ))
+
+        fig.update_layout(
+            title=f"{title_suffix}",
+            barmode="stack",
+            barnorm="percent",
+            height=500,
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font_color=text_color,
+            title_font_color=text_color,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                font=dict(size=11),
+            ),
+            margin=dict(l=60, r=60, t=100, b=60),
+            yaxis=dict(
+                title="Percentage (%)",
+                range=[0, 100],
+                dtick=20,
+                ticksuffix="%",
+                gridcolor="rgba(128,128,128,0.2)",
+                zeroline=True,
+                zerolinecolor="rgba(128,128,128,0.5)",
+                showline=True,
+                linewidth=2,
+                linecolor="rgba(128,128,128,0.8)",
+                mirror=True,
+            ),
+            xaxis=dict(
+                type="category",
+                categoryorder="array",
+                categoryarray=periods,
+                tickangle=-45,
+                gridcolor="rgba(128,128,128,0.2)",
+                showgrid=True,
+                showline=True,
+                linewidth=2,
+                linecolor="rgba(128,128,128,0.8)",
+                mirror=True,
+            ),
+        )
+        return fig
+
+    def _build_table(agg_df):
+        """Build per-period table for one timing type."""
+        table_data = []
+        for _, r in agg_df.iterrows():
+            row = {"Period": r["period_display"]}
+            for cat_name in cat_names:
+                cnt = int(r[f"{cat_name}_count"])
+                den = int(r["total"])
+                pct = r[f"{cat_name}_pct"]
+                row[cat_name] = f"{pct:.1f}% ({cnt}/{den})" if den > 0 else "-"
+            table_data.append(row)
+        overall_row = {"Period": "Overall"}
+        for cat_name in cat_names:
+            total_cnt = int(agg_df[f"{cat_name}_count"].sum())
+            total_den = int(agg_df["total"].sum())
+            overall_pct = (total_cnt / total_den * 100) if total_den > 0 else 0.0
+            overall_row[cat_name] = f"{overall_pct:.1f}% ({total_cnt}/{total_den})" if total_den > 0 else "-"
+        table_data.append(overall_row)
+        return pd.DataFrame(table_data)
+
+    # Render two charts side-by-side
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if admission_agg is not None:
+            periods = admission_agg["period_display"].tolist()
+            fig = _build_stacked_bar(admission_agg, "Time between Admission and CPAP initiation", periods)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No data for Time between Admission and CPAP initiation.")
+
+    with col2:
+        if birth_agg is not None:
+            periods = birth_agg["period_display"].tolist()
+            fig = _build_stacked_bar(birth_agg, "Time between Birth and CPAP initiation", periods)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No data for Time between Birth and CPAP initiation.")
+
+    # Tables side-by-side
+    st.subheader("📊 Quality of Care Tables")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+
+    tcol1, tcol2 = st.columns(2)
+    with tcol1:
+        st.markdown("**Admission → CPAP**")
+        if admission_agg is not None:
+            table_df = _build_table(admission_agg)
+            st.dataframe(table_df, use_container_width=True, height=300)
+        else:
+            st.info("No data")
+
+    with tcol2:
+        st.markdown("**Birth → CPAP**")
+        if birth_agg is not None:
+            table_df = _build_table(birth_agg)
+            st.dataframe(table_df, use_container_width=True, height=300)
+        else:
+            st.info("No data")
+
+    # Info expander
+    with st.expander("ℹ️ How each CPAP timing category is defined"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+
+            <h4 style="margin-top:0;">Indicators</h4>
+            <ul>
+              <li><b>Time between Admission and CPAP initiation</b> — uses <code>Date of Admission</code> + <code>Time of Admission</code> as reference, subtracted from <code>CPAP (1) Start Date</code> + <code>CPAP (1) Start Time</code>.</li>
+              <li><b>Time between Birth and CPAP initiation</b> — uses <code>Date of Admission</code> (proxy for birth date) + <code>Time of Birth</code> as reference, subtracted from <code>CPAP (1) Start Date</code> + <code>CPAP (1) Start Time</code>.</li>
+            </ul>
+
+            <h4>How the time difference is computed</h4>
+            <p><code>hours = (CPAP Start DateTime) − (Reference DateTime)</code></p>
+            <p>The result in hours is then assigned to one of the 5 timing buckets below.</p>
+
+            <h4>When is it marked "Missing"?</h4>
+            <p>A baby is categorised as <b>"Missing CPAP Timing"</b> when either:</p>
+            <ul>
+              <li>The <b>reference datetime</b> is missing (no admission date/time, or no birth date/time), OR</li>
+              <li>The <b>CPAP start datetime</b> is missing (no CPAP start date or start time).</li>
+            </ul>
+            <p>Babies with missing data <i>are still counted</i> in the denominator (total babies who received CPAP).</p>
+
+            <h4>Denominator</h4>
+            <p><b>Total number of babies who received CPAP</b> in the period (all birth weights).</p>
+
+            <table style="width:100%; border-collapse:collapse; margin-top:12px;">
+            <tr style="background-color:#1f77b4; color:white;">
+                <th style="padding:8px; text-align:left;">Category</th>
+                <th style="padding:8px; text-align:left;">Time Range</th>
+                <th style="padding:8px; text-align:left;">Denominator</th>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><span style="color:#27AE60;">●</span> <b>CPAP within 1h</b></td>
+                <td style="padding:8px;">≤ 1 hour after reference time</td>
+                <td style="padding:8px;" rowspan="6">Babies who received CPAP in period</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><span style="color:#2ECC71;">●</span> <b>CPAP 1-4h</b></td>
+                <td style="padding:8px;">1 – 4 hours after reference time</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><span style="color:#F1C40F;">●</span> <b>CPAP 4-12h</b></td>
+                <td style="padding:8px;">4 – 12 hours after reference time</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><span style="color:#E67E22;">●</span> <b>CPAP 12-24h</b></td>
+                <td style="padding:8px;">12 – 24 hours after reference time</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><span style="color:#E74C3C;">●</span> <b>CPAP after 24h</b></td>
+                <td style="padding:8px;">> 24 hours after reference time</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><span style="color:#7F8C8D;">●</span> <b>Missing</b></td>
+                <td style="padding:8px;">Reference or CPAP start time not documented</td>
+            </tr>
+            </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _render_cpap_timing_combined_comparison_chart(
+    df_to_use,
+    comparison_mode,
+    display_names,
+    facility_uids,
+    facilities_by_region,
+    region_names,
+    bg_color,
+    text_color,
+    is_national,
+    show_chart=True,
+):
+    """(Removed) Combined run-chart has been replaced by QOC stacked bar charts"""
+    st.info("CPAP Timing Comparison has been replaced by the stacked bar charts in the trend view.")
+    return
 
 
 def _render_vital_monitoring_trend_chart(
@@ -4189,6 +4543,10 @@ __all__ = [
     "HYPO_QOC_MARKER",
     "THERMAL_CATEGORIES",
     "_render_hypothermia_qoc_trend_chart",
+    # CPAP Timing
+    "CPAP_TIMING_QOC_MARKER",
+    "CPAP_TIMING_CATEGORIES",
+    "_render_cpap_timing_qoc_trend_chart",
     # Vital Monitoring
     "VITAL_MONITORING_MARKER",
     "VITAL_MONITORING_INDICATORS",
