@@ -2311,6 +2311,18 @@ CPAP_TIMING_CATEGORIES = [
     ("Missing CPAP Timing", "#7F8C8D"),
 ]
 
+# CPAP Machine Type categories (for QOC stacked bar)
+CPAP_MACHINE_TYPE_COL = "type_of_cpap_machine_used_interventions"
+CPAP_MACHINE_TYPE_MAP = {
+    1: "Improvised bubble CPAP with 100% O2",
+    2: "CPAP blends O2 without humidification",
+    3: "CPAP blends O2 and humidifies",
+    4: "CPAP blends O2, heats and humidifies",
+    5: "Mechanical ventilator nasal CPAP mode",
+}
+CPAP_MACHINE_TYPE_COLORS = ["#8E44AD", "#3498DB", "#2ECC71", "#F39C12", "#E74C3C"]
+CPAP_MACHINE_TYPE_CATEGORIES = list(zip(CPAP_MACHINE_TYPE_MAP.values(), CPAP_MACHINE_TYPE_COLORS))
+
 VITAL_MONITORING_MARKER = "__vital_monitoring__"
 
 VITAL_MONITORING_INDICATORS = [
@@ -3489,11 +3501,12 @@ def _render_cpap_timing_qoc_trend_chart(
             return None
         return pd.DataFrame(agg_list)
 
-    # ---- Create 3 sub-tabs ----
-    tab1, tab2, tab3 = st.tabs([
+    # ---- Create 4 sub-tabs ----
+    tab1, tab2, tab3, tab4 = st.tabs([
         "Admission → CPAP",
         "Birth → CPAP",
         "CPAPs Done & Mortality",
+        "CPAP Type / Machine Used",
     ])
 
     with tab1:
@@ -3683,6 +3696,170 @@ def _render_cpap_timing_qoc_trend_chart(
                     table_rows.append(overall)
                     st.dataframe(pd.DataFrame(table_rows), use_container_width=True, height=300)
 
+    # ---- CPAP Machine Type helper ----
+    def _build_cpap_machine_type_data():
+        """Compute CPAP machine type distribution per period.
+        Denominator: all babies who received CPAP.
+        Grouping: valid machine types 1-5. Excludes -1 and -3.
+        """
+        df = working_df.copy()
+        if df.empty or "tei_id" not in df.columns:
+            return None
+        df = df.drop_duplicates(subset=["tei_id"])
+
+        cpap_col = _CPAP_TIMING_CPAP_COL
+        if cpap_col not in df.columns:
+            return None
+        df["has_cpap"] = (
+            pd.to_numeric(df[cpap_col].astype(str).str.split(".").str[0], errors="coerce") == 1.0
+        )
+        cpap_df = df[df["has_cpap"]].copy()
+        if cpap_df.empty:
+            return None
+
+        machine_col = CPAP_MACHINE_TYPE_COL
+        if machine_col not in cpap_df.columns:
+            return None
+        cpap_df["machine_code"] = pd.to_numeric(
+            cpap_df[machine_col].astype(str).str.split(".").str[0], errors="coerce"
+        )
+
+        cpap_df["event_date"] = pd.to_datetime(cpap_df["enrollment_date"], errors="coerce")
+        if date_range_filters:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                cpap_df = cpap_df[(cpap_df["event_date"] >= start_dt) & (cpap_df["event_date"] < end_dt)].copy()
+        cpap_df = cpap_df[cpap_df["event_date"].notna()].copy()
+        if cpap_df.empty:
+            return None
+
+        period_label = st.session_state.get("period_label", "Monthly")
+        try:
+            cpap_df = assign_period(cpap_df, "event_date", period_label)
+        except Exception:
+            return None
+
+        # Per period: count total CPAP and each machine type
+        result = []
+        for period_display in cpap_df["period_display"].unique():
+            period_df = cpap_df[cpap_df["period_display"] == period_display]
+            total_cpap = len(period_df)
+            if total_cpap == 0:
+                continue
+            sort_val = period_df["period_sort"].iloc[0] if "period_sort" in period_df.columns else pd.NaT
+            row = {"period_display": period_display, "period_sort": sort_val, "total": total_cpap}
+            for code, label in CPAP_MACHINE_TYPE_MAP.items():
+                count = int((period_df["machine_code"] == code).sum())
+                pct = (count / total_cpap * 100) if total_cpap > 0 else 0.0
+                row[f"{label}_count"] = count
+                row[f"{label}_pct"] = pct
+            result.append(row)
+
+        if not result:
+            return None
+        return pd.DataFrame(result).sort_values("period_sort")
+
+    with tab4:
+        machine_df = _build_cpap_machine_type_data()
+        if machine_df is None or machine_df.empty:
+            st.info("No CPAP machine type data available.")
+        else:
+            periods = machine_df["period_display"].tolist()
+            fig = go.Figure()
+            for label, color in CPAP_MACHINE_TYPE_CATEGORIES:
+                pct_col = f"{label}_pct"
+                count_col = f"{label}_count"
+                fig.add_trace(go.Bar(
+                    name=label,
+                    x=machine_df["period_display"],
+                    y=machine_df[pct_col],
+                    marker_color=color,
+                    text=[f"{v:.1f}%" if v > 0 else "" for v in machine_df[pct_col]],
+                    textposition="inside",
+                    textfont=dict(color="white", size=11),
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        f"{label}<br>"
+                        "Numerator: %{customdata[0]}<br>"
+                        "Denominator: %{customdata[1]}<br>"
+                        "<extra></extra>"
+                    ),
+                    customdata=machine_df[[count_col, "total"]].values,
+                    cliponaxis=False,
+                ))
+
+            fig.update_layout(
+                title=dict(
+                    text="Distribution of CPAP Machine Types<br>among babies who received CPAP",
+                    font=dict(size=13),
+                ),
+                barmode="stack",
+                height=450,
+                paper_bgcolor=bg_color,
+                plot_bgcolor=bg_color,
+                font_color=text_color,
+                title_font_color=text_color,
+                legend=dict(
+                    orientation="v",
+                    yanchor="middle",
+                    y=0.5,
+                    xanchor="left",
+                    x=1.02,
+                    font=dict(size=9),
+                ),
+                margin=dict(l=60, r=140, t=80, b=60),
+                yaxis=dict(
+                    title="Percentage (%)",
+                    range=[0, 100],
+                    dtick=20,
+                    ticksuffix="%",
+                    gridcolor="rgba(128,128,128,0.2)",
+                    zeroline=True,
+                    zerolinecolor="rgba(128,128,128,0.5)",
+                    showline=True,
+                    linewidth=2,
+                    linecolor="rgba(128,128,128,0.8)",
+                    mirror=True,
+                ),
+                xaxis=dict(
+                    type="category",
+                    categoryorder="array",
+                    categoryarray=periods,
+                    tickangle=-45,
+                    gridcolor="rgba(128,128,128,0.2)",
+                    showgrid=True,
+                    showline=True,
+                    linewidth=2,
+                    linecolor="rgba(128,128,128,0.8)",
+                    mirror=True,
+                ),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Table
+            st.subheader("📊 CPAP Machine Type Table")
+            st.caption("Values shown as: Rate% (numerator / denominator)")
+            table_data = []
+            for _, r in machine_df.iterrows():
+                row = {"Period": r["period_display"]}
+                for label in CPAP_MACHINE_TYPE_MAP.values():
+                    cnt = int(r[f"{label}_count"])
+                    den = int(r["total"])
+                    pct = r[f"{label}_pct"]
+                    row[label] = f"{pct:.1f}% ({cnt}/{den})" if den > 0 else "-"
+                table_data.append(row)
+            overall = {"Period": "Overall"}
+            for label in CPAP_MACHINE_TYPE_MAP.values():
+                total_cnt = int(machine_df[f"{label}_count"].sum())
+                total_den = int(machine_df["total"].sum())
+                pct = (total_cnt / total_den * 100) if total_den > 0 else 0.0
+                overall[label] = f"{pct:.1f}% ({total_cnt}/{total_den})" if total_den > 0 else "-"
+            table_data.append(overall)
+            st.dataframe(pd.DataFrame(table_data), use_container_width=True, height=300)
+
     # Info expander at bottom
     with st.expander("ℹ️ Numerator & Denominator Definitions"):
         st.markdown(
@@ -3707,6 +3884,12 @@ def _render_cpap_timing_qoc_trend_chart(
             <ul>
               <li><b>Numerator:</b> Babies of the specified weight category who received CPAP <b>and</b> died.</li>
               <li><b>Denominator:</b> Total babies of the specified weight category who received CPAP.</li>
+            </ul>
+
+            <h4>4. CPAP Type / Machine Used</h4>
+            <ul>
+              <li><b>Numerator:</b> Babies who received CPAP, grouped by CPAP machine type (codes 1–5). Codes −1 and −3 are excluded from the breakdown.</li>
+              <li><b>Denominator:</b> All babies who received CPAP in the period.</li>
             </ul>
 
             </div>

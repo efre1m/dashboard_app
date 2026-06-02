@@ -90,7 +90,7 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Observations And Nursing Care 1",
     },
     "ed8ErpgTCwx": {
-        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk"],
+        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk", "CIKlewzNAxj"],
         "program_stage_name": "Interventions",
     },
     "TOicTEwzSGj": {
@@ -128,6 +128,7 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     "K5hp1PVB5l4": "Time of Admission",
     "yVNrsnUo7AR": "CPAP (1) Start Date",
     "Ul6aAlFy5Kk": "CPAP (1) Start Time",
+    "CIKlewzNAxj": "Type of CPAP machine used:",
     ADDITIONAL_O2_DATAELEMENT_UID: ADDITIONAL_O2_DATAELEMENT_NAME,
 }
 

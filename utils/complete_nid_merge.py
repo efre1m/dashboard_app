@@ -65,6 +65,7 @@ MAPPING = {
     "cpap_administered_interventions": "baby_placed_on_cpap_neonatal_referral_form",
     "cpap_1_start_date_interventions": "cpap_1_start_date_interventions",
     "cpap_1_start_time_interventions": "cpap_1_start_time_interventions",
+    "type_of_cpap_machine_used_interventions": "type_of_cpap_machine_used_interventions",
     # Discharge data
     "newborn_status_at_discharge_discharge_and_final_diagnosis": "newborn_status_at_discharge_n_discharge_care_form",
     "discharge_weight_grams_discharge_and_final_diagnosis": "weight_on_discharge_discharge_care_form",
