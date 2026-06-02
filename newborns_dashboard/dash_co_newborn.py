@@ -54,6 +54,7 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     # CPAP timing computation
     compute_cpap_timing_data,
     CPAP_TIMING_BIRTH_COL,
+    BIRTH_WEIGHT_CATEGORIES,
 )
 
 # KPI mapping for newborn comparison charts
@@ -3208,7 +3209,7 @@ def _render_cpap_timing_qoc_trend_chart(
     facility_uids,
     date_range_filters,
 ):
-    """Render two 100% stacked bar charts side-by-side: Admission→CPAP and Birth→CPAP"""
+    """Render Quality of Care section with 3 sub-tabs: Admission→CPAP, Birth→CPAP, CPAPs Done & Mortality"""
     categories = CPAP_TIMING_CATEGORIES
     cat_names = [c[0] for c in categories]
     cat_colors = [c[1] for c in categories]
@@ -3218,17 +3219,21 @@ def _render_cpap_timing_qoc_trend_chart(
     birth_timing = compute_cpap_timing_data(working_df, timing_type="birth")
 
     if admission_timing.empty and birth_timing.empty:
-        st.warning("No CPAP timing data available for babies who received CPAP.")
-        return
+        st.warning("No CPAP timing data available for 1000-1999g babies who received CPAP.")
 
     def _build_agg_df(timing_df):
-        """Build per-period aggregated dataframe for one timing type (admission or birth)."""
+        """Build per-period aggregated dataframe for one timing type (admission or birth).
+
+        Numerator: 1000-1999g CPAP babies in each timing bucket.
+        Denominator: ALL babies who received CPAP (any birth weight).
+        """
         if timing_df.empty:
             return None
+
+        # --- Numerator: 1000-1999g CPAP babies with timing info ---
         df = working_df[["tei_id", "enrollment_date", "orgUnit"]].drop_duplicates(subset=["tei_id"]).copy()
         df = df.merge(timing_df, on="tei_id", how="inner")
         df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
-
         if date_range_filters:
             start_date = date_range_filters.get("start_date")
             end_date = date_range_filters.get("end_date")
@@ -3236,7 +3241,6 @@ def _render_cpap_timing_qoc_trend_chart(
                 start_dt = pd.Timestamp(start_date)
                 end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
                 df = df[(df["event_date"] >= start_dt) & (df["event_date"] < end_dt)].copy()
-
         df = df[df["event_date"].notna()].copy()
         if df.empty:
             return None
@@ -3247,12 +3251,45 @@ def _render_cpap_timing_qoc_trend_chart(
         except Exception:
             return None
 
+        # --- Denominator: ALL babies who received CPAP (any birth weight) ---
+        cpap_col = _CPAP_TIMING_CPAP_COL
+        denom_raw = working_df[["tei_id", "enrollment_date", cpap_col]].drop_duplicates(subset=["tei_id"]).copy()
+        denom_raw["has_cpap"] = (
+            pd.to_numeric(
+                denom_raw[cpap_col].astype(str).str.split(".").str[0],
+                errors="coerce",
+            )
+            == 1.0
+        )
+        denom_df = denom_raw[denom_raw["has_cpap"]].copy()
+        if denom_df.empty:
+            return None
+        denom_df["event_date"] = pd.to_datetime(denom_df["enrollment_date"], errors="coerce")
+        if date_range_filters:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                denom_df = denom_df[(denom_df["event_date"] >= start_dt) & (denom_df["event_date"] < end_dt)].copy()
+        denom_df = denom_df[denom_df["event_date"].notna()].copy()
+        if denom_df.empty:
+            return None
+        try:
+            denom_df = assign_period(denom_df, "event_date", period_label)
+        except Exception:
+            return None
+        denom_counts = denom_df.groupby("period_display").size()
+
+        # --- Aggregate: numerator buckets / denominator total ---
         unique_periods = df[["period_display", "period_sort"]].drop_duplicates().sort_values("period_sort")
         all_data = []
         for _, row_data in unique_periods.iterrows():
             period_display = row_data["period_display"]
             period_df = df[df["period_display"] == period_display]
-            total = len(period_df)
+            total = int(denom_counts.get(period_display, 0))
+            if total == 0:
+                continue
             row = {"period_display": period_display, "period_sort": row_data["period_sort"], "total": total}
             for cat_name in cat_names:
                 count = int((period_df["cpap_timing_category"] == cat_name).sum())
@@ -3283,13 +3320,12 @@ def _render_cpap_timing_qoc_trend_chart(
                 marker_color=cat_color,
                 text=[f"{v:.1f}%" for v in agg_df[pct_col]],
                 textposition="inside",
-                textfont=dict(color="white", size=10),
+                textfont=dict(color="white", size=13),
                 hovertemplate=(
                     "<b>%{x}</b><br>"
                     f"{cat_name}<br>"
-                    "Percentage: %{y:.1f}%%<br>"
-                    "Count: %{customdata[0]}<br>"
-                    "Total with CPAP: %{customdata[1]}<br>"
+                    "Numerator: %{customdata[0]}<br>"
+                    "Denominator: %{customdata[1]}<br>"
                     "<extra></extra>"
                 ),
                 customdata=agg_df[[count_col, "total"]].values,
@@ -3303,7 +3339,7 @@ def _render_cpap_timing_qoc_trend_chart(
             ),
             barmode="stack",
             barnorm="percent",
-            height=500,
+            height=450,
             paper_bgcolor=bg_color,
             plot_bgcolor=bg_color,
             font_color=text_color,
@@ -3365,105 +3401,314 @@ def _render_cpap_timing_qoc_trend_chart(
         table_data.append(overall_row)
         return pd.DataFrame(table_data)
 
-    # Render two charts side-by-side
-    col1, col2 = st.columns(2)
+    # ---- CPAP Mortality: per-period per-BW-category ----
+    def _build_cpap_mortality_data():
+        """
+        Compute CPAP mortality rate per birth weight category per period.
 
-    with col1:
+        Numerator:   CPAP babies who died (newborn_status_at_discharge == 0)
+        Denominator: Total CPAP babies in the same birth weight category
+        """
+        df = working_df.copy()
+        if df.empty or "tei_id" not in df.columns:
+            return None
+        df = df.drop_duplicates(subset=["tei_id"])
+
+        cpap_col = _CPAP_TIMING_CPAP_COL
+        if cpap_col not in df.columns:
+            return None
+        df["has_cpap"] = (
+            pd.to_numeric(df[cpap_col].astype(str).str.split(".").str[0], errors="coerce") == 1.0
+        )
+        cpap_df = df[df["has_cpap"]].copy()
+        if cpap_df.empty:
+            return None
+
+        status_col = "newborn_status_at_discharge_n_discharge_care_form"
+        if status_col in cpap_df.columns:
+            cpap_df["status_num"] = pd.to_numeric(
+                cpap_df[status_col].astype(str).str.split(".").str[0], errors="coerce"
+            )
+            cpap_df["died"] = cpap_df["status_num"] == 0
+        else:
+            cpap_df["died"] = False
+
+        bw_col = _CPAP_TIMING_BW_COL
+        if bw_col not in cpap_df.columns:
+            return None
+        cpap_df["bw_num"] = pd.to_numeric(cpap_df[bw_col], errors="coerce")
+
+        def _bw_category(val):
+            if pd.isna(val):
+                return None
+            for key, info in BIRTH_WEIGHT_CATEGORIES.items():
+                if info["min"] <= val <= info["max"]:
+                    return key
+            return None
+
+        cpap_df["bw_category"] = cpap_df["bw_num"].apply(_bw_category)
+        cpap_df = cpap_df[cpap_df["bw_category"].notna()].copy()
+        if cpap_df.empty:
+            return None
+
+        cpap_df["event_date"] = pd.to_datetime(cpap_df["enrollment_date"], errors="coerce")
+        if date_range_filters:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                cpap_df = cpap_df[(cpap_df["event_date"] >= start_dt) & (cpap_df["event_date"] < end_dt)].copy()
+        cpap_df = cpap_df[cpap_df["event_date"].notna()].copy()
+        if cpap_df.empty:
+            return None
+
+        period_label = st.session_state.get("period_label", "Monthly")
+        try:
+            cpap_df = assign_period(cpap_df, "event_date", period_label)
+        except Exception:
+            return None
+
+        period_sort_map = cpap_df[["period_display", "period_sort"]].drop_duplicates().set_index("period_display")["period_sort"]
+        grouped = cpap_df.groupby(["period_display", "bw_category"])
+        agg_list = []
+        for (period, cat), group in grouped:
+            total = len(group)
+            died = int(group["died"].sum())
+            rate = (died / total * 100) if total > 0 else 0.0
+            sort_val = period_sort_map.get(period, pd.NaT)
+            agg_list.append({
+                "period_display": period,
+                "period_sort": sort_val,
+                "bw_category": cat,
+                "died_count": died,
+                "total_cpap": total,
+                "mortality_rate": rate,
+            })
+        if not agg_list:
+            return None
+        return pd.DataFrame(agg_list)
+
+    # ---- Create 3 sub-tabs ----
+    tab1, tab2, tab3 = st.tabs([
+        "Admission → CPAP",
+        "Birth → CPAP",
+        "CPAPs Done & Mortality",
+    ])
+
+    with tab1:
         if admission_agg is not None:
             periods = admission_agg["period_display"].tolist()
-            fig = _build_stacked_bar(admission_agg, "Time between Admission<br>and CPAP initiation", periods)
+            fig = _build_stacked_bar(
+                admission_agg,
+                "Time between Admission<br>and CPAP initiation",
+                periods,
+            )
             st.plotly_chart(fig, use_container_width=True)
+            st.subheader("📊 Quality of Care Table")
+            st.caption("Values shown as: Rate% (numerator / denominator)")
+            st.dataframe(_build_table(admission_agg), use_container_width=True, height=300)
         else:
-            st.info("No data for Time between Admission and CPAP initiation.")
+            st.info("No data available for Time between Admission and CPAP initiation.")
 
-    with col2:
+    with tab2:
         if birth_agg is not None:
             periods = birth_agg["period_display"].tolist()
-            fig = _build_stacked_bar(birth_agg, "Time between Birth<br>and CPAP initiation", periods)
+            fig = _build_stacked_bar(
+                birth_agg,
+                "Time between Birth<br>and CPAP initiation",
+                periods,
+            )
             st.plotly_chart(fig, use_container_width=True)
+            st.subheader("📊 Quality of Care Table")
+            st.caption("Values shown as: Rate% (numerator / denominator)")
+            st.dataframe(_build_table(birth_agg), use_container_width=True, height=300)
         else:
-            st.info("No data for Time between Birth and CPAP initiation.")
+            st.info("No data available for Time between Birth and CPAP initiation.")
 
-    # Tables side-by-side
-    st.subheader("📊 Quality of Care Tables")
-    st.caption("Values shown as: Rate% (numerator / denominator)")
-
-    tcol1, tcol2 = st.columns(2)
-    with tcol1:
-        st.markdown("**Admission → CPAP**")
-        if admission_agg is not None:
-            table_df = _build_table(admission_agg)
-            st.dataframe(table_df, use_container_width=True, height=300)
+    with tab3:
+        mortality_df = _build_cpap_mortality_data()
+        if mortality_df is None or mortality_df.empty:
+            st.info("No CPAP mortality data available.")
         else:
-            st.info("No data")
+            period_sort_map = mortality_df[["period_display", "period_sort"]].drop_duplicates().dropna(subset=["period_sort"])
+            periods_mort = period_sort_map.sort_values("period_sort")["period_display"].tolist()
+            cats_with_data = mortality_df["bw_category"].unique()
+            all_cats_with_data = {
+                k: v for k, v in BIRTH_WEIGHT_CATEGORIES.items()
+                if k in cats_with_data
+            }
+            if not all_cats_with_data:
+                st.info("No CPAP mortality data by weight category.")
+            else:
+                with st.expander("Filter Birth Weight Categories", expanded=False):
+                    selected_cat_names = st.multiselect(
+                        "Select Birth Weight Categories:",
+                        options=[cat["name"] for cat in BIRTH_WEIGHT_CATEGORIES.values()],
+                        default=[cat["name"] for cat in all_cats_with_data.values()],
+                        key="cpap_mortality_cat_filter",
+                    )
+                filtered_cats = {
+                    k: v for k, v in all_cats_with_data.items()
+                    if v["name"] in selected_cat_names
+                }
+                if not filtered_cats:
+                    st.warning("No categories selected.")
+                else:
+                    rows, cols = 3, 2
+                    fig = make_subplots(
+                        rows=rows, cols=cols,
+                        subplot_titles=[
+                            cat["name"] for cat in sorted(
+                                filtered_cats.values(), key=lambda x: x["sort_order"]
+                            )
+                        ],
+                        vertical_spacing=0.10,
+                        horizontal_spacing=0.08,
+                    )
+                    axis_periods = list(periods_mort)
 
-    with tcol2:
-        st.markdown("**Birth → CPAP**")
-        if birth_agg is not None:
-            table_df = _build_table(birth_agg)
-            st.dataframe(table_df, use_container_width=True, height=300)
-        else:
-            st.info("No data")
+                    for idx, (cat_key, cat_info) in enumerate(sorted(
+                        filtered_cats.items(), key=lambda x: x[1]["sort_order"]
+                    )):
+                        cat_df = (
+                            mortality_df[mortality_df["bw_category"] == cat_key]
+                            .copy()
+                            .set_index("period_display")
+                            .reindex(periods_mort)
+                            .reset_index()
+                        )
+                        row_pos = (idx // cols) + 1
+                        col_pos = (idx % cols) + 1
 
-    # Info expander
-    with st.expander("ℹ️ How each CPAP timing category is defined"):
+                        fig.add_trace(
+                            go.Scatter(
+                                x=cat_df["period_display"],
+                                y=cat_df["mortality_rate"],
+                                name=cat_info["name"],
+                                mode="lines",
+                                line=dict(
+                                    color="#1f77b4", width=3,
+                                    shape="spline", smoothing=0.35,
+                                ),
+                                connectgaps=True,
+                                cliponaxis=False,
+                                hovertemplate=(
+                                    "<b>%{x}</b><br>"
+                                    f"{cat_info['name']}<br>"
+                                    "Numerator: %{customdata[0]}<br>"
+                                    "Denominator: %{customdata[1]}<br>"
+                                    "<extra></extra>"
+                                ),
+                                customdata=np.column_stack((
+                                    cat_df["died_count"].fillna(0).astype(int),
+                                    cat_df["total_cpap"].fillna(0).astype(int),
+                                )),
+                                text=[
+                                    f"{v:.1f}%" if pd.notna(v) else ""
+                                    for v in cat_df["mortality_rate"]
+                                ],
+                                textposition="top center",
+                            ),
+                            row=row_pos, col=col_pos,
+                        )
+
+                    fig.update_layout(
+                        title="CPAPs Done & Mortality Rate by Birth Weight Category",
+                        height=1000,
+                        showlegend=False,
+                        paper_bgcolor=bg_color,
+                        plot_bgcolor=bg_color,
+                        font_color=text_color,
+                        title_font_color=text_color,
+                        margin=dict(l=60, r=60, t=80, b=60),
+                    )
+                    fig.update_xaxes(
+                        type="category",
+                        categoryorder="array",
+                        categoryarray=axis_periods,
+                        tickangle=-45,
+                        gridcolor="rgba(128,128,128,0.2)",
+                        showgrid=True,
+                        showline=True,
+                        linewidth=2,
+                        linecolor="rgba(128,128,128,0.8)",
+                        mirror=True,
+                    )
+                    fig.update_yaxes(
+                        range=[-2, 102],
+                        dtick=25,
+                        ticksuffix="%",
+                        gridcolor="rgba(128,128,128,0.2)",
+                        showgrid=True,
+                        zeroline=True,
+                        zerolinecolor="rgba(128,128,128,0.5)",
+                        showline=True,
+                        linewidth=2,
+                        linecolor="rgba(128,128,128,0.8)",
+                        mirror=True,
+                    )
+                    fig.update_layout(yaxis_tickformat=".1f")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    st.subheader("📊 CPAPs Done & Mortality Table")
+                    table_rows = []
+                    for period in periods_mort:
+                        row = {"Period": period}
+                        for cat_key, cat_info in sorted(
+                            filtered_cats.items(), key=lambda x: x[1]["sort_order"]
+                        ):
+                            sub = mortality_df[
+                                (mortality_df["period_display"] == period) &
+                                (mortality_df["bw_category"] == cat_key)
+                            ]
+                            if not sub.empty:
+                                r = sub.iloc[0]
+                                row[cat_info["short_name"]] = (
+                                    f"{r['mortality_rate']:.1f}% "
+                                    f"({int(r['died_count'])}/{int(r['total_cpap'])})"
+                                )
+                            else:
+                                row[cat_info["short_name"]] = "-"
+                        table_rows.append(row)
+                    overall = {"Period": "Overall"}
+                    for cat_key, cat_info in sorted(
+                        filtered_cats.items(), key=lambda x: x[1]["sort_order"]
+                    ):
+                        cat_df = mortality_df[mortality_df["bw_category"] == cat_key]
+                        total_died = int(cat_df["died_count"].sum())
+                        total_cpap = int(cat_df["total_cpap"].sum())
+                        rate = (total_died / total_cpap * 100) if total_cpap > 0 else 0.0
+                        overall[cat_info["short_name"]] = f"{rate:.1f}% ({total_died}/{total_cpap})"
+                    table_rows.append(overall)
+                    st.dataframe(pd.DataFrame(table_rows), use_container_width=True, height=300)
+
+    # Info expander at bottom
+    with st.expander("ℹ️ Numerator & Denominator Definitions"):
         st.markdown(
             """
             <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
 
-            <h4 style="margin-top:0;">Indicators</h4>
+            <h4 style="margin-top:0;">1. Time between Admission and CPAP initiation</h4>
             <ul>
-              <li><b>Time between Admission and CPAP initiation</b> — uses <code>Date of Admission</code> + <code>Time of Admission</code> as reference, subtracted from <code>CPAP (1) Start Date</code> + <code>CPAP (1) Start Time</code>.</li>
-              <li><b>Time between Birth and CPAP initiation</b> — uses <code>Date of Admission</code> (proxy for birth date) + <code>Time of Birth</code> as reference, subtracted from <code>CPAP (1) Start Date</code> + <code>CPAP (1) Start Time</code>.</li>
+              <li><b>Numerator:</b> 1000–1999g babies who received CPAP, in each timing bucket (≤1h, 1-4h, 4-12h, 12-24h, &gt;24h).</li>
+              <li><b>Denominator:</b> ALL babies who received CPAP (any birth weight) in the period.</li>
+              <li><b>How it is computed:</b> Time from admission to CPAP start is calculated and assigned to a timing bucket.</li>
             </ul>
 
-            <h4>How the time difference is computed</h4>
-            <p><code>hours = (CPAP Start DateTime) − (Reference DateTime)</code></p>
-            <p>The result in hours is then assigned to one of the 5 timing buckets below.</p>
-
-            <h4>When is it marked "Missing"?</h4>
-            <p>A baby is categorised as <b>"Missing CPAP Timing"</b> when either:</p>
+            <h4>2. Time between Birth and CPAP initiation</h4>
             <ul>
-              <li>The <b>reference datetime</b> is missing (no admission date/time, or no birth date/time), OR</li>
-              <li>The <b>CPAP start datetime</b> is missing (no CPAP start date or start time).</li>
+              <li><b>Numerator:</b> 1000–1999g babies who received CPAP, in each timing bucket.</li>
+              <li><b>Denominator:</b> ALL babies who received CPAP (any birth weight) in the period.</li>
+              <li><b>How it is computed:</b> Time from birth (admission date used as proxy) to CPAP start is calculated and assigned to a timing bucket.</li>
             </ul>
-            <p>Babies with missing data <i>are still counted</i> in the denominator (total babies who received CPAP).</p>
 
-            <h4>Denominator</h4>
-            <p><b>Total number of babies who received CPAP</b> in the period (all birth weights).</p>
+            <h4>3. CPAPs Done &amp; Mortality</h4>
+            <ul>
+              <li><b>Numerator:</b> Babies of the specified weight category who received CPAP <b>and</b> died.</li>
+              <li><b>Denominator:</b> Total babies of the specified weight category who received CPAP.</li>
+            </ul>
 
-            <table style="width:100%; border-collapse:collapse; margin-top:12px;">
-            <tr style="background-color:#1f77b4; color:white;">
-                <th style="padding:8px; text-align:left;">Category</th>
-                <th style="padding:8px; text-align:left;">Time Range</th>
-                <th style="padding:8px; text-align:left;">Denominator</th>
-            </tr>
-            <tr style="background-color:#f0f8ff;">
-                <td style="padding:8px;"><span style="color:#27AE60;">●</span> <b>CPAP within 1h</b></td>
-                <td style="padding:8px;">≤ 1 hour after reference time</td>
-                <td style="padding:8px;" rowspan="6">Babies who received CPAP in period</td>
-            </tr>
-            <tr>
-                <td style="padding:8px;"><span style="color:#2ECC71;">●</span> <b>CPAP 1-4h</b></td>
-                <td style="padding:8px;">1 – 4 hours after reference time</td>
-            </tr>
-            <tr style="background-color:#f0f8ff;">
-                <td style="padding:8px;"><span style="color:#F1C40F;">●</span> <b>CPAP 4-12h</b></td>
-                <td style="padding:8px;">4 – 12 hours after reference time</td>
-            </tr>
-            <tr>
-                <td style="padding:8px;"><span style="color:#E67E22;">●</span> <b>CPAP 12-24h</b></td>
-                <td style="padding:8px;">12 – 24 hours after reference time</td>
-            </tr>
-            <tr style="background-color:#f0f8ff;">
-                <td style="padding:8px;"><span style="color:#E74C3C;">●</span> <b>CPAP after 24h</b></td>
-                <td style="padding:8px;">> 24 hours after reference time</td>
-            </tr>
-            <tr>
-                <td style="padding:8px;"><span style="color:#7F8C8D;">●</span> <b>Missing</b></td>
-                <td style="padding:8px;">Reference or CPAP start time not documented</td>
-            </tr>
-            </table>
             </div>
             """,
             unsafe_allow_html=True,

@@ -2267,16 +2267,32 @@ def render_cpap_rds_trend_chart(
 
     trend_df = pd.DataFrame(trend_data)
 
-    # Render two separate columns
-    col1, col2 = st.columns(2)
+    # Filter — show/hide each indicator
+    with st.expander("Filter CPAP Coverage Indicators", expanded=False):
+        selected_indicators = st.multiselect(
+            "Select indicators to display:",
+            options=[ind["display_name"] for ind in indicators],
+            default=[ind["display_name"] for ind in indicators],
+            key="cpap_coverage_indicator_filter",
+        )
 
-    for idx, ind in enumerate(indicators):
-        with col1 if idx == 0 else col2:
+    filtered_indicators = [ind for ind in indicators if ind["display_name"] in selected_indicators]
+
+    if not filtered_indicators:
+        st.warning("No indicators selected.")
+    else:
+        n = len(filtered_indicators)
+        fig = make_subplots(
+            rows=1, cols=n,
+            subplot_titles=[ind["short_name"] for ind in filtered_indicators],
+            horizontal_spacing=0.08,
+        )
+
+        for idx, ind in enumerate(filtered_indicators):
+            col = idx + 1
             value_col = f"{ind['kpi_name']}_value"
             num_col = f"{ind['kpi_name']}_num"
             den_col = f"{ind['kpi_name']}_den"
-
-            fig = go.Figure()
 
             fig.add_trace(
                 go.Scatter(
@@ -2284,13 +2300,12 @@ def render_cpap_rds_trend_chart(
                     y=trend_df[value_col],
                     name=ind["short_name"],
                     mode="lines+markers",
-                    line=dict(color=ind["color"], width=3, shape="linear"),
+                    line=dict(color="#1f77b4", width=3, shape="linear"),
                     connectgaps=False,
                     cliponaxis=False,
                     hovertemplate=(
-                        f"<b>{ind['display_name']}</b><br>"
-                        "Period: %{x}<br>"
-                        "Rate: %{y:.1f}%<br>"
+                        "<b>%{x}</b><br>"
+                        f"{ind['short_name']}<br>"
                         "Numerator: %{customdata[0]}<br>"
                         "Denominator: %{customdata[1]}<br>"
                         "<extra></extra>"
@@ -2298,93 +2313,89 @@ def render_cpap_rds_trend_chart(
                     customdata=np.column_stack(
                         (trend_df[num_col].values, trend_df[den_col].values)
                     ),
-                )
+                ),
+                row=1, col=col,
             )
 
-            fig.add_hline(y=100, line_dash="dash", line_color="green", line_width=1.5)
+            fig.add_hline(y=100, line_dash="dash", line_color="green", line_width=1.5, row=1, col=col)
 
-            fig.update_xaxes(
-                type="category",
-                categoryorder="array",
-                categoryarray=periods,
-                tickangle=-45,
-                gridcolor="rgba(128,128,128,0.2)",
-                showgrid=True,
-                showline=True,
-                linewidth=2,
-                linecolor="rgba(128,128,128,0.8)",
-                mirror=True,
-            )
-            fig.update_yaxes(
-                range=[0, 105],
-                dtick=25,
-                gridcolor="rgba(128,128,128,0.2)",
-                showgrid=True,
-                zeroline=True,
-                zerolinecolor="rgba(128,128,128,0.5)",
-                ticksuffix="%",
-                showline=True,
-                linewidth=2,
-                linecolor="rgba(128,128,128,0.8)",
-                mirror=True,
-                title_text="CPAP Coverage Rate (%)",
-            )
+        fig.update_layout(
+            title="CPAP Coverage",
+            height=400,
+            showlegend=False,
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font_color=text_color,
+            title_font_color=text_color,
+            margin=dict(l=60, r=60, t=80, b=60),
+        )
 
-            fig.update_layout(
-                title=dict(text=ind["display_name"], font=dict(size=14)),
-                height=400,
-                showlegend=False,
-                paper_bgcolor=bg_color,
-                plot_bgcolor=bg_color,
-                font_color=text_color,
-                title_font_color=text_color,
-                title_y=0.95,
-                margin=dict(l=50, r=50, t=80, b=80),
-            )
+        fig.update_xaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,
+            tickangle=-45,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        )
 
-            st.plotly_chart(fig, use_container_width=True)
+        fig.update_yaxes(
+            range=[0, 105],
+            dtick=25,
+            ticksuffix="%",
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+            title_text="CPAP Coverage Rate (%)",
+        )
 
-            # Table for this indicator
-            st.subheader(f"📊 {ind['short_name']} Table")
-            st.caption("Values shown as: Rate% (numerator / denominator)")
+        st.plotly_chart(fig, use_container_width=True)
 
-            table_data = []
-            for period in periods:
-                period_row_data = trend_df[trend_df[period_col] == period].iloc[0]
-                per_num = int(period_row_data[num_col])
-                per_den = int(period_row_data[den_col])
-                val = period_row_data[value_col]
+        # Combined table
+        st.subheader("📊 CPAP Coverage Table")
+        st.caption("Values shown as: Rate% (numerator / denominator)")
+
+        table_data = []
+        for period in periods:
+            row = {"Period": period}
+            for ind in filtered_indicators:
+                val_col = f"{ind['kpi_name']}_value"
+                num_col = f"{ind['kpi_name']}_num"
+                den_col = f"{ind['kpi_name']}_den"
+                period_data = trend_df[trend_df[period_col] == period].iloc[0]
+                per_num = int(period_data[num_col])
+                per_den = int(period_data[den_col])
+                val = period_data[val_col]
                 if per_den > 0:
-                    table_data.append({
-                        "Period": period,
-                        "Rate": f"{val:.1f}%",
-                        "Numerator": per_num,
-                        "Denominator": per_den
-                    })
+                    row[ind["short_name"]] = f"{val:.1f}% ({per_num}/{per_den})"
                 else:
-                    table_data.append({
-                        "Period": period,
-                        "Rate": "-",
-                        "Numerator": per_num,
-                        "Denominator": per_den
-                    })
+                    row[ind["short_name"]] = "-"
+            table_data.append(row)
 
+        overall = {"Period": "Overall"}
+        for ind in filtered_indicators:
+            num_col = f"{ind['kpi_name']}_num"
+            den_col = f"{ind['kpi_name']}_den"
             total_num = int(trend_df[num_col].sum())
             total_den = int(trend_df[den_col].sum())
-            overall_val = (total_num / total_den * 100) if total_den > 0 else 0.0
-            if total_den > 0:
-                table_data.append({
-                    "Period": "**OVERALL**",
-                    "Rate": f"{overall_val:.1f}%",
-                    "Numerator": total_num,
-                    "Denominator": total_den
-                })
+            rate = (total_num / total_den * 100) if total_den > 0 else 0.0
+            overall[ind["short_name"]] = f"{rate:.1f}% ({total_num}/{total_den})" if total_den > 0 else "-"
+        table_data.append(overall)
 
-            st.dataframe(
-                pd.DataFrame(table_data),
-                use_container_width=True,
-                height=min(400, (len(table_data) + 1) * 35 + 3),
-            )
+        st.dataframe(
+            pd.DataFrame(table_data),
+            use_container_width=True,
+            height=min(400, (len(table_data) + 1) * 35 + 3),
+        )
 
     with st.expander("ℹ️ How each indicator is computed"):
         st.markdown(
@@ -2398,13 +2409,13 @@ def render_cpap_rds_trend_chart(
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>CPAP Eligible</b></td>
-                <td style="padding:8px;">RDS and BW 1000-1999g and Hypoxic babies given CPAP</td>
-                <td style="padding:8px;">RDS and BW 1000-1999g and Hypoxic babies</td>
+                <td style="padding:8px;">Babies with Respiratory Distress Syndrome, birth weight 1000-1999g, and hypoxia who received CPAP</td>
+                <td style="padding:8px;">Babies with Respiratory Distress Syndrome, birth weight 1000-1999g, and hypoxia</td>
             </tr>
             <tr>
                 <td style="padding:8px;"><b>CPAP Symptomatic 1500-1999g</b></td>
-                <td style="padding:8px;">RDS and BW 1500-1999g babies given CPAP</td>
-                <td style="padding:8px;">RDS and BW 1500-1999g babies</td>
+                <td style="padding:8px;">Babies with Respiratory Distress Syndrome and birth weight 1500-1999g who received CPAP</td>
+                <td style="padding:8px;">Babies with Respiratory Distress Syndrome and birth weight 1500-1999g</td>
             </tr>
             </table>
             </div>
@@ -5251,7 +5262,7 @@ def _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_reg
 
 def compute_cpap_timing_data(df, timing_type="admission"):
     """
-    Compute CPAP timing categories for babies who received CPAP.
+    Compute CPAP timing categories for 1000-1999g babies who received CPAP.
 
     Parameters:
         timing_type: "admission" for admission→CPAP, "birth" for birth→CPAP
@@ -5264,7 +5275,13 @@ def compute_cpap_timing_data(df, timing_type="admission"):
 
     df = df.copy()
 
-    # CPAP flag — all babies who received CPAP (no birth weight filter)
+    # Birth weight filter
+    bw_col = BIRTH_WEIGHT_COL
+    if bw_col not in df.columns:
+        return pd.DataFrame()
+    df["bw_num"] = pd.to_numeric(df[bw_col], errors="coerce")
+
+    # CPAP flag
     cpap_col = CPAP_ADMINISTERED_COL
     if cpap_col in df.columns:
         df["has_cpap"] = (
@@ -5277,7 +5294,10 @@ def compute_cpap_timing_data(df, timing_type="admission"):
     else:
         df["has_cpap"] = False
 
-    cpap_df = df[df["has_cpap"]].copy()
+    # Filter to 1000-1999g babies who received CPAP
+    cpap_df = df[
+        df["has_cpap"] & df["bw_num"].between(1000, 1999, inclusive="both")
+    ].copy()
 
     if cpap_df.empty:
         return pd.DataFrame()

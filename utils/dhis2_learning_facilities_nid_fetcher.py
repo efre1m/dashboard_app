@@ -20,6 +20,7 @@ from dhis2_fetcher import (
 )
 
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NID_PROGRAM_UID = "pLk3Ht2XMKl"
 
 ADDITIONAL_O2_DATAELEMENT_UID = "j4W59YyYG04"
@@ -556,7 +557,10 @@ class AutomatedLearningFacilitiesNIDPipeline:
 
 
 def main() -> None:
-    load_dotenv()
+    # Always prefer the repo .env for this command-line runner. This avoids
+    # stale process or Windows environment variables shadowing recently edited
+    # DHIS2 credentials.
+    load_dotenv(os.path.join(REPO_ROOT, ".env"), override=True)
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "mode",
