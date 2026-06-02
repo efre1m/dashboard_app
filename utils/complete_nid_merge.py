@@ -10,6 +10,9 @@ print("=" * 80)
 print("NID TO NEWBORN APPEND - ONLY 5→1, OTHERS N/A")
 print("=" * 80)
 
+# Import assign_source_column to fix source after merge
+from add_source_column import assign_source_column
+
 # ==================== 1. PATHS ====================
 current_dir = os.path.dirname(os.path.abspath(__file__))
 nid_folder = os.path.join(current_dir, "imnid", "nid")
@@ -46,6 +49,8 @@ MAPPING = {
     "event_date_interventions": "event_date_nurse_followup_sheet",
     "event_date_interventions_cpap": "event_date_neonatal_referral_form",
     "event_date_discharge_and_final_diagnosis": "event_date_discharge_care_form",
+    "event_date_observations_and_nursing_care_2": "event_date_observations_and_nursing_care_2",
+    "event_observations_and_nursing_care_2": "event_observations_and_nursing_care_2",
     # Admission data
     "date_of_admission_admission_information": "date_of_admission_n_nicu_admission_careform",
     "birth_location_admission_information": "place_of_delivery_nicu_admission_careform",
@@ -217,6 +222,7 @@ def append_nid_to_newborn(nid_path, newborn_path):
                     "event_date_nurse_followup_sheet",
                     "event_date_neonatal_referral_form",
                     "event_date_discharge_care_form",
+                    "event_date_observations_and_nursing_care_2",
                 ]
 
                 for event_col in event_date_cols:
@@ -240,6 +246,9 @@ def append_nid_to_newborn(nid_path, newborn_path):
             ].copy()
             combined_df = pd.concat([preserved_newborn, new_df], ignore_index=True)
             combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="last")
+
+            # Fix source column before saving
+            combined_df = assign_source_column(combined_df)
 
             # Save
             combined_df.to_csv(newborn_path, index=False)

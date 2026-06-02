@@ -1,4 +1,4 @@
-# kpi_utils_newborn_simplified.py - COMPLETE UPDATED WITH DATASET VARIABLE NAMES
+﻿# kpi_utils_newborn_simplified.py - COMPLETE UPDATED WITH DATASET VARIABLE NAMES
 
 import pandas as pd
 import plotly.express as px
@@ -47,7 +47,7 @@ def clear_cache_simplified():
 
 # ---------------- Helper Function for CSV Download ----------------
 def download_csv_button(
-    df, filename, button_label="📥 Download CSV", help_text="Download data as CSV"
+    df, filename, button_label="≡ƒôÑ Download CSV", help_text="Download data as CSV"
 ):
     """Helper function to create download button with proper encoding"""
     csv = df.to_csv(index=False, encoding="utf-8-sig")
@@ -232,17 +232,6 @@ BIRTH_WEIGHT_CATEGORY_NAMES = [
 ]
 
 
-# Hypoxia / O2 Saturation columns
-O2_SAT_COLUMNS = [
-    "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2",
-    "lowest_recorded_oxygen_saturation",
-    "lowest_recorded_oxygen_saturation_pct",
-    "lowest_recorded_oxygen_saturation_observations_and_nursing_care_2",
-    "Lowest recorded oxygen saturation (%)",
-    "Lowest recorded oxygen saturation",
-]
-O2_THRESHOLD = 90
-
 # ---------------- HELPER FUNCTIONS ----------------
 def safe_convert_numeric(value, default=0):
     """Safely convert value to numeric"""
@@ -272,7 +261,7 @@ def filter_by_facility(df, facility_uids):
 
 def clean_category_name(category_name):
     """Clean category name for CSV download (replace special characters)"""
-    return category_name.replace("–", "-").replace("+", "plus")
+    return category_name.replace("ΓÇô", "-").replace("+", "plus")
 
 
 def deduplicate_by_tei(df):
@@ -642,65 +631,6 @@ def get_rds_newborns(df, facility_uids=None):
         return set()
 
 
-def _aggregate_tei_flags(df):
-    """Aggregate TEI-level flags for CPAP/RDS/hypoxia analysis.
-    Returns DataFrame with tei_id index and columns: has_rds, birth_weight, has_hypoxia, has_cpap.
-    """
-    if df is None or df.empty or "tei_id" not in df.columns:
-        return pd.DataFrame()
-
-    df = df.copy()
-
-    # Birth weight
-    bw_col = "birth_weight_n_nicu_admission_careform"
-    if bw_col in df.columns:
-        df["bw_num"] = pd.to_numeric(df[bw_col], errors="coerce")
-
-    # CPAP flag
-    if CPAP_ADMINISTERED_COL in df.columns:
-        df["cpap_num"] = pd.to_numeric(
-            df[CPAP_ADMINISTERED_COL].astype(str).str.split(".").str[0],
-            errors="coerce",
-        )
-        df["has_cpap"] = df["cpap_num"] == float(CPAP_YES_CODE)
-    else:
-        df["has_cpap"] = False
-
-    # RDS flag
-    if RDS_DIAGNOSIS_COL in df.columns:
-        df["has_rds"] = (
-            df[RDS_DIAGNOSIS_COL]
-            .astype(str)
-            .str.contains(RDS_YES_CODE, na=False)
-        )
-    else:
-        df["has_rds"] = False
-
-    # Hypoxia flag: any O2 sat < threshold (strictly less than)
-    def _check_hypoxia(row):
-        for col in O2_SAT_COLUMNS:
-            if col in df.columns:
-                val = pd.to_numeric(row[col], errors="coerce")
-                if pd.notna(val) and val < O2_THRESHOLD:
-                    return True
-        return False
-
-    df["has_hypoxia"] = df.apply(_check_hypoxia, axis=1)
-
-    # Aggregate per TEI: use ANY (max) for flags, first valid for birth weight
-    cols = ["tei_id", "bw_num", "has_cpap", "has_rds", "has_hypoxia"]
-    agg = df[cols].groupby("tei_id", sort=False).agg({
-        "bw_num": "first",
-        "has_cpap": "max",
-        "has_rds": "max",
-        "has_hypoxia": "max",
-    })
-
-    # Rename bw_num to birth_weight for clarity
-    agg = agg.rename(columns={"bw_num": "birth_weight"})
-    return agg
-
-
 def compute_cpap_general_kpi(df, facility_uids=None):
     """Compute general CPAP coverage rate - FIXED with deduplication"""
     cache_key = get_cache_key_simplified(df, facility_uids, "cpap_general_kpi")
@@ -829,61 +759,6 @@ def compute_cpap_for_rds_kpi(df, facility_uids=None):
                 "cpap_count": int(cpap_count),
                 "total_rds": int(total_rds),
             }
-
-    st.session_state.kpi_cache_newborn_simplified[cache_key] = result
-    return result
-
-
-def compute_cpap_eligible_babies_kpi(df, facility_uids=None):
-    """CPAP eligible: RDS + BW 1000-1999 + Hypoxia"""
-    cache_key = get_cache_key_simplified(df, facility_uids, "cpap_eligible_babies_kpi")
-    if cache_key in st.session_state.kpi_cache_newborn_simplified:
-        return st.session_state.kpi_cache_newborn_simplified[cache_key]
-
-    if df is None or df.empty:
-        result = {"cpap_count": 0, "total_eligible": 0}
-    else:
-        filtered_df = filter_by_facility(df, facility_uids)
-        tei_flags = _aggregate_tei_flags(filtered_df)
-        if tei_flags is None or tei_flags.empty:
-            result = {"cpap_count": 0, "total_eligible": 0}
-        else:
-            eligible_mask = (
-                tei_flags["has_rds"]
-                & tei_flags["birth_weight"].between(1000, 1999, inclusive="both").fillna(False)
-                & tei_flags["has_hypoxia"]
-            )
-            eligible_teis = tei_flags.loc[eligible_mask].dropna(subset=["tei_id"])
-            total_eligible = len(eligible_teis)
-            cpap_count = int(eligible_teis["has_cpap"].sum()) if total_eligible > 0 else 0
-            result = {"cpap_count": cpap_count, "total_eligible": total_eligible}
-
-    st.session_state.kpi_cache_newborn_simplified[cache_key] = result
-    return result
-
-
-def compute_cpap_symptomatic_1500_1999_kpi(df, facility_uids=None):
-    """CPAP symptomatic: RDS + BW 1500-1999"""
-    cache_key = get_cache_key_simplified(df, facility_uids, "cpap_symptomatic_1500_1999_kpi")
-    if cache_key in st.session_state.kpi_cache_newborn_simplified:
-        return st.session_state.kpi_cache_newborn_simplified[cache_key]
-
-    if df is None or df.empty:
-        result = {"cpap_count": 0, "total_eligible": 0}
-    else:
-        filtered_df = filter_by_facility(df, facility_uids)
-        tei_flags = _aggregate_tei_flags(filtered_df)
-        if tei_flags is None or tei_flags.empty:
-            result = {"cpap_count": 0, "total_eligible": 0}
-        else:
-            symp_mask = (
-                tei_flags["has_rds"]
-                & tei_flags["birth_weight"].between(1500, 1999, inclusive="both").fillna(False)
-            )
-            symp_teis = tei_flags.loc[symp_mask].dropna(subset=["tei_id"])
-            total_eligible = len(symp_teis)
-            cpap_count = int(symp_teis["has_cpap"].sum()) if total_eligible > 0 else 0
-            result = {"cpap_count": cpap_count, "total_eligible": total_eligible}
 
     st.session_state.kpi_cache_newborn_simplified[cache_key] = result
     return result
@@ -1022,7 +897,7 @@ def render_birth_weight_trend_chart(
 
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
-        st.warning("⚠️ No data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No data available for the selected period.")
         return
 
     with st.expander("Filter Birth Weight Categories", expanded=False):
@@ -1075,7 +950,7 @@ def render_birth_weight_trend_chart(
         trend_data.append(period_row)
 
     if not trend_data:
-        st.warning("⚠️ No birth weight data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No birth weight data available for the selected period.")
         return
 
     trend_df = pd.DataFrame(trend_data)
@@ -1200,7 +1075,7 @@ def render_birth_weight_trend_chart(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE COMPARISON TABLE
-    st.subheader("📊 Birth Weight Rate Table (%)")
+    st.subheader("≡ƒôè Birth Weight Rate Table (%)")
 
     # Create a table with all categories for each period
     table_data = []
@@ -1250,7 +1125,7 @@ def render_birth_weight_trend_chart(
     )
 
     # SINGLE DOWNLOAD SECTION
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     # Create a simplified version for download
     download_df = trend_df.copy()
@@ -1301,7 +1176,7 @@ def render_birth_weight_trend_chart(
     download_csv_button(
         download_df,
         f"birth_weight_rate_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         "Download the birth weight rate data as CSV",
     )
 
@@ -1325,7 +1200,7 @@ def render_birth_weight_facility_comparison(
         or not facility_uids
         or len(facility_names) != len(facility_uids)
     ):
-        st.warning("⚠️ No facilities selected for comparison.")
+        st.warning("ΓÜá∩╕Å No facilities selected for comparison.")
         return
 
     # Get periods (for information only, not for selection)
@@ -1351,7 +1226,7 @@ def render_birth_weight_facility_comparison(
 
     # FIX: Check if periods is empty properly
     if periods is None or len(periods) == 0:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Compute AGGREGATED data for each facility (sum across all periods)
@@ -1379,7 +1254,7 @@ def render_birth_weight_facility_comparison(
             facility_data.append(row_data)
 
     if not facility_data:
-        st.warning("⚠️ No data available for facility comparison.")
+        st.warning("ΓÜá∩╕Å No data available for facility comparison.")
         return
 
     facility_df = pd.DataFrame(facility_data)
@@ -1595,7 +1470,7 @@ def render_birth_weight_facility_comparison(
     )
 
     # SINGLE DOWNLOAD SECTION
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     download_df = facility_df.copy()
 
@@ -1628,7 +1503,7 @@ def render_birth_weight_facility_comparison(
     download_csv_button(
         download_df,
         f"birth_weight_facility_rate_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         "Download birth weight facility rate data as CSV",
     )
 
@@ -1649,7 +1524,7 @@ def render_birth_weight_region_comparison(
         text_color = auto_text_color(bg_color)
 
     if not region_names or not region_mapping or not facilities_by_region:
-        st.warning("⚠️ No regions available for comparison.")
+        st.warning("ΓÜá∩╕Å No regions available for comparison.")
         return
 
     # Get periods (for information only)
@@ -1674,7 +1549,7 @@ def render_birth_weight_region_comparison(
         return
 
     if periods is None or len(periods) == 0:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Compute AGGREGATED data for each region (sum across all periods)
@@ -1712,7 +1587,7 @@ def render_birth_weight_region_comparison(
                 region_data.append(row_data)
 
     if not region_data:
-        st.warning("⚠️ No data available for region comparison.")
+        st.warning("ΓÜá∩╕Å No data available for region comparison.")
         return
 
     region_df = pd.DataFrame(region_data)
@@ -1934,7 +1809,7 @@ def render_birth_weight_region_comparison(
     )
 
     # SINGLE DOWNLOAD SECTION
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     download_df = region_df.copy()
 
@@ -1967,7 +1842,7 @@ def render_birth_weight_region_comparison(
     download_csv_button(
         download_df,
         f"birth_weight_region_comparison_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         "Download birth weight region comparison data as CSV",
     )
 
@@ -1990,7 +1865,7 @@ def render_cpap_general_trend_chart(
 
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
-        st.warning("⚠️ No data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No data available for the selected period.")
         return
 
     # Get unique periods
@@ -2016,7 +1891,7 @@ def render_cpap_general_trend_chart(
         trend_data.append(period_row)
 
     if not trend_data:
-        st.warning("⚠️ No CPAP data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No CPAP data available for the selected period.")
         return
 
     trend_df = pd.DataFrame(trend_data)
@@ -2086,7 +1961,7 @@ def render_cpap_general_trend_chart(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE
-    st.subheader("📊 General CPAP Coverage Table")
+    st.subheader("≡ƒôè General CPAP Coverage Table")
 
     # Create a detailed table
     table_data = []
@@ -2124,7 +1999,7 @@ def render_cpap_general_trend_chart(
     )
 
     # SINGLE DOWNLOAD SECTION
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     # Create a simplified version for download
     download_df = trend_valid_df.copy()
@@ -2167,7 +2042,7 @@ def render_cpap_general_trend_chart(
     download_csv_button(
         download_df,
         f"general_cpap_coverage_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         "Download general CPAP coverage data as CSV",
     )
 
@@ -2175,271 +2050,229 @@ def render_cpap_general_trend_chart(
 def render_cpap_rds_trend_chart(
     df,
     period_col="period_display",
-    title="CPAP Coverage Trend",
+    title="CPAP for RDS Trend",
     bg_color="#FFFFFF",
     text_color=None,
     facility_uids=None,
     numerator_name="CPAP Cases",
-    denominator_name="Total Eligible",
+    denominator_name="Total RDS Cases",
     **kwargs
 ):
-    """Render CPAP Coverage trend chart with two separate columns for each indicator"""
+    """Render CPAP for RDS trend chart - WITH SINGLE TABLE"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
-        st.warning("⚠️ No data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No data available for the selected period.")
         return
 
-    indicators = [
-        {
-            "kpi_name": "cpap_eligible",
-            "display_name": "CPAP for eligible babies (1000-1999g + RDS + Hypoxia)",
-            "short_name": "CPAP Eligible",
-            "color": "#1f77b4",
-        },
-        {
-            "kpi_name": "cpap_symptomatic",
-            "display_name": "CPAP 1500-1999g (symptomatic)",
-            "short_name": "CPAP 1500-1999g",
-            "color": "#1f77b4",
-        },
-    ]
+    # Get unique periods
+    periods = df[period_col].unique()
 
-    periods = sort_periods_chronologically(df[period_col].unique())
+    # FIX: Sort periods chronologically using helper function
+    periods = sort_periods_chronologically(periods)
 
-    # Pre-compute tei_flags once, then filter by period
-    filtered_for_flags = filter_by_facility(df, facility_uids)
-    tei_flags = _aggregate_tei_flags(filtered_for_flags)
-    if tei_flags is None or tei_flags.empty:
-        st.warning("⚠️ No TEI-level data available for CPAP computation.")
-        return
-    # Sort by event_date before dedup so earliest enrollment period is used
-    period_src = filtered_for_flags
-    if "event_date" in period_src.columns:
-        period_src = period_src.sort_values("event_date")
-    tei_periods = period_src[["tei_id", period_col]].drop_duplicates(subset=["tei_id"])
-    tei_period_map = tei_periods.set_index("tei_id")[period_col]
-
+    # Compute CPAP data for each period
     trend_data = []
+
     for period in periods:
-        teis_in_period = tei_period_map[tei_period_map == period].index
-        pflags = tei_flags.loc[tei_flags.index.isin(teis_in_period)]
-
-        # Eligible: RDS + BW 1000-1999 + Hypoxia
-        e_mask = (
-            pflags["has_rds"]
-            & pflags["birth_weight"].between(1000, 1999, inclusive="both").fillna(False)
-            & pflags["has_hypoxia"]
+        period_df = df[df[period_col] == period]
+        cpap_rds_data = compute_cpap_for_rds_kpi(period_df, facility_uids)
+        period_sort_val = (
+            pd.to_datetime(period_df["period_sort"], errors="coerce").min()
+            if "period_sort" in period_df.columns
+            else pd.NaT
         )
-        e_teis = pflags[e_mask]
-        e_num, e_den = int(e_teis["has_cpap"].sum()), len(e_teis)
 
-        # Symptomatic: RDS + BW 1500-1999
-        s_mask = (
-            pflags["has_rds"]
-            & pflags["birth_weight"].between(1500, 1999, inclusive="both").fillna(False)
-        )
-        s_teis = pflags[s_mask]
-        s_num, s_den = int(s_teis["has_cpap"].sum()), len(s_teis)
-
-        trend_data.append({
+        period_row = {
             period_col: period,
-            "cpap_eligible_value": (e_num / e_den * 100) if e_den > 0 else None,
-            "cpap_eligible_num": e_num,
-            "cpap_eligible_den": e_den,
-            "cpap_symptomatic_value": (s_num / s_den * 100) if s_den > 0 else None,
-            "cpap_symptomatic_num": s_num,
-            "cpap_symptomatic_den": s_den,
-        })
+            "period_sort": period_sort_val,
+            "cpap_rds_rate": cpap_rds_data.get("cpap_rate", 0.0),
+            "cpap_rds_count": cpap_rds_data.get("cpap_count", 0),
+            "cpap_rds_total": cpap_rds_data.get("total_rds", 0),
+        }
+
+        trend_data.append(period_row)
 
     if not trend_data:
-        st.warning("⚠️ No CPAP data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No CPAP for RDS data available for the selected period.")
         return
 
     trend_df = pd.DataFrame(trend_data)
+    trend_plot_df = trend_df.copy()
+    den_vals = pd.to_numeric(trend_plot_df["cpap_rds_total"], errors="coerce").fillna(0)
+    trend_plot_df["cpap_rds_rate"] = pd.to_numeric(
+        trend_plot_df["cpap_rds_rate"], errors="coerce"
+    )
+    trend_plot_df.loc[den_vals <= 0, "cpap_rds_rate"] = np.nan
+    trend_valid_df = trend_df[
+        pd.to_numeric(trend_df["cpap_rds_total"], errors="coerce").fillna(0) > 0
+    ].copy()
+    if trend_valid_df.empty:
+        st.warning("No valid CPAP for RDS data to display (denominator is zero for all periods).")
+        return
 
-    # Render two separate columns
-    col1, col2 = st.columns(2)
+    # Create bar chart for CPAP for RDS
+    fig = go.Figure()
 
-    for idx, ind in enumerate(indicators):
-        with col1 if idx == 0 else col2:
-            value_col = f"{ind['kpi_name']}_value"
-            num_col = f"{ind['kpi_name']}_num"
-            den_col = f"{ind['kpi_name']}_den"
+    # Prepare hover data as numpy array
+    hover_data = np.column_stack(
+        (trend_plot_df["cpap_rds_count"], trend_plot_df["cpap_rds_total"])
+    )
 
-            fig = go.Figure()
-
-            fig.add_trace(
-                go.Scatter(
-                    x=trend_df[period_col],
-                    y=trend_df[value_col],
-                    name=ind["short_name"],
-                    mode="lines+markers",
-                    line=dict(color=ind["color"], width=3, shape="linear"),
-                    connectgaps=False,
-                    cliponaxis=False,
-                    hovertemplate=(
-                        f"<b>{ind['display_name']}</b><br>"
-                        "Period: %{x}<br>"
-                        "Rate: %{y:.1f}%<br>"
-                        "Numerator: %{customdata[0]}<br>"
-                        "Denominator: %{customdata[1]}<br>"
-                        "<extra></extra>"
-                    ),
-                    customdata=np.column_stack(
-                        (trend_df[num_col].values, trend_df[den_col].values)
-                    ),
-                )
-            )
-
-            fig.add_hline(y=100, line_dash="dash", line_color="green", line_width=1.5)
-
-            fig.update_xaxes(
-                type="category",
-                categoryorder="array",
-                categoryarray=periods,
-                tickangle=-45,
-                gridcolor="rgba(128,128,128,0.2)",
-                showgrid=True,
-                showline=True,
-                linewidth=2,
-                linecolor="rgba(128,128,128,0.8)",
-                mirror=True,
-            )
-            fig.update_yaxes(
-                range=[0, 105],
-                dtick=25,
-                gridcolor="rgba(128,128,128,0.2)",
-                showgrid=True,
-                zeroline=True,
-                zerolinecolor="rgba(128,128,128,0.5)",
-                ticksuffix="%",
-                showline=True,
-                linewidth=2,
-                linecolor="rgba(128,128,128,0.8)",
-                mirror=True,
-                title_text="CPAP Coverage Rate (%)",
-            )
-
-            fig.update_layout(
-                title=dict(text=ind["display_name"], font=dict(size=14)),
-                height=400,
-                showlegend=False,
-                paper_bgcolor=bg_color,
-                plot_bgcolor=bg_color,
-                font_color=text_color,
-                title_font_color=text_color,
-                title_y=0.95,
-                margin=dict(l=50, r=50, t=80, b=80),
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Table for this indicator
-            st.subheader(f"📊 {ind['short_name']} Table")
-            st.caption("Values shown as: Rate% (numerator / denominator)")
-
-            table_data = []
-            for period in periods:
-                period_row_data = trend_df[trend_df[period_col] == period].iloc[0]
-                per_num = int(period_row_data[num_col])
-                per_den = int(period_row_data[den_col])
-                val = period_row_data[value_col]
-                if per_den > 0:
-                    table_data.append({
-                        "Period": period,
-                        "Rate": f"{val:.1f}%",
-                        "Numerator": per_num,
-                        "Denominator": per_den
-                    })
-                else:
-                    table_data.append({
-                        "Period": period,
-                        "Rate": "-",
-                        "Numerator": per_num,
-                        "Denominator": per_den
-                    })
-
-            total_num = int(trend_df[num_col].sum())
-            total_den = int(trend_df[den_col].sum())
-            overall_val = (total_num / total_den * 100) if total_den > 0 else 0.0
-            if total_den > 0:
-                table_data.append({
-                    "Period": "**OVERALL**",
-                    "Rate": f"{overall_val:.1f}%",
-                    "Numerator": total_num,
-                    "Denominator": total_den
-                })
-
-            st.dataframe(
-                pd.DataFrame(table_data),
-                use_container_width=True,
-                height=min(400, (len(table_data) + 1) * 35 + 3),
-            )
-
-    with st.expander("ℹ️ How each indicator is computed"):
-        st.markdown(
-            """
-            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
-            <table style="width:100%; border-collapse:collapse;">
-            <tr style="background-color:#1f77b4; color:white;">
-                <th style="padding:8px; text-align:left;">Indicator</th>
-                <th style="padding:8px; text-align:left;">Numerator</th>
-                <th style="padding:8px; text-align:left;">Denominator</th>
-            </tr>
-            <tr style="background-color:#f0f8ff;">
-                <td style="padding:8px;"><b>CPAP Eligible</b></td>
-                <td style="padding:8px;">RDS and BW 1000-1999g and Hypoxic babies given CPAP</td>
-                <td style="padding:8px;">RDS and BW 1000-1999g and Hypoxic babies</td>
-            </tr>
-            <tr>
-                <td style="padding:8px;"><b>CPAP Symptomatic 1500-1999g</b></td>
-                <td style="padding:8px;">RDS and BW 1500-1999g babies given CPAP</td>
-                <td style="padding:8px;">RDS and BW 1500-1999g babies</td>
-            </tr>
-            </table>
-            </div>
-            """,
-            unsafe_allow_html=True,
+    fig.add_trace(
+        go.Scatter(
+            x=trend_plot_df[period_col],
+            y=trend_plot_df["cpap_rds_rate"],
+            mode="lines",
+            name="CPAP for RDS",
+            line=dict(color="#3498db", width=3, shape="spline", smoothing=0.35),
+            connectgaps=True,
+            cliponaxis=False,
+            hovertemplate=get_attractive_hover_template(
+                "CPAP for RDS", numerator_name, denominator_name
+            ),
+            customdata=hover_data,
         )
+    )
 
-    # Download
+    forecast_series_df = trend_plot_df[
+        [period_col, "period_sort", "cpap_rds_rate"]
+    ].rename(columns={"cpap_rds_rate": "rate_value"})
+    forecast_payload = _compute_forecast_payload_for_series(
+        forecast_series_df,
+        period_col,
+        "rate_value",
+    )
+    _add_forecast_trace(fig, forecast_payload, trace_name="CPAP for RDS Forecast")
+    axis_periods = list(periods)
+    if forecast_payload:
+        next_x = forecast_payload.get("next_x")
+        if next_x and next_x not in axis_periods:
+            axis_periods.append(next_x)
+
+    # Calculate Y-axis range for percentage charts
+    all_rates = trend_plot_df["cpap_rds_rate"].tolist()
+    y_max = 100
+
+    fig.update_layout(
+        title=title,
+        height=400,
+        xaxis_title="Period",
+        yaxis_title="CPAP Coverage (%)",
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        xaxis=dict(
+            type="category",
+            categoryorder="array",
+            categoryarray=axis_periods,  # Ensure chronological order
+            tickangle=-45,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            layer="below traces",
+        ),
+        yaxis=dict(
+            rangemode="tozero",
+            range=[0, y_max],
+            dtick=25,
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            layer="below traces",
+        ),
+    )
+
+    fig.update_layout(yaxis_tickformat=".1f")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # SINGLE TABLE
+    st.subheader("≡ƒôè CPAP for RDS Table")
+
+    # Create a detailed table
+    table_data = []
+
+    for _, row in trend_valid_df.iterrows():
+        table_row = {
+            "Period": row[period_col],
+            "Rate (%)": f"{row['cpap_rds_rate']:.1f}%",
+            "CPAP Cases": int(row["cpap_rds_count"]),
+            "Total RDS": int(row["cpap_rds_total"]),
+        }
+        table_data.append(table_row)
+
+    # Add overall row
+    total_cases = trend_valid_df["cpap_rds_count"].sum()
+    total_rds = trend_valid_df["cpap_rds_total"].sum()
+    overall_rate = (total_cases / total_rds * 100) if total_rds > 0 else 0
+
+    overall_row = {
+        "Period": "Overall",
+        "Rate (%)": f"{overall_rate:.1f}%",
+        "CPAP Cases": int(total_cases),
+        "Total RDS": int(total_rds),
+    }
+    table_data.append(overall_row)
+
+    comparison_df = pd.DataFrame(table_data)
+
+    # Display the table
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+    # Add description
+    st.info(
+        "**CPAP for Respiratory Distress Syndrome (RDS)**: Shows the percentage of newborns diagnosed with RDS who received CPAP therapy."
+    )
+
+    # SINGLE DOWNLOAD SECTION
+    st.subheader("≡ƒôÑ Download Data")
+
+    # Create a simplified version for download
+    download_df = trend_valid_df.copy()
+
+    # Select and rename columns
+    download_df = download_df[
+        [
+            period_col,
+            "cpap_rds_rate",
+            "cpap_rds_count",
+            "cpap_rds_total",
+        ]
+    ]
+
+    # Calculate totals for "Overall" row
+    overall_row = {period_col: "Overall"}
+    overall_row["cpap_rds_count"] = download_df["cpap_rds_count"].sum()
+    overall_row["cpap_rds_total"] = download_df["cpap_rds_total"].sum()
+    overall_row["cpap_rds_rate"] = (
+        overall_row["cpap_rds_count"] / overall_row["cpap_rds_total"] * 100
+        if overall_row["cpap_rds_total"] > 0
+        else 0
+    )
+
+    # Add "Overall" row to the dataframe
+    overall_df = pd.DataFrame([overall_row])
+    download_df = pd.concat([download_df, overall_df], ignore_index=True)
+
+    column_names = {
+        period_col: "Period",
+        "cpap_rds_rate": "CPAP for RDS Rate (%)",
+        "cpap_rds_count": "CPAP for RDS Cases",
+        "cpap_rds_total": "Total RDS Newborns",
+    }
+
+    download_df = download_df.rename(columns=column_names)
+
+    # Use helper function for download
     timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-    download_rows = []
-    for period in periods:
-        prow = trend_df[trend_df[period_col] == period].iloc[0]
-        download_rows.append({period_col: period, **{
-            f"{ind['kpi_name']}_num": int(prow[f"{ind['kpi_name']}_num"])
-            for ind in indicators
-        }, **{
-            f"{ind['kpi_name']}_den": int(prow[f"{ind['kpi_name']}_den"])
-            for ind in indicators
-        }})
-    download_df = pd.DataFrame(download_rows)
-    overall_dl = {}
-    for ind in indicators:
-        overall_dl[f"{ind['kpi_name']}_num"] = download_df[f"{ind['kpi_name']}_num"].sum()
-        overall_dl[f"{ind['kpi_name']}_den"] = download_df[f"{ind['kpi_name']}_den"].sum()
-    overall_dl[period_col] = "Overall"
-    download_df = pd.concat([download_df, pd.DataFrame([overall_dl])], ignore_index=True)
-
-    col_map = {period_col: "Period"}
-    col_map.update({
-        f"{ind['kpi_name']}_num": f"{ind['short_name']} - CPAP Cases"
-        for ind in indicators
-    })
-    col_map.update({
-        f"{ind['kpi_name']}_den": f"{ind['short_name']} - Total Eligible"
-        for ind in indicators
-    })
-    download_df = download_df.rename(columns=col_map)
     download_csv_button(
         download_df,
-        f"cpap_coverage_{timestamp}.csv",
-        "📥 Download CSV",
-        "Download CPAP coverage data as CSV",
+        f"cpap_for_rds_{timestamp}.csv",
+        "≡ƒôÑ Download CSV",
+        "Download CPAP for RDS data as CSV",
     )
 
 
@@ -2463,7 +2296,7 @@ def render_cpap_general_facility_comparison(
         or not facility_uids
         or len(facility_names) != len(facility_uids)
     ):
-        st.warning("⚠️ No facilities selected for comparison.")
+        st.warning("ΓÜá∩╕Å No facilities selected for comparison.")
         return
 
     # Get periods (for information only)
@@ -2471,7 +2304,7 @@ def render_cpap_general_facility_comparison(
 
     # FIX: Check if periods is empty properly
     if periods is None or len(periods) == 0:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Compute AGGREGATED CPAP GENERAL data for each facility (sum across all periods)
@@ -2492,7 +2325,7 @@ def render_cpap_general_facility_comparison(
             facility_data.append(row_data)
 
     if not facility_data:
-        st.warning("⚠️ No CPAP data available for facility comparison.")
+        st.warning("ΓÜá∩╕Å No CPAP data available for facility comparison.")
         return
 
     facility_df = pd.DataFrame(facility_data)
@@ -2562,7 +2395,7 @@ def render_cpap_general_facility_comparison(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE
-    st.subheader("📊 General CPAP Facility Comparison Table")
+    st.subheader("≡ƒôè General CPAP Facility Comparison Table")
 
     # Create a detailed table
     table_data = []
@@ -2595,7 +2428,7 @@ def render_cpap_general_facility_comparison(
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     download_df = facility_df.copy()
 
@@ -2618,7 +2451,7 @@ def render_cpap_general_facility_comparison(
     download_csv_button(
         download_df,
         f"general_cpap_facility_comparison_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         f"Download general CPAP facility comparison data as CSV",
     )
 
@@ -2642,7 +2475,7 @@ def render_cpap_rds_facility_comparison(
         or not facility_uids
         or len(facility_names) != len(facility_uids)
     ):
-        st.warning("⚠️ No facilities selected for comparison.")
+        st.warning("ΓÜá∩╕Å No facilities selected for comparison.")
         return
 
     # Get periods (for information only)
@@ -2650,7 +2483,7 @@ def render_cpap_rds_facility_comparison(
 
     # FIX: Check if periods is empty properly
     if periods is None or len(periods) == 0:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Compute AGGREGATED CPAP for RDS data for each facility (sum across all periods)
@@ -2671,7 +2504,7 @@ def render_cpap_rds_facility_comparison(
             facility_data.append(row_data)
 
     if not facility_data:
-        st.warning("⚠️ No CPAP for RDS data available for facility comparison.")
+        st.warning("ΓÜá∩╕Å No CPAP for RDS data available for facility comparison.")
         return
 
     facility_df = pd.DataFrame(facility_data)
@@ -2741,7 +2574,7 @@ def render_cpap_rds_facility_comparison(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE
-    st.subheader("📊 CPAP for RDS Facility Comparison Table")
+    st.subheader("≡ƒôè CPAP for RDS Facility Comparison Table")
 
     # Create a detailed table
     table_data = []
@@ -2774,7 +2607,7 @@ def render_cpap_rds_facility_comparison(
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     download_df = facility_df.copy()
 
@@ -2797,7 +2630,7 @@ def render_cpap_rds_facility_comparison(
     download_csv_button(
         download_df,
         f"cpap_for_rds_facility_comparison_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         f"Download CPAP for RDS facility comparison data as CSV",
     )
 
@@ -2819,7 +2652,7 @@ def render_cpap_general_region_comparison(
         text_color = auto_text_color(bg_color)
 
     if not region_names or not region_mapping or not facilities_by_region:
-        st.warning("⚠️ No regions available for comparison.")
+        st.warning("ΓÜá∩╕Å No regions available for comparison.")
         return
 
     # Get periods (for information only)
@@ -2827,7 +2660,7 @@ def render_cpap_general_region_comparison(
 
     # FIX: Check if periods is empty properly
     if periods is None or len(periods) == 0:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Compute AGGREGATED CPAP GENERAL data for each region (sum across all periods)
@@ -2858,7 +2691,7 @@ def render_cpap_general_region_comparison(
                 region_data.append(row_data)
 
     if not region_data:
-        st.warning("⚠️ No CPAP data available for region comparison.")
+        st.warning("ΓÜá∩╕Å No CPAP data available for region comparison.")
         return
 
     region_df = pd.DataFrame(region_data)
@@ -2928,7 +2761,7 @@ def render_cpap_general_region_comparison(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE
-    st.subheader("📊 General CPAP Region Comparison Table")
+    st.subheader("≡ƒôè General CPAP Region Comparison Table")
 
     # Create a detailed table
     table_data = []
@@ -2961,7 +2794,7 @@ def render_cpap_general_region_comparison(
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     download_df = region_df.copy()
 
@@ -2984,7 +2817,7 @@ def render_cpap_general_region_comparison(
     download_csv_button(
         download_df,
         f"general_cpap_region_comparison_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         f"Download general CPAP region comparison data as CSV",
     )
 
@@ -3005,7 +2838,7 @@ def render_cpap_rds_region_comparison(
         text_color = auto_text_color(bg_color)
 
     if not region_names or not region_mapping or not facilities_by_region:
-        st.warning("⚠️ No regions available for comparison.")
+        st.warning("ΓÜá∩╕Å No regions available for comparison.")
         return
 
     # Get periods (for information only)
@@ -3013,7 +2846,7 @@ def render_cpap_rds_region_comparison(
 
     # FIX: Check if periods is empty properly
     if periods is None or len(periods) == 0:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Compute AGGREGATED CPAP for RDS data for each region (sum across all periods)
@@ -3044,7 +2877,7 @@ def render_cpap_rds_region_comparison(
                 region_data.append(row_data)
 
     if not region_data:
-        st.warning("⚠️ No CPAP for RDS data available for region comparison.")
+        st.warning("ΓÜá∩╕Å No CPAP for RDS data available for region comparison.")
         return
 
     region_df = pd.DataFrame(region_data)
@@ -3114,7 +2947,7 @@ def render_cpap_rds_region_comparison(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE
-    st.subheader("📊 CPAP for RDS Region Comparison Table")
+    st.subheader("≡ƒôè CPAP for RDS Region Comparison Table")
 
     # Create a detailed table
     table_data = []
@@ -3147,7 +2980,7 @@ def render_cpap_rds_region_comparison(
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     download_df = region_df.copy()
 
@@ -3170,7 +3003,7 @@ def render_cpap_rds_region_comparison(
     download_csv_button(
         download_df,
         f"cpap_for_rds_region_comparison_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         f"Download CPAP for RDS region comparison data as CSV",
     )
 
@@ -3193,7 +3026,7 @@ def render_kmc_coverage_trend_chart(
 
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
-        st.warning("⚠️ No data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No data available for the selected period.")
         return
 
     # Add multiselect for filtering categories inside an expander
@@ -3212,7 +3045,7 @@ def render_kmc_coverage_trend_chart(
     }
 
     if not filtered_categories:
-        st.warning("⚠️ No categories selected.")
+        st.warning("ΓÜá∩╕Å No categories selected.")
         return
 
     # Get unique periods
@@ -3254,7 +3087,7 @@ def render_kmc_coverage_trend_chart(
         trend_data.append(period_row)
 
     if not trend_data:
-        st.warning("⚠️ No KMC data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No KMC data available for the selected period.")
         return
 
     trend_df = pd.DataFrame(trend_data)
@@ -3381,7 +3214,7 @@ def render_kmc_coverage_trend_chart(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE (unchanged)
-    st.subheader("📊 KMC Coverage Table")
+    st.subheader("≡ƒôè KMC Coverage Table")
 
     # Create a detailed table with rates, counts, and totals for each category
     table_data = []
@@ -3446,7 +3279,7 @@ def render_kmc_coverage_trend_chart(
     )
 
     # SINGLE DOWNLOAD SECTION (unchanged)
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     # Create a simplified version for download
     download_df = trend_df.copy()
@@ -3513,7 +3346,7 @@ def render_kmc_coverage_trend_chart(
     download_csv_button(
         download_df,
         f"kmc_coverage_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         f"Download KMC coverage data as CSV",
     )
 
@@ -3533,7 +3366,7 @@ def render_cpap_by_weight_trend_chart(
 
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
-        st.warning("⚠️ No data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No data available for the selected period.")
         return
     # Add multiselect for filtering categories inside an expander
     with st.expander("Filter Birth Weight Categories", expanded=False):
@@ -3551,7 +3384,7 @@ def render_cpap_by_weight_trend_chart(
     }
 
     if not filtered_categories:
-        st.warning("⚠️ No categories selected.")
+        st.warning("ΓÜá∩╕Å No categories selected.")
         return
 
     # Get unique periods
@@ -3593,7 +3426,7 @@ def render_cpap_by_weight_trend_chart(
         trend_data.append(period_row)
 
     if not trend_data:
-        st.warning("⚠️ No CPAP data available for the selected period.")
+        st.warning("ΓÜá∩╕Å No CPAP data available for the selected period.")
         return
 
     trend_df = pd.DataFrame(trend_data)
@@ -3721,7 +3554,7 @@ def render_cpap_by_weight_trend_chart(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE (unchanged)
-    st.subheader("📊 CPAP Coverage Table")
+    st.subheader("≡ƒôè CPAP Coverage Table")
 
     # Create a detailed table with rates, counts, and totals for each category
     table_data = []
@@ -3788,7 +3621,7 @@ def render_cpap_by_weight_trend_chart(
     )
 
     # SINGLE DOWNLOAD SECTION (unchanged)
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     # Create a simplified version for download
     download_df = trend_df.copy()
@@ -3855,7 +3688,7 @@ def render_cpap_by_weight_trend_chart(
     download_csv_button(
         download_df,
         f"cpap_coverage_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         f"Download CPAP coverage data as CSV",
     )
 
@@ -3879,7 +3712,7 @@ def render_kmc_facility_comparison(
         or not facility_uids
         or len(facility_names) != len(facility_uids)
     ):
-        st.warning("⚠️ No facilities selected for comparison.")
+        st.warning("ΓÜá∩╕Å No facilities selected for comparison.")
         return
 
     # Get periods (for information only)
@@ -3887,7 +3720,7 @@ def render_kmc_facility_comparison(
 
     # FIX: Check if periods is empty properly
     if periods is None or len(periods) == 0:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Compute AGGREGATED KMC data for each facility (sum across all periods)
@@ -3917,7 +3750,7 @@ def render_kmc_facility_comparison(
             facility_data.append(row_data)
 
     if not facility_data:
-        st.warning("⚠️ No KMC data available for facility comparison.")
+        st.warning("ΓÜá∩╕Å No KMC data available for facility comparison.")
         return
 
     facility_df = pd.DataFrame(facility_data)
@@ -3980,7 +3813,7 @@ def render_kmc_facility_comparison(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE (unchanged)
-    st.subheader("📊 KMC Facility Comparison Table")
+    st.subheader("≡ƒôè KMC Facility Comparison Table")
 
     # Create a detailed table with rates, counts, and totals for each category
     table_data = []
@@ -4036,7 +3869,7 @@ def render_kmc_facility_comparison(
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     download_df = facility_df.copy()
 
@@ -4075,7 +3908,7 @@ def render_kmc_facility_comparison(
     download_csv_button(
         download_df,
         f"kmc_rates_facility_comparison_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         f"Download KMC rates facility comparison data as CSV",
     )
 
@@ -4098,7 +3931,7 @@ def render_kmc_region_comparison(
         text_color = auto_text_color(bg_color)
 
     if not region_names or not region_mapping or not facilities_by_region:
-        st.warning("⚠️ No regions available for comparison.")
+        st.warning("ΓÜá∩╕Å No regions available for comparison.")
         return
 
     # Get periods (for information only)
@@ -4106,7 +3939,7 @@ def render_kmc_region_comparison(
 
     # FIX: Check if periods is empty properly
     if periods is None or len(periods) == 0:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Compute AGGREGATED KMC data for each region (sum across all periods)
@@ -4146,7 +3979,7 @@ def render_kmc_region_comparison(
                 region_data.append(row_data)
 
     if not region_data:
-        st.warning("⚠️ No KMC data available for region comparison.")
+        st.warning("ΓÜá∩╕Å No KMC data available for region comparison.")
         return
 
     region_df = pd.DataFrame(region_data)
@@ -4209,7 +4042,7 @@ def render_kmc_region_comparison(
     st.plotly_chart(fig, use_container_width=True)
 
     # SINGLE TABLE (unchanged)
-    st.subheader("📊 KMC Region Comparison Table")
+    st.subheader("≡ƒôè KMC Region Comparison Table")
 
     # Create a detailed table with rates, counts, and totals for each category
     table_data = []
@@ -4265,7 +4098,7 @@ def render_kmc_region_comparison(
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
     # SINGLE DOWNLOAD SECTION (unchanged)
-    st.subheader("📥 Download Data")
+    st.subheader("≡ƒôÑ Download Data")
 
     download_df = region_df.copy()
 
@@ -4304,7 +4137,7 @@ def render_kmc_region_comparison(
     download_csv_button(
         download_df,
         f"kmc_rates_region_comparison_{timestamp}.csv",
-        "📥 Download CSV",
+        "≡ƒôÑ Download CSV",
         f"Download KMC rates region comparison data as CSV",
     )
 
@@ -4418,7 +4251,7 @@ def render_kmc_coverage_comparison_chart(
 
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Add multiselect for filtering categories inside an expander
@@ -4437,7 +4270,7 @@ def render_kmc_coverage_comparison_chart(
     }
 
     if not filtered_categories:
-        st.warning("⚠️ No categories selected.")
+        st.warning("ΓÜá∩╕Å No categories selected.")
         return
 
     # Get unique periods
@@ -4447,7 +4280,7 @@ def render_kmc_coverage_comparison_chart(
     # Determine comparison entities and labels
     if comparison_mode == "facility":
         if not facility_uids or not display_names:
-            st.warning("⚠️ No facilities selected for comparison.")
+            st.warning("ΓÜá∩╕Å No facilities selected for comparison.")
             return
         
         # Create map of UID -> Name
@@ -4458,7 +4291,7 @@ def render_kmc_coverage_comparison_chart(
         
     else:  # region
         if not region_names:
-            st.warning("⚠️ No regions selected for comparison.")
+            st.warning("ΓÜá∩╕Å No regions selected for comparison.")
             return
             
         entities = region_names # List of Region Names
@@ -4530,7 +4363,7 @@ def render_kmc_coverage_comparison_chart(
             comparison_data[entity] = pd.DataFrame(entity_period_data)
 
     if not comparison_data:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Create 3x2 subplot grid
@@ -4635,7 +4468,7 @@ def render_kmc_coverage_comparison_chart(
     st.plotly_chart(fig, use_container_width=True)
 
     # Add comparison table - OVERALL AGGREGATED VALUES
-    st.subheader(f"📊 KMC Coverage Comparison Table - By {entity_label_text}")
+    st.subheader(f"≡ƒôè KMC Coverage Comparison Table - By {entity_label_text}")
     
     # Compute overall aggregated data for table
     table_data = []
@@ -4738,7 +4571,7 @@ def render_cpap_by_weight_comparison_chart(
 
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Add multiselect for filtering categories inside an expander
@@ -4757,7 +4590,7 @@ def render_cpap_by_weight_comparison_chart(
     }
 
     if not filtered_categories:
-        st.warning("⚠️ No categories selected.")
+        st.warning("ΓÜá∩╕Å No categories selected.")
         return
 
     # Get unique periods
@@ -4767,7 +4600,7 @@ def render_cpap_by_weight_comparison_chart(
     # Determine comparison entities and labels
     if comparison_mode == "facility":
         if not facility_uids or not display_names:
-            st.warning("⚠️ No facilities selected for comparison.")
+            st.warning("ΓÜá∩╕Å No facilities selected for comparison.")
             return
         
         # Create map of UID -> Name
@@ -4778,7 +4611,7 @@ def render_cpap_by_weight_comparison_chart(
         
     else:  # region
         if not region_names:
-            st.warning("⚠️ No regions selected for comparison.")
+            st.warning("ΓÜá∩╕Å No regions selected for comparison.")
             return
             
         entities = region_names # List of Region Names
@@ -4786,7 +4619,7 @@ def render_cpap_by_weight_comparison_chart(
         entity_label_text = "Region"
 
     if not entities:
-        st.warning(f"⚠️ No {entity_label_text.lower()}s selected for comparison.")
+        st.warning(f"ΓÜá∩╕Å No {entity_label_text.lower()}s selected for comparison.")
         return
 
     # Generate distinct colors for each entity
@@ -4848,7 +4681,7 @@ def render_cpap_by_weight_comparison_chart(
             comparison_data[entity] = pd.DataFrame(entity_period_data)
 
     if not comparison_data:
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
     # Create 3x2 subplot grid
@@ -4953,7 +4786,7 @@ def render_cpap_by_weight_comparison_chart(
     st.plotly_chart(fig, use_container_width=True)
 
     # Add comparison table - OVERALL AGGREGATED VALUES
-    st.subheader(f"📊 CPAP Coverage Comparison Table - By {entity_label_text}")
+    st.subheader(f"≡ƒôè CPAP Coverage Comparison Table - By {entity_label_text}")
     
     # Compute overall aggregated data for table
     table_data = []
@@ -5049,186 +4882,265 @@ def render_cpap_rds_comparison_line_chart(
     facilities_by_region=None,
     region_names=None,
     period_col="period_display",
-    title="CPAP Coverage Comparison",
+    title="CPAP for RDS Comparison",
     bg_color="#FFFFFF",
     text_color=None,
     **kwargs
 ):
-    """Render CPAP coverage comparison - two-column layout with eligible and symptomatic side by side."""
+    """Render CPAP for RDS comparison as LINE CHART - multiple lines for facilities/regions"""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
     if df is None or df.empty or period_col not in df.columns:
         st.subheader(title)
-        st.warning("⚠️ No data available for comparison.")
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
         return
 
+    # Get unique periods
     periods = df[period_col].unique()
     periods = sort_periods_chronologically(periods)
 
+    # Determine comparison entities
+    # Determine comparison entities and labels
     if comparison_mode == "facility":
         if not facility_uids or not display_names:
-            st.warning("⚠️ No facilities selected for comparison.")
+            st.warning("ΓÜá∩╕Å No facilities selected for comparison.")
             return
+        
+        # Create map of UID -> Name
         entities_map = dict(zip(facility_uids, display_names))
-        entities = list(entities_map.keys())
+        entities = list(entities_map.keys()) # List of UIDs
         get_label = lambda x: entities_map.get(x, x)
         entity_label_text = "Facility"
-    else:
+        
+    else:  # region
         if not region_names:
-            st.warning("⚠️ No regions selected for comparison.")
+            st.warning("ΓÜá∩╕Å No regions selected for comparison.")
             return
-        entities = region_names
+            
+        entities = region_names # List of Region Names
         get_label = lambda x: x
         entity_label_text = "Region"
 
     if not entities:
-        st.warning(f"⚠️ No {entity_label_text.lower()}s selected for comparison.")
+        st.warning(f"ΓÜá∩╕Å No {entity_label_text.lower()}s selected for comparison.")
         return
 
-    # Compute both KPI types in one pass (single _aggregate_tei_flags per entity)
-    eligible_data, symptomatic_data = {}, {}
-    for entity in entities:
-        ed, sd = _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_region, periods, period_col)
-        if ed is not None:
-            eligible_data[entity] = ed
-        if sd is not None:
-            symptomatic_data[entity] = sd
-
-    sorted_entities = sorted(entities, key=lambda e: str(get_label(e)).lower())
+    # Generate distinct colors for each entity
     color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set2
+    sorted_entities = sorted(entities, key=lambda e: str(get_label(e)).lower())
     entity_colors = {
-        e: color_palette[i % len(color_palette)]
-        for i, e in enumerate(sorted_entities) if e in eligible_data or e in symptomatic_data
+        entity: color_palette[i % len(color_palette)]
+        for i, entity in enumerate(sorted_entities)
     }
 
-    def make_chart(comparison_data, kpi_title, num_label, den_label):
-        fig = go.Figure()
-        for eid, edf in comparison_data.items():
-            label = get_label(eid)
-            pdf = edf.copy()
-            den_vals = pd.to_numeric(pdf["total"], errors="coerce").fillna(0)
-            pdf["rate"] = pd.to_numeric(pdf["rate"], errors="coerce")
-            pdf.loc[den_vals <= 0, "rate"] = np.nan
-            fig.add_trace(go.Scatter(
-                x=pdf[period_col], y=pdf["rate"], name=label,
-                mode="lines+markers",
-                line=dict(color=entity_colors[eid], width=2, shape="linear"),
-                connectgaps=True, cliponaxis=False,
-                hovertemplate=(
-                    "Date: %{x}<br>Entity: %{fullData.name}<br>"
-                    f"{kpi_title}: %{{y:.1f}}%<br>"
-                    f"{num_label}: %{{customdata[0]:.0f}}<br>"
-                    f"{den_label}: %{{customdata[1]:.0f}}<extra></extra>"
-                ),
-                customdata=np.column_stack((pdf["cpap_count"], pdf["total"])),
-            ))
-
-        fig.update_layout(
-            title=dict(text=kpi_title, font=dict(size=13)),
-            height=400, showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-            paper_bgcolor=bg_color, plot_bgcolor=bg_color,
-            font_color=text_color, margin=dict(l=50, r=50, t=60, b=60),
-            xaxis_title="Period", yaxis_title="Coverage Rate (%)",
-        )
-        fig.update_xaxes(
-            type="category", categoryorder="array", categoryarray=periods,
-            tickangle=-45, gridcolor="rgba(128,128,128,0.2)", showgrid=True,
-            showline=True, linewidth=2, linecolor="rgba(128,128,128,0.8)", mirror=True,
-        )
-        fig.update_yaxes(
-            range=[-0.5, 100.5], dtick=25, gridcolor="rgba(128,128,128,0.2)",
-            showgrid=True, zeroline=True, zerolinecolor="rgba(128,128,128,0.5)",
-            showline=True, linewidth=2, linecolor="rgba(128,128,128,0.8)", mirror=True,
-            ticksuffix="%",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader(f"📊 {kpi_title} - By {entity_label_text}", divider="gray")
-        rows = []
-        for e in entities:
-            if e not in comparison_data:
+    # Compute CPAP for RDS rates for each period and entity
+    comparison_data = {}
+    
+    for entity in entities:
+        label = get_label(entity)
+        
+        # Get entity dataframe
+        if comparison_mode == "facility":
+            entity_df = df[df["orgUnit"] == entity].copy()
+        else:  # region
+            if facilities_by_region and entity in facilities_by_region:
+                raw_facilities = facilities_by_region[entity]
+                # Extract UIDs if they are tuples (name, uid), otherwise use as is
+                region_facilities = [
+                    f[1] if isinstance(f, (list, tuple)) and len(f) > 1 else f 
+                    for f in raw_facilities
+                ]
+                entity_df = df[df["orgUnit"].isin(region_facilities)].copy()
+            else:
                 continue
-            lbl = get_label(e)
-            overall = comparison_data[e]
-            c = int(pd.to_numeric(overall["cpap_count"], errors="coerce").sum())
-            t = int(pd.to_numeric(overall["total"], errors="coerce").sum())
-            r = (c / t * 100) if t > 0 else None
-            rows.append({entity_label_text: lbl, "Rate": f"{r:.1f}% ({c}/{t})" if r is not None else "-", num_label: c, den_label: t})
+        
+        if entity_df.empty:
+            continue
+            
+        entity_data = []
+        for period in periods:
+            period_df = entity_df[entity_df[period_col] == period]
+            
+            # Compute using helper function (pass None for facility_uids)
+            cpap_rds_data = compute_cpap_for_rds_kpi(period_df, facility_uids=None)
+            
+            entity_data.append({
+                period_col: period,
+                "rate": cpap_rds_data.get("cpap_rate"),
+                "cpap_count": cpap_rds_data.get("cpap_count", 0),
+                "total_rds": cpap_rds_data.get("total_rds", 0)
+            })
+        
+        if entity_data:
+            comparison_data[entity] = pd.DataFrame(entity_data)
 
-        if rows:
-            oc = sum(r[num_label] for r in rows)
-            ot = sum(r[den_label] for r in rows)
-            ov = (oc / ot * 100) if ot > 0 else None
-            rows.append({entity_label_text: "**OVERALL**", "Rate": f"{ov:.1f}% ({oc}/{ot})" if ov is not None else "-", num_label: oc, den_label: ot})
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, height=(len(rows) + 1) * 35 + 3)
+    if not comparison_data:
+        st.warning("ΓÜá∩╕Å No data available for comparison.")
+        return
 
-    col1, col2 = st.columns(2)
-    with col1:
-        make_chart(eligible_data, "CPAP Eligible (1000-1999g + RDS + Hypoxia)", "CPAP Given", "Total Eligible")
-    with col2:
-        make_chart(symptomatic_data, "CPAP 1500-1999g (Symptomatic)", "CPAP Given", "Total Symptomatic")
-
-
-def _get_entity_df(df, entity, comparison_mode, facilities_by_region):
-    """Extract entity-level dataframe based on comparison mode."""
-    if comparison_mode == "facility":
-        return df[df["orgUnit"] == entity].copy() if entity in df["orgUnit"].values else None
-    if facilities_by_region and entity in facilities_by_region:
-        raw = facilities_by_region[entity]
-        region_facilities = [
-            f[1] if isinstance(f, (list, tuple)) and len(f) > 1 else f
-            for f in raw
-        ]
-        return df[df["orgUnit"].isin(region_facilities)].copy()
-    return None
-
-
-def _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_region, periods, period_col):
-    """Compute both eligible and symptomatic KPI per-period data for one entity.
-    Optimized: calls _aggregate_tei_flags only once per entity instead of per-period.
-    """
-    entity_df = _get_entity_df(df, entity, comparison_mode, facilities_by_region)
-    if entity_df is None or entity_df.empty:
-        return None, None
-
-    tei_flags = _aggregate_tei_flags(entity_df)
-    if tei_flags is None or tei_flags.empty:
-        return None, None
-
-    period_src = entity_df
-    if "event_date" in period_src.columns:
-        period_src = period_src.sort_values("event_date")
-    tei_periods = period_src[["tei_id", period_col]].drop_duplicates(subset=["tei_id"])
-    tei_period_map = tei_periods.set_index("tei_id")[period_col]
-
-    eligible_rows, symptomatic_rows = [], []
-    for period in periods:
-        teis_in_period = tei_period_map[tei_period_map == period].index
-        pflags = tei_flags.loc[tei_flags.index.isin(teis_in_period)]
-
-        # Eligible: RDS + BW 1000-1999 + Hypoxia
-        e_mask = (
-            pflags["has_rds"]
-            & pflags["birth_weight"].between(1000, 1999, inclusive="both").fillna(False)
-            & pflags["has_hypoxia"]
+    # Create line chart
+    fig = go.Figure()
+    
+    # Add a line for each entity
+    for entity_id, entity_df in comparison_data.items():
+        label = get_label(entity_id)
+        entity_plot_df = entity_df.copy()
+        den_vals = pd.to_numeric(entity_plot_df["total_rds"], errors="coerce").fillna(0)
+        entity_plot_df["rate"] = pd.to_numeric(entity_plot_df["rate"], errors="coerce")
+        entity_plot_df.loc[den_vals <= 0, "rate"] = np.nan
+        
+        fig.add_trace(
+            go.Scatter(
+                x=entity_plot_df[period_col],
+                y=entity_plot_df["rate"],
+                name=label,
+                mode='lines',
+                line=dict(color=entity_colors[entity_id], width=3, shape="spline", smoothing=0.35),
+                connectgaps=True,
+                cliponaxis=False,
+                hovertemplate=
+                            "Date: %{x}<br>" +
+                            f"Entity: {label}<br>" +
+                            "CPAP for RDS: %{y:.1f}%<br>" +
+                            "CPAP Cases: %{customdata[0]:.0f}<br>" +
+                            "Total RDS: %{customdata[1]:.0f}<extra></extra>",
+                customdata=np.column_stack(
+                    (entity_plot_df["cpap_count"], entity_plot_df["total_rds"])
+                ),
+            )
         )
-        e_teis = pflags[e_mask]
-        e_total, e_cpap = len(e_teis), int(e_teis["has_cpap"].sum())
-        e_rate = (e_cpap / e_total * 100) if e_total > 0 else None
-        eligible_rows.append({period_col: period, "rate": e_rate, "cpap_count": e_cpap, "total": e_total})
 
-        # Symptomatic: RDS + BW 1500-1999
-        s_mask = (
-            pflags["has_rds"]
-            & pflags["birth_weight"].between(1500, 1999, inclusive="both").fillna(False)
-        )
-        s_teis = pflags[s_mask]
-        s_total, s_cpap = len(s_teis), int(s_teis["has_cpap"].sum())
-        s_rate = (s_cpap / s_total * 100) if s_total > 0 else None
-        symptomatic_rows.append({period_col: period, "rate": s_rate, "cpap_count": s_cpap, "total": s_total})
+    fig.update_layout(
+        title=title,
+        height=600,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            itemwidth=30
+        ),
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        margin=dict(l=60, r=200, t=80, b=60),
+        xaxis_title="Period",
+        yaxis_title="CPAP Coverage Rate (%)"
+    )
+    
+    # Update axes
+    fig.update_xaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=periods,
+        tickangle=-45,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        showline=True, 
+        linewidth=2, 
+        linecolor='rgba(128,128,128,0.8)', 
+        mirror=True
+    )
+    
+    fig.update_yaxes(
+        range=[-0.5, 100.5],
+        dtick=25,
+        gridcolor="rgba(128,128,128,0.2)",
+        showgrid=True,
+        zeroline=True,
+        zerolinecolor="rgba(128,128,128,0.5)",
+        showline=True, 
+        linewidth=2, 
+        linecolor='rgba(128,128,128,0.8)', 
+        mirror=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
-    edf = pd.DataFrame(eligible_rows) if eligible_rows else None
-    sdf = pd.DataFrame(symptomatic_rows) if symptomatic_rows else None
-    return edf, sdf
+    # Add comparison table - OVERALL AGGREGATED VALUES
+    st.subheader(f"≡ƒôè CPAP for RDS Comparison Table - By {entity_label_text}")
+    
+    # Compute overall aggregated data for table
+    table_data = []
+    
+    for entity in entities:
+        if entity not in comparison_data:
+            continue
+            
+        label = get_label(entity)
+        
+        # Get entity dataframe
+        if comparison_mode == "facility":
+            entity_df = df[df["orgUnit"] == entity].copy()
+        else:  # region
+            if facilities_by_region and entity in facilities_by_region:
+                raw_facilities = facilities_by_region[entity]
+                # Extract UIDs if they are tuples (name, uid), otherwise use as is
+                region_facilities = [
+                    f[1] if isinstance(f, (list, tuple)) and len(f) > 1 else f 
+                    for f in raw_facilities
+                ]
+                entity_df = df[df["orgUnit"].isin(region_facilities)].copy()
+            else:
+                continue
+        
+        if entity_df.empty:
+            continue
+            
+        # Compute OVERALL CPAP for RDS data (aggregated across all periods)
+        # Pass facility_uids=None because entity_df is already filtered and we don't want to re-filter
+        cpap_rds_data = compute_cpap_for_rds_kpi(entity_df, facility_uids=None)
+        
+        cpap_count = cpap_rds_data.get("cpap_count", 0)
+        total_rds = cpap_rds_data.get("total_rds", 0)
+        
+        if total_rds > 0:
+            rate = (cpap_count / total_rds) * 100
+            rate_str = f"{rate:.1f}% ({int(cpap_count)}/{int(total_rds)})"
+        else:
+            rate_str = "-"
+        
+        table_data.append({
+            entity_label_text: label,
+            "CPAP Coverage": rate_str,
+            "Numerator (CPAP)": cpap_count,
+            "Denominator (RDS)": total_rds
+        })
+
+    if table_data:
+        # Add 'Overall' row
+        overall_cpap = sum(item["Numerator (CPAP)"] for item in table_data)
+        overall_rds = sum(item["Denominator (RDS)"] for item in table_data)
+        
+        if overall_rds > 0:
+            overall_rate = (overall_cpap / overall_rds) * 100
+            overall_str = f"{overall_rate:.1f}% ({int(overall_cpap)}/{int(overall_rds)})"
+        else:
+            overall_str = "-"
+            
+        table_data.append({
+            entity_label_text: "**OVERALL**",
+            "CPAP Coverage": overall_str,
+            "Numerator (CPAP)": overall_cpap,
+            "Denominator (RDS)": overall_rds
+        })
+
+        comparison_df = pd.DataFrame(table_data)
+        # Drop raw num/den columns if user only wants the combined string, 
+        # but user asked for "num and den value", so let's keep them or format them.
+        # User said: "indicator value and num and den value" - implied separate or combined?
+        # "show the region name numerator name denumeratr name and kpi name each hodign th eoveral value"
+        # So display Name, Numerator, Denominator, Rate.
+        
+        # Rename columns to match user expectations
+        comparison_df = comparison_df.rename(columns={
+            "Numerator (CPAP)": "CPAP Given",
+            "Denominator (RDS)": "Total RDS Cases"
+        })
+        
+        # Dynamic height based on rows
+        st.dataframe(comparison_df, use_container_width=True, height=(len(comparison_df) + 1) * 35)

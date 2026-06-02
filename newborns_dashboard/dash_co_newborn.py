@@ -152,12 +152,12 @@ NEWBORN_KPI_MAPPING = {
     #     "comparison_type": "rates",  # Shows rates in comparison charts
     # },
     "CPAP for RDS": {
-        "title": "CPAP for Respiratory Distress Syndrome (RDS)",
+        "title": "CPAP Coverage (Dual Panel)",
         "numerator_name": "CPAP Cases",
-        "denominator_name": "Total RDS Cases",
+        "denominator_name": "Eligible Babies / RDS Cases",
         "type": "simplified",
         "category": "cpap_rds",
-        "comparison_type": "rates",  # Shows rates in comparison charts
+        "comparison_type": "rates",
     },
     "CPAP Coverage by Birth Weight": {
         "title": "CPAP Coverage by Birth Weight Category",
@@ -397,8 +397,15 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
+        "birth_weight_n_nicu_admission_careform",
         "baby_placed_on_cpap_neonatal_referral_form",
-        "sub_categories_of_prematurity_n_discharge_care_form",  # RDS diagnosis column
+        "sub_categories_of_prematurity_n_discharge_care_form",
+        "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2",
+        "lowest_recorded_oxygen_saturation",
+        "lowest_recorded_oxygen_saturation_pct",
+        "lowest_recorded_oxygen_saturation_observations_and_nursing_care_2",
+        "Lowest recorded oxygen saturation (%)",
+        "Lowest recorded oxygen saturation",
         "event_date_neonatal_referral_form",
     ],
     "CPAP Coverage by Birth Weight": [
@@ -780,7 +787,7 @@ def render_newborn_kpi_tab_navigation():
         #                  type=("primary" if selected_kpi == "General CPAP Coverage" else "secondary")):
         #         selected_kpi = "General CPAP Coverage"
         with cols[1]:
-            if st.button("CPAP for RDS", key="cpap_rds_btn", use_container_width=True,
+            if st.button("CPAP Coverage", key="cpap_rds_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "CPAP for RDS" else "secondary")):
                 selected_kpi = "CPAP for RDS"
         with cols[2]:
@@ -3965,7 +3972,6 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
         and not selected_sources
     ):
         df = df.iloc[0:0].copy()
-        logging.info("   - Newborn source filter cleared: 0 patients")
 
     normalized_sources = {
         _normalize_source_value(source)
@@ -3975,9 +3981,6 @@ def apply_newborn_patient_filters(patient_df, filters, facility_uids=None):
     if normalized_sources and "source" in df.columns:
         source_mask = df["source"].map(_normalize_source_value).isin(normalized_sources)
         df = df[source_mask].copy()
-        logging.info(
-            f"   - After newborn source filter ({', '.join(sorted(normalized_sources))}): {len(df)} patients"
-        )
 
     # STEP 1: Create a list of possible date columns to check
     date_columns_to_try = []

@@ -312,6 +312,37 @@ class AutomatedLearningFacilitiesNIDPipeline:
         self.use_all_facilities = use_all_facilities
         self.fetcher = DHIS2DataFetcher(self.base_url, self.username, self.password)
 
+    @staticmethod
+    def _fix_o2_data(events_df: pd.DataFrame, patient_df: pd.DataFrame) -> pd.DataFrame:
+        o2_mask = (
+            (events_df["programStageName"] == "Observations And Nursing Care 2")
+            & (events_df["dataElement_uid"] == ADDITIONAL_O2_DATAELEMENT_UID)
+            & (events_df["has_actual_event"] == True)
+            & (events_df["value"].notna())
+            & (events_df["value"] != "")
+        )
+        o2_events = events_df[o2_mask].copy()
+        if o2_events.empty:
+            return patient_df
+        o2_events = o2_events.sort_values("eventDate")
+        o2_events["o2_num"] = pd.to_numeric(o2_events["value"], errors="coerce")
+        o2_best = o2_events.dropna(subset=["o2_num"]).groupby("tei_id", sort=False).first().reset_index()
+        if o2_best.empty:
+            return patient_df
+        tei_val = o2_best.set_index("tei_id")["o2_num"].to_dict()
+        tei_date = o2_best.set_index("tei_id")["eventDate"].to_dict()
+        tei_event = o2_best.set_index("tei_id")["event"].to_dict()
+        patient_df["lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2"] = (
+            patient_df["tei_id"].map(tei_val)
+        )
+        patient_df["event_date_observations_and_nursing_care_2"] = (
+            patient_df["tei_id"].map(tei_date)
+        )
+        patient_df["event_observations_and_nursing_care_2"] = (
+            patient_df["tei_id"].map(tei_event)
+        )
+        return patient_df
+
     def run_pipeline(self) -> bool:
         logger.info("=" * 80)
         logger.info("STARTING LEARNING FACILITIES NID FETCH + MERGE")
@@ -396,6 +427,7 @@ class AutomatedLearningFacilitiesNIDPipeline:
                         logger.warning(f"No patient-level rows in {facility_name}")
                         continue
 
+                    patient_df = self._fix_o2_data(events_df, patient_df)
                     patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
                     patient_df["region_uid"] = region_uid
                     patient_df["region_name"] = region_name
@@ -462,6 +494,7 @@ class AutomatedLearningFacilitiesNIDPipeline:
                     logger.warning(f"No patient-level rows in {region_key.title()}")
                     continue
 
+                patient_df = self._fix_o2_data(events_df, patient_df)
                 patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
 
                 if "orgUnit" not in patient_df.columns:
