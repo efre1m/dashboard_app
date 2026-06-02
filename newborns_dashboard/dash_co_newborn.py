@@ -3297,7 +3297,10 @@ def _render_cpap_timing_qoc_trend_chart(
             ))
 
         fig.update_layout(
-            title=f"{title_suffix}",
+            title=dict(
+                text=f"{title_suffix}",
+                font=dict(size=13),
+            ),
             barmode="stack",
             barnorm="percent",
             height=500,
@@ -3306,14 +3309,14 @@ def _render_cpap_timing_qoc_trend_chart(
             font_color=text_color,
             title_font_color=text_color,
             legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1,
-                font=dict(size=11),
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                xanchor="left",
+                x=1.02,
+                font=dict(size=9),
             ),
-            margin=dict(l=60, r=60, t=100, b=60),
+            margin=dict(l=60, r=120, t=80, b=60),
             yaxis=dict(
                 title="Percentage (%)",
                 range=[0, 100],
@@ -3368,7 +3371,7 @@ def _render_cpap_timing_qoc_trend_chart(
     with col1:
         if admission_agg is not None:
             periods = admission_agg["period_display"].tolist()
-            fig = _build_stacked_bar(admission_agg, "Time between Admission and CPAP initiation", periods)
+            fig = _build_stacked_bar(admission_agg, "Time between Admission<br>and CPAP initiation", periods)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No data for Time between Admission and CPAP initiation.")
@@ -3376,7 +3379,7 @@ def _render_cpap_timing_qoc_trend_chart(
     with col2:
         if birth_agg is not None:
             periods = birth_agg["period_display"].tolist()
-            fig = _build_stacked_bar(birth_agg, "Time between Birth and CPAP initiation", periods)
+            fig = _build_stacked_bar(birth_agg, "Time between Birth<br>and CPAP initiation", periods)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No data for Time between Birth and CPAP initiation.")
