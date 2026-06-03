@@ -3350,7 +3350,6 @@ def _render_cpap_timing_qoc_trend_chart(
                 font=dict(size=13),
             ),
             barmode="stack",
-            barnorm="percent",
             height=450,
             paper_bgcolor=bg_color,
             plot_bgcolor=bg_color,
