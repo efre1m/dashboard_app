@@ -2415,6 +2415,15 @@ THERMAL_CATEGORIES = [
 ]
 
 
+def _style_coverage_subplot_titles(fig, font_size=12):
+    """Keep subplot titles above the plot frames in compact coverage grids."""
+    for ann in fig["layout"]["annotations"]:
+        ann["font"] = dict(size=font_size)
+        ann["yshift"] = 16
+        ann["bgcolor"] = "rgba(255,255,255,0.85)"
+        ann["borderpad"] = 2
+
+
 def _render_hypothermia_combined_trend_chart(
     working_df,
     chart_title,
@@ -2603,8 +2612,7 @@ def _render_hypothermia_combined_trend_chart(
         title_y=0.95,
         margin=dict(l=50, r=50, t=130, b=80),
     )
-    for ann in fig['layout']['annotations']:
-        ann['font'] = dict(size=12)
+    _style_coverage_subplot_titles(fig, font_size=12)
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -4405,8 +4413,7 @@ def _render_vital_monitoring_trend_chart(
         title_y=0.95,
         margin=dict(l=50, r=50, t=120, b=80),
     )
-    for ann in fig['layout']['annotations']:
-        ann['font'] = dict(size=11)
+    _style_coverage_subplot_titles(fig, font_size=11)
 
     st.plotly_chart(fig, use_container_width=True)
 
