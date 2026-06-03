@@ -53,8 +53,8 @@ GLUCOSE_RECORDING_COL = "was_blood_sugar_recorded_on_admission?_observations_and
 OXYGEN_RECORDING_COL = "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1"
 HYPOTHERMIA_THRESHOLD = 36.5  # °C
 
-# Observations and Nursing Care 2 columns - NOT AVAILABLE
-# LOWEST_TEMPERATURE_COL = "lowest_recorded_temperature_celsius_observations_and_nursing_care_2"
+# Observations and Nursing Care 2 columns
+LOWEST_TEMPERATURE_COL = "lowest_recorded_temperature_celsius_observations_and_nursing_care_2"
 
 # Discharge columns
 NEWBORN_STATUS_COL = "newborn_status_at_discharge_n_discharge_care_form"
@@ -732,6 +732,63 @@ def compute_outborn_not_hypothermic_rate(df, facility_uids=None):
             (outborn_not_hypo_count / outborn_count * 100) if outborn_count > 0 else 0.0
         )
         result = (rate, outborn_not_hypo_count, outborn_count)
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
+def compute_not_hypothermic_after_admission_count(df, facility_uids=None):
+    """Count newborns not hypothermic after admission (lowest temp >= 36.5°C, excluding admission temp)"""
+    if df is None or df.empty:
+        return 0
+
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    if LOWEST_TEMPERATURE_COL not in filtered_df.columns:
+        return 0
+
+    df_copy = filtered_df.copy()
+    df_copy["temp_numeric"] = pd.to_numeric(
+        df_copy[LOWEST_TEMPERATURE_COL], errors="coerce"
+    )
+    not_hypothermia_mask = df_copy["temp_numeric"] >= HYPOTHERMIA_THRESHOLD
+    return int(not_hypothermia_mask.sum())
+
+
+def compute_total_with_lowest_temp_taken(df, facility_uids=None):
+    """Count newborns who had temperature taken after admission (non-NA lowest temp)"""
+    if df is None or df.empty:
+        return 0
+
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    if LOWEST_TEMPERATURE_COL not in filtered_df.columns:
+        return 0
+
+    return int(filtered_df[LOWEST_TEMPERATURE_COL].notna().sum())
+
+
+def compute_not_hypothermic_after_admission_rate(df, facility_uids=None):
+    """Compute not hypothermic after admission rate"""
+    cache_key = get_cache_key_newborn(
+        df, facility_uids, "not_hypothermic_after_admission_rate"
+    )
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        not_hypo_count = compute_not_hypothermic_after_admission_count(df, facility_uids)
+        total_with_temp = compute_total_with_lowest_temp_taken(df, facility_uids)
+        rate = (
+            (not_hypo_count / total_with_temp * 100) if total_with_temp > 0 else 0.0
+        )
+        result = (rate, not_hypo_count, total_with_temp)
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
