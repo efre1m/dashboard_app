@@ -72,6 +72,10 @@ MAPPING = {
     "sub_categories_of_infection_discharge_and_final_diagnosis": "sub_categories_of_infection_n_discharge_care_form",
     # Observations & monitoring
     "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2": "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2",
+    # New variables
+    "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1": "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1",
+    "was_blood_sugar_recorded_on_admission?_observations_and_nursing_care_1": "was_blood_sugar_recorded_on_admission?_observations_and_nursing_care_1",
+    "if_yes_kmc_start_date_interventions": "if_yes_kmc_start_date_interventions",
 }
 
 print(f"\n📋 Basic mapping: {len(MAPPING)} columns")

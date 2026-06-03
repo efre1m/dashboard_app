@@ -86,11 +86,11 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Maternal Birth And Infant Details",
     },
     "j0HI2eJjvbj": {
-        "data_elements": ["gZi9y12E9i7"],
+        "data_elements": ["gZi9y12E9i7", "kvJUcoHhx7f", "tX82J8ZIcNr"],
         "program_stage_name": "Observations And Nursing Care 1",
     },
     "ed8ErpgTCwx": {
-        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk", "CIKlewzNAxj"],
+        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk", "CIKlewzNAxj", "JxGlnPychB0"],
         "program_stage_name": "Interventions",
     },
     "TOicTEwzSGj": {
@@ -129,6 +129,9 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     "yVNrsnUo7AR": "CPAP (1) Start Date",
     "Ul6aAlFy5Kk": "CPAP (1) Start Time",
     "CIKlewzNAxj": "Type of CPAP machine used:",
+    "kvJUcoHhx7f": "Was oxygen saturation (%) recorded on admission?",
+    "tX82J8ZIcNr": "Was blood sugar recorded on admission?",
+    "JxGlnPychB0": "If yes - KMC Start Date:",
     ADDITIONAL_O2_DATAELEMENT_UID: ADDITIONAL_O2_DATAELEMENT_NAME,
 }
 

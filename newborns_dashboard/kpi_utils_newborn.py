@@ -49,6 +49,8 @@ OUTBORN_CODE = "2"
 
 # Observations and Nursing Care 1 columns
 TEMPERATURE_ON_ADMISSION_COL = "temp_at_admission_nicu_admission_careform"
+GLUCOSE_RECORDING_COL = "was_blood_sugar_recorded_on_admission?_observations_and_nursing_care_1"
+OXYGEN_RECORDING_COL = "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1"
 HYPOTHERMIA_THRESHOLD = 36.5  # °C
 
 # Observations and Nursing Care 2 columns - NOT AVAILABLE
@@ -951,6 +953,12 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     wt_adm_rate, wt_adm_count, total_wt_adm = compute_weight_taken_at_admission(
         filtered_df, facility_uids
     )
+    glucose_rate, glucose_count, total_glucose = compute_glucose_monitored_at_admission(
+        filtered_df, facility_uids
+    )
+    pulse_ox_rate, pulse_ox_count, total_pulse_ox = compute_pulse_ox_used_at_admission(
+        filtered_df, facility_uids
+    )
 
     admitted_newborns_count = compute_admitted_newborns_count(
         filtered_df, facility_uids
@@ -1011,6 +1019,12 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         "weight_taken_admission_rate": float(wt_adm_rate),
         "weight_taken_admission_count": int(wt_adm_count),
         "total_weight_taken_admission": int(total_wt_adm),
+        "glucose_monitored_rate": float(glucose_rate),
+        "glucose_monitored_count": int(glucose_count),
+        "total_glucose_monitored": int(total_glucose),
+        "pulse_ox_used_rate": float(pulse_ox_rate),
+        "pulse_ox_used_count": int(pulse_ox_count),
+        "total_pulse_ox_used": int(total_pulse_ox),
         # DATA QUALITY
         "missing_temperature_rate": float(missing_temp_rate),
         "missing_temperature_count": int(missing_temp_count),
@@ -1244,6 +1258,16 @@ def get_numerator_denominator_for_newborn_kpi(
             "numerator": "weight_taken_admission_count",
             "denominator": "total_weight_taken_admission",
             "value": "weight_taken_admission_rate",
+        },
+        "Glucose Monitored at Admission (%)": {
+            "numerator": "glucose_monitored_count",
+            "denominator": "total_glucose_monitored",
+            "value": "glucose_monitored_rate",
+        },
+        "Pulse Oximeter Used at Admission (%)": {
+            "numerator": "pulse_ox_used_count",
+            "denominator": "total_pulse_ox_used",
+            "value": "pulse_ox_used_rate",
         },
         # ============== ANTIBIOTICS MAPPING - COMMENTED OUT ==============
         # "Antibiotics for Clinical Sepsis (%)": {
@@ -2348,6 +2372,60 @@ def compute_weight_taken_at_admission(df, facility_uids=None):
     return result
 
 
+def compute_glucose_monitored_at_admission(df, facility_uids=None):
+    """Compute count of newborns with blood glucose recorded at admission"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "glucose_monitored")
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+        total_admitted = len(filtered_df)
+        if total_admitted == 0:
+            result = (0.0, 0, 0)
+        elif GLUCOSE_RECORDING_COL not in filtered_df.columns:
+            result = (0.0, 0, total_admitted)
+        else:
+            taken_count = filtered_df[GLUCOSE_RECORDING_COL].notna().sum()
+            rate = (taken_count / total_admitted * 100)
+            result = (rate, int(taken_count), int(total_admitted))
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
+def compute_pulse_ox_used_at_admission(df, facility_uids=None):
+    """Compute count of newborns with blood oxygen recorded at admission"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "pulse_ox_used")
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+        total_admitted = len(filtered_df)
+        if total_admitted == 0:
+            result = (0.0, 0, 0)
+        elif OXYGEN_RECORDING_COL not in filtered_df.columns:
+            result = (0.0, 0, total_admitted)
+        else:
+            taken_count = filtered_df[OXYGEN_RECORDING_COL].notna().sum()
+            rate = (taken_count / total_admitted * 100)
+            result = (rate, int(taken_count), int(total_admitted))
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
 # ---------------- Export all functions ----------------
 __all__ = [
     # Cache functions
@@ -2403,4 +2481,6 @@ __all__ = [
     "compute_temperature_taken_at_admission",
     "compute_birth_weight_taken",
     "compute_weight_taken_at_admission",
+    "compute_glucose_monitored_at_admission",
+    "compute_pulse_ox_used_at_admission",
 ]

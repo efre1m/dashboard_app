@@ -250,6 +250,10 @@ CPAP_TIMING_CPAP_DATE_COL = "cpap_1_start_date_interventions"
 CPAP_TIMING_CPAP_TIME_COL = "cpap_1_start_time_interventions"
 CPAP_TIMING_BIRTH_COL = "time_of_birth_admission_information"
 
+# KMC Timing columns - time from birth to KMC initiation for 1000-2500g
+KMC_TIMING_ADM_DATE_COL = "date_of_admission_n_nicu_admission_careform"
+KMC_TIMING_START_DATE_COL = "if_yes_kmc_start_date_interventions"
+
 # ---------------- HELPER FUNCTIONS ----------------
 def safe_convert_numeric(value, default=0):
     """Safely convert value to numeric"""
@@ -4422,6 +4426,10 @@ __all__ = [
     "CPAP_TIMING_CPAP_DATE_COL",
     "CPAP_TIMING_CPAP_TIME_COL",
     "CPAP_TIMING_BIRTH_COL",
+    # KMC Timing
+    "compute_kmc_timing_data",
+    "KMC_TIMING_ADM_DATE_COL",
+    "KMC_TIMING_START_DATE_COL",
 ]
 # Comparison chart functions for KMC and CPAP with 3x2 grid layout
 
@@ -5366,3 +5374,67 @@ def compute_cpap_timing_data(df, timing_type="admission"):
     cpap_df.loc[missing_mask, "cpap_timing_category"] = "Missing CPAP Timing"
 
     return cpap_df[["tei_id", "cpap_timing_category"]]
+
+
+def compute_kmc_timing_data(df):
+    """
+    Compute KMC timing categories for babies who received KMC (any birth weight).
+
+    Numerator: Babies who received KMC, classified by time to KMC initiation.
+    Denominator: All babies who received KMC (used in the rendering function).
+
+    Returns DataFrame with columns: tei_id, kmc_timing_category
+    Returns empty DataFrame if no qualifying data or required columns are missing.
+    """
+    if df is None or df.empty or "tei_id" not in df.columns:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    # KMC flag
+    df["has_kmc"] = df.apply(lambda r: get_kmc_status_for_tei(r), axis=1)
+
+    # All babies who received KMC (any birth weight)
+    kmc_df = df[df["has_kmc"]].copy()
+
+    if kmc_df.empty:
+        return pd.DataFrame()
+
+    # Reference datetime: date of admission (proxy for birth date)
+    date_col = KMC_TIMING_ADM_DATE_COL
+    kmc_start_col = KMC_TIMING_START_DATE_COL
+
+    # Parse date helper
+    def _parse_date(date_val):
+        if pd.isna(date_val):
+            return pd.NaT
+        try:
+            return pd.to_datetime(date_val, errors="coerce")
+        except Exception:
+            return pd.NaT
+
+    kmc_df["ref_dt"] = kmc_df[date_col].apply(_parse_date) if date_col in kmc_df.columns else pd.NaT
+    kmc_df["kmc_start_dt"] = kmc_df[kmc_start_col].apply(_parse_date) if kmc_start_col in kmc_df.columns else pd.NaT
+
+    # Compute days between reference and KMC start
+    kmc_df["kmc_days"] = (kmc_df["kmc_start_dt"] - kmc_df["ref_dt"]).dt.total_seconds() / 86400.0
+
+    # Bucket into timing categories
+    def _bucket(days):
+        if pd.isna(days):
+            return "Missing KMC Timing"
+        if days < 1:
+            return "Same day KMC"
+        if days <= 3:
+            return "Early KMC (1-3 days)"
+        if days <= 7:
+            return "Delayed KMC (3-7 days)"
+        return "Late KMC (>7 days)"
+
+    kmc_df["kmc_timing_category"] = kmc_df["kmc_days"].apply(_bucket)
+
+    # If either datetime is missing, categorize as Missing
+    missing_mask = kmc_df["ref_dt"].isna() | kmc_df["kmc_start_dt"].isna()
+    kmc_df.loc[missing_mask, "kmc_timing_category"] = "Missing KMC Timing"
+
+    return kmc_df[["tei_id", "kmc_timing_category"]]

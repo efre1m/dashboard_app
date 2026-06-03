@@ -55,6 +55,9 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     compute_cpap_timing_data,
     CPAP_TIMING_BIRTH_COL,
     BIRTH_WEIGHT_CATEGORIES,
+    compute_kmc_timing_data,
+    get_kmc_status_for_tei,
+    KMC_COLUMNS,
 )
 
 # KPI mapping for newborn comparison charts
@@ -797,12 +800,16 @@ def render_newborn_kpi_tab_navigation():
                 selected_kpi = CPAP_TIMING_QOC_MARKER
 
     with tab_kmc:
-        # KMC - 1 button
+        # KMC - 2 buttons
         cols = st.columns(5)
         with cols[0]:
             if st.button("KMC Coverage", key="kmc_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "KMC Coverage by Birth Weight" else "secondary")):
                 selected_kpi = "KMC Coverage by Birth Weight"
+        with cols[1]:
+            if st.button("Quality of Care", key="kmc_timing_qoc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == KMC_TIMING_QOC_MARKER else "secondary")):
+                selected_kpi = KMC_TIMING_QOC_MARKER
 
     with tab_mortality:
         # Mortality - 1 button
@@ -933,6 +940,18 @@ def render_newborn_trend_chart_section(
         _render_cpap_timing_qoc_trend_chart(
             working_df,
             "CPAP Quality of Care",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: KMC Timing Quality of Care stacked chart
+    if kpi_selection == KMC_TIMING_QOC_MARKER:
+        _render_kmc_timing_qoc_trend_chart(
+            working_df,
+            "KMC Quality of Care",
             bg_color,
             text_color,
             facility_uids,
@@ -1316,6 +1335,18 @@ def render_newborn_comparison_chart(
         _render_cpap_timing_qoc_trend_chart(
             df_to_use,
             "CPAP Quality of Care",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters={},
+        )
+        return
+
+    # SPECIAL HANDLING: KMC Timing QOC
+    if kpi_selection == KMC_TIMING_QOC_MARKER:
+        _render_kmc_timing_qoc_trend_chart(
+            df_to_use,
+            "KMC Quality of Care",
             bg_color,
             text_color,
             facility_uids,
@@ -2323,6 +2354,16 @@ CPAP_MACHINE_TYPE_MAP = {
 CPAP_MACHINE_TYPE_COLORS = ["#8E44AD", "#3498DB", "#2ECC71", "#F39C12", "#E74C3C"]
 CPAP_MACHINE_TYPE_CATEGORIES = list(zip(CPAP_MACHINE_TYPE_MAP.values(), CPAP_MACHINE_TYPE_COLORS))
 
+KMC_TIMING_QOC_MARKER = "__kmc_timing_qoc__"
+
+KMC_TIMING_CATEGORIES = [
+    ("Same day KMC", "#27AE60"),
+    ("Early KMC (1-3 days)", "#2ECC71"),
+    ("Delayed KMC (3-7 days)", "#F1C40F"),
+    ("Late KMC (>7 days)", "#E74C3C"),
+    ("Missing KMC Timing", "#7F8C8D"),
+]
+
 VITAL_MONITORING_MARKER = "__vital_monitoring__"
 
 VITAL_MONITORING_INDICATORS = [
@@ -2330,19 +2371,36 @@ VITAL_MONITORING_INDICATORS = [
         "kpi_name": "Temperature Taken at Admission (%)",
         "display_name": "Temperature Taken at Admission (%)",
         "short_name": "Temp. taken",
+        "target": 100,
         "sort_order": 1,
     },
     {
         "kpi_name": "Birth Weight Taken (%)",
         "display_name": "Birth Weight Taken (%)",
         "short_name": "BWeight. taken",
+        "target": 100,
         "sort_order": 2,
     },
     {
         "kpi_name": "Weight Taken at Admission (%)",
         "display_name": "Weight Taken at Admission (%)",
         "short_name": "Weight. taken",
+        "target": 100,
         "sort_order": 3,
+    },
+    {
+        "kpi_name": "Glucose Monitored at Admission (%)",
+        "display_name": "Glucose Monitored at Admission (%)",
+        "short_name": "Glucose monit.",
+        "target": 75,
+        "sort_order": 4,
+    },
+    {
+        "kpi_name": "Pulse Oximeter Used at Admission (%)",
+        "display_name": "Pulse Oximeter Used at Admission (%)",
+        "short_name": "Pulse ox. used",
+        "target": 75,
+        "sort_order": 5,
     },
 ]
 
@@ -3914,6 +3972,236 @@ def _render_cpap_timing_combined_comparison_chart(
     return
 
 
+def _render_kmc_timing_qoc_trend_chart(
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render KMC Time to Initiation stacked bar chart (Quality of Care)"""
+    categories = KMC_TIMING_CATEGORIES
+    cat_names = [c[0] for c in categories]
+    cat_colors = [c[1] for c in categories]
+
+    kmc_timing = compute_kmc_timing_data(working_df)
+
+    if kmc_timing.empty:
+        st.warning("No KMC timing data available for babies who received KMC.")
+        return
+
+    def _build_agg_df(timing_df):
+        if timing_df.empty:
+            return None
+
+        df = working_df[["tei_id", "enrollment_date", "orgUnit"]].drop_duplicates(subset=["tei_id"]).copy()
+        df = df.merge(timing_df, on="tei_id", how="inner")
+        df["event_date"] = pd.to_datetime(df["enrollment_date"], errors="coerce")
+        if date_range_filters:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                df = df[(df["event_date"] >= start_dt) & (df["event_date"] < end_dt)].copy()
+        df = df[df["event_date"].notna()].copy()
+        if df.empty:
+            return None
+
+        period_label = st.session_state.get("period_label", "Monthly")
+        try:
+            df = assign_period(df, "event_date", period_label)
+        except Exception:
+            return None
+
+        denom_raw = working_df.drop_duplicates(subset=["tei_id"]).copy()
+        denom_raw["has_kmc"] = denom_raw.apply(
+            lambda r: get_kmc_status_for_tei(r), axis=1
+        )
+        denom_df = denom_raw[denom_raw["has_kmc"]].copy()
+        if denom_df.empty:
+            return None
+        denom_df["event_date"] = pd.to_datetime(denom_df["enrollment_date"], errors="coerce")
+        if date_range_filters:
+            start_date = date_range_filters.get("start_date")
+            end_date = date_range_filters.get("end_date")
+            if start_date and end_date:
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+                denom_df = denom_df[(denom_df["event_date"] >= start_dt) & (denom_df["event_date"] < end_dt)].copy()
+        denom_df = denom_df[denom_df["event_date"].notna()].copy()
+        if denom_df.empty:
+            return None
+        try:
+            denom_df = assign_period(denom_df, "event_date", period_label)
+        except Exception:
+            return None
+        denom_counts = denom_df.groupby("period_display").size()
+
+        unique_periods = df[["period_display", "period_sort"]].drop_duplicates().sort_values("period_sort")
+        all_data = []
+        for _, row_data in unique_periods.iterrows():
+            period_display = row_data["period_display"]
+            period_df = df[df["period_display"] == period_display]
+            total = int(denom_counts.get(period_display, 0))
+            if total == 0:
+                continue
+            row = {"period_display": period_display, "period_sort": row_data["period_sort"], "total": total}
+            for cat_name in cat_names:
+                count = int((period_df["kmc_timing_category"] == cat_name).sum())
+                pct = (count / total * 100) if total > 0 else 0.0
+                row[f"{cat_name}_count"] = count
+                row[f"{cat_name}_pct"] = pct
+            all_data.append(row)
+
+        if not all_data:
+            return None
+        agg_df = pd.DataFrame(all_data)
+        agg_df = agg_df.sort_values("period_sort")
+        return agg_df
+
+    agg_df = _build_agg_df(kmc_timing)
+
+    if agg_df is None or agg_df.empty:
+        st.warning("No aggregated KMC timing data available.")
+        return
+
+    periods = agg_df["period_display"].tolist()
+
+    fig = go.Figure()
+    for cat_name, cat_color in categories:
+        pct_col = f"{cat_name}_pct"
+        count_col = f"{cat_name}_count"
+        fig.add_trace(go.Bar(
+            name=cat_name,
+            x=agg_df["period_display"],
+            y=agg_df[pct_col],
+            marker_color=cat_color,
+            text=[f"{v:.1f}%" for v in agg_df[pct_col]],
+            textposition="inside",
+            textfont=dict(color="white", size=13),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                f"{cat_name}<br>"
+                "Numerator: %{customdata[0]}<br>"
+                "Denominator: %{customdata[1]}<br>"
+                "<extra></extra>"
+            ),
+            customdata=agg_df[[count_col, "total"]].values,
+            cliponaxis=False,
+        ))
+
+    fig.update_layout(
+        title=dict(text="Time from Birth to KMC Initiation", font=dict(size=13)),
+        barmode="stack",
+        height=450,
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        legend=dict(
+            orientation="v",
+            yanchor="middle",
+            y=0.5,
+            xanchor="left",
+            x=1.02,
+            font=dict(size=9),
+        ),
+        margin=dict(l=60, r=120, t=80, b=60),
+        yaxis=dict(
+            title="Percentage (%)",
+            range=[0, 100],
+            dtick=20,
+            ticksuffix="%",
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        ),
+        xaxis=dict(
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,
+            tickangle=-45,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Table
+    st.subheader("📊 KMC Timing Distribution Table")
+    st.caption("Values shown as: Percentage% (numerator / denominator)")
+
+    table_data = []
+    for _, r in agg_df.iterrows():
+        row = {"Period": r["period_display"]}
+        for cat_name in cat_names:
+            cnt = int(r[f"{cat_name}_count"])
+            den = int(r["total"])
+            pct = r[f"{cat_name}_pct"]
+            row[cat_name] = f"{pct:.1f}% ({cnt}/{den})" if den > 0 else "-"
+        table_data.append(row)
+    overall_row = {"Period": "Overall"}
+    for cat_name in cat_names:
+        total_cnt = int(agg_df[f"{cat_name}_count"].sum())
+        total_den = int(agg_df["total"].sum())
+        overall_pct = (total_cnt / total_den * 100) if total_den > 0 else 0.0
+        overall_row[cat_name] = f"{overall_pct:.1f}% ({total_cnt}/{total_den})" if total_den > 0 else "-"
+    table_data.append(overall_row)
+    table_df = pd.DataFrame(table_data)
+    st.dataframe(table_df, use_container_width=True, height=200)
+
+    with st.expander("ℹ️ How KMC timing is computed"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <p><b>Time from Birth to KMC Initiation</b></p>
+            <ul>
+              <li><b>Numerator:</b> Babies who received KMC, grouped by time from birth (admission date as proxy) to KMC start date.</li>
+              <li><b>Denominator:</b> All babies who received KMC.</li>
+            </ul>
+            <table style="width:100%; border-collapse:collapse;">
+            <tr style="background-color:#1f77b4; color:white;">
+                <th style="padding:8px; text-align:left;">Category</th>
+                <th style="padding:8px; text-align:left;">Definition</th>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Same day KMC</b></td>
+                <td style="padding:8px;">KMC started on the same day as admission (&lt;1 day)</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Early KMC</b></td>
+                <td style="padding:8px;">KMC started 1-3 days after admission</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Delayed KMC</b></td>
+                <td style="padding:8px;">KMC started 3-7 days after admission</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Late KMC</b></td>
+                <td style="padding:8px;">KMC started &gt;7 days after admission</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Missing KMC Timing</b></td>
+                <td style="padding:8px;">KMC start date is not available</td>
+            </tr>
+            </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 def _render_vital_monitoring_trend_chart(
     working_df,
     chart_title,
@@ -3922,11 +4210,28 @@ def _render_vital_monitoring_trend_chart(
     facility_uids,
     date_range_filters,
 ):
-    """Render combined Vital Monitoring indicators in a 1x2 panel chart"""
+    """Render combined Vital Monitoring indicators in a 2x3 panel chart"""
     indicators = VITAL_MONITORING_INDICATORS
 
     if not indicators:
         return
+
+    # Multiselect filter for showing/hiding panels
+    with st.expander("Filter Vital Monitoring Indicators", expanded=False):
+        selected_display_names = st.multiselect(
+            "Select indicators to display:",
+            options=[ind["display_name"] for ind in indicators],
+            default=[ind["display_name"] for ind in indicators],
+            key="vital_monitoring_indicator_filter",
+        )
+
+    filtered_indicators = [
+        ind for ind in indicators if ind["display_name"] in selected_display_names
+    ]
+    if not filtered_indicators:
+        st.warning("No indicators selected.")
+        return
+    indicators = filtered_indicators
 
     date_column = "enrollment_date"
 
@@ -4002,23 +4307,29 @@ def _render_vital_monitoring_trend_chart(
 
     periods = trend_df["period_display"].tolist()
 
-    # Build 1xN subplot grid (one row, one column per indicator)
-    cols = len(indicators)
-    rows = 1
+    # Build dynamic subplot grid based on indicator count
+    n = len(indicators)
+    if n <= 3:
+        rows, cols = 1, n
+    else:
+        rows, cols = 2, 3
 
     fig = make_subplots(
         rows=rows,
         cols=cols,
         subplot_titles=[ind["display_name"] for ind in indicators],
         horizontal_spacing=0.12,
-        vertical_spacing=0.15,
+        vertical_spacing=0.20,
     )
 
     for idx, ind in enumerate(indicators):
-        current_col = idx + 1
+        current_row = 1 if idx < 3 else 2
+        current_col = (idx % 3) + 1
         value_col = f"{ind['kpi_name']}_value"
         num_col = f"{ind['kpi_name']}_num"
         den_col = f"{ind['kpi_name']}_den"
+
+        target_y = ind["target"]
 
         fig.add_trace(
             go.Scatter(
@@ -4041,17 +4352,17 @@ def _render_vital_monitoring_trend_chart(
                     (trend_df[num_col].values, trend_df[den_col].values)
                 ),
             ),
-            row=1,
+            row=current_row,
             col=current_col,
         )
 
         fig.add_hline(
-            y=100, line_dash="dash", line_color="green", line_width=1.5,
-            row=1, col=current_col,
+            y=target_y, line_dash="dash", line_color="green", line_width=1.5,
+            row=current_row, col=current_col,
         )
 
         fig.update_xaxes(
-            row=1, col=current_col,
+            row=current_row, col=current_col,
             type="category",
             categoryorder="array",
             categoryarray=periods,
@@ -4064,7 +4375,7 @@ def _render_vital_monitoring_trend_chart(
             mirror=True,
         )
         fig.update_yaxes(
-            row=1, col=current_col,
+            row=current_row, col=current_col,
             range=[0, 105],
             dtick=25,
             gridcolor="rgba(128,128,128,0.2)",
@@ -4078,85 +4389,26 @@ def _render_vital_monitoring_trend_chart(
             mirror=True,
         )
 
+    # Hide empty subplot (row 2, col 3) when using 2x3 grid with <=5 indicators
+    if rows == 2 and n < 6:
+        fig.update_xaxes(row=2, col=3, visible=False)
+        fig.update_yaxes(row=2, col=3, visible=False)
+
     fig.update_layout(
         title=dict(text=chart_title, font=dict(size=16)),
-        height=400,
+        height=700,
         showlegend=False,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font_color=text_color,
         title_font_color=text_color,
         title_y=0.95,
-        margin=dict(l=50, r=50, t=100, b=80),
+        margin=dict(l=50, r=50, t=120, b=80),
     )
     for ann in fig['layout']['annotations']:
-        ann['font'] = dict(size=12)
+        ann['font'] = dict(size=11)
 
     st.plotly_chart(fig, use_container_width=True)
-
-    # Combined table
-    st.subheader("📊 Vital Monitoring Indicators Table")
-    st.caption("Values shown as: Rate% (numerator / denominator)")
-
-    table_data = []
-    for period in periods:
-        period_row_data = trend_df[trend_df["period_display"] == period].iloc[0]
-        row = {"Period": period}
-        for ind in indicators:
-            num = int(period_row_data[f"{ind['kpi_name']}_num"])
-            den = int(period_row_data[f"{ind['kpi_name']}_den"])
-            val = period_row_data[f"{ind['kpi_name']}_value"]
-            if den > 0:
-                row[ind["short_name"]] = f"{val:.1f}% ({num}/{den})"
-            else:
-                row[ind["short_name"]] = "-"
-        table_data.append(row)
-
-    # Overall row
-    overall_row = {"Period": "Overall"}
-    for ind in indicators:
-        total_num = int(trend_df[f"{ind['kpi_name']}_num"].sum())
-        total_den = int(trend_df[f"{ind['kpi_name']}_den"].sum())
-        overall_val = (total_num / total_den * 100) if total_den > 0 else 0.0
-        if total_den > 0:
-            overall_row[ind["short_name"]] = f"{overall_val:.1f}% ({total_num}/{total_den})"
-        else:
-            overall_row[ind["short_name"]] = "-"
-    table_data.append(overall_row)
-
-    table_df = pd.DataFrame(table_data)
-    st.dataframe(table_df, use_container_width=True, height=200)
-
-    with st.expander("ℹ️ How each indicator is computed"):
-        st.markdown(
-            """
-            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
-            <table style="width:100%; border-collapse:collapse;">
-            <tr style="background-color:#1f77b4; color:white;">
-                <th style="padding:8px; text-align:left;">Indicator</th>
-                <th style="padding:8px; text-align:left;">Numerator</th>
-                <th style="padding:8px; text-align:left;">Denominator</th>
-            </tr>
-            <tr style="background-color:#f0f8ff;">
-                <td style="padding:8px;"><b>Temperature Taken at Admission</b></td>
-                <td style="padding:8px;">Newborns with temperature recorded at admission</td>
-                <td style="padding:8px;">Total admitted newborns</td>
-            </tr>
-            <tr>
-                <td style="padding:8px;"><b>Birth Weight Taken</b></td>
-                <td style="padding:8px;">Newborns with birth weight recorded</td>
-                <td style="padding:8px;">Total admitted newborns</td>
-            </tr>
-            <tr style="background-color:#f0f8ff;">
-                <td style="padding:8px;"><b>Weight Taken at Admission</b></td>
-                <td style="padding:8px;">Newborns with weight recorded at NICU admission</td>
-                <td style="padding:8px;">Total admitted newborns</td>
-            </tr>
-            </table>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
 
 
 def _render_vital_monitoring_comparison_chart(
@@ -4982,4 +5234,8 @@ __all__ = [
     "VITAL_MONITORING_INDICATORS",
     "_render_vital_monitoring_trend_chart",
     "_render_vital_monitoring_comparison_chart",
+    # KMC Timing QoC
+    "KMC_TIMING_QOC_MARKER",
+    "KMC_TIMING_CATEGORIES",
+    "_render_kmc_timing_qoc_trend_chart",
 ]
