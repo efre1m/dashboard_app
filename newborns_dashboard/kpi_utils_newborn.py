@@ -990,6 +990,9 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     outborn_not_hypo_rate, outborn_not_hypo_count, total_outborn_not_hypo = (
         compute_outborn_not_hypothermic_rate(filtered_df, facility_uids)
     )
+    not_hypo_after_rate, not_hypo_after_count, total_not_hypo_after = (
+        compute_not_hypothermic_after_admission_rate(filtered_df, facility_uids)
+    )
 
     neonatal_mortality_rate, death_count, _ = compute_neonatal_mortality_rate(
         filtered_df, facility_uids
@@ -1058,6 +1061,9 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         "outborn_not_hypothermic_rate": float(outborn_not_hypo_rate),
         "outborn_not_hypothermic_count": int(outborn_not_hypo_count),
         "total_outborn_not_hypo": int(total_outborn_not_hypo),
+        "not_hypothermic_after_admission_rate": float(not_hypo_after_rate),
+        "not_hypothermic_after_admission_count": int(not_hypo_after_count),
+        "total_not_hypo_after": int(total_not_hypo_after),
         "neonatal_mortality_rate": float(neonatal_mortality_rate),
         "death_count": int(death_count),
         "total_deaths": int(total_admitted),
@@ -1267,6 +1273,11 @@ def get_numerator_denominator_for_newborn_kpi(
             "numerator": "outborn_not_hypothermic_count",
             "denominator": "total_outborn_not_hypo",
             "value": "outborn_not_hypothermic_rate",
+        },
+        "Not hypothermic after admission (%)": {
+            "numerator": "not_hypothermic_after_admission_count",
+            "denominator": "total_not_hypo_after",
+            "value": "not_hypothermic_after_admission_rate",
         },
         # Other KPIs
         "Neonatal Mortality Rate (%)": {
@@ -2518,6 +2529,9 @@ __all__ = [
     "compute_not_hypothermic_on_admission_rate",
     "compute_inborn_not_hypothermic_rate",
     "compute_outborn_not_hypothermic_rate",
+    "compute_not_hypothermic_after_admission_count",
+    "compute_total_with_lowest_temp_taken",
+    "compute_not_hypothermic_after_admission_rate",
     "compute_neonatal_mortality_rate",
     # Master KPI function
     "compute_newborn_kpis",

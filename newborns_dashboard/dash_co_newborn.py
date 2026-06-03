@@ -2324,6 +2324,12 @@ HYPO_COMBINED_INDICATORS = [
         "short_name": "Not Hypo Outborn",
         "sort_order": 6,
     },
+    {
+        "kpi_name": "Not hypothermic after admission (%)",
+        "display_name": "Not hypothermic after admission (%)",
+        "short_name": "Not hypothermic after admis.",
+        "sort_order": 7,
+    },
 ]
 
 HYPO_COMBINED_MARKER = "__hypothermia_combined__"
@@ -2527,15 +2533,23 @@ def _render_hypothermia_combined_trend_chart(
 
     periods = trend_df["period_display"].tolist()
 
-    # Build 2x3 subplot grid
-    rows, cols = 2, 3
+    # Sort indicators by sort_order for consistent layout
     sorted_indicators = sorted(filtered_indicators, key=lambda x: x["sort_order"])
+
+    # Build dynamic subplot grid based on indicator count
+    n = len(sorted_indicators)
+    if n <= 3:
+        rows, cols = 1, n
+    elif n <= 6:
+        rows, cols = 2, 3
+    else:
+        rows, cols = 3, 3
 
     fig = make_subplots(
         rows=rows,
         cols=cols,
         subplot_titles=[ind["display_name"] for ind in sorted_indicators],
-        vertical_spacing=0.28,
+        vertical_spacing=0.12,
         horizontal_spacing=0.10,
     )
 
@@ -2603,7 +2617,7 @@ def _render_hypothermia_combined_trend_chart(
 
     fig.update_layout(
         title=dict(text=chart_title, font=dict(size=16)),
-        height=700,
+        height=250 * rows,
         showlegend=False,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -2839,17 +2853,24 @@ def _render_hypothermia_combined_comparison_chart(
     comp_df = pd.DataFrame(comparison_rows)
     comp_df = comp_df.sort_values(["period_sort", entity_label_col])
 
-    # Build 2x3 subplot grid - only for selected indicators
+    # Build dynamic subplot grid based on indicator count
     n_indicators = len(filtered_indicators)
     if n_indicators > 0:
-        n_cols = 3
-        n_rows = 2
+        if n_indicators <= 3:
+            n_cols = n_indicators
+            n_rows = 1
+        elif n_indicators <= 6:
+            n_cols = 3
+            n_rows = 2
+        else:
+            n_cols = 3
+            n_rows = 3
         subplot_titles = [ind["display_name"] for ind in filtered_indicators]
         fig = make_subplots(
             rows=n_rows, cols=n_cols,
             subplot_titles=subplot_titles,
             horizontal_spacing=0.10,
-            vertical_spacing=0.28,
+            vertical_spacing=0.12,
         )
 
         entity_names = comp_df[entity_label_col].unique()
@@ -2927,7 +2948,7 @@ def _render_hypothermia_combined_comparison_chart(
         chart_title = "Hypothermia Indicators - Facility Comparison" if comparison_mode == "facility" else "Hypothermia Indicators - Region Comparison"
         fig.update_layout(
             title=dict(text=chart_title, font=dict(size=16)),
-            height=700,
+            height=250 * n_rows,
             paper_bgcolor=bg_color,
             plot_bgcolor=bg_color,
             font_color=text_color,
