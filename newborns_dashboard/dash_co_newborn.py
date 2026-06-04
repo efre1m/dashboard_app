@@ -2549,7 +2549,7 @@ def _render_hypothermia_combined_trend_chart(
         rows=rows,
         cols=cols,
         subplot_titles=[ind["display_name"] for ind in sorted_indicators],
-        vertical_spacing=0.12,
+        vertical_spacing=0.18,
         horizontal_spacing=0.10,
     )
 
@@ -2597,7 +2597,8 @@ def _render_hypothermia_combined_trend_chart(
             linewidth=2,
             linecolor="rgba(128,128,128,0.8)",
             mirror=True,
-            showticklabels=(current_row == rows),
+            showticklabels=True,
+            tickfont=dict(size=9),
         )
         fig.update_yaxes(
             row=current_row, col=current_col,
@@ -2617,7 +2618,7 @@ def _render_hypothermia_combined_trend_chart(
 
     fig.update_layout(
         title=dict(text=chart_title, font=dict(size=16)),
-        height=250 * rows,
+        height=280 * rows,
         showlegend=False,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
@@ -2675,33 +2676,33 @@ def _render_hypothermia_combined_trend_chart(
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>Hypothermia on Admission</b></td>
-                <td style="padding:8px;">Newborns with temp &lt; 36.5°C</td>
-                <td style="padding:8px;">Total admitted newborns</td>
+                <td style="padding:8px;">Newborns with temp &lt; 36.5°C at admission</td>
+                <td style="padding:8px;">Newborns with temperature recorded at admission</td>
             </tr>
             <tr>
                 <td style="padding:8px;"><b>Inborn Hypothermia</b></td>
-                <td style="padding:8px;">Inborn newborns with temp &lt; 36.5°C</td>
-                <td style="padding:8px;">Total inborn newborns</td>
+                <td style="padding:8px;">Inborn newborns with temp &lt; 36.5°C at admission</td>
+                <td style="padding:8px;">Inborn newborns with temperature recorded at admission</td>
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>Outborn Hypothermia</b></td>
-                <td style="padding:8px;">Outborn newborns with temp &lt; 36.5°C</td>
-                <td style="padding:8px;">Total outborn newborns</td>
+                <td style="padding:8px;">Outborn newborns with temp &lt; 36.5°C at admission</td>
+                <td style="padding:8px;">Outborn newborns with temperature recorded at admission</td>
             </tr>
             <tr>
-                <td style="padding:8px;"><b>Not Hypothermic</b></td>
-                <td style="padding:8px;">Newborns with temp ≥ 36.5°C</td>
-                <td style="padding:8px;">Total admitted newborns</td>
+                <td style="padding:8px;"><b>Not Hypothermic at Admission</b></td>
+                <td style="padding:8px;">Newborns with temp ≥ 36.5°C at admission</td>
+                <td style="padding:8px;">Newborns with temperature recorded at admission</td>
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>Not Hypo Inborn</b></td>
-                <td style="padding:8px;">Inborn newborns with temp ≥ 36.5°C</td>
-                <td style="padding:8px;">Total inborn newborns</td>
+                <td style="padding:8px;">Inborn newborns with temp ≥ 36.5°C at admission</td>
+                <td style="padding:8px;">Inborn newborns with temperature recorded at admission</td>
             </tr>
             <tr>
                 <td style="padding:8px;"><b>Not Hypo Outborn</b></td>
-                <td style="padding:8px;">Outborn newborns with temp ≥ 36.5°C</td>
-                <td style="padding:8px;">Total outborn newborns</td>
+                <td style="padding:8px;">Outborn newborns with temp ≥ 36.5°C at admission</td>
+                <td style="padding:8px;">Outborn newborns with temperature recorded at admission</td>
             </tr>
             </table>
             </div>
@@ -2870,7 +2871,7 @@ def _render_hypothermia_combined_comparison_chart(
             rows=n_rows, cols=n_cols,
             subplot_titles=subplot_titles,
             horizontal_spacing=0.10,
-            vertical_spacing=0.12,
+            vertical_spacing=0.18,
         )
 
         entity_names = comp_df[entity_label_col].unique()
@@ -2928,7 +2929,8 @@ def _render_hypothermia_combined_comparison_chart(
                 linewidth=1,
                 linecolor="rgba(128,128,128,0.5)",
                 mirror=True,
-                showticklabels=(row_idx == n_rows),
+                showticklabels=True,
+                tickfont=dict(size=9),
             )
             fig.update_yaxes(
                 row=row_idx, col=col_idx,
@@ -2948,7 +2950,7 @@ def _render_hypothermia_combined_comparison_chart(
         chart_title = "Hypothermia Indicators - Facility Comparison" if comparison_mode == "facility" else "Hypothermia Indicators - Region Comparison"
         fig.update_layout(
             title=dict(text=chart_title, font=dict(size=16)),
-            height=250 * n_rows,
+            height=280 * n_rows,
             paper_bgcolor=bg_color,
             plot_bgcolor=bg_color,
             font_color=text_color,
@@ -3005,33 +3007,33 @@ def _render_hypothermia_combined_comparison_chart(
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>Hypothermia on Admission</b></td>
-                <td style="padding:8px;">Newborns with temp &lt; 36.5°C</td>
-                <td style="padding:8px;">Total admitted newborns</td>
+                <td style="padding:8px;">Newborns with temp &lt; 36.5°C at admission</td>
+                <td style="padding:8px;">Newborns with temperature recorded at admission</td>
             </tr>
             <tr>
                 <td style="padding:8px;"><b>Inborn Hypothermia</b></td>
-                <td style="padding:8px;">Inborn newborns with temp &lt; 36.5°C</td>
-                <td style="padding:8px;">Total inborn newborns</td>
+                <td style="padding:8px;">Inborn newborns with temp &lt; 36.5°C at admission</td>
+                <td style="padding:8px;">Inborn newborns with temperature recorded at admission</td>
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>Outborn Hypothermia</b></td>
-                <td style="padding:8px;">Outborn newborns with temp &lt; 36.5°C</td>
-                <td style="padding:8px;">Total outborn newborns</td>
+                <td style="padding:8px;">Outborn newborns with temp &lt; 36.5°C at admission</td>
+                <td style="padding:8px;">Outborn newborns with temperature recorded at admission</td>
             </tr>
             <tr>
-                <td style="padding:8px;"><b>Not Hypothermic</b></td>
-                <td style="padding:8px;">Newborns with temp ≥ 36.5°C</td>
-                <td style="padding:8px;">Total admitted newborns</td>
+                <td style="padding:8px;"><b>Not Hypothermic at Admission</b></td>
+                <td style="padding:8px;">Newborns with temp ≥ 36.5°C at admission</td>
+                <td style="padding:8px;">Newborns with temperature recorded at admission</td>
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>Not Hypo Inborn</b></td>
-                <td style="padding:8px;">Inborn newborns with temp ≥ 36.5°C</td>
-                <td style="padding:8px;">Total inborn newborns</td>
+                <td style="padding:8px;">Inborn newborns with temp ≥ 36.5°C at admission</td>
+                <td style="padding:8px;">Inborn newborns with temperature recorded at admission</td>
             </tr>
             <tr>
                 <td style="padding:8px;"><b>Not Hypo Outborn</b></td>
-                <td style="padding:8px;">Outborn newborns with temp ≥ 36.5°C</td>
-                <td style="padding:8px;">Total outborn newborns</td>
+                <td style="padding:8px;">Outborn newborns with temp ≥ 36.5°C at admission</td>
+                <td style="padding:8px;">Outborn newborns with temperature recorded at admission</td>
             </tr>
             </table>
             </div>
@@ -4438,6 +4440,80 @@ def _render_vital_monitoring_trend_chart(
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # Combined table
+    st.subheader("📊 Vital Monitoring Indicators Table")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+
+    sorted_indicators = sorted(indicators, key=lambda x: x.get("sort_order", 99))
+    table_data = []
+    for period in periods:
+        period_row_data = trend_df[trend_df["period_display"] == period].iloc[0]
+        row = {"Period": period}
+        for ind in sorted_indicators:
+            num = int(period_row_data[f"{ind['kpi_name']}_num"])
+            den = int(period_row_data[f"{ind['kpi_name']}_den"])
+            val = period_row_data[f"{ind['kpi_name']}_value"]
+            if den > 0:
+                row[ind["short_name"]] = f"{val:.1f}% ({num}/{den})"
+            else:
+                row[ind["short_name"]] = "-"
+        table_data.append(row)
+
+    overall_row = {"Period": "Overall"}
+    for ind in sorted_indicators:
+        total_num = int(trend_df[f"{ind['kpi_name']}_num"].sum())
+        total_den = int(trend_df[f"{ind['kpi_name']}_den"].sum())
+        overall_val = (total_num / total_den * 100) if total_den > 0 else 0.0
+        if total_den > 0:
+            overall_row[ind["short_name"]] = f"{overall_val:.1f}% ({total_num}/{total_den})"
+        else:
+            overall_row[ind["short_name"]] = "-"
+    table_data.append(overall_row)
+
+    table_df = pd.DataFrame(table_data)
+    st.dataframe(table_df, use_container_width=True, height=300)
+
+    with st.expander("ℹ️ How each indicator is computed"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <table style="width:100%; border-collapse:collapse;">
+            <tr style="background-color:#1f77b4; color:white;">
+                <th style="padding:8px; text-align:left;">Indicator</th>
+                <th style="padding:8px; text-align:left;">Numerator</th>
+                <th style="padding:8px; text-align:left;">Denominator</th>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Temperature Taken at Admission</b></td>
+                <td style="padding:8px;">Newborns with temperature recorded at admission</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Birth Weight Taken</b></td>
+                <td style="padding:8px;">Newborns with birth weight recorded</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Weight Taken at Admission</b></td>
+                <td style="padding:8px;">Newborns with weight recorded at NICU admission</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;"><b>Glucose Monitored at Admission</b></td>
+                <td style="padding:8px;">Newborns with glucose level monitored at admission</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>Pulse Oximeter Used at Admission</b></td>
+                <td style="padding:8px;">Newborns with pulse oximeter used at admission</td>
+                <td style="padding:8px;">Total admitted newborns</td>
+            </tr>
+            </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 
 def _render_vital_monitoring_comparison_chart(
     df_to_use,
@@ -5190,6 +5266,21 @@ def compute_newborn_kpi_for_period(kpi_selection, period_df, facility_uids):
 def _get_newborn_default_kpi_data(kpi_selection):
     """Get default empty data for newborn KPIs"""
     return {"value": 0.0, "numerator": 0, "denominator": 0}
+
+
+def _period_display_format(period_start, period_label):
+    """Format period start date as display string based on label"""
+    fmt_map = {
+        "Daily": "%a %b %d, %Y",
+        "Weekly": "Wk of %b %d, %Y",
+        "Quarterly": "'Q%q %Y'",
+        "Yearly": "%Y",
+    }
+    fmt = fmt_map.get(period_label, "%b-%y")
+    if period_label == "Quarterly":
+        q = period_start.month // 3 + 1
+        return f"Q{q}-{period_start.year % 100:02d}"
+    return period_start.strftime(fmt)
 
 
 def get_date_column_from_newborn_df(df, kpi_selection):
