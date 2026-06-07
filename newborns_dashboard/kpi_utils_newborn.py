@@ -49,10 +49,12 @@ OUTBORN_CODE = "2"
 
 # Observations and Nursing Care 1 columns
 TEMPERATURE_ON_ADMISSION_COL = "temp_at_admission_nicu_admission_careform"
+GLUCOSE_RECORDING_COL = "was_blood_sugar_recorded_on_admission?_observations_and_nursing_care_1"
+OXYGEN_RECORDING_COL = "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1"
 HYPOTHERMIA_THRESHOLD = 36.5  # °C
 
-# Observations and Nursing Care 2 columns - NOT AVAILABLE
-# LOWEST_TEMPERATURE_COL = "lowest_recorded_temperature_celsius_observations_and_nursing_care_2"
+# Observations and Nursing Care 2 columns
+LOWEST_TEMPERATURE_COL = "lowest_recorded_temperature_celsius_observations_and_nursing_care_2"
 
 # Discharge columns
 NEWBORN_STATUS_COL = "newborn_status_at_discharge_n_discharge_care_form"
@@ -621,9 +623,9 @@ def compute_hypothermia_on_admission_rate(df, facility_uids=None):
         result = (0.0, 0, 0)
     else:
         hypothermia_count = compute_hypothermia_on_admission_count(df, facility_uids)
-        total_admitted = compute_total_admitted_newborns(df, facility_uids)
-        rate = (hypothermia_count / total_admitted * 100) if total_admitted > 0 else 0.0
-        result = (rate, hypothermia_count, total_admitted)
+        total_with_temp = compute_newborns_with_temp_recorded(df, facility_uids)
+        rate = (hypothermia_count / total_with_temp * 100) if total_with_temp > 0 else 0.0
+        result = (rate, hypothermia_count, total_with_temp)
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
@@ -640,10 +642,10 @@ def compute_inborn_hypothermia_rate(df, facility_uids=None):
         result = (0.0, 0, 0)
     else:
         inborn_hypo_count = compute_inborn_hypothermia_count(df, facility_uids)
-        inborn_count = compute_inborn_count(df, facility_uids)  # CORRECT DENOMINATOR
+        inborn_with_temp = compute_inborn_with_temp_recorded(df, facility_uids)
 
-        rate = (inborn_hypo_count / inborn_count * 100) if inborn_count > 0 else 0.0
-        result = (rate, inborn_hypo_count, inborn_count)
+        rate = (inborn_hypo_count / inborn_with_temp * 100) if inborn_with_temp > 0 else 0.0
+        result = (rate, inborn_hypo_count, inborn_with_temp)
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
@@ -660,10 +662,10 @@ def compute_outborn_hypothermia_rate(df, facility_uids=None):
         result = (0.0, 0, 0)
     else:
         outborn_hypo_count = compute_outborn_hypothermia_count(df, facility_uids)
-        outborn_count = compute_outborn_count(df, facility_uids)  # CORRECT DENOMINATOR
+        outborn_with_temp = compute_outborn_with_temp_recorded(df, facility_uids)
 
-        rate = (outborn_hypo_count / outborn_count * 100) if outborn_count > 0 else 0.0
-        result = (rate, outborn_hypo_count, outborn_count)
+        rate = (outborn_hypo_count / outborn_with_temp * 100) if outborn_with_temp > 0 else 0.0
+        result = (rate, outborn_hypo_count, outborn_with_temp)
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
@@ -683,11 +685,11 @@ def compute_not_hypothermic_on_admission_rate(df, facility_uids=None):
         not_hypothermia_count = compute_not_hypothermic_on_admission_count(
             df, facility_uids
         )
-        total_admitted = compute_total_admitted_newborns(df, facility_uids)
+        total_with_temp = compute_newborns_with_temp_recorded(df, facility_uids)
         rate = (
-            (not_hypothermia_count / total_admitted * 100) if total_admitted > 0 else 0.0
+            (not_hypothermia_count / total_with_temp * 100) if total_with_temp > 0 else 0.0
         )
-        result = (rate, not_hypothermia_count, total_admitted)
+        result = (rate, not_hypothermia_count, total_with_temp)
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
@@ -703,11 +705,11 @@ def compute_inborn_not_hypothermic_rate(df, facility_uids=None):
         result = (0.0, 0, 0)
     else:
         inborn_not_hypo_count = compute_inborn_not_hypothermic_count(df, facility_uids)
-        inborn_count = compute_inborn_count(df, facility_uids)
+        inborn_with_temp = compute_inborn_with_temp_recorded(df, facility_uids)
         rate = (
-            (inborn_not_hypo_count / inborn_count * 100) if inborn_count > 0 else 0.0
+            (inborn_not_hypo_count / inborn_with_temp * 100) if inborn_with_temp > 0 else 0.0
         )
-        result = (rate, inborn_not_hypo_count, inborn_count)
+        result = (rate, inborn_not_hypo_count, inborn_with_temp)
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
@@ -725,14 +727,122 @@ def compute_outborn_not_hypothermic_rate(df, facility_uids=None):
         result = (0.0, 0, 0)
     else:
         outborn_not_hypo_count = compute_outborn_not_hypothermic_count(df, facility_uids)
-        outborn_count = compute_outborn_count(df, facility_uids)
+        outborn_with_temp = compute_outborn_with_temp_recorded(df, facility_uids)
         rate = (
-            (outborn_not_hypo_count / outborn_count * 100) if outborn_count > 0 else 0.0
+            (outborn_not_hypo_count / outborn_with_temp * 100) if outborn_with_temp > 0 else 0.0
         )
-        result = (rate, outborn_not_hypo_count, outborn_count)
+        result = (rate, outborn_not_hypo_count, outborn_with_temp)
 
     st.session_state.kpi_cache_newborn[cache_key] = result
     return result
+
+
+def compute_not_hypothermic_after_admission_count(df, facility_uids=None):
+    """Count newborns not hypothermic after admission (lowest temp >= 36.5°C, excluding admission temp)"""
+    if df is None or df.empty:
+        return 0
+
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    if LOWEST_TEMPERATURE_COL not in filtered_df.columns:
+        return 0
+
+    df_copy = filtered_df.copy()
+    df_copy["temp_numeric"] = pd.to_numeric(
+        df_copy[LOWEST_TEMPERATURE_COL], errors="coerce"
+    )
+    not_hypothermia_mask = df_copy["temp_numeric"] >= HYPOTHERMIA_THRESHOLD
+    return int(not_hypothermia_mask.sum())
+
+
+def compute_total_with_lowest_temp_taken(df, facility_uids=None):
+    """Count newborns who had temperature taken after admission (non-NA lowest temp)"""
+    if df is None or df.empty:
+        return 0
+
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+    if LOWEST_TEMPERATURE_COL not in filtered_df.columns:
+        return 0
+
+    return int(filtered_df[LOWEST_TEMPERATURE_COL].notna().sum())
+
+
+def compute_not_hypothermic_after_admission_rate(df, facility_uids=None):
+    """Compute not hypothermic after admission rate"""
+    cache_key = get_cache_key_newborn(
+        df, facility_uids, "not_hypothermic_after_admission_rate"
+    )
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        not_hypo_count = compute_not_hypothermic_after_admission_count(df, facility_uids)
+        total_with_temp = compute_total_with_lowest_temp_taken(df, facility_uids)
+        rate = (
+            (not_hypo_count / total_with_temp * 100) if total_with_temp > 0 else 0.0
+        )
+        result = (rate, not_hypo_count, total_with_temp)
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
+# ---------- Helpers: count newborns WITH temperature recorded (ignore NA) ----------
+def compute_newborns_with_temp_recorded(df, facility_uids=None):
+    """Count newborns with a non-NA temperature recorded at admission"""
+    if df is None or df.empty:
+        return 0
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+    if TEMPERATURE_ON_ADMISSION_COL not in filtered_df.columns:
+        return 0
+    return int(filtered_df[TEMPERATURE_ON_ADMISSION_COL].notna().sum())
+
+
+def compute_inborn_with_temp_recorded(df, facility_uids=None):
+    """Count inborn newborns with a non-NA temperature recorded at admission"""
+    if df is None or df.empty:
+        return 0
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+    if TEMPERATURE_ON_ADMISSION_COL not in filtered_df.columns or BIRTH_LOCATION_COL not in filtered_df.columns:
+        return 0
+    df_copy = filtered_df.copy()
+    df_copy["birth_location_clean"] = df_copy[BIRTH_LOCATION_COL].astype(str)
+    df_copy["birth_location_numeric"] = pd.to_numeric(
+        df_copy["birth_location_clean"].str.split(".").str[0], errors="coerce"
+    )
+    inborn_mask = df_copy["birth_location_numeric"] == 1
+    temp_present = df_copy[TEMPERATURE_ON_ADMISSION_COL].notna()
+    return int((inborn_mask & temp_present).sum())
+
+
+def compute_outborn_with_temp_recorded(df, facility_uids=None):
+    """Count outborn newborns with a non-NA temperature recorded at admission"""
+    if df is None or df.empty:
+        return 0
+    filtered_df = df.copy()
+    if facility_uids and "orgUnit" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+    if TEMPERATURE_ON_ADMISSION_COL not in filtered_df.columns or BIRTH_LOCATION_COL not in filtered_df.columns:
+        return 0
+    df_copy = filtered_df.copy()
+    df_copy["birth_location_clean"] = df_copy[BIRTH_LOCATION_COL].astype(str)
+    df_copy["birth_location_numeric"] = pd.to_numeric(
+        df_copy["birth_location_clean"].str.split(".").str[0], errors="coerce"
+    )
+    outborn_mask = df_copy["birth_location_numeric"] == 2
+    temp_present = df_copy[TEMPERATURE_ON_ADMISSION_COL].notna()
+    return int((outborn_mask & temp_present).sum())
 
 
 def compute_neonatal_mortality_rate(df, facility_uids=None):
@@ -911,7 +1021,7 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     outborn_rate, outborn_count, total_outborn_denom = compute_outborn_rate(
         filtered_df, facility_uids
     )
-    hypothermia_on_admission_rate, hypothermia_on_admission_count, _ = (
+    hypothermia_on_admission_rate, hypothermia_on_admission_count, total_hypo_admission_count = (
         compute_hypothermia_on_admission_rate(filtered_df, facility_uids)
     )
 
@@ -931,6 +1041,9 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
     outborn_not_hypo_rate, outborn_not_hypo_count, total_outborn_not_hypo = (
         compute_outborn_not_hypothermic_rate(filtered_df, facility_uids)
     )
+    not_hypo_after_rate, not_hypo_after_count, total_not_hypo_after = (
+        compute_not_hypothermic_after_admission_rate(filtered_df, facility_uids)
+    )
 
     neonatal_mortality_rate, death_count, _ = compute_neonatal_mortality_rate(
         filtered_df, facility_uids
@@ -949,6 +1062,12 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         filtered_df, facility_uids
     )
     wt_adm_rate, wt_adm_count, total_wt_adm = compute_weight_taken_at_admission(
+        filtered_df, facility_uids
+    )
+    glucose_rate, glucose_count, total_glucose = compute_glucose_monitored_at_admission(
+        filtered_df, facility_uids
+    )
+    pulse_ox_rate, pulse_ox_count, total_pulse_ox = compute_pulse_ox_used_at_admission(
         filtered_df, facility_uids
     )
 
@@ -976,7 +1095,7 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         ),  # This is total_admitted for distribution
         "hypothermia_on_admission_rate": float(hypothermia_on_admission_rate),
         "hypothermia_on_admission_count": int(hypothermia_on_admission_count),
-        "total_hypo_admission": int(total_admitted),
+        "total_hypo_admission": int(total_hypo_admission_count),
         # NEW: Hypothermia by birth location
         "inborn_hypothermia_rate": float(inborn_hypo_rate),
         "inborn_hypothermia_count": int(inborn_hypo_count),
@@ -993,6 +1112,9 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         "outborn_not_hypothermic_rate": float(outborn_not_hypo_rate),
         "outborn_not_hypothermic_count": int(outborn_not_hypo_count),
         "total_outborn_not_hypo": int(total_outborn_not_hypo),
+        "not_hypothermic_after_admission_rate": float(not_hypo_after_rate),
+        "not_hypothermic_after_admission_count": int(not_hypo_after_count),
+        "total_not_hypo_after": int(total_not_hypo_after),
         "neonatal_mortality_rate": float(neonatal_mortality_rate),
         "death_count": int(death_count),
         "total_deaths": int(total_admitted),
@@ -1011,6 +1133,12 @@ def compute_newborn_kpis(df, facility_uids=None, date_column=None):
         "weight_taken_admission_rate": float(wt_adm_rate),
         "weight_taken_admission_count": int(wt_adm_count),
         "total_weight_taken_admission": int(total_wt_adm),
+        "glucose_monitored_rate": float(glucose_rate),
+        "glucose_monitored_count": int(glucose_count),
+        "total_glucose_monitored": int(total_glucose),
+        "pulse_ox_used_rate": float(pulse_ox_rate),
+        "pulse_ox_used_count": int(pulse_ox_count),
+        "total_pulse_ox_used": int(total_pulse_ox),
         # DATA QUALITY
         "missing_temperature_rate": float(missing_temp_rate),
         "missing_temperature_count": int(missing_temp_count),
@@ -1168,7 +1296,7 @@ def get_numerator_denominator_for_newborn_kpi(
         # General hypothermia (all newborns)
         "Hypothermia on Admission Rate (%)": {
             "numerator": "hypothermia_on_admission_count",
-            "denominator": "total_admitted",
+            "denominator": "total_hypo_admission",
             "value": "hypothermia_on_admission_rate",
         },
         # NEW: Hypothermia by birth location
@@ -1196,6 +1324,11 @@ def get_numerator_denominator_for_newborn_kpi(
             "numerator": "outborn_not_hypothermic_count",
             "denominator": "total_outborn_not_hypo",
             "value": "outborn_not_hypothermic_rate",
+        },
+        "Not hypothermic after admission (%)": {
+            "numerator": "not_hypothermic_after_admission_count",
+            "denominator": "total_not_hypo_after",
+            "value": "not_hypothermic_after_admission_rate",
         },
         # Other KPIs
         "Neonatal Mortality Rate (%)": {
@@ -1244,6 +1377,16 @@ def get_numerator_denominator_for_newborn_kpi(
             "numerator": "weight_taken_admission_count",
             "denominator": "total_weight_taken_admission",
             "value": "weight_taken_admission_rate",
+        },
+        "Glucose Monitored at Admission (%)": {
+            "numerator": "glucose_monitored_count",
+            "denominator": "total_glucose_monitored",
+            "value": "glucose_monitored_rate",
+        },
+        "Pulse Oximeter Used at Admission (%)": {
+            "numerator": "pulse_ox_used_count",
+            "denominator": "total_pulse_ox_used",
+            "value": "pulse_ox_used_rate",
         },
         # ============== ANTIBIOTICS MAPPING - COMMENTED OUT ==============
         # "Antibiotics for Clinical Sepsis (%)": {
@@ -2348,6 +2491,60 @@ def compute_weight_taken_at_admission(df, facility_uids=None):
     return result
 
 
+def compute_glucose_monitored_at_admission(df, facility_uids=None):
+    """Compute count of newborns with blood glucose recorded at admission"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "glucose_monitored")
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+        total_admitted = len(filtered_df)
+        if total_admitted == 0:
+            result = (0.0, 0, 0)
+        elif GLUCOSE_RECORDING_COL not in filtered_df.columns:
+            result = (0.0, 0, total_admitted)
+        else:
+            taken_count = filtered_df[GLUCOSE_RECORDING_COL].notna().sum()
+            rate = (taken_count / total_admitted * 100)
+            result = (rate, int(taken_count), int(total_admitted))
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
+def compute_pulse_ox_used_at_admission(df, facility_uids=None):
+    """Compute count of newborns with blood oxygen recorded at admission"""
+    cache_key = get_cache_key_newborn(df, facility_uids, "pulse_ox_used")
+    if cache_key in st.session_state.kpi_cache_newborn:
+        return st.session_state.kpi_cache_newborn[cache_key]
+
+    if df is None or df.empty:
+        result = (0.0, 0, 0)
+    else:
+        filtered_df = df.copy()
+        if facility_uids and "orgUnit" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["orgUnit"].isin(facility_uids)].copy()
+
+        total_admitted = len(filtered_df)
+        if total_admitted == 0:
+            result = (0.0, 0, 0)
+        elif OXYGEN_RECORDING_COL not in filtered_df.columns:
+            result = (0.0, 0, total_admitted)
+        else:
+            taken_count = filtered_df[OXYGEN_RECORDING_COL].notna().sum()
+            rate = (taken_count / total_admitted * 100)
+            result = (rate, int(taken_count), int(total_admitted))
+
+    st.session_state.kpi_cache_newborn[cache_key] = result
+    return result
+
+
 # ---------------- Export all functions ----------------
 __all__ = [
     # Cache functions
@@ -2383,6 +2580,9 @@ __all__ = [
     "compute_not_hypothermic_on_admission_rate",
     "compute_inborn_not_hypothermic_rate",
     "compute_outborn_not_hypothermic_rate",
+    "compute_not_hypothermic_after_admission_count",
+    "compute_total_with_lowest_temp_taken",
+    "compute_not_hypothermic_after_admission_rate",
     "compute_neonatal_mortality_rate",
     # Master KPI function
     "compute_newborn_kpis",
@@ -2403,4 +2603,6 @@ __all__ = [
     "compute_temperature_taken_at_admission",
     "compute_birth_weight_taken",
     "compute_weight_taken_at_admission",
+    "compute_glucose_monitored_at_admission",
+    "compute_pulse_ox_used_at_admission",
 ]
