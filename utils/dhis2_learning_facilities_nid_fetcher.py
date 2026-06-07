@@ -320,6 +320,7 @@ class AutomatedLearningFacilitiesNIDPipeline:
         password: str = None,
         merge_mode: str = "replace",
         enrollment_date_filters: dict = None,
+        org_unit_ids: list = None,
     ):
         env_base_url = os.getenv("DHIS2_BASE_URL")
         env_username = os.getenv("DHIS2_USERNAME")
@@ -338,6 +339,7 @@ class AutomatedLearningFacilitiesNIDPipeline:
         self.password = password
         self.merge_mode = merge_mode
         self.enrollment_date_filters = enrollment_date_filters or {}
+        self.org_unit_ids = org_unit_ids or []
         self.fetcher = DHIS2DataFetcher(self.base_url, self.username, self.password)
 
     @staticmethod
@@ -390,15 +392,6 @@ class AutomatedLearningFacilitiesNIDPipeline:
             orgunit_names = self.fetcher.fetch_orgunit_names()
             logger.info(f"Fetched {len(orgunit_names)} orgUnit names")
 
-            logger.info("Fetching region list...")
-            regions = self.fetcher.fetch_all_regions()  # uid -> name
-            if not regions:
-                logger.error("No regions found")
-                return False
-
-            all_region_patient_dfs: List[pd.DataFrame] = []
-            total_fetched_teis = 0
-
             prog_start = self.enrollment_date_filters.get("program_start_date")
             prog_end = self.enrollment_date_filters.get("program_end_date")
             mode = self.enrollment_date_filters.get("mode", "none")
@@ -408,70 +401,112 @@ class AutomatedLearningFacilitiesNIDPipeline:
             if prog_end:
                 logger.info(f"  program_end_date (enrollment <=): {prog_end}")
 
-            total_regions = len(regions)
-            for i, (region_uid, region_name) in enumerate(regions.items(), 1):
-                logger.info("-" * 80)
-                logger.info(f"[{i}/{total_regions}] Processing region: {region_name} ({region_uid})")
+            all_region_patient_dfs: List[pd.DataFrame] = []
+            total_fetched_teis = 0
 
-                tei_data = self.fetcher.fetch_program_data(
-                    NID_PROGRAM_UID,
-                    region_uid,
-                    "DESCENDANTS",
-                    1000,
-                    program_start_date=prog_start,
-                    program_end_date=prog_end,
-                )
-                tei_count = len(tei_data.get("trackedEntityInstances", []))
-                total_fetched_teis += tei_count
-                logger.info(f"Fetched TEIs from region scope: {tei_count}")
+            if self.org_unit_ids:
+                logger.info(f"Fetching data for {len(self.org_unit_ids)} specific org unit(s)...")
+                logger.info("Fetching facility-to-region mapping...")
+                facility_to_region = self.fetcher.fetch_facility_to_region_mapping()
+                regions = self.fetcher.fetch_all_regions()
+                region_by_name = {v: k for k, v in regions.items()}
 
-                if tei_count == 0:
-                    continue
-
-                events_df = CSVIntegration.create_events_dataframe(
-                    tei_data,
-                    NID_PROGRAM_UID,
-                    orgunit_names,
-                )
-                patient_df = CSVIntegration.transform_events_to_patient_level(
-                    events_df,
-                    NID_PROGRAM_UID,
-                )
-
-                if patient_df.empty:
-                    logger.warning(f"No patient-level rows in {region_name}")
-                    continue
-
-                patient_df = self._fix_o2_data(events_df, patient_df)
-                patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
-
-                # Preprocess enrollment dates (fix EC entries)
-                before_ct = len(patient_df)
-                patient_df, removed_teis = preprocess_nid_enrollment_dates(patient_df)
-                if removed_teis:
-                    logger.warning(
-                        f"  {region_name}: dropped {len(removed_teis)} TEI(s) "
-                        f"with invalid enrollment dates — {removed_teis}"
+                for ouid in self.org_unit_ids:
+                    logger.info(f"  Fetching orgUnit: {ouid}")
+                    tei_data = self.fetcher.fetch_program_data(
+                        NID_PROGRAM_UID, ouid, "SELECTED", 1000,
+                        program_start_date=prog_start, program_end_date=prog_end,
                     )
+                    tei_count = len(tei_data.get("trackedEntityInstances", []))
+                    total_fetched_teis += tei_count
+                    logger.info(f"  Fetched TEIs: {tei_count}")
+                    if tei_count == 0:
+                        continue
+                    events_df = CSVIntegration.create_events_dataframe(
+                        tei_data, NID_PROGRAM_UID, orgunit_names,
+                    )
+                    patient_df = CSVIntegration.transform_events_to_patient_level(
+                        events_df, NID_PROGRAM_UID,
+                    )
+                    if patient_df.empty:
+                        continue
+                    patient_df = self._fix_o2_data(events_df, patient_df)
+                    patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
+                    patient_df, removed_teis = preprocess_nid_enrollment_dates(patient_df)
+                    if removed_teis:
+                        logger.warning(f"  Dropped {len(removed_teis)} TEI(s) with invalid enrollment dates")
 
-                patient_df["region_uid"] = region_uid
-                patient_df["region_name"] = region_name
+                    # Resolve region for this facility
+                    facility_name = orgunit_names.get(ouid, ouid)
+                    region_name = facility_to_region.get(facility_name)
+                    region_uid = region_by_name.get(region_name) if region_name else None
+                    patient_df["region_uid"] = region_uid or ""
+                    patient_df["region_name"] = region_name or ""
 
-                regional_filename = regional_output_filename(region_name)
-                regional_target = os.path.join(NID_DIR, regional_filename)
-                append_missing_teis(patient_df, regional_target, merge_mode=self.merge_mode)
+                    # Save to regional file
+                    if region_name:
+                        regional_filename = regional_output_filename(region_name)
+                        regional_target = os.path.join(NID_DIR, regional_filename)
+                        append_missing_teis(patient_df, regional_target, merge_mode=self.merge_mode)
 
-                all_region_patient_dfs.append(patient_df)
+                    all_region_patient_dfs.append(patient_df)
 
-            if not all_region_patient_dfs:
-                logger.warning("No NID data found")
-                return False
+                if not all_region_patient_dfs:
+                    logger.warning("No NID data found for the specified org units")
+                    return False
+                combined_df = pd.concat(all_region_patient_dfs, ignore_index=True)
+                combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="first")
+                national_target = os.path.join(NID_DIR, NATIONAL_OUTPUT_FILE)
+                append_missing_teis(combined_df, national_target, merge_mode=self.merge_mode)
+                logger.info(f"Updated national file with {len(combined_df)} TEIs from specified org units")
+            else:
+                logger.info("Fetching region list...")
+                regions = self.fetcher.fetch_all_regions()
+                if not regions:
+                    logger.error("No regions found")
+                    return False
 
-            combined_df = pd.concat(all_region_patient_dfs, ignore_index=True)
-            combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="first")
+                total_regions = len(regions)
+                for i, (region_uid, region_name) in enumerate(regions.items(), 1):
+                    logger.info("-" * 80)
+                    logger.info(f"[{i}/{total_regions}] Processing region: {region_name} ({region_uid})")
+                    tei_data = self.fetcher.fetch_program_data(
+                        NID_PROGRAM_UID, region_uid, "DESCENDANTS", 1000,
+                        program_start_date=prog_start, program_end_date=prog_end,
+                    )
+                    tei_count = len(tei_data.get("trackedEntityInstances", []))
+                    total_fetched_teis += tei_count
+                    logger.info(f"Fetched TEIs from region scope: {tei_count}")
+                    if tei_count == 0:
+                        continue
+                    events_df = CSVIntegration.create_events_dataframe(
+                        tei_data, NID_PROGRAM_UID, orgunit_names,
+                    )
+                    patient_df = CSVIntegration.transform_events_to_patient_level(
+                        events_df, NID_PROGRAM_UID,
+                    )
+                    if patient_df.empty:
+                        logger.warning(f"No patient-level rows in {region_name}")
+                        continue
+                    patient_df = self._fix_o2_data(events_df, patient_df)
+                    patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
+                    patient_df, removed_teis = preprocess_nid_enrollment_dates(patient_df)
+                    if removed_teis:
+                        logger.warning(f"  {region_name}: dropped {len(removed_teis)} TEI(s) with invalid enrollment dates")
+                    patient_df["region_uid"] = region_uid
+                    patient_df["region_name"] = region_name
+                    regional_filename = regional_output_filename(region_name)
+                    regional_target = os.path.join(NID_DIR, regional_filename)
+                    append_missing_teis(patient_df, regional_target, merge_mode=self.merge_mode)
+                    all_region_patient_dfs.append(patient_df)
 
-            national_target = os.path.join(NID_DIR, NATIONAL_OUTPUT_FILE)
-            append_missing_teis(combined_df, national_target, merge_mode=self.merge_mode)
+                if not all_region_patient_dfs:
+                    logger.warning("No NID data found")
+                    return False
+                combined_df = pd.concat(all_region_patient_dfs, ignore_index=True)
+                combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="first")
+                national_target = os.path.join(NID_DIR, NATIONAL_OUTPUT_FILE)
+                append_missing_teis(combined_df, national_target, merge_mode=self.merge_mode)
 
             logger.info("=" * 80)
             logger.info("NID FETCH COMPLETE")
@@ -488,6 +523,25 @@ class AutomatedLearningFacilitiesNIDPipeline:
             return False
 
 
+def _prompt_facility_numbers(orgunit_names: dict) -> list:
+    """Display numbered orgUnit list and return selected UIDs."""
+    items = sorted(orgunit_names.items(), key=lambda x: x[1])
+    print("\nAvailable facilities:")
+    print("-" * 60)
+    for idx, (uid, name) in enumerate(items, 1):
+        print(f"  {idx:>4}. {name} ({uid})")
+    print("-" * 60)
+    raw = input("\nEnter facility numbers separated by comma (e.g., 1,3,5): ").strip()
+    selected_indices = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            n = int(part)
+            if 1 <= n <= len(items):
+                selected_indices.add(n)
+    return [items[i - 1][0] for i in sorted(selected_indices)]
+
+
 def main() -> None:
     # Always prefer the repo .env for this command-line runner. This avoids
     # stale process or Windows environment variables shadowing recently edited
@@ -499,6 +553,12 @@ def main() -> None:
         nargs="?",
         default="",
         help="1/replace updates existing TEIs; 2/new_only appends only new TEIs.",
+    )
+    parser.add_argument(
+        "--facilities",
+        action="store_true",
+        default=False,
+        help="List all facilities, let user select by number, and fetch only those.",
     )
     args = parser.parse_args()
 
@@ -515,9 +575,25 @@ def main() -> None:
 
     enrollment_date_filters = prompt_enrollment_date_filter()
 
+    org_unit_ids = None
+    if args.facilities:
+        base_url = os.getenv("DHIS2_BASE_URL")
+        username = os.getenv("DHIS2_USERNAME")
+        password = os.getenv("DHIS2_PASSWORD")
+        temp_fetcher = DHIS2DataFetcher(base_url, username, password)
+        orgunit_names = temp_fetcher.fetch_orgunit_names()
+        if not orgunit_names:
+            print("No facilities found on DHIS2.")
+            raise SystemExit(1)
+        org_unit_ids = _prompt_facility_numbers(orgunit_names)
+        if not org_unit_ids:
+            print("No facilities selected.")
+            raise SystemExit(0)
+
     pipeline = AutomatedLearningFacilitiesNIDPipeline(
         merge_mode=merge_mode,
         enrollment_date_filters=enrollment_date_filters,
+        org_unit_ids=org_unit_ids,
     )
     success = pipeline.run_pipeline()
     raise SystemExit(0 if success else 1)
