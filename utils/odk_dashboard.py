@@ -71,7 +71,7 @@ CIS_BUNDLE_INDICATORS = [
     ),
     (
         "NICU-nicu5",
-        "% Normothermic at admission (36.5â€“37.5C)",
+        "% Normothermic at admission (36.5-37.5C)",
         "Baby's body temperature is between 36.5 and 37.5 degree Celsius at admission",
         "Normal temperature at admission (Yes)",
         "Admission temperature recorded (Answered)",
@@ -79,7 +79,7 @@ CIS_BUNDLE_INDICATORS = [
 ]
 
 
-# ðŸ”¥ OPTIMIZATION: Cache forms listing for 1 hour
+# Cache forms listing for 1 hour
 @st.cache_data(ttl=3600, show_spinner=False)
 def list_forms_cached(odk_project_id: str | int | None = None):
     """Cached version of forms listing"""
@@ -240,6 +240,125 @@ def _normalize_entity_text(value) -> str:
         if raw.isdigit():
             return raw
     return text
+
+
+MENTORSHIP_FACILITY_CODE_TO_NAME = {
+    "1": "Adama RH",
+    "2": "Olenchiti PH",
+    "3": "Batu GH",
+    "4": "Meki PH",
+    "6": "Felegehiwot CSH",
+    "7": "Enjibara GH",
+    "8": "Merawi PH",
+    "9": "Dangla PH",
+    "11": "Ayder CSH",
+    "12": "Adigudom PH",
+    "13": "Mekelle GH",
+    "14": "Hagereselam PH",
+    "15": "Adigrat general hospital",
+    "16": "Adishu primary hospital",
+    "17": "Lemlem Karl general hospital hospital",
+    "18": "Mekoni primary hospital",
+    "19": "Quiha general hospital",
+    "20": "Wukro general hospital",
+    "21": "Abyi-adi general hospital",
+    "22": "Adwa general hospital",
+    "23": "Axum referral hospital",
+    "24": "Jimma CSH",
+    "25": "Shenan Gibe GH",
+    "26": "Limmu Genat GH",
+    "27": "Agaro GH",
+    "28": "Dr Tsegay G/her primary hospital",
+    "29": "Edaga-arbi primary hospital",
+    "30": "Freweyni primary hospital",
+    "31": "Hawzen primary hospital",
+    "32": "Meles primary hospital",
+    "33": "Selekleka primary hospital",
+    "34": "St. mary general hospital",
+    "35": "Suhul general hospital",
+    "36": "Wukromaray primary hospital",
+    "37": "Yechila primary hospital",
+    "38": "Endabaguna primary hospital",
+    "40": "Seka Chekorsa Primary Hospital",
+    "41": "Dedo Primary Hospital",
+    "42": "Asela Teaching Hospital",
+    "43": "Bokoji Primary Hospital",
+    "44": "Kersa Primary Hospital",
+    "45": "Huruta primary hospital",
+    "46": "Robe Dida General Hospital",
+    "47": "Shashamane Specialized",
+    "48": "Melka Oda General Hospital",
+    "49": "Dodola General Hospital",
+    "50": "Loke Ada Primary Hospital",
+    "51": "Arsi Negele Primary Hospital",
+    "52": "Ambo university Hospital",
+    "53": "Ambo General Hospital",
+    "54": "Gedo General Hospital",
+    "55": "Ginchi Primary Hospitals",
+    "56": "Guder Primary Hospital",
+    "58": "Hawassa University CSH",
+    "59": "Adare GH",
+    "60": "Tula PH",
+    "61": "Dorebafano PH",
+    "63": "Aleta Wondo PH",
+    "64": "Bona GH",
+    "65": "Daye GH",
+    "66": "Leku GH",
+    "67": "Yirgalem GH",
+    "68": "Arba Minch General Hospital",
+    "69": "Butajira GH",
+    "70": "Dilla Referral Hospital",
+    "71": "Dr.Bogalech Memorial GH",
+    "72": "Gebre Tsadik shawo GH",
+    "73": "Halaba GH",
+    "74": "Jinka General Hospital",
+    "75": "Mizan tepi teacing Hospital",
+    "76": "Nigist Eleni M/M/referral Hospital",
+    "77": "Sawla General General Hospital",
+    "78": "Tepi General Hospital",
+    "79": "Tercha General Hospital",
+    "80": "Welkite University Specialized Teaching Hospital",
+    "81": "Wolayta dsodo T and R Hospital",
+    "82": "Worabe CSH",
+    "84": "Dubti RH",
+    "85": "Ayssaita GH",
+    "88": "Tibebe Ghion teaching referral hospital",
+    "89": "Addis Alem Primary Hospital",
+    "90": "Durbetie Primary hospital",
+    "91": "Burie Aserade primary hospital",
+    "92": "Fenote selam General Hospital",
+    "93": "Chagni Primary Hospital",
+    "94": "Debere Markos comprehensive referral hospital",
+    "95": "Lumamie Primary Hospital",
+    "96": "Dejen Primary Hospital",
+    "97": "Debere birhan comprehensive referral hospital",
+    "98": "Deberesina Primary Hospital",
+    "99": "Deneba Primary Hospital",
+    "100": "Deberetabor comprehensive referral hospital",
+    "101": "Addis Zemen Primary Hospital",
+    "102": "Dessie comprehensive referral hospital",
+    "103": "Haik Primary Hospital",
+    "104": "Boru meda General Hospital",
+    "105": "Woldia comprehensive referral hospital",
+    "106": "Habiru Primary Hospital",
+    "107": "Kobo Primary Hospital",
+    "109": "Korem primary hospital",
+    "110": "Alamata general hospital",
+    "111": "Samre Primary hospital",
+    "112": "Lekatit 11 primary hospital",
+    "113": "Mulu Assefa primary hospital",
+    "114": "Birshewa primay hospital",
+    "115": "Semema primary hospital",
+    "116": "Mayni general hospital",
+    "117": "May tsebri primary hospital",
+    "118": "Dewhan primary hospital",
+    "119": "Adi daero primary hospital",
+}
+
+
+def _display_mentorship_facility(value) -> str:
+    code_or_name = _normalize_entity_text(value)
+    return MENTORSHIP_FACILITY_CODE_TO_NAME.get(code_or_name, code_or_name)
 
 
 def _get_region_code_to_name_mapping() -> dict[str, str]:
@@ -926,7 +1045,7 @@ def render_mentorship_analysis_dashboard():
             else:
                 work_df = df.copy()
                 work_df["region_code"] = work_df["region"].apply(_normalize_region_code)
-                work_df["hospital"] = work_df["hospital"].apply(_normalize_entity_text)
+                work_df["hospital"] = work_df["hospital"].apply(_display_mentorship_facility)
                 work_df["round"] = work_df["round"].astype(str).str.strip()
                 for score_col in score_cols:
                     work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce")
@@ -956,7 +1075,7 @@ def render_mentorship_analysis_dashboard():
             else:
                 work_df = df.copy()
                 work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
-                work_df["hospital"] = work_df["reg-hospital"].apply(_normalize_entity_text)
+                work_df["hospital"] = work_df["reg-hospital"].apply(_display_mentorship_facility)
                 work_df["round"] = work_df["reg-round"].astype(str).str.strip()
                 for score_col in score_cols:
                     work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce")
@@ -990,7 +1109,7 @@ def render_mentorship_analysis_dashboard():
             else:
                 work_df = df.copy()
                 work_df["region_code"] = work_df[region_col].apply(_normalize_region_code)
-                work_df["hospital"] = work_df[hospital_col].apply(_normalize_entity_text)
+                work_df["hospital"] = work_df[hospital_col].apply(_display_mentorship_facility)
                 work_df["round"] = work_df[round_col].astype(str).str.strip()
                 work_df["unit"] = (
                     work_df[unit_col].astype(str).str.strip().replace({"1.0": "1", "2.0": "2"})
@@ -1022,7 +1141,7 @@ def render_mentorship_analysis_dashboard():
             else:
                 work_df = df.copy()
                 work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
-                work_df["hospital"] = work_df["reg-hospital"].apply(_normalize_entity_text)
+                work_df["hospital"] = work_df["reg-hospital"].apply(_display_mentorship_facility)
                 work_df["round"] = work_df["reg-round"].astype(str).str.strip()
                 has_any_indicator_answer = ~work_df[indicator_source_cols].apply(_blank_like_mask)
                 work_df = work_df[has_any_indicator_answer.any(axis=1)].copy()
@@ -1060,7 +1179,7 @@ def render_mentorship_analysis_dashboard():
             else:
                 work_df = df.copy()
                 work_df["region_code"] = work_df["region"].apply(_normalize_region_code)
-                work_df["hospital"] = work_df["hospital"].apply(_normalize_entity_text)
+                work_df["hospital"] = work_df["hospital"].apply(_display_mentorship_facility)
                 work_df["round"] = work_df["round"].astype(str).str.strip()
                 cleaned_answers = work_df[all_indicator_cols].apply(
                     lambda col: col.astype(str).str.strip().str.lower()
@@ -1102,7 +1221,7 @@ def render_mentorship_analysis_dashboard():
             else:
                 work_df = df.copy()
                 work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
-                work_df["hospital"] = work_df["reg-hospital"].apply(_normalize_entity_text)
+                work_df["hospital"] = work_df["reg-hospital"].apply(_display_mentorship_facility)
                 work_df["round"] = work_df["reg-round"].astype(str).str.strip()
                 work_df["week"] = work_df["week"].apply(_normalize_entity_text)
                 work_df["unit"] = (
@@ -1178,10 +1297,10 @@ def display_odk_dashboard(user: dict = None):
         unsafe_allow_html=True,
     )
 
-    # ðŸ”¥ OPTIMIZATION: Get current user info directly from session state
+    # Get current user info directly from session state
     current_user = st.session_state.get("user", {})
     if not current_user:
-        st.warning("âš ï¸ Please log in to access data")
+        st.warning("Please log in to access data")
         return
 
     current_user_id = current_user.get("id", "anonymous")
@@ -1272,13 +1391,13 @@ def display_odk_dashboard(user: dict = None):
         except (TypeError, ValueError):
             is_afar_user = False
 
-    # ðŸ”¥ OPTIMIZATION: Create session state keys
+    # Create session state keys
     odk_data_key = f"odk_forms_data_{current_user_id}"
     afar_odk_data_key = f"odk_forms_data_afar_{current_user_id}"
     last_refresh_key = f"last_odk_refresh_{current_user_id}"
     user_tracker_key = "current_odk_user"
 
-    # ðŸ”¥ CRITICAL FIX: Check if user has changed
+    # Check if user has changed
     current_user_info = f"{current_user_id}_{current_region_id}_{current_role}"
 
     if user_tracker_key not in st.session_state:
@@ -1286,8 +1405,8 @@ def display_odk_dashboard(user: dict = None):
     else:
         previous_user_info = st.session_state[user_tracker_key]
         if previous_user_info != current_user_info:
-            # ðŸ”¥ USER CHANGED - CLEAR ALL OLD DATA
-            st.info(f"ðŸ”„ Loading data for {current_username}...")
+            # User changed - clear old data
+            st.info(f"Loading data for {current_username}...")
 
             # Clear ALL session data
             for key in list(st.session_state.keys()):
@@ -1314,7 +1433,7 @@ def display_odk_dashboard(user: dict = None):
 
     with col1:
         st.markdown(
-            '<div class="main-header">ðŸ“Š Integrated Mentorship Data</div>',
+            '<div class="main-header">Integrated Mentorship Data</div>',
             unsafe_allow_html=True,
         )
         st.markdown("**All available forms are automatically loaded below**")
@@ -1322,14 +1441,14 @@ def display_odk_dashboard(user: dict = None):
     with col2:
         st.markdown('<div class="action-buttons-container">', unsafe_allow_html=True)
 
-        if st.button("ðŸ”„ Refresh Data", use_container_width=True, type="primary"):
+        if st.button("Refresh Data", use_container_width=True, type="primary"):
             st.session_state[odk_data_key] = {}
             st.session_state[afar_odk_data_key] = {}
             st.session_state[last_refresh_key] = pd.Timestamp.now()
             st.rerun()
 
         # Download All button ALWAYS visible - no conditions
-        if st.button("ðŸ“¥ Download All", use_container_width=True, type="secondary"):
+        if st.button("Download All", use_container_width=True, type="secondary"):
             has_data = (
                 st.session_state.get(odk_data_key)
                 and len(st.session_state[odk_data_key]) > 0
@@ -1341,11 +1460,11 @@ def display_odk_dashboard(user: dict = None):
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ðŸ”¥ OPTIMIZATION: Load data only if needed
+    # Load data only if needed
     if (not st.session_state[odk_data_key]) or (
         is_afar_user and not st.session_state[afar_odk_data_key]
     ):
-        with st.spinner("â³ Loading forms data..."):
+        with st.spinner("Loading forms data..."):
             try:
                 # Fetch data once
                 odk_data = fetch_odk_data_for_user(current_user)
@@ -1356,16 +1475,16 @@ def display_odk_dashboard(user: dict = None):
                 st.session_state[afar_odk_data_key] = afar_forms_data
                 st.session_state[last_refresh_key] = pd.Timestamp.now()
 
-                st.success(f"âœ… Loaded {len(forms_data)} forms")
+                st.success(f"Loaded {len(forms_data)} forms")
 
             except Exception as e:
-                st.error(f"âŒ Failed to load data: {str(e)}")
+                st.error(f"Failed to load data: {str(e)}")
 
     # Show refresh info
     if st.session_state[last_refresh_key]:
         refresh_time = st.session_state[last_refresh_key].strftime("%Y-%m-%d %H:%M:%S")
         st.markdown(
-            f'<div class="auto-load-info">âœ… Last refresh: {refresh_time}</div>',
+            f'<div class="auto-load-info">Last refresh: {refresh_time}</div>',
             unsafe_allow_html=True,
         )
 
@@ -1378,7 +1497,7 @@ def display_odk_dashboard(user: dict = None):
     if top_forms_data and len(top_forms_data) > 0:
         display_forms_grid(top_forms_data, key_prefix="mentorship")
     else:
-        st.info("ðŸ“­ No forms data available. Click 'Refresh Data' to try again.")
+        st.info("No forms data available. Click 'Refresh Data' to try again.")
 
 
     # Afar mentorship section (Project 17) - STRICTLY for Afar regional users only
@@ -1403,13 +1522,13 @@ def display_forms_grid(
     key_prefix: str = "odk",
 ):
     """Display all loaded forms in an attractive grid layout"""
-    st.markdown(f"### ðŸ“‹ Available Forms ({len(forms_data)})")
+    st.markdown(f"### Available Forms ({len(forms_data)})")
 
     consistent_color = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
     cols = st.columns(2)
 
     for i, (form_id, df) in enumerate(forms_data.items()):
-        # ðŸ”¥ OPTIMIZATION: Get display name from cached forms
+        # Get display name from cached forms
         forms = list_forms_cached(odk_project_id)
         form_metadata = next((f for f in forms if f.get("xmlFormId") == form_id), {})
 
@@ -1451,11 +1570,11 @@ def display_form_card(
         st.markdown(
             f"""
         <div class="form-card" style="background: {color};">
-            <h3>ðŸ“„ {display_name}</h3>
+            <h3>{display_name}</h3>
             <div class="form-id">({form_id})</div>
             <div style="display: flex; gap: 8px; margin-bottom: 15px; margin-top: 10px;">
-                <span class="stats-badge">ðŸ“Š {len(df):,} records</span>
-                <span class="stats-badge">ðŸ“‹ {len(df.columns)} columns</span>
+                <span class="stats-badge">{len(df):,} records</span>
+                <span class="stats-badge">{len(df.columns)} columns</span>
             </div>
         </div>
         """,
@@ -1464,7 +1583,7 @@ def display_form_card(
 
         csv_data = convert_df_to_csv(df)
         st.download_button(
-            label="â¬‡ï¸ Download CSV",
+            label="Download CSV",
             data=csv_data,
             file_name=f"{form_id}.csv",
             mime="text/csv",
@@ -1489,7 +1608,7 @@ def download_all_forms(forms_data: Dict[str, pd.DataFrame]):
     zip_buffer.seek(0)
 
     st.download_button(
-        label="ðŸ“¥ Download All as ZIP",
+        label="Download All as ZIP",
         data=zip_buffer,
         file_name="forms.zip",
         mime="application/zip",

@@ -168,7 +168,7 @@ def _reprocess_saved_file(path: Path, dry_run: bool) -> None:
         df = pd.read_csv(path, dtype=str, keep_default_na=False)
         if df.empty:
             return
-        processed = assign_source_column(CSVIntegration.post_process_dataframe(df))
+        processed = CSVIntegration.post_process_dataframe(df)
         processed.to_csv(path, index=False, encoding="utf-8")
     except Exception as exc:
         print(f"[WARN] Failed to reprocess {path.name}: {exc}")
@@ -307,7 +307,7 @@ def _upsert_rows(
 
     if not overlap.empty:
         for col in all_cols:
-            if col == key_col:
+            if col in (key_col, "source"):
                 continue
             inc = incoming_idx.loc[overlap, col]
             non_missing = ~_is_missing(inc)

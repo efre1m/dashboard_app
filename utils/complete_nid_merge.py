@@ -10,9 +10,6 @@ print("=" * 80)
 print("NID TO NEWBORN APPEND - ONLY 5→1, OTHERS N/A")
 print("=" * 80)
 
-# Import assign_source_column to fix source after merge
-from add_source_column import assign_source_column
-
 # ==================== 1. PATHS ====================
 current_dir = os.path.dirname(os.path.abspath(__file__))
 nid_folder = os.path.join(current_dir, "imnid", "nid")
@@ -49,34 +46,22 @@ MAPPING = {
     "event_date_interventions": "event_date_nurse_followup_sheet",
     "event_date_interventions_cpap": "event_date_neonatal_referral_form",
     "event_date_discharge_and_final_diagnosis": "event_date_discharge_care_form",
-    "event_date_observations_and_nursing_care_2": "event_date_observations_and_nursing_care_2",
-    "event_observations_and_nursing_care_2": "event_observations_and_nursing_care_2",
     # Admission data
     "date_of_admission_admission_information": "date_of_admission_n_nicu_admission_careform",
     "birth_location_admission_information": "place_of_delivery_nicu_admission_careform",
     "temperature_on_admission_degc_observations_and_nursing_care_1": "temp_at_admission_nicu_admission_careform",
     "birth_weight_grams_maternal_birth_and_infant_details": "birth_weight_n_nicu_admission_careform",
     "weight_on_admission_admission_information": "weight_at_admission_n_nicu_admission_careform",
-    "time_of_birth_admission_information": "time_of_birth_admission_information",
-    "time_of_admission_admission_information": "time_of_admission_admission_information",
     "were_antibiotics_administered?_interventions": "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform",
     # Interventions
     "kmc_administered_interventions": "kmc_done_nurse_followup_sheet",
     "cpap_administered_interventions": "baby_placed_on_cpap_neonatal_referral_form",
-    "cpap_1_start_date_interventions": "cpap_1_start_date_interventions",
-    "cpap_1_start_time_interventions": "cpap_1_start_time_interventions",
-    "type_of_cpap_machine_used_interventions": "type_of_cpap_machine_used_interventions",
     # Discharge data
     "newborn_status_at_discharge_discharge_and_final_diagnosis": "newborn_status_at_discharge_n_discharge_care_form",
     "discharge_weight_grams_discharge_and_final_diagnosis": "weight_on_discharge_discharge_care_form",
     "sub_categories_of_infection_discharge_and_final_diagnosis": "sub_categories_of_infection_n_discharge_care_form",
     # Observations & monitoring
     "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2": "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2",
-    "lowest_recorded_temperature_celsius_observations_and_nursing_care_2": "lowest_recorded_temperature_celsius_observations_and_nursing_care_2",
-    # New variables
-    "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1": "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1",
-    "was_blood_sugar_recorded_on_admission?_observations_and_nursing_care_1": "was_blood_sugar_recorded_on_admission?_observations_and_nursing_care_1",
-    "if_yes_kmc_start_date_interventions": "if_yes_kmc_start_date_interventions",
 }
 
 print(f"\n📋 Basic mapping: {len(MAPPING)} columns")
@@ -232,7 +217,6 @@ def append_nid_to_newborn(nid_path, newborn_path):
                     "event_date_nurse_followup_sheet",
                     "event_date_neonatal_referral_form",
                     "event_date_discharge_care_form",
-                    "event_date_observations_and_nursing_care_2",
                 ]
 
                 for event_col in event_date_cols:
@@ -256,9 +240,6 @@ def append_nid_to_newborn(nid_path, newborn_path):
             ].copy()
             combined_df = pd.concat([preserved_newborn, new_df], ignore_index=True)
             combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="last")
-
-            # Fix source column before saving
-            combined_df = assign_source_column(combined_df)
 
             # Save
             combined_df.to_csv(newborn_path, index=False)

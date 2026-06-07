@@ -24,7 +24,8 @@ EMR_SOURCE_VALUE = "EMR"
 EMR_FACILITY_UIDS = {
     "QSD7RkcT8v2",  # Axum Referral Hospital, Tigray
     "Q6ryvdOY3Tj",  # Tula Primary Hospital, Sidama
-    "WNzF8NcSHLu",  # Olenchity Primary Hospital
+    "WNzF8NcSHLu",  # Olenchity Primary Hospital, Oromia
+    "JlNXtEkqfJ8",  # Meki Primary Hospital, Oromia
 }
 EMR_FACILITY_NAMES = {
     "axum referral hospital",
@@ -33,6 +34,7 @@ EMR_FACILITY_NAMES = {
     "axum referral",
     "tula primary hospital",
     "olenchity primary hospital",
+    "meki primary hospital",
 }
 
 
