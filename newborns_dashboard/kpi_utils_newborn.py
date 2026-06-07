@@ -2829,12 +2829,12 @@ def render_mortality_cause_of_death_qoc_chart(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=1.25,
             xanchor="right",
             x=1,
             font=dict(size=11),
         ),
-        margin=dict(l=60, r=60, t=100, b=60),
+        margin=dict(l=60, r=60, t=160, b=60),
         yaxis=dict(
             title="Percentage (%)",
             range=[0, 100],
@@ -3041,12 +3041,12 @@ def _render_single_subcause_stack_chart(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=1.25,
             xanchor="right",
             x=1,
             font=dict(size=11),
         ),
-        margin=dict(l=60, r=60, t=100, b=60),
+        margin=dict(l=60, r=60, t=160, b=60),
         yaxis=dict(
             title="Percentage (%)",
             range=[0, 100],

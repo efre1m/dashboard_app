@@ -454,6 +454,7 @@ NEWBORN_KPI_COLUMN_REQUIREMENTS = {
         "orgUnit",
         "tei_id",
         "enrollment_date",
+        "source",
     ],
     # VITAL MONITORING
     "Temperature Taken at Admission (%)": [
@@ -1070,6 +1071,13 @@ def render_newborn_trend_chart_section(
             st.info("Warning: No denominator periods available for Newborn Coverage Rate.")
             return
 
+        # Derive source filter from numerator data (already filtered by source upstream)
+        source_filter = None
+        if "source" in working_df.columns:
+            source_vals = working_df["source"].dropna().unique().tolist()
+            if source_vals:
+                source_filter = source_vals
+
         # Precompute patient numerator keys (df may be empty; that's OK).
         numerator_df = working_df.copy()
         if not numerator_df.empty:
@@ -1130,11 +1138,11 @@ def render_newborn_trend_chart_section(
 
             if region_scope:
                 denominator = _sum_denominator_for_regions(
-                    den_long, region_scope, yearmonths=pdef["yearmonths"]
+                    den_long, region_scope, yearmonths=pdef["yearmonths"], source_filter=source_filter
                 )
             else:
                 denominator = _sum_denominator_for_facilities(
-                    den_long, facility_scope_names or [], yearmonths=pdef["yearmonths"]
+                    den_long, facility_scope_names or [], yearmonths=pdef["yearmonths"], source_filter=source_filter
                 )
 
             value = (numerator / denominator * 100) if denominator > 0 else 0.0
@@ -1476,6 +1484,12 @@ def render_newborn_comparison_chart(
                 st.info("Warning: No denominator periods available for Newborn Coverage Rate.")
                 return
 
+            source_filter = None
+            if "source" in df_to_use.columns:
+                source_vals = df_to_use["source"].dropna().unique().tolist()
+                if source_vals:
+                    source_filter = source_vals
+
             for facility_uid, facility_name in zip(facility_uids, display_names):
                 facility_df = df_to_use[df_to_use["orgUnit"] == facility_uid].copy()
 
@@ -1513,7 +1527,7 @@ def render_newborn_comparison_chart(
                         )
 
                     denominator = _sum_denominator_for_facilities(
-                        den_long, [facility_name], yearmonths=pdef["yearmonths"]
+                        den_long, [facility_name], yearmonths=pdef["yearmonths"], source_filter=source_filter
                     )
                     value = (numerator / denominator * 100) if denominator > 0 else 0.0
 
@@ -1738,6 +1752,12 @@ def render_newborn_comparison_chart(
                 st.info("Warning: No denominator periods available for Newborn Coverage Rate.")
                 return
 
+            source_filter = None
+            if "source" in df_to_use.columns:
+                source_vals = df_to_use["source"].dropna().unique().tolist()
+                if source_vals:
+                    source_filter = source_vals
+
             for region_name in region_names:
                 region_facility_uids = region_facility_mapping.get(region_name, [])
                 if not region_facility_uids:
@@ -1785,7 +1805,7 @@ def render_newborn_comparison_chart(
                         )
 
                     denominator = _sum_denominator_for_regions(
-                        den_long, [region_name], yearmonths=pdef["yearmonths"]
+                        den_long, [region_name], yearmonths=pdef["yearmonths"], source_filter=source_filter
                     )
                     value = (numerator / denominator * 100) if denominator > 0 else 0.0
 

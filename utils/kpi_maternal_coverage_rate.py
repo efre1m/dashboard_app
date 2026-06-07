@@ -135,6 +135,7 @@ def _wide_to_long_denominator(df_wide):
                 "yearmonth",
                 "year",
                 "denominator",
+                "source",
             ]
         )
 
@@ -143,6 +144,11 @@ def _wide_to_long_denominator(df_wide):
     # Column name normalization (handle minor naming differences)
     col_map = {c: str(c).strip() for c in wide.columns}
     wide = wide.rename(columns=col_map)
+
+    # Normalize source column name (handle 'Source', 'source', etc.)
+    source_col = next((c for c in wide.columns if c.lower() == "source"), None)
+    if source_col:
+        wide = wide.rename(columns={source_col: "source"})
 
     if "region_name" not in wide.columns or "org_unit_name" not in wide.columns:
         alt_region = next(
@@ -183,8 +189,11 @@ def _wide_to_long_denominator(df_wide):
         )
         return pd.DataFrame()
 
+    id_vars = ["region_name", "org_unit_name"]
+    if "source" in wide.columns:
+        id_vars.append("source")
     long_df = wide.melt(
-        id_vars=["region_name", "org_unit_name"],
+        id_vars=id_vars,
         value_vars=ym_cols,
         var_name="yearmonth",
         value_name="denominator",
@@ -302,9 +311,14 @@ def _resolve_facility_names(facility_uids, df=None):
     return names
 
 
-def _sum_denominator_for_facilities(den_df, facility_names, yearmonths=None, years=None):
+def _sum_denominator_for_facilities(den_df, facility_names, yearmonths=None, years=None, source_filter=None):
     if den_df is None or den_df.empty or not facility_names:
         return 0
+
+    if source_filter and "source" in den_df.columns:
+        den_df = den_df[den_df["source"].isin(source_filter)].copy()
+        if den_df.empty:
+            return 0
 
     norms = {_normalize_facility_key(n) for n in facility_names if n}
     if not norms:
@@ -388,9 +402,14 @@ def _infer_full_regions_for_selection(facility_uids, facilities_by_region):
     return None
 
 
-def _sum_denominator_for_regions(den_df, region_names, yearmonths=None, years=None):
+def _sum_denominator_for_regions(den_df, region_names, yearmonths=None, years=None, source_filter=None):
     if den_df is None or den_df.empty or not region_names:
         return 0
+
+    if source_filter and "source" in den_df.columns:
+        den_df = den_df[den_df["source"].isin(source_filter)].copy()
+        if den_df.empty:
+            return 0
 
     region_keys = {_normalize_region_key(r) for r in region_names if r}
     if not region_keys:
@@ -506,6 +525,13 @@ def get_numerator_denominator_for_maternal_coverage_rate(
     user = st.session_state.get("user", {}) or {}
     role = str(user.get("role") or "").lower()
 
+    # Determine source filter from numerator data (already filtered by source upstream)
+    source_filter = None
+    if "source" in working_df.columns:
+        source_vals = working_df["source"].dropna().unique().tolist()
+        if source_vals:
+            source_filter = source_vals
+
     denominator = 0
     if role in {"national", "regional"}:
         try:
@@ -526,13 +552,13 @@ def get_numerator_denominator_for_maternal_coverage_rate(
 
         if inferred_regions:
             denominator = _sum_denominator_for_regions(
-                den_long, inferred_regions, yearmonths=yearmonths, years=years
+                den_long, inferred_regions, yearmonths=yearmonths, years=years, source_filter=source_filter
             )
 
     if denominator == 0:
         facility_names = _resolve_facility_names(facility_uids, df=working_df)
         denominator = _sum_denominator_for_facilities(
-            den_long, facility_names, yearmonths=yearmonths, years=years
+            den_long, facility_names, yearmonths=yearmonths, years=years, source_filter=source_filter
         )
 
     value = (numerator / denominator * 100) if denominator > 0 else 0.0
