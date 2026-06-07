@@ -142,10 +142,6 @@ def assign_period(df: pd.DataFrame, date_col: str, period_label: str):
     if df.empty:
         return df
 
-    print(f"\n📅 assign_period: Creating '{period_label}' periods")
-    print(f"   Date range: {df[date_col].min()} to {df[date_col].max()}")
-    print(f"   Total rows: {len(df)}")
-
     # RESET any existing period columns
     for col in ["period", "period_display", "period_sort"]:
         if col in df.columns:
@@ -158,9 +154,6 @@ def assign_period(df: pd.DataFrame, date_col: str, period_label: str):
         )  # Display: 17 Jul 2025
         df["period_sort"] = df[date_col].dt.normalize()
 
-        print(f"   Created DAILY periods")
-        print(f"   Sample: {df['period_display'].head(3).tolist()}")
-
     elif period_label == "Weekly":
         # Calculate week start (Monday)
         df["week_start"] = df[date_col] - pd.to_timedelta(
@@ -170,9 +163,6 @@ def assign_period(df: pd.DataFrame, date_col: str, period_label: str):
         df["period_display"] = df["week_start"].apply(format_weekly_label)
         df["period_sort"] = df["week_start"]
 
-        print(f"   Created WEEKLY periods")
-        print(f"   Sample: {df['period_display'].head(3).tolist()}")
-
     elif period_label == "Monthly":
         # MONTHLY - Most important fix
         df["period"] = df[date_col].dt.strftime("%Y-%m")  # Sortable: 2025-07
@@ -181,28 +171,17 @@ def assign_period(df: pd.DataFrame, date_col: str, period_label: str):
         )  # Display: Jul-25 (NOT 25-Jul!)
         df["period_sort"] = df[date_col].dt.to_period("M").dt.start_time
 
-        print(f"   Created MONTHLY periods")
-        print(f"   Sample periods: {df['period_display'].head(5).tolist()}")
-        print(f"   Unique periods: {sorted(df['period_display'].unique())}")
-
     elif period_label == "Quarterly":
         df["period"] = df[date_col].dt.to_period("Q").astype(str)  # Sortable: 2025Q3
         df["period_display"] = df["period"].apply(format_quarterly_label)
         df["period_sort"] = df[date_col].dt.to_period("Q").dt.start_time
-
-        print(f"   Created QUARTERLY periods")
 
     else:  # Yearly
         df["period"] = df[date_col].dt.strftime("%Y")  # Sortable: 2025
         df["period_display"] = df["period"]  # Display: 2025
         df["period_sort"] = df[date_col].dt.to_period("Y").dt.start_time
 
-        print(f"   Created YEARLY periods")
-
     # Sort the dataframe by period_sort to ensure chronological order
     df = df.sort_values("period_sort")
 
-    print(
-        f"   ✅ Successfully created {len(df['period_display'].unique())} unique periods\n"
-    )
     return df
