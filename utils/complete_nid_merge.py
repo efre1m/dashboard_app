@@ -68,6 +68,16 @@ MAPPING = {
     "sub_categories_of_jaundice_pathological_discharge_and_final_diagnosis": "sub_categories_of_jaundice_pathological_n_discharge_care_form",
     # Observations & monitoring
     "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2": "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2",
+    # New direct pass-through columns
+    "time_of_birth_admission_information": "time_of_birth_admission_information",
+    "time_of_admission_admission_information": "time_of_admission_admission_information",
+    "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1": "was_oxygen_saturation_pct_recorded_on_admission?_observations_and_nursing_care_1",
+    "was_blood_sugar_recorded_on_admission?_observations_and_nursing_care_1": "was_blood_sugar_recorded_on_admission?_observations_and_nursing_care_1",
+    "cpap_1_start_date_interventions": "cpap_1_start_date_interventions",
+    "type_of_cpap_machine_used_interventions": "type_of_cpap_machine_used_interventions",
+    "cpap_1_start_time_interventions": "cpap_1_start_time_interventions",
+    "if_yes_kmc_start_date_interventions": "if_yes_kmc_start_date_interventions",
+    "lowest_recorded_temperature_celsius_observations_and_nursing_care_2": "lowest_recorded_temperature_celsius_observations_and_nursing_care_2",
 }
 
 print(f"\n📋 Basic mapping: {len(MAPPING)} columns")
