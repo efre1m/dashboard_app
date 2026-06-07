@@ -33,6 +33,7 @@ from newborns_dashboard.kpi_utils_newborn import (
     render_admitted_newborns_region_comparison_chart,
     MORTALITY_QOC_MARKER,
     render_mortality_cause_of_death_qoc_chart,
+    render_mortality_qoc_tabbed_chart,
 )
 
 # Import simplified functions with SINGLE TABLE DISPLAY
@@ -965,9 +966,9 @@ def render_newborn_trend_chart_section(
         )
         return
 
-    # SPECIAL HANDLING: Mortality Cause of Death QOC stacked chart
+    # SPECIAL HANDLING: Mortality Cause of Death QOC tabbed chart
     if kpi_selection == MORTALITY_QOC_MARKER:
-        render_mortality_cause_of_death_qoc_chart(
+        render_mortality_qoc_tabbed_chart(
             working_df,
             "Neonatal Cause of Death Distribution Rate (%)",
             bg_color,
@@ -1372,9 +1373,9 @@ def render_newborn_comparison_chart(
         )
         return
 
-    # SPECIAL HANDLING: Mortality Cause of Death QOC
+    # SPECIAL HANDLING: Mortality Cause of Death QOC tabbed chart
     if kpi_selection == MORTALITY_QOC_MARKER:
-        render_mortality_cause_of_death_qoc_chart(
+        render_mortality_qoc_tabbed_chart(
             df_to_use,
             "Neonatal Cause of Death Distribution Rate (%)",
             bg_color,

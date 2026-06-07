@@ -91,6 +91,131 @@ CAUSE_CATEGORIES = [
     ("Missing Reason", "#546E7A"),
 ]
 
+# ============== MORTALITY SUB-CAUSE CONSTANTS ==============
+
+SUBCAUSE_COL_CONGENITAL = "sub_categories_of_congenital_malformations_n_discharge_care_form"
+SUBCAUSE_COL_PREMATURITY = "sub_categories_of_prematurity_n_discharge_care_form"
+SUBCAUSE_COL_INFECTION = "sub_categories_of_infection_n_discharge_care_form"
+SUBCAUSE_COL_INTRAPARTUM = "sub_categories_of_intrapartum_related_n_discharge_care_form"
+SUBCAUSE_COL_JAUNDICE = "sub_categories_of_jaundice_pathological_n_discharge_care_form"
+
+CAUSE_MAIN_CODE = {
+    "Congenital Malformations": 1,
+    "Prematurity": 2,
+    "Infection": 3,
+    "Intrapartum-related": 4,
+    "Jaundice (Pathological)": 5,
+}
+
+CONGENITAL_SUBCAUSE_MAP = {
+    1: "Neural Tube Defects",
+    2: "Orofacial Cleft",
+    3: "Abdominal Defects",
+    4: "Talipes/Club Foot",
+    5: "Other Congenital",
+    6: "Congenital Cause But Not Able to Specify",
+    7: "Congenital Heart Defects",
+    8: "Chromosomal Disorders",
+}
+
+CONGENITAL_SUBCAUSE_CATEGORIES = [
+    ("Neural Tube Defects", "#8E44AD"),
+    ("Orofacial Cleft", "#D35400"),
+    ("Abdominal Defects", "#27AE60"),
+    ("Talipes/Club Foot", "#2980B9"),
+    ("Other Congenital", "#C0392B"),
+    ("Congenital Cause But Not Able to Specify", "#F39C12"),
+    ("Congenital Heart Defects", "#1ABC9C"),
+    ("Chromosomal Disorders", "#2C3E50"),
+    ("Missing Sub Cause", "#BDC3C7"),
+]
+
+INFECTION_SUBCAUSE_MAP = {
+    1: "Probable Sepsis",
+    2: "Culture-Positive Sepsis",
+    3: "Probable Meningitis",
+    4: "Culture-Positive Meningitis",
+    5: "Pneumonia",
+    6: "Tetanus",
+    7: "SARS-CoV-2 (COVID-19)",
+    8: "Other Infection",
+    9: "Infection Cause But Not Able to Specify",
+}
+
+INFECTION_SUBCAUSE_CATEGORIES = [
+    ("Probable Sepsis", "#8E44AD"),
+    ("Culture-Positive Sepsis", "#C0392B"),
+    ("Probable Meningitis", "#2980B9"),
+    ("Culture-Positive Meningitis", "#27AE60"),
+    ("Pneumonia", "#D35400"),
+    ("Tetanus", "#1ABC9C"),
+    ("SARS-CoV-2 (COVID-19)", "#E74C3C"),
+    ("Other Infection", "#F39C12"),
+    ("Infection Cause But Not Able to Specify", "#7F8C8D"),
+    ("Missing Sub Cause", "#BDC3C7"),
+]
+
+INTRAPARTUM_SUBCAUSE_MAP = {
+    1: "Neonatal Hypoxic Ischemic Encephalopathy",
+    2: "Meconium Aspiration",
+    3: "Birth Injury (Intrapartum-related)",
+    4: "Other Intrapartum-Related",
+    5: "Intrapartum-Related Cause But Not Able to Specify",
+}
+
+INTRAPARTUM_SUBCAUSE_CATEGORIES = [
+    ("Neonatal Hypoxic Ischemic Encephalopathy", "#E74C3C"),
+    ("Meconium Aspiration", "#3498DB"),
+    ("Birth Injury (Intrapartum-related)", "#F39C12"),
+    ("Other Intrapartum-Related", "#2ECC71"),
+    ("Intrapartum-Related Cause But Not Able to Specify", "#8E44AD"),
+    ("Missing Sub Cause", "#BDC3C7"),
+]
+
+JAUNDICE_SUBCAUSE_MAP = {
+    1: "Requiring Phototherapy",
+    2: "Requiring Exchange Transfusion",
+}
+
+JAUNDICE_SUBCAUSE_CATEGORIES = [
+    ("Requiring Phototherapy", "#F39C12"),
+    ("Requiring Exchange Transfusion", "#E74C3C"),
+    ("Missing Sub Cause", "#BDC3C7"),
+]
+
+PREMATURITY_SUBCAUSE_MAP = {
+    1: "Respiratory Distress Syndrome (of Prematurity)",
+    2: "Intraventricular Haemorrhage",
+    3: "Necrotizing Enterocolitis",
+    4: "Other Prematurity",
+    5: "Prematurity Cause But Not Able to Specify",
+}
+
+PREMATURITY_SUBCAUSE_CATEGORIES = [
+    ("Respiratory Distress Syndrome (of Prematurity)", "#8E44AD"),
+    ("Intraventricular Haemorrhage", "#E74C3C"),
+    ("Necrotizing Enterocolitis", "#F39C12"),
+    ("Other Prematurity", "#3498DB"),
+    ("Prematurity Cause But Not Able to Specify", "#2ECC71"),
+    ("Missing Sub Cause", "#BDC3C7"),
+]
+
+SUBCAUSE_CONFIGS = [
+    ("Congenital Malformations", CAUSE_MAIN_CODE["Congenital Malformations"], SUBCAUSE_COL_CONGENITAL, CONGENITAL_SUBCAUSE_MAP, CONGENITAL_SUBCAUSE_CATEGORIES),
+    ("Prematurity", CAUSE_MAIN_CODE["Prematurity"], SUBCAUSE_COL_PREMATURITY, PREMATURITY_SUBCAUSE_MAP, PREMATURITY_SUBCAUSE_CATEGORIES),
+    ("Infection", CAUSE_MAIN_CODE["Infection"], SUBCAUSE_COL_INFECTION, INFECTION_SUBCAUSE_MAP, INFECTION_SUBCAUSE_CATEGORIES),
+    ("Intrapartum-related", CAUSE_MAIN_CODE["Intrapartum-related"], SUBCAUSE_COL_INTRAPARTUM, INTRAPARTUM_SUBCAUSE_MAP, INTRAPARTUM_SUBCAUSE_CATEGORIES),
+    ("Jaundice (Pathological)", CAUSE_MAIN_CODE["Jaundice (Pathological)"], SUBCAUSE_COL_JAUNDICE, JAUNDICE_SUBCAUSE_MAP, JAUNDICE_SUBCAUSE_CATEGORIES),
+]
+
+SUBCAUSE_TAB_LABELS = [
+    "Congenital Malformation Sub-Causes",
+    "Prematurity Sub-Causes",
+    "Infection Sub-Causes",
+    "Intrapartum-Related Sub-Causes",
+    "Jaundice Sub-Causes",
+]
+
 # ============== ANTIBIOTICS COLUMNS - COMMENTED OUT ==============
 # # Maternal medication during pregnancy and labor - value "1" means Antibiotics
 # MATERNAL_MEDICATION_COL = (
@@ -2778,6 +2903,260 @@ def render_mortality_cause_of_death_qoc_chart(
         )
 
 
+# ============== SUB-CAUSE OF DEATH STACKED CHART HELPERS ==============
+
+def _get_subcause_category(cause_val, subcause_map):
+    """Map a numeric sub-cause code to a category label, handling missing values."""
+    if pd.isna(cause_val):
+        return "Missing Sub Cause"
+    try:
+        v = int(cause_val)
+        return subcause_map.get(v, "Missing Sub Cause")
+    except (ValueError, TypeError):
+        return "Missing Sub Cause"
+
+
+def _render_single_subcause_stack_chart(
+    working_df,
+    subcause_col,
+    subcause_map,
+    subcause_categories,
+    main_cause_code,
+    chart_title,
+    bg_color,
+    text_color,
+    date_range_filters,
+):
+    """Render a 100% stacked bar chart for sub-causes within one main cause category."""
+    from utils.time_filter import assign_period
+
+    status_col = "newborn_status_at_discharge_n_discharge_care_form"
+    cause_col = "final_discharge_diagnosis_cause_of_death_discharge_care_form"
+
+    if subcause_col not in working_df.columns:
+        st.warning(f"\u26a0\ufe0f Sub-cause column not found: {subcause_col}")
+        return
+
+    working_df = working_df.copy()
+
+    status_numeric = pd.to_numeric(working_df[status_col], errors="coerce")
+    cause_numeric = pd.to_numeric(working_df[cause_col], errors="coerce")
+    working_df = working_df[(status_numeric == 0) & (cause_numeric == main_cause_code)].copy()
+
+    if working_df.empty:
+        st.info("\u2139\ufe0f No death records found for this cause category.")
+        return
+
+    working_df["event_date"] = pd.to_datetime(
+        working_df["enrollment_date"], errors="coerce"
+    )
+
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+            working_df = working_df[
+                (working_df["event_date"] >= start_dt)
+                & (working_df["event_date"] < end_dt)
+            ].copy()
+
+    working_df = working_df[working_df["event_date"].notna()].copy()
+    if working_df.empty:
+        st.info("\u2139\ufe0f No records for the selected date range.")
+        return
+
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        working_df = assign_period(working_df, "event_date", period_label)
+    except Exception:
+        st.error("Error assigning periods")
+        return
+
+    rev_map = {v: k for k, v in subcause_map.items()}
+    cat_names = [c[0] for c in subcause_categories]
+
+    working_df["subcause_category"] = working_df[subcause_col].apply(
+        lambda x: _get_subcause_category(x, subcause_map)
+    )
+
+    unique_periods = working_df[["period_display", "period_sort"]].drop_duplicates()
+    unique_periods = unique_periods.sort_values("period_sort")
+    periods = unique_periods["period_display"].tolist()
+
+    all_data = []
+    for _, row_data in unique_periods.iterrows():
+        period_display = row_data["period_display"]
+        period_df = working_df[working_df["period_display"] == period_display]
+        total = len(period_df)
+        row = {"period_display": period_display, "period_sort": row_data["period_sort"], "total": total}
+        for cat_name in cat_names:
+            count = int((period_df["subcause_category"] == cat_name).sum())
+            pct = (count / total * 100) if total > 0 else 0.0
+            row[f"{cat_name}_count"] = count
+            row[f"{cat_name}_pct"] = pct
+        all_data.append(row)
+
+    if not all_data:
+        st.info("\u26a0\ufe0f No period data available.")
+        return
+
+    agg_df = pd.DataFrame(all_data)
+    agg_df = agg_df.sort_values("period_sort")
+
+    fig = go.Figure()
+    for cat_name, cat_color in subcause_categories:
+        pct_col = f"{cat_name}_pct"
+        count_col = f"{cat_name}_count"
+        fig.add_trace(go.Bar(
+            name=cat_name,
+            x=agg_df["period_display"],
+            y=agg_df[pct_col],
+            marker_color=cat_color,
+            text=[f"{v:.1f}%" for v in agg_df[pct_col]],
+            textposition="inside",
+            textfont=dict(color="white", size=10),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                f"{cat_name}<br>"
+                "Percentage: %{y:.1f}%%<br>"
+                "Count: %{customdata[0]}<br>"
+                "Total Deaths: %{customdata[1]}<br>"
+                "<extra></extra>"
+            ),
+            customdata=agg_df[[count_col, "total"]].values,
+            cliponaxis=False,
+        ))
+
+    fig.update_layout(
+        title=chart_title,
+        barmode="stack",
+        barnorm="percent",
+        height=500,
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=11),
+        ),
+        margin=dict(l=60, r=60, t=100, b=60),
+        yaxis=dict(
+            title="Percentage (%)",
+            range=[0, 100],
+            dtick=20,
+            ticksuffix="%",
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        ),
+        xaxis=dict(
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,
+            tickangle=-45,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    chart_label = chart_title if chart_title else "Sub-Cause Distribution"
+    st.subheader(f"\U0001f4ca {chart_label} - Data Table")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+
+    table_data = []
+    for _, r in agg_df.iterrows():
+        row = {"Period": r["period_display"]}
+        for cat_name in cat_names:
+            cnt = int(r[f"{cat_name}_count"])
+            den = int(r["total"])
+            pct = r[f"{cat_name}_pct"]
+            row[cat_name] = f"{pct:.1f}% ({cnt}/{den})" if den > 0 else "-"
+        table_data.append(row)
+
+    overall_row = {"Period": "Overall"}
+    for cat_name in cat_names:
+        total_cnt = int(agg_df[f"{cat_name}_count"].sum())
+        total_den = int(agg_df["total"].sum())
+        overall_pct = (total_cnt / total_den * 100) if total_den > 0 else 0.0
+        overall_row[cat_name] = f"{overall_pct:.1f}% ({total_cnt}/{total_den})" if total_den > 0 else "-"
+    table_data.append(overall_row)
+
+    table_df = pd.DataFrame(table_data)
+    st.dataframe(table_df, use_container_width=True, height=300)
+
+    main_cause_name = chart_title.replace("Sub-Causes of ", "") if chart_title else ""
+    with st.expander(f"\u2139\ufe0f Indicator Information \u2014 {chart_title}"):
+        st.markdown(
+            f"""
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <p><b>{chart_title}</b></p>
+            <ul>
+              <li><b>Numerator:</b> Number of neonatal deaths for each sub-cause category within {main_cause_name}.</li>
+              <li><b>Denominator:</b> Total number of neonatal deaths attributed to {main_cause_name}.</li>
+            </ul>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_mortality_qoc_tabbed_chart(
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render the Mortality Quality of Care section with tabs for main cause + sub-causes."""
+    tab_labels = [
+        "Main Causes of Neonatal Death",
+    ] + SUBCAUSE_TAB_LABELS
+
+    tabs = st.tabs(tab_labels)
+
+    with tabs[0]:
+        render_mortality_cause_of_death_qoc_chart(
+            working_df,
+            "Neonatal Cause of Death Distribution Rate (%)",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters,
+        )
+
+    for idx, (main_name, main_code, sub_col, sub_map, sub_cats) in enumerate(SUBCAUSE_CONFIGS):
+        with tabs[idx + 1]:
+            _render_single_subcause_stack_chart(
+                working_df,
+                sub_col,
+                sub_map,
+                sub_cats,
+                main_code,
+                f"Sub-Causes of {main_name}",
+                bg_color,
+                text_color,
+                date_range_filters,
+            )
+
+
 # ---------------- Export all functions ----------------
 __all__ = [
     # Cache functions
@@ -2844,4 +3223,25 @@ __all__ = [
     "CAUSE_CATEGORIES",
     "_get_cause_category",
     "render_mortality_cause_of_death_qoc_chart",
+    # Mortality Sub-Cause QOC
+    "SUBCAUSE_COL_CONGENITAL",
+    "SUBCAUSE_COL_PREMATURITY",
+    "SUBCAUSE_COL_INFECTION",
+    "SUBCAUSE_COL_INTRAPARTUM",
+    "SUBCAUSE_COL_JAUNDICE",
+    "CAUSE_MAIN_CODE",
+    "CONGENITAL_SUBCAUSE_MAP",
+    "CONGENITAL_SUBCAUSE_CATEGORIES",
+    "INFECTION_SUBCAUSE_MAP",
+    "INFECTION_SUBCAUSE_CATEGORIES",
+    "INTRAPARTUM_SUBCAUSE_MAP",
+    "INTRAPARTUM_SUBCAUSE_CATEGORIES",
+    "JAUNDICE_SUBCAUSE_MAP",
+    "JAUNDICE_SUBCAUSE_CATEGORIES",
+    "PREMATURITY_SUBCAUSE_MAP",
+    "PREMATURITY_SUBCAUSE_CATEGORIES",
+    "SUBCAUSE_CONFIGS",
+    "SUBCAUSE_TAB_LABELS",
+    "_get_subcause_category",
+    "render_mortality_qoc_tabbed_chart",
 ]
