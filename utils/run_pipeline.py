@@ -45,11 +45,13 @@ def main():
 
     try:
         # Import from the same directory
-        from dhis2_fetcher import run_automated_pipeline
+        from dhis2_fetcher import prompt_program_selection, run_automated_pipeline
 
         print("✅ Import successful")
         print("🚀 Starting pipeline...")
         print()
+
+        programs_to_run = prompt_program_selection()
 
         facility_selection = args.facilities
         if "--facilities" in sys.argv and args.facilities is None:
@@ -59,6 +61,7 @@ def main():
         success = run_automated_pipeline(
             facility_selection=facility_selection,
             merge_mode=args.merge_mode,
+            programs_to_run=programs_to_run,
         )
 
         print()

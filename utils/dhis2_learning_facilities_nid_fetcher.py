@@ -2,8 +2,8 @@ import os
 import sys
 import traceback
 import argparse
-from datetime import datetime
-from typing import Dict, List, Set
+from datetime import date, datetime, timedelta
+from typing import List
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -15,8 +15,6 @@ from dhis2_fetcher import (
     DHIS2DataFetcher,
     DEFAULT_OUTPUT_DIR,
     logger,
-    normalize_selection_text,
-    select_facilities_from_cli,
 )
 
 
@@ -28,42 +26,6 @@ ADDITIONAL_O2_DATAELEMENT_NAME = "Lowest recorded oxygen saturation (%)"
 OBS_STAGE_UID = "VsVlpG1V2ub"  # Observations And Nursing Care 2
 
 NID_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "nid")
-
-LEARNING_FACILITIES_BY_REGION = {
-    "afar": [],  # Empty list means include all facilities in this region
-    "tigray": [
-        "Adigudom primary hospital",
-        "Hagereselam primary hospital",
-        "Mekelle General Hospital",
-        "Ayder referral hospital",
-    ],
-    "oromia": [
-        "Adama Teaching Hospital",
-        "Batu Primary Hospital",
-        "Meki Primary Hospital",
-        "Olenchity Primary Hospital",
-    ],
-    "amhara": [
-        "Merawi PH",
-        "Felegehiwot Referral",
-        "Dangela PH",
-        "Injibara General Hospital",
-    ],
-    "sidama": [
-        "Adare GH",
-        "Hawassa U/CSH",
-        "Dore Bafano Primary hospital",
-        "Tula Primary Hospital",
-    ],
-}
-
-REGIONAL_OUTPUT_FILES = {
-    "afar": "regional_Afar_newborn_nid.csv",
-    "tigray": "regional_Tigray_newborn_nid.csv",
-    "oromia": "regional_Oromia_newborn_nid.csv",
-    "amhara": "regional_Amhara_newborn_nid.csv",
-    "sidama": "regional_Sidama_newborn_nid.csv",
-}
 
 NATIONAL_OUTPUT_FILE = "national_newborn_nid.csv"
 
@@ -94,7 +56,11 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Interventions",
     },
     "TOicTEwzSGj": {
-        "data_elements": ["vmOAGuFcaz4", "yBCwmQP0A6a", "wn0tHaHcceW"],
+        "data_elements": [
+            "vmOAGuFcaz4", "yBCwmQP0A6a", "wn0tHaHcceW",
+            "X2m8NB1P83P", "EClz4eZuxH2", "VCatFN4N9wD",
+            "o1sbIt5YJ8b", "t2iHoRMo5hn",
+        ],
         "program_stage_name": "Discharge And Final Diagnosis",
     },
     "VsVlpG1V2ub": {
@@ -121,7 +87,12 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     "yBCwmQP0A6a": "Discharge Weight (grams)",
     "nIKIu6f5vbW": "lowest recorded temperature (Celsius)",
     "sxtsEDilKZd": "Were antibiotics administered?",
+    "X2m8NB1P83P": "Primary Category",
+    "EClz4eZuxH2": "Sub-Categories of Congenital Malformations",
+    "VCatFN4N9wD": "Sub-Categories of Prematurity",
     "wn0tHaHcceW": "Sub-Categories of Infection",
+    "o1sbIt5YJ8b": "Sub-Categories of Intrapartum-Related",
+    "t2iHoRMo5hn": "Sub-Categories of Jaundice (Pathological)",
     "A94ibeuO9GL": "Blood culture for suspected sepsis",
     "CzIgD0rsk52": "Birth weight (grams)",
     "p2GxXHvzlnC": "Time of Birth",
@@ -136,26 +107,43 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
 }
 
 
-def normalize(text: str) -> str:
-    return " ".join(str(text or "").strip().lower().replace("/", " ").split())
+def prompt_enrollment_date_filter() -> dict:
+    """Prompt user for enrollment date filter and return start/end date strings."""
+    print("\nSelect enrollment date filter mode:")
+    print("  1. Between two dates")
+    print("  2. Before a date (exclusive)")
+    print("  3. After a date (exclusive)")
+    print("  4. No filter")
+    choice = input("Enter choice (1-4): ").strip()
+
+    if choice == "1":
+        start = input("Enter start date (YYYY-MM-DD): ").strip()
+        end = input("Enter end date (YYYY-MM-DD): ").strip()
+        print(f"  => Enrollment Date >= {start}, Enrollment Date <= {end}")
+        return {"program_start_date": start, "program_end_date": end, "mode": "between"}
+    elif choice == "2":
+        before = input("Enter before date (YYYY-MM-DD) – enrollments strictly before this date: ").strip()
+        # Shift one day back so DHIS2 inclusive filter effectively excludes the given date
+        dt = datetime.strptime(before, "%Y-%m-%d") - timedelta(days=1)
+        end = dt.strftime("%Y-%m-%d")
+        print(f"  => Enrollment Date < {before} (API: Enrollment Date <= {end})")
+        return {"program_start_date": None, "program_end_date": end, "mode": "before"}
+    elif choice == "3":
+        after = input("Enter after date (YYYY-MM-DD) – enrollments strictly after this date: ").strip()
+        # Shift one day forward so DHIS2 inclusive filter effectively excludes the given date
+        dt = datetime.strptime(after, "%Y-%m-%d") + timedelta(days=1)
+        start = dt.strftime("%Y-%m-%d")
+        print(f"  => Enrollment Date > {after} (API: Enrollment Date >= {start})")
+        return {"program_start_date": start, "program_end_date": None, "mode": "after"}
+    else:
+        print("  => No enrollment date filter")
+        return {"program_start_date": None, "program_end_date": None, "mode": "none"}
 
 
 def regional_output_filename(region_name: str) -> str:
     clean_region = "".join(ch if ch.isalnum() or ch in " _-" else "" for ch in str(region_name))
     clean_region = "_".join(clean_region.replace("-", " ").split())
     return f"regional_{clean_region}_newborn_nid.csv"
-
-
-def build_facility_ids_by_region_from_selection(
-    facilities: List[Dict[str, str]]
-) -> Dict[str, Set[str]]:
-    region_facility_ids: Dict[str, Set[str]] = {}
-    for facility in facilities:
-        region_key = normalize(facility.get("region_name", ""))
-        if not region_key:
-            continue
-        region_facility_ids.setdefault(region_key, set()).add(facility.get("id"))
-    return region_facility_ids
 
 
 def ensure_additional_dataelement_mapping() -> None:
@@ -168,57 +156,88 @@ def ensure_additional_dataelement_mapping() -> None:
     logger.info("Applied expected newborn stage mapping and data element names (including oxygen saturation)")
 
 
-def fetch_learning_facilities(fetcher: DHIS2DataFetcher) -> List[dict]:
-    url = f"{fetcher.base_url}/api/organisationUnits.json"
-    params = {
-        "level": 3,
-        "fields": "id,displayName,parent[id,name,displayName]",
-        "paging": False,
-    }
-    resp = fetcher.session.get(url, params=params, timeout=120)
-    resp.raise_for_status()
-    return resp.json().get("organisationUnits", [])
+def preprocess_nid_enrollment_dates(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Standardize enrollment dates that appear to be entered in Ethiopian Calendar.
 
+    For rows where enrollment_date < 2025-01-01:
+    1. Look for a valid date >= 2025-01-01 in any event_date_* column
+    2. If found, replace enrollment_date with that event date value
+    3. If no valid event date is found, try Ethiopian -> Gregorian conversion
+    4. If the converted date is in the future (> today), remove the row and log tei_id
 
-def build_learning_facility_ids_by_region(
-    fetcher: DHIS2DataFetcher,
-) -> Dict[str, Set[str]]:
-    facilities = fetch_learning_facilities(fetcher)
+    Returns (cleaned_df, list_of_removed_tei_ids).
+    """
+    if df.empty or "enrollment_date" not in df.columns:
+        return df, []
 
-    wanted = {
-        region: {normalize(name) for name in names}
-        for region, names in LEARNING_FACILITIES_BY_REGION.items()
-    }
+    df = df.copy()
+    removed_teis: List[str] = []
+    event_date_cols = [c for c in df.columns if c.startswith("event_date_")]
+    cutoff = date(2025, 1, 1)
 
-    region_facility_ids: Dict[str, Set[str]] = {k: set() for k in LEARNING_FACILITIES_BY_REGION}
+    def _parse(val: str):
+        if not val or val in ("N/A", "nan", ""):
+            return None
+        try:
+            v = val.split("T")[0].split(" ")[0]
+            p = v.split("-")
+            if len(p) != 3:
+                return None
+            return date(int(p[0]), int(p[1]), int(p[2]))
+        except Exception:
+            return None
 
-    for ou in facilities:
-        facility_name_norm = normalize(ou.get("displayName", ""))
-        parent = ou.get("parent") or {}
-        parent_name_norm = normalize(parent.get("displayName") or parent.get("name") or "")
+    for idx, row in df.iterrows():
+        raw_enc = str(row.get("enrollment_date", "")).strip()
+        if not raw_enc or raw_enc in ("N/A", "nan", ""):
+            continue
 
-        for region_key, names_norm in wanted.items():
-            if parent_name_norm != region_key:
-                continue
+        enc_date = _parse(raw_enc)
+        if enc_date is None:
+            continue
 
-            # Empty list => include all facilities in this region
-            if not names_norm:
-                region_facility_ids[region_key].add(ou.get("id"))
-            elif facility_name_norm in names_norm:
-                region_facility_ids[region_key].add(ou.get("id"))
+        # Already valid (>= Jan 2025), skip
+        if enc_date >= cutoff:
+            continue
 
-    for region_key, ids in region_facility_ids.items():
-        configured_count = len(LEARNING_FACILITIES_BY_REGION[region_key])
-        if configured_count == 0:
-            logger.info(
-                f"Facilities matched in {region_key.title()}: {len(ids)} (all region facilities included)"
-            )
-        else:
-            logger.info(
-                f"Learning facilities matched in {region_key.title()}: {len(ids)}/{configured_count}"
-            )
+        # Method 1: find a valid event_date_* >= cutoff
+        found = False
+        for col in event_date_cols:
+            evt = _parse(str(row.get(col, "")))
+            if evt is not None and evt >= cutoff:
+                df.at[idx, "enrollment_date"] = row[col]
+                found = True
+                break
+        if found:
+            continue
 
-    return region_facility_ids
+        # Method 2: Ethiopian -> Gregorian conversion
+        try:
+            gy_start = enc_date.year + 7
+            start_day = 12 if (enc_date.year - 1) % 4 == 3 else 11
+            start_gc = date(gy_start, 9, start_day)
+            days_off = (enc_date.month - 1) * 30 + (enc_date.day - 1)
+            gc_date = start_gc + timedelta(days=days_off)
+        except Exception:
+            continue
+
+        if gc_date > date.today():
+            removed_teis.append(str(row.get("tei_id", "")))
+            df.at[idx, "_remove"] = True
+            continue
+
+        df.at[idx, "enrollment_date"] = gc_date.strftime("%Y-%m-%dT00:00:00.000")
+
+    if "_remove" in df.columns:
+        n_before = len(df)
+        df = df[df["_remove"] != True].drop(columns=["_remove"])
+        logger.warning(
+            f"Preprocess: removed {len(removed_teis)} TEI(s) with future "
+            f"EC-converted enrollment date: {removed_teis}"
+        )
+
+    return df, removed_teis
 
 
 def append_missing_teis(source_df: pd.DataFrame, target_path: str, merge_mode: str = "replace") -> int:
@@ -300,8 +319,7 @@ class AutomatedLearningFacilitiesNIDPipeline:
         username: str = None,
         password: str = None,
         merge_mode: str = "replace",
-        selected_facilities: List[Dict[str, str]] = None,
-        use_all_facilities: bool = False,
+        enrollment_date_filters: dict = None,
     ):
         env_base_url = os.getenv("DHIS2_BASE_URL")
         env_username = os.getenv("DHIS2_USERNAME")
@@ -319,8 +337,7 @@ class AutomatedLearningFacilitiesNIDPipeline:
         self.username = username
         self.password = password
         self.merge_mode = merge_mode
-        self.selected_facilities = selected_facilities or []
-        self.use_all_facilities = use_all_facilities
+        self.enrollment_date_filters = enrollment_date_filters or {}
         self.fetcher = DHIS2DataFetcher(self.base_url, self.username, self.password)
 
     @staticmethod
@@ -379,110 +396,30 @@ class AutomatedLearningFacilitiesNIDPipeline:
                 logger.error("No regions found")
                 return False
 
-            region_name_to_uid = {normalize(name): uid for uid, name in regions.items()}
-
-            if self.use_all_facilities:
-                logger.info("Facility mode: all facilities")
-                selected_facilities = self.fetcher.fetch_facilities()
-                facility_ids_by_region = build_facility_ids_by_region_from_selection(
-                    selected_facilities
-                )
-            elif self.selected_facilities:
-                logger.info(f"Facility mode: {len(self.selected_facilities)} selected facilities")
-                facility_ids_by_region = build_facility_ids_by_region_from_selection(
-                    self.selected_facilities
-                )
-            else:
-                facility_ids_by_region = build_learning_facility_ids_by_region(self.fetcher)
-
             all_region_patient_dfs: List[pd.DataFrame] = []
             total_fetched_teis = 0
 
-            if self.selected_facilities:
-                for i, facility in enumerate(self.selected_facilities, 1):
-                    facility_uid = facility.get("id")
-                    facility_name = facility.get("name")
-                    region_uid = facility.get("region_uid")
-                    region_name = facility.get("region_name")
+            prog_start = self.enrollment_date_filters.get("program_start_date")
+            prog_end = self.enrollment_date_filters.get("program_end_date")
+            mode = self.enrollment_date_filters.get("mode", "none")
+            logger.info(f"Enrollment date filter mode: {mode}")
+            if prog_start:
+                logger.info(f"  program_start_date (enrollment >=): {prog_start}")
+            if prog_end:
+                logger.info(f"  program_end_date (enrollment <=): {prog_end}")
 
-                    logger.info("-" * 80)
-                    logger.info(
-                        f"Processing selected facility [{i}/{len(self.selected_facilities)}]: "
-                        f"{facility_name} ({region_name})"
-                    )
-
-                    tei_data = self.fetcher.fetch_program_data(
-                        NID_PROGRAM_UID,
-                        facility_uid,
-                        "SELECTED",
-                        1000,
-                    )
-                    tei_count = len(tei_data.get("trackedEntityInstances", []))
-                    total_fetched_teis += tei_count
-                    logger.info(f"Fetched TEIs from facility scope: {tei_count}")
-
-                    if tei_count == 0:
-                        continue
-
-                    events_df = CSVIntegration.create_events_dataframe(
-                        tei_data,
-                        NID_PROGRAM_UID,
-                        orgunit_names,
-                    )
-                    patient_df = CSVIntegration.transform_events_to_patient_level(
-                        events_df,
-                        NID_PROGRAM_UID,
-                    )
-
-                    if patient_df.empty:
-                        logger.warning(f"No patient-level rows in {facility_name}")
-                        continue
-
-                    patient_df = self._fix_o2_data(events_df, patient_df)
-                    patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
-                    patient_df["region_uid"] = region_uid
-                    patient_df["region_name"] = region_name
-
-                    regional_target = os.path.join(
-                        NID_DIR, regional_output_filename(region_name)
-                    )
-                    append_missing_teis(patient_df, regional_target, merge_mode=self.merge_mode)
-                    all_region_patient_dfs.append(patient_df)
-
-                if not all_region_patient_dfs:
-                    logger.warning("No selected facility data found to merge")
-                    return False
-
-                combined_df = pd.concat(all_region_patient_dfs, ignore_index=True)
-                combined_df = combined_df.drop_duplicates(subset=["tei_id"], keep="first")
-                national_target = os.path.join(NID_DIR, NATIONAL_OUTPUT_FILE)
-                append_missing_teis(combined_df, national_target, merge_mode=self.merge_mode)
-
-                logger.info("=" * 80)
-                logger.info("SELECTED FACILITIES NID FETCH + MERGE COMPLETE")
-                logger.info(f"Total TEIs fetched from facility scopes: {total_fetched_teis}")
-                logger.info(f"Combined unique TEIs: {combined_df['tei_id'].nunique()}")
-                logger.info("=" * 80)
-                return True
-
-            for region_key, facility_ids in facility_ids_by_region.items():
-                if not facility_ids:
-                    logger.warning(f"Skipping {region_key.title()}: no matching learning facilities found")
-                    continue
-
-                region_uid = region_name_to_uid.get(region_key)
-                if not region_uid:
-                    logger.warning(f"Skipping {region_key.title()}: region UID not found")
-                    continue
-
+            total_regions = len(regions)
+            for i, (region_uid, region_name) in enumerate(regions.items(), 1):
                 logger.info("-" * 80)
-                logger.info(f"Processing region: {region_key.title()} ({region_uid})")
+                logger.info(f"[{i}/{total_regions}] Processing region: {region_name} ({region_uid})")
 
                 tei_data = self.fetcher.fetch_program_data(
                     NID_PROGRAM_UID,
                     region_uid,
                     "DESCENDANTS",
                     1000,
+                    program_start_date=prog_start,
+                    program_end_date=prog_end,
                 )
                 tei_count = len(tei_data.get("trackedEntityInstances", []))
                 total_fetched_teis += tei_count
@@ -502,41 +439,32 @@ class AutomatedLearningFacilitiesNIDPipeline:
                 )
 
                 if patient_df.empty:
-                    logger.warning(f"No patient-level rows in {region_key.title()}")
+                    logger.warning(f"No patient-level rows in {region_name}")
                     continue
 
                 patient_df = self._fix_o2_data(events_df, patient_df)
                 patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
 
-                if "orgUnit" not in patient_df.columns:
-                    logger.warning("No orgUnit column in transformed data; cannot filter learning facilities")
-                    continue
-
-                before_filter = len(patient_df)
-                patient_df = patient_df[
-                    patient_df["orgUnit"].astype(str).str.strip().isin(facility_ids)
-                ].copy()
-                logger.info(
-                    f"Filtered to learning facilities in {region_key.title()}: "
-                    f"{len(patient_df)}/{before_filter} rows"
-                )
-
-                if patient_df.empty:
-                    continue
+                # Preprocess enrollment dates (fix EC entries)
+                before_ct = len(patient_df)
+                patient_df, removed_teis = preprocess_nid_enrollment_dates(patient_df)
+                if removed_teis:
+                    logger.warning(
+                        f"  {region_name}: dropped {len(removed_teis)} TEI(s) "
+                        f"with invalid enrollment dates — {removed_teis}"
+                    )
 
                 patient_df["region_uid"] = region_uid
-                patient_df["region_name"] = regions[region_uid]
+                patient_df["region_name"] = region_name
 
-                regional_filename = REGIONAL_OUTPUT_FILES.get(
-                    region_key, regional_output_filename(regions[region_uid])
-                )
+                regional_filename = regional_output_filename(region_name)
                 regional_target = os.path.join(NID_DIR, regional_filename)
                 append_missing_teis(patient_df, regional_target, merge_mode=self.merge_mode)
 
                 all_region_patient_dfs.append(patient_df)
 
             if not all_region_patient_dfs:
-                logger.warning("No learning facility data found to merge")
+                logger.warning("No NID data found")
                 return False
 
             combined_df = pd.concat(all_region_patient_dfs, ignore_index=True)
@@ -546,9 +474,9 @@ class AutomatedLearningFacilitiesNIDPipeline:
             append_missing_teis(combined_df, national_target, merge_mode=self.merge_mode)
 
             logger.info("=" * 80)
-            logger.info("LEARNING FACILITIES NID FETCH + MERGE COMPLETE")
-            logger.info(f"Total TEIs fetched from DHIS2 regional scopes: {total_fetched_teis}")
-            logger.info(f"Combined unique TEIs from learning facilities: {combined_df['tei_id'].nunique()}")
+            logger.info("NID FETCH COMPLETE")
+            logger.info(f"Total TEIs fetched from DHIS2: {total_fetched_teis}")
+            logger.info(f"Combined unique TEIs: {combined_df['tei_id'].nunique()}")
             logger.info(f"NID output directory: {NID_DIR}")
             logger.info(f"End time: {datetime.now()}")
             logger.info("=" * 80)
@@ -572,12 +500,6 @@ def main() -> None:
         default="",
         help="1/replace updates existing TEIs; 2/new_only appends only new TEIs.",
     )
-    parser.add_argument(
-        "--facilities",
-        nargs="?",
-        default=None,
-        help="Use custom facility selection: 'all', comma-separated names/UIDs, or omit value to prompt.",
-    )
     args = parser.parse_args()
 
     mode_arg = args.mode.strip().lower()
@@ -591,25 +513,11 @@ def main() -> None:
         ).strip()
         merge_mode = "replace" if choice == "1" else "new_only"
 
-    selected_facilities = []
-    use_all_facilities = False
-    if "--facilities" in sys.argv:
-        selector = args.facilities or ""
-        all_facilities = DHIS2DataFetcher(
-            os.getenv("DHIS2_BASE_URL"),
-            os.getenv("DHIS2_USERNAME"),
-            os.getenv("DHIS2_PASSWORD"),
-        ).fetch_facilities()
-        selected = select_facilities_from_cli(all_facilities, selector)
-        if selected is None:
-            use_all_facilities = True
-        else:
-            selected_facilities = selected
+    enrollment_date_filters = prompt_enrollment_date_filter()
 
     pipeline = AutomatedLearningFacilitiesNIDPipeline(
         merge_mode=merge_mode,
-        selected_facilities=selected_facilities,
-        use_all_facilities=use_all_facilities,
+        enrollment_date_filters=enrollment_date_filters,
     )
     success = pipeline.run_pipeline()
     raise SystemExit(0 if success else 1)

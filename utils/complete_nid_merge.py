@@ -59,7 +59,13 @@ MAPPING = {
     # Discharge data
     "newborn_status_at_discharge_discharge_and_final_diagnosis": "newborn_status_at_discharge_n_discharge_care_form",
     "discharge_weight_grams_discharge_and_final_diagnosis": "weight_on_discharge_discharge_care_form",
+    # New discharge diagnosis sub-categories (replaces old single mapping)
+    "primary_category_discharge_and_final_diagnosis": "final_discharge_diagnosis_cause_of_death_discharge_care_form",
+    "sub_categories_of_congenital_malformations_discharge_and_final_diagnosis": "sub_categories_of_congenital_malformations_n_discharge_care_form",
+    "sub_categories_of_prematurity_discharge_and_final_diagnosis": "sub_categories_of_prematurity_n_discharge_care_form",
     "sub_categories_of_infection_discharge_and_final_diagnosis": "sub_categories_of_infection_n_discharge_care_form",
+    "sub_categories_of_intrapartum_related_discharge_and_final_diagnosis": "sub_categories_of_intrapartum_related_n_discharge_care_form",
+    "sub_categories_of_jaundice_pathological_discharge_and_final_diagnosis": "sub_categories_of_jaundice_pathological_n_discharge_care_form",
     # Observations & monitoring
     "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2": "lowest_recorded_oxygen_saturation_pct_observations_and_nursing_care_2",
 }

@@ -26,6 +26,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def prompt_program_selection() -> List[str]:
+    """Prompt user to select which program(s) to fetch: newborn, maternal, or both."""
+    print("\nSelect program(s) to fetch:")
+    print("  1. Newborn")
+    print("  2. Maternal")
+    print("  3. Both")
+    choice = input("Enter choice (1-3): ").strip()
+    if choice == "1":
+        print("  => Fetching Newborn program only")
+        return ["newborn"]
+    elif choice == "2":
+        print("  => Fetching Maternal program only")
+        return ["maternal"]
+    else:
+        print("  => Fetching both programs")
+        return ["maternal", "newborn"]
+
+
 def normalize_selection_text(value: str) -> str:
     return " ".join(str(value or "").strip().lower().replace("/", " ").split())
 
@@ -211,6 +229,10 @@ NEWBORN_HEALTH_ELEMENTS = {
     "XITh8vyfqaR",  # Newborn status at discharge n
     "UGz9phsvHt4",  # Sub-Categories of Infection n
     "lxtEbLnOxfk",  # Sub-Categories of Prematurity n,
+    "hP9hE6B9mVQ",  # Final Discharge Diagnosis/Cause of Death
+    "Zq5pooW1Osg",  # Sub-Categories of Congenital Malformations n
+    "kXx9ea03Eb3",  # Sub-Categories of Intrapartum-Related n
+    "ANU3lt2Bt3O",  # Sub-Categories of Jaundice (Pathological) n
 }
 
 REQUIRED_DATA_ELEMENTS = MATERNAL_HEALTH_ELEMENTS | NEWBORN_HEALTH_ELEMENTS
@@ -257,6 +279,10 @@ DATA_ELEMENT_NAMES = {
     "XITh8vyfqaR": "Newborn status at discharge n",
     "UGz9phsvHt4": "Sub-Categories of Infection n",
     "lxtEbLnOxfk": "Sub-Categories of Prematurity n",
+    "hP9hE6B9mVQ": "Final Discharge Diagnosis/Cause of Death",
+    "Zq5pooW1Osg": "Sub-Categories of Congenital Malformations n",
+    "kXx9ea03Eb3": "Sub-Categories of Intrapartum-Related n",
+    "ANU3lt2Bt3O": "Sub-Categories of Jaundice (Pathological) n",
 }
 
 # MATERNAL PROGRAM STAGE MAPPING FROM FIRST CODE
@@ -337,6 +363,10 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
             "XITh8vyfqaR",  # Newborn status at discharge n
             "UGz9phsvHt4",  # Sub-Categories of Infection n
             "lxtEbLnOxfk",  # Sub-Categories of Prematurity n
+            "hP9hE6B9mVQ",  # Final Discharge Diagnosis/Cause of Death
+            "Zq5pooW1Osg",  # Sub-Categories of Congenital Malformations n
+            "kXx9ea03Eb3",  # Sub-Categories of Intrapartum-Related n
+            "ANU3lt2Bt3O",  # Sub-Categories of Jaundice (Pathological) n
         ],
         "program_stage_name": "Discharge care form",
         "is_repeatable": False,  # One discharge per admission
@@ -2536,6 +2566,7 @@ class AutomatedDHIS2Pipeline:
         output_base_dir: str = None,
         selected_facilities: Optional[List[Dict[str, str]]] = None,
         merge_mode: str = "replace",
+        programs_to_run: Optional[List[str]] = None,
     ):
         """
         Initialize automated pipeline
@@ -2546,6 +2577,7 @@ class AutomatedDHIS2Pipeline:
             password: DHIS2 password (optional - tries config.py first)
             csv_path: Path to maternal CSV file (optional)
             output_base_dir: Base directory for output (optional)
+            programs_to_run: List of programs to process ("maternal", "newborn") or None for both
         """
         env_base_url = os.getenv("DHIS2_BASE_URL")
         env_username = os.getenv("DHIS2_USERNAME")
@@ -2582,6 +2614,7 @@ class AutomatedDHIS2Pipeline:
         self.csv_path = csv_path
         self.selected_facilities = selected_facilities or []
         self.merge_mode = merge_mode
+        self.programs_to_run = programs_to_run or ["maternal", "newborn"]
 
         # FIX 1: Set output directories correctly
         if output_base_dir:
@@ -2976,22 +3009,25 @@ class AutomatedDHIS2Pipeline:
             else self.process_program
         )
 
-        # Step 3: Process MATERNAL program
-        maternal_success = processor(MATERNAL_PROGRAM_UID, "MATERNAL")
-
-        # Step 4: Process NEWBORN program
-        newborn_success = processor(NEWBORN_PROGRAM_UID, "NEWBORN")
+        # Step 3: Process selected programs
+        results = {}
+        for prog in self.programs_to_run:
+            if prog == "maternal":
+                results["maternal"] = processor(MATERNAL_PROGRAM_UID, "MATERNAL")
+            elif prog == "newborn":
+                results["newborn"] = processor(NEWBORN_PROGRAM_UID, "NEWBORN")
 
         # Summary
         logger.info("=" * 80)
         logger.info("📊 PIPELINE COMPLETION SUMMARY")
         logger.info("=" * 80)
-        logger.info(f"Maternal: {'✅ SUCCESS' if maternal_success else '❌ FAILED'}")
-        logger.info(f"Newborn: {'✅ SUCCESS' if newborn_success else '❌ FAILED'}")
+        for prog in self.programs_to_run:
+            success = results.get(prog, False)
+            logger.info(f"{prog.title()}: {'✅ SUCCESS' if success else '❌ FAILED'}")
         logger.info(f"End time: {datetime.now()}")
         logger.info("=" * 80)
 
-        return maternal_success and newborn_success
+        return all(results.values())
 
 
 # ========== GUI APPLICATION ==========
@@ -4179,7 +4215,7 @@ class DHIS2DataFetcherApp:
 # ========== STANDALONE AUTOMATION SCRIPT ==========
 
 
-def run_automated_pipeline(facility_selection: Optional[str] = None, merge_mode: str = "replace"):
+def run_automated_pipeline(facility_selection: Optional[str] = None, merge_mode: str = "replace", programs_to_run: Optional[List[str]] = None):
     """
     Standalone function to run the automated pipeline
     This can be called from a scheduled task or batch file
@@ -4239,6 +4275,7 @@ def run_automated_pipeline(facility_selection: Optional[str] = None, merge_mode:
             output_base_dir=config["output_base_dir"],
             selected_facilities=selected_facilities,
             merge_mode=merge_mode,
+            programs_to_run=programs_to_run,
         )
 
         # Run pipeline
@@ -4290,7 +4327,8 @@ def main():
         facility_selection = args.facilities
         if "--facilities" in sys.argv and args.facilities is None:
             facility_selection = ""
-        run_automated_pipeline(facility_selection, args.merge_mode)
+        programs_to_run = prompt_program_selection()
+        run_automated_pipeline(facility_selection, args.merge_mode, programs_to_run)
     else:
         # Run GUI
         root = tk.Tk()

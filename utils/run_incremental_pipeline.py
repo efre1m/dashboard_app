@@ -41,6 +41,7 @@ from dhis2_fetcher import (  # noqa: E402
     DHIS2DataFetcher,
     MATERNAL_PROGRAM_UID,
     NEWBORN_PROGRAM_UID,
+    prompt_program_selection,
     select_facilities_from_cli,
 )
 
@@ -654,6 +655,8 @@ def main() -> int:
         newborn_dir / "national_newborn.csv"
     )
 
+    programs_to_run = prompt_program_selection()
+
     print("=" * 72)
     print("INCREMENTAL PIPELINE")
     print("=" * 72)
@@ -663,63 +666,71 @@ def main() -> int:
     print(f"Last run timestamp: {last_run_since}")
     print(f"Maternal enrollment fallback: {maternal_since}")
     print(f"Newborn enrollment fallback: {newborn_since}")
+    print(f"Programs selected: {', '.join(programs_to_run)}")
     print("=" * 72)
 
-    maternal_result = _process_program(
-        program_uid=MATERNAL_PROGRAM_UID,
-        program_name="MATERNAL",
-        program_type="maternal",
-        since_date=maternal_since,
-        last_updated_since=last_run_since,
-        output_dir=maternal_dir,
-        fetcher=fetcher,
-        orgunit_names=orgunit_names,
-        regions=regions,
-        csv_data=pipeline.csv_data,
-        facility_map=pipeline.facility_to_region_map,
-        existing_teis=existing_maternal_teis,
-        lookback_days=args.lookback_days,
-        dry_run=args.dry_run,
-        selected_facilities=selected_facilities,
-    )
+    maternal_result = ProgramResult(0, 0, 0, None)
+    newborn_result = ProgramResult(0, 0, 0, None)
 
-    newborn_result = _process_program(
-        program_uid=NEWBORN_PROGRAM_UID,
-        program_name="NEWBORN",
-        program_type="newborn",
-        since_date=newborn_since,
-        last_updated_since=last_run_since,
-        output_dir=newborn_dir,
-        fetcher=fetcher,
-        orgunit_names=orgunit_names,
-        regions=regions,
-        csv_data=None,  # no CSV integration for newborn
-        facility_map=None,
-        existing_teis=existing_newborn_teis,
-        lookback_days=args.lookback_days,
-        dry_run=args.dry_run,
-        selected_facilities=selected_facilities,
-    )
+    if "maternal" in programs_to_run:
+        maternal_result = _process_program(
+            program_uid=MATERNAL_PROGRAM_UID,
+            program_name="MATERNAL",
+            program_type="maternal",
+            since_date=maternal_since,
+            last_updated_since=last_run_since,
+            output_dir=maternal_dir,
+            fetcher=fetcher,
+            orgunit_names=orgunit_names,
+            regions=regions,
+            csv_data=pipeline.csv_data,
+            facility_map=pipeline.facility_to_region_map,
+            existing_teis=existing_maternal_teis,
+            lookback_days=args.lookback_days,
+            dry_run=args.dry_run,
+            selected_facilities=selected_facilities,
+        )
+
+    if "newborn" in programs_to_run:
+        newborn_result = _process_program(
+            program_uid=NEWBORN_PROGRAM_UID,
+            program_name="NEWBORN",
+            program_type="newborn",
+            since_date=newborn_since,
+            last_updated_since=last_run_since,
+            output_dir=newborn_dir,
+            fetcher=fetcher,
+            orgunit_names=orgunit_names,
+            regions=regions,
+            csv_data=None,  # no CSV integration for newborn
+            facility_map=None,
+            existing_teis=existing_newborn_teis,
+            lookback_days=args.lookback_days,
+            dry_run=args.dry_run,
+            selected_facilities=selected_facilities,
+        )
 
     print("=" * 72)
     print("SUMMARY")
     print("=" * 72)
-    print(
-        f"Maternal fetched from DHIS2: {maternal_result.fetched_rows} "
-        f"(new={maternal_result.inserted_rows}, updated={maternal_result.updated_rows})"
-    )
-    print(
-        f"Maternal upserted: {maternal_result.inserted_rows + maternal_result.updated_rows} "
-        f"(new={maternal_result.inserted_rows}, updated={maternal_result.updated_rows})"
-    )
-    print(
-        f"Newborn fetched from DHIS2: {newborn_result.fetched_rows} "
-        f"(new={newborn_result.inserted_rows}, updated={newborn_result.updated_rows})"
-    )
-    print(
-        f"Newborn upserted: {newborn_result.inserted_rows + newborn_result.updated_rows} "
-        f"(new={newborn_result.inserted_rows}, updated={newborn_result.updated_rows})"
-    )
+    if "maternal" in programs_to_run:
+        print(
+            f"Maternal fetched from DHIS2: {maternal_result.fetched_rows} "
+            f"(new={maternal_result.inserted_rows}, updated={maternal_result.updated_rows})"
+        )
+        print(
+            f"Maternal upserted: {maternal_result.inserted_rows + maternal_result.updated_rows} "
+            f"(new={maternal_result.inserted_rows}, updated={maternal_result.updated_rows})"
+        )
+    if "newborn" in programs_to_run:
+        print(
+            f"Newborn fetched from DHIS2: {newborn_result.fetched_rows} "
+            f"(new={newborn_result.inserted_rows}, updated={newborn_result.updated_rows})"
+        )
+        print(
+            f"Newborn upserted: {newborn_result.inserted_rows + newborn_result.updated_rows} "
+            f"(new={newborn_result.inserted_rows}, updated={newborn_result.updated_rows})"
+        )
     print(
         f"Grand total fetched from DHIS2: "
         f"{maternal_result.fetched_rows + newborn_result.fetched_rows}"
@@ -730,13 +741,13 @@ def main() -> int:
             "Facility-scoped run: output files were updated, but incremental state was not advanced."
         )
     elif not args.dry_run:
-        if maternal_result.max_enrollment_date:
+        if maternal_result.max_enrollment_date and "maternal" in programs_to_run:
             prev = _parse_iso_datetime(state.get("maternal_last_enrollment_date"))
             if prev is None or maternal_result.max_enrollment_date > prev:
                 state["maternal_last_enrollment_date"] = (
                     maternal_result.max_enrollment_date.isoformat()
                 )
-        if newborn_result.max_enrollment_date:
+        if newborn_result.max_enrollment_date and "newborn" in programs_to_run:
             prev = _parse_iso_datetime(state.get("newborn_last_enrollment_date"))
             if prev is None or newborn_result.max_enrollment_date > prev:
                 state["newborn_last_enrollment_date"] = (
