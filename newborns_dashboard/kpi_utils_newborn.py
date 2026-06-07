@@ -65,6 +65,32 @@ ADMISSION_DATE_COL = "event_date_nicu_admission_careform"
 DISCHARGE_DATE_COL = "event_date_discharge_care_form"
 ENROLLMENT_DATE_COL = "enrollment_date"  # For Admitted Newborns
 
+# Mortality - Cause of Death QOC constants
+MORTALITY_QOC_MARKER = "__mortality_qoc__"
+
+CAUSE_MAP = {
+    1: "Congenital Malformations",
+    2: "Prematurity",
+    3: "Infection",
+    4: "Intrapartum-related",
+    5: "Jaundice (Pathological)",
+    6: "Other (None of Above)",
+    -1: "Primary Cause/Final Diagnosis Not Recorded",
+    -3: "Not Readable",
+}
+
+CAUSE_CATEGORIES = [
+    ("Congenital Malformations", "#8E44AD"),
+    ("Prematurity", "#E74C3C"),
+    ("Infection", "#F39C12"),
+    ("Intrapartum-related", "#3498DB"),
+    ("Jaundice (Pathological)", "#2ECC71"),
+    ("Other (None of Above)", "#00ACC1"),
+    ("Primary Cause/Final Diagnosis Not Recorded", "#FF7043"),
+    ("Not Readable", "#6D4C41"),
+    ("Missing Reason", "#546E7A"),
+]
+
 # ============== ANTIBIOTICS COLUMNS - COMMENTED OUT ==============
 # # Maternal medication during pregnancy and labor - value "1" means Antibiotics
 # MATERNAL_MEDICATION_COL = (
@@ -2545,6 +2571,213 @@ def compute_pulse_ox_used_at_admission(df, facility_uids=None):
     return result
 
 
+# ---------------- Mortality QOC Chart Functions ----------------
+
+
+def _get_cause_category(cause_val):
+    """Map numeric cause-of-death code to category label."""
+    if pd.isna(cause_val):
+        return "Missing Reason"
+    try:
+        val = int(cause_val)
+        return CAUSE_MAP.get(val, "Other (None of Above)")
+    except (ValueError, TypeError):
+        return "Missing Reason"
+
+
+def render_mortality_cause_of_death_qoc_chart(
+    working_df,
+    chart_title,
+    bg_color,
+    text_color,
+    facility_uids,
+    date_range_filters,
+):
+    """Render 100% stacked bar chart for Neonatal Cause of Death Distribution Rate (%)"""
+    from utils.time_filter import assign_period
+
+    status_col = "newborn_status_at_discharge_n_discharge_care_form"
+    cause_col = "final_discharge_diagnosis_cause_of_death_discharge_care_form"
+
+    if status_col not in working_df.columns:
+        st.warning("\u26a0\ufe0f Required discharge status column not found.")
+        return
+
+    working_df = working_df.copy()
+
+    status_numeric = pd.to_numeric(working_df[status_col], errors="coerce")
+    working_df = working_df[status_numeric == 0].copy()
+    if working_df.empty:
+        st.info("\u2139\ufe0f No neonatal death records found for the current selection.")
+        return
+
+    working_df["event_date"] = pd.to_datetime(
+        working_df["enrollment_date"], errors="coerce"
+    )
+
+    if date_range_filters:
+        start_date = date_range_filters.get("start_date")
+        end_date = date_range_filters.get("end_date")
+        if start_date and end_date:
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+            working_df = working_df[
+                (working_df["event_date"] >= start_dt)
+                & (working_df["event_date"] < end_dt)
+            ].copy()
+
+    working_df = working_df[working_df["event_date"].notna()].copy()
+    if working_df.empty:
+        st.info("\u2139\ufe0f No neonatal death records for the selected date range.")
+        return
+
+    period_label = st.session_state.get("period_label", "Monthly")
+    try:
+        working_df = assign_period(working_df, "event_date", period_label)
+    except Exception:
+        st.error("Error assigning periods")
+        return
+
+    working_df["cause_category"] = working_df[cause_col].apply(_get_cause_category)
+
+    categories = CAUSE_CATEGORIES
+    cat_names = [c[0] for c in categories]
+    cat_colors = [c[1] for c in categories]
+
+    unique_periods = working_df[["period_display", "period_sort"]].drop_duplicates()
+    unique_periods = unique_periods.sort_values("period_sort")
+    periods = unique_periods["period_display"].tolist()
+
+    all_data = []
+    for _, row_data in unique_periods.iterrows():
+        period_display = row_data["period_display"]
+        period_df = working_df[working_df["period_display"] == period_display]
+        total = len(period_df)
+        row = {"period_display": period_display, "period_sort": row_data["period_sort"], "total": total}
+        for cat_name in cat_names:
+            count = int((period_df["cause_category"] == cat_name).sum())
+            pct = (count / total * 100) if total > 0 else 0.0
+            row[f"{cat_name}_count"] = count
+            row[f"{cat_name}_pct"] = pct
+        all_data.append(row)
+
+    if not all_data:
+        st.info("\u26a0\ufe0f No period data available.")
+        return
+
+    agg_df = pd.DataFrame(all_data)
+    agg_df = agg_df.sort_values("period_sort")
+
+    fig = go.Figure()
+    for cat_name, cat_color in categories:
+        pct_col = f"{cat_name}_pct"
+        count_col = f"{cat_name}_count"
+        fig.add_trace(go.Bar(
+            name=cat_name,
+            x=agg_df["period_display"],
+            y=agg_df[pct_col],
+            marker_color=cat_color,
+            text=[f"{v:.1f}%" for v in agg_df[pct_col]],
+            textposition="inside",
+            textfont=dict(color="white", size=10),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                f"{cat_name}<br>"
+                "Percentage: %{y:.1f}%%<br>"
+                "Count: %{customdata[0]}<br>"
+                "Total Deaths: %{customdata[1]}<br>"
+                "<extra></extra>"
+            ),
+            customdata=agg_df[[count_col, "total"]].values,
+            cliponaxis=False,
+        ))
+
+    fig.update_layout(
+        title=chart_title,
+        barmode="stack",
+        barnorm="percent",
+        height=500,
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font_color=text_color,
+        title_font_color=text_color,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=11),
+        ),
+        margin=dict(l=60, r=60, t=100, b=60),
+        yaxis=dict(
+            title="Percentage (%)",
+            range=[0, 100],
+            dtick=20,
+            ticksuffix="%",
+            gridcolor="rgba(128,128,128,0.2)",
+            zeroline=True,
+            zerolinecolor="rgba(128,128,128,0.5)",
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        ),
+        xaxis=dict(
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,
+            tickangle=-45,
+            gridcolor="rgba(128,128,128,0.2)",
+            showgrid=True,
+            showline=True,
+            linewidth=2,
+            linecolor="rgba(128,128,128,0.8)",
+            mirror=True,
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("\U0001f4ca Neonatal Cause of Death Distribution Table")
+    st.caption("Values shown as: Rate% (numerator / denominator)")
+
+    table_data = []
+    for _, r in agg_df.iterrows():
+        row = {"Period": r["period_display"]}
+        for cat_name in cat_names:
+            cnt = int(r[f"{cat_name}_count"])
+            den = int(r["total"])
+            pct = r[f"{cat_name}_pct"]
+            row[cat_name] = f"{pct:.1f}% ({cnt}/{den})" if den > 0 else "-"
+        table_data.append(row)
+
+    overall_row = {"Period": "Overall"}
+    for cat_name in cat_names:
+        total_cnt = int(agg_df[f"{cat_name}_count"].sum())
+        total_den = int(agg_df["total"].sum())
+        overall_pct = (total_cnt / total_den * 100) if total_den > 0 else 0.0
+        overall_row[cat_name] = f"{overall_pct:.1f}% ({total_cnt}/{total_den})" if total_den > 0 else "-"
+    table_data.append(overall_row)
+
+    table_df = pd.DataFrame(table_data)
+    st.dataframe(table_df, use_container_width=True, height=300)
+
+    with st.expander("\u2139\ufe0f Indicator Information \u2014 Neonatal Cause of Death Distribution Rate (%)"):
+        st.markdown(
+            """
+            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+            <p><b>Neonatal Cause of Death Distribution Rate (%)</b></p>
+            <ul>
+              <li><b>Numerator:</b> Number of neonatal deaths for each cause category.</li>
+              <li><b>Denominator:</b> Total number of neonatal deaths.</li>
+            </ul>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 # ---------------- Export all functions ----------------
 __all__ = [
     # Cache functions
@@ -2605,4 +2838,10 @@ __all__ = [
     "compute_weight_taken_at_admission",
     "compute_glucose_monitored_at_admission",
     "compute_pulse_ox_used_at_admission",
+    # Mortality QOC
+    "MORTALITY_QOC_MARKER",
+    "CAUSE_MAP",
+    "CAUSE_CATEGORIES",
+    "_get_cause_category",
+    "render_mortality_cause_of_death_qoc_chart",
 ]

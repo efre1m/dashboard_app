@@ -31,6 +31,8 @@ from newborns_dashboard.kpi_utils_newborn import (
     render_admitted_newborns_trend_chart,
     render_admitted_newborns_facility_comparison_chart,
     render_admitted_newborns_region_comparison_chart,
+    MORTALITY_QOC_MARKER,
+    render_mortality_cause_of_death_qoc_chart,
 )
 
 # Import simplified functions with SINGLE TABLE DISPLAY
@@ -812,12 +814,16 @@ def render_newborn_kpi_tab_navigation():
                 selected_kpi = KMC_TIMING_QOC_MARKER
 
     with tab_mortality:
-        # Mortality - 1 button
+        # Mortality - 2 buttons
         cols = st.columns(5)
         with cols[0]:
             if st.button("Neonatal Mortality", key="nmr_btn", use_container_width=True,
                          type=("primary" if selected_kpi == "Neonatal Mortality Rate (%)" else "secondary")):
                 selected_kpi = "Neonatal Mortality Rate (%)"
+        with cols[1]:
+            if st.button("Quality of Care", key="mortality_qoc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == MORTALITY_QOC_MARKER else "secondary")):
+                selected_kpi = MORTALITY_QOC_MARKER
 
     # Update session state with final selection
     if selected_kpi != st.session_state.selected_newborn_kpi:
@@ -952,6 +958,18 @@ def render_newborn_trend_chart_section(
         _render_kmc_timing_qoc_trend_chart(
             working_df,
             "KMC Quality of Care",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Mortality Cause of Death QOC stacked chart
+    if kpi_selection == MORTALITY_QOC_MARKER:
+        render_mortality_cause_of_death_qoc_chart(
+            working_df,
+            "Neonatal Cause of Death Distribution Rate (%)",
             bg_color,
             text_color,
             facility_uids,
@@ -1347,6 +1365,18 @@ def render_newborn_comparison_chart(
         _render_kmc_timing_qoc_trend_chart(
             df_to_use,
             "KMC Quality of Care",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters={},
+        )
+        return
+
+    # SPECIAL HANDLING: Mortality Cause of Death QOC
+    if kpi_selection == MORTALITY_QOC_MARKER:
+        render_mortality_cause_of_death_qoc_chart(
+            df_to_use,
+            "Neonatal Cause of Death Distribution Rate (%)",
             bg_color,
             text_color,
             facility_uids,
