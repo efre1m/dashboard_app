@@ -2818,7 +2818,11 @@ def render_mortality_cause_of_death_qoc_chart(
         ))
 
     fig.update_layout(
-        title=chart_title,
+        title=dict(
+            text=chart_title,
+            y=0.98,
+            yanchor="top",
+        ),
         barmode="stack",
         barnorm="percent",
         height=500,
@@ -2827,14 +2831,14 @@ def render_mortality_cause_of_death_qoc_chart(
         font_color=text_color,
         title_font_color=text_color,
         legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.25,
-            xanchor="right",
-            x=1,
-            font=dict(size=11),
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            font=dict(size=10),
         ),
-        margin=dict(l=60, r=60, t=160, b=60),
+        margin=dict(l=60, r=180, t=60, b=60),
         yaxis=dict(
             title="Percentage (%)",
             range=[0, 100],
@@ -3029,8 +3033,15 @@ def _render_single_subcause_stack_chart(
             cliponaxis=False,
         ))
 
+    n_cats = len(subcause_categories)
+    right_margin = 180 if n_cats <= 6 else 220
+
     fig.update_layout(
-        title=chart_title,
+        title=dict(
+            text=chart_title,
+            y=0.98,
+            yanchor="top",
+        ),
         barmode="stack",
         barnorm="percent",
         height=500,
@@ -3039,14 +3050,14 @@ def _render_single_subcause_stack_chart(
         font_color=text_color,
         title_font_color=text_color,
         legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.25,
-            xanchor="right",
-            x=1,
-            font=dict(size=11),
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            font=dict(size=10),
         ),
-        margin=dict(l=60, r=60, t=160, b=60),
+        margin=dict(l=60, r=right_margin, t=60, b=60),
         yaxis=dict(
             title="Percentage (%)",
             range=[0, 100],
@@ -3126,6 +3137,22 @@ def render_mortality_qoc_tabbed_chart(
     date_range_filters,
 ):
     """Render the Mortality Quality of Care section with tabs for main cause + sub-causes."""
+    st.markdown(
+        """
+        <style>
+        div[role="tablist"] {
+            overflow-x: auto !important;
+            flex-wrap: nowrap !important;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+        }
+        div[role="tablist"] button {
+            flex-shrink: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     tab_labels = [
         "Main Causes of Neonatal Death",
     ] + SUBCAUSE_TAB_LABELS
