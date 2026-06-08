@@ -4027,7 +4027,7 @@ def _render_cpap_timing_qoc_trend_chart(
 
             <h4>4. CPAP Type / Machine Used</h4>
             <ul>
-              <li><b>Numerator:</b> Babies who received CPAP, grouped by CPAP machine type (codes 1–5). Codes −1 and −3 are excluded from the breakdown.</li>
+              <li><b>Numerator:</b> Babies who received CPAP, grouped by CPAP machine type.</li>
               <li><b>Denominator:</b> All babies who received CPAP in the period.</li>
             </ul>
 
