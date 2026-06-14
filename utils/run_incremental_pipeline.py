@@ -15,7 +15,7 @@ Notes:
 """
 
 from __future__ import annotations
-
+from datetime import datetime, UTC
 import argparse
 import json
 import os
@@ -753,7 +753,7 @@ def main() -> int:
                 state["newborn_last_enrollment_date"] = (
                     newborn_result.max_enrollment_date.isoformat()
                 )
-        state["last_run_utc"] = datetime.utcnow().isoformat() + "Z"
+        state["last_run_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         _write_state(state_path, state)
         print(f"State file updated: {state_path}")
 
