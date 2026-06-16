@@ -5,6 +5,7 @@ import numpy as np
 import logging
 import time
 import os
+import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Dict
@@ -1258,112 +1259,121 @@ def render_mentorship_analysis_dashboard():
                                 st.markdown("</div>", unsafe_allow_html=True)
 
                         with left_col:
-                            filtered = all_or_none_df.copy()
-                            if selected_round != "All Rounds":
-                                filtered = filtered[filtered["round"] == selected_round]
-                            if selected_entities:
-                                filtered = filtered[filtered[entity_col].isin(selected_entities)]
-                            else:
-                                filtered = filtered.iloc[0:0]
+                            hypo_tab, = st.tabs(["Hypothermia Prevention"])
 
-                            if filtered.empty:
-                                st.info("No data for the selected filter combination.")
-                            else:
-                                show_card_details = (group_mode == "Regional" and len(selected_entities) == 1 and entity_col == "hospital")
+                            with hypo_tab:
+                                all_or_none_tab, care_delivered_tab = st.tabs([
+                                    "Percentage of Hypothermia prevention All or None",
+                                    "Percentage of care delivered",
+                                ])
 
-                                if show_card_details:
-                                    card_hover = filtered.groupby("week").apply(
-                                        lambda g: "<br>".join(
-                                            f"Card {int(row['card'])}: {int(row['all_or_none'])}"
-                                            for _, row in g.iterrows()
+                                with all_or_none_tab:
+                                    filtered = all_or_none_df.copy()
+                                    if selected_round != "All Rounds":
+                                        filtered = filtered[filtered["round"] == selected_round]
+                                    if selected_entities:
+                                        filtered = filtered[filtered[entity_col].isin(selected_entities)]
+                                    else:
+                                        filtered = filtered.iloc[0:0]
+
+                                    if filtered.empty:
+                                        st.info("No data for the selected filter combination.")
+                                    else:
+                                        show_card_details = (group_mode == "Regional" and len(selected_entities) == 1 and entity_col == "hospital")
+
+                                        if show_card_details:
+                                            card_hover = filtered.groupby("week").apply(
+                                                lambda g: "<br>".join(
+                                                    f"Card {int(row['card'])}: {int(row['all_or_none'])}"
+                                                    for _, row in g.iterrows()
+                                                )
+                                            ).reset_index(name="card_details")
+
+                                        weekly_stats = filtered.groupby("week").agg(
+                                            total_cards=("all_or_none", "count"),
+                                            compliant=("all_or_none", "sum"),
+                                        ).reset_index()
+                                        weekly_stats["percentage"] = np.where(
+                                            weekly_stats["total_cards"] > 0,
+                                            (weekly_stats["compliant"] / weekly_stats["total_cards"]) * 100,
+                                            0.0,
                                         )
-                                    ).reset_index(name="card_details")
+                                        if show_card_details:
+                                            weekly_stats = weekly_stats.merge(card_hover, on="week", how="left")
+                                        weekly_stats = weekly_stats.sort_values("week")
 
-                                weekly_stats = filtered.groupby("week").agg(
-                                    total_cards=("all_or_none", "count"),
-                                    compliant=("all_or_none", "sum"),
-                                ).reset_index()
-                                weekly_stats["percentage"] = np.where(
-                                    weekly_stats["total_cards"] > 0,
-                                    (weekly_stats["compliant"] / weekly_stats["total_cards"]) * 100,
-                                    0.0,
-                                )
-                                if show_card_details:
-                                    weekly_stats = weekly_stats.merge(card_hover, on="week", how="left")
-                                weekly_stats = weekly_stats.sort_values("week")
+                                        week_display_map = {w: f"Week {int(w)}" for w in sorted(weekly_stats["week"].unique())}
+                                        weekly_stats["week_label"] = weekly_stats["week"].map(week_display_map)
 
-                                week_display_map = {w: f"Week {int(w)}" for w in sorted(weekly_stats["week"].unique())}
-                                weekly_stats["week_label"] = weekly_stats["week"].map(week_display_map)
+                                        median_val = np.median(weekly_stats["percentage"]) if len(weekly_stats) > 0 else 0
 
-                                median_val = np.median(weekly_stats["percentage"]) if len(weekly_stats) > 0 else 0
+                                        ci_total = 0
+                                        ci_compliant = 1
+                                        customdata_cols = ["total_cards", "compliant"]
+                                        if show_card_details:
+                                            customdata_cols = ["card_details", "total_cards", "compliant"]
+                                            ci_total = 1
+                                            ci_compliant = 2
 
-                                ci_total = 0
-                                ci_compliant = 1
-                                customdata_cols = ["total_cards", "compliant"]
-                                if show_card_details:
-                                    customdata_cols = ["card_details", "total_cards", "compliant"]
-                                    ci_total = 1
-                                    ci_compliant = 2
+                                        hover_parts = [
+                                            "<b>%{x}</b><br>",
+                                            f"Patients with full bundle: %{{customdata[{ci_compliant}]:.0f}}<br>",
+                                            f"Total patients observed: %{{customdata[{ci_total}]:.0f}}<br>",
+                                            "% of Hypothermia prevention: %{y:.1f}%<br>",
+                                            f"Median: {median_val:.1f}%",
+                                        ]
 
-                                hover_parts = [
-                                    "<b>%{x}</b><br>",
-                                    f"Patients with full bundle: %{{customdata[{ci_compliant}]:.0f}}<br>",
-                                    f"Total patients observed: %{{customdata[{ci_total}]:.0f}}<br>",
-                                    "% of Hypothermia prevention: %{y:.1f}%<br>",
-                                    f"Median: {median_val:.1f}%",
-                                ]
+                                        if show_card_details:
+                                            hover_parts.append("<br><br><b>All-or-None</b><br>%{customdata[0]}")
 
-                                if show_card_details:
-                                    hover_parts.append("<br><br><b>All-or-None</b><br>%{customdata[0]}")
+                                        hover_parts.append("<extra></extra>")
 
-                                hover_parts.append("<extra></extra>")
+                                        fig = go.Figure()
+                                        fig.add_trace(go.Scatter(
+                                            x=weekly_stats["week_label"],
+                                            y=weekly_stats["percentage"],
+                                            mode="lines+markers",
+                                            name="Hypothermia Prevention All-or-None Bundle",
+                                            marker=dict(size=8, symbol="circle", color="#2563eb", line=dict(color="#2563eb", width=1)),
+                                            line=dict(color="#2563eb", width=2.5),
+                                            customdata=weekly_stats[customdata_cols].fillna("").values,
+                                            hovertemplate="".join(hover_parts),
+                                        ))
+                                        fig.add_hline(
+                                            y=median_val,
+                                            line=dict(color="#e91e9e", width=2.5, dash="solid"),
+                                            annotation_text=f"Median: {median_val:.1f}%",
+                                            annotation_font_size=10,
+                                            annotation_position="right",
+                                        )
+                                        fig.add_trace(go.Scatter(
+                                            x=[None], y=[None],
+                                            mode="lines",
+                                            name=f"Median: {median_val:.1f}%",
+                                            line=dict(color="#e91e9e", width=2.5),
+                                            showlegend=True,
+                                        ))
 
-                                fig = go.Figure()
-                                fig.add_trace(go.Scatter(
-                                    x=weekly_stats["week_label"],
-                                    y=weekly_stats["percentage"],
-                                    mode="lines+markers",
-                                    name="Hypothermia Prevention All-or-None Bundle",
-                                    marker=dict(size=8, symbol="circle", color="#2563eb", line=dict(color="#2563eb", width=1)),
-                                    line=dict(color="#2563eb", width=2.5),
-                                    customdata=weekly_stats[customdata_cols].fillna("").values,
-                                    hovertemplate="".join(hover_parts),
-                                ))
-                                fig.add_hline(
-                                    y=median_val,
-                                    line=dict(color="#e91e9e", width=2.5, dash="solid"),
-                                    annotation_text=f"Median: {median_val:.1f}%",
-                                    annotation_font_size=10,
-                                    annotation_position="right",
-                                )
-                                fig.add_trace(go.Scatter(
-                                    x=[None], y=[None],
-                                    mode="lines",
-                                    name=f"Median: {median_val:.1f}%",
-                                    line=dict(color="#e91e9e", width=2.5),
-                                    showlegend=True,
-                                ))
+                                        fig.update_layout(
+                                            template="plotly_white",
+                                            height=290,
+                                            margin=dict(l=8, r=8, t=20, b=8),
+                                            xaxis_title=dict(text="Week", font=dict(size=11)),
+                                            yaxis_title=dict(text="Percentage (%)", font=dict(size=11)),
+                                            font=dict(size=10),
+                                            hoverlabel=dict(font_size=10, namelength=-1),
+                                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=9)),
+                                            yaxis=dict(range=[0, 110], tickformat=".0f", dtick=20),
+                                        )
+                                        sorted_week_labels = [f"Week {int(w)}" for w in sorted(weekly_stats["week"].unique())]
+                                        fig.update_xaxes(tickfont=dict(size=9), automargin=True, categoryorder="array", categoryarray=sorted_week_labels)
+                                        fig.update_yaxes(tickfont=dict(size=9), automargin=True, gridcolor="#f0f0f0")
 
-                                fig.update_layout(
-                                    template="plotly_white",
-                                    height=290,
-                                    margin=dict(l=8, r=8, t=20, b=8),
-                                    xaxis_title=dict(text="Week", font=dict(size=11)),
-                                    yaxis_title=dict(text="Percentage (%)", font=dict(size=11)),
-                                    font=dict(size=10),
-                                    hoverlabel=dict(font_size=10, namelength=-1),
-                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=9)),
-                                    yaxis=dict(range=[0, 110], tickformat=".0f", dtick=20),
-                                )
-                                sorted_week_labels = [f"Week {int(w)}" for w in sorted(weekly_stats["week"].unique())]
-                                fig.update_xaxes(tickfont=dict(size=9), automargin=True, categoryorder="array", categoryarray=sorted_week_labels)
-                                fig.update_yaxes(tickfont=dict(size=9), automargin=True, gridcolor="#f0f0f0")
+                                        st.plotly_chart(fig, use_container_width=True, key="mentorship_cis_run_chart")
 
-                                st.plotly_chart(fig, use_container_width=True, key="mentorship_cis_run_chart")
-
-                                with st.expander("How this is computed", expanded=False):
-                                    st.markdown(
-                                        """
+                                        with st.expander("How this is computed", expanded=False):
+                                            st.markdown(
+                                                """
 **Percentage** = (Patients with full bundle ÷ Total patients observed) × 100
 
 **Hypothermia Prevention Bundle of Care – L&D**
@@ -1373,8 +1383,141 @@ def render_mentorship_analysis_dashboard():
 - The baby is dried thoroughly, wet towel discarded, and baby covered by a pre-warmed towel
 - Skin-to-skin contact is maintained
 - The baby's body temperature is between 36.5 and 37.5°C when leaving the labour ward
-                                        """
+                                                """
+                                            )
+
+                                with care_delivered_tab:
+                                    selected_weeks = st.multiselect(
+                                        "Select Weeks",
+                                        options=sorted([int(w) for w in work_df["week"].dropna().unique() if str(w).strip()]),
+                                        default=sorted([int(w) for w in work_df["week"].dropna().unique() if str(w).strip()]),
+                                        key="mentorship_cis_care_weeks",
                                     )
+
+                                    if not selected_weeks:
+                                        st.info("Please select at least one week.")
+                                    else:
+                                        bundle_cols_bar = ["LD-ld1", "LD-ld2", "LD-ld3", "LD-ld4", "LD-ld5"]
+                                        bundle_labels = {
+                                            "LD-ld1": "Room temp 25-28°C",
+                                            "LD-ld2": "Radiant warmer pre-warm",
+                                            "LD-ld3": "Dried & covered",
+                                            "LD-ld4": "Skin-to-skin",
+                                            "LD-ld5": "Temp 36.5-37.5°C",
+                                        }
+                                        care_entity_col = "hospital"
+
+                                        all_weeks_data = []
+                                        for week_val in selected_weeks:
+                                            week_raw = work_df[work_df["week"] == week_val].copy()
+                                            if selected_round != "All Rounds":
+                                                week_raw = week_raw[week_raw["round"] == selected_round]
+                                            if selected_entities:
+                                                week_raw = week_raw[week_raw[entity_col].isin(selected_entities)]
+                                            if week_raw.empty:
+                                                continue
+                                            card_data = week_raw.groupby(["card", care_entity_col])[bundle_cols_bar].max().reset_index()
+                                            card_data["care_pct"] = card_data[bundle_cols_bar].sum(axis=1) / 5 * 100
+                                            card_data["card_label"] = card_data.apply(
+                                                lambda r: f"Card {int(r['card'])}", axis=1
+                                            )
+                                            card_data["week"] = f"Week {week_val}"
+
+                                            bundle_vals = []
+                                            for _, r in card_data.iterrows():
+                                                lines = [f"<b>Card {int(r['card'])}</b>"]
+                                                for col in bundle_cols_bar:
+                                                    val = int(r[col])
+                                                    lines.append(f"{bundle_labels[col]}: {'Yes' if val else 'No'}")
+                                                bundle_vals.append("<br>".join(lines))
+                                            card_data["bundle_detail"] = bundle_vals
+
+                                            all_weeks_data.append(card_data)
+
+                                        if not all_weeks_data:
+                                            st.info("No data for the selected filter combination.")
+                                        else:
+                                            plot_df = pd.concat(all_weeks_data, ignore_index=True)
+                                            fig = px.bar(
+                                                plot_df,
+                                                x=care_entity_col,
+                                                y="care_pct",
+                                                color="card_label",
+                                                barmode="group",
+                                                facet_col="week",
+                                                facet_col_wrap=2,
+                                                color_discrete_sequence=px.colors.qualitative.Plotly + px.colors.qualitative.D3,
+                                                custom_data=["bundle_detail"],
+                                                labels={care_entity_col: "Facility", "care_pct": "%"},
+                                            )
+                                            fig.update_traces(
+                                                hovertemplate=(
+                                                    "<b>%{x}</b><br>"
+                                                    + "%{customdata[0]}<br>"
+                                                    + "Care delivered: %{y:.1f}%"
+                                                    + "<extra></extra>"
+                                                ),
+                                            )
+                                            fig.update_layout(
+                                                template="plotly_white",
+                                                height=max(300, len(selected_weeks) * 200),
+                                                margin=dict(l=8, r=8, t=48, b=8),
+                                                font=dict(size=9),
+                                                hoverlabel=dict(font_size=9),
+                                                legend=dict(
+                                                    orientation="h",
+                                                    yanchor="bottom",
+                                                    y=1.02,
+                                                    xanchor="left",
+                                                    x=0,
+                                                    font=dict(size=8),
+                                                    title=dict(text="Card", font=dict(size=8)),
+                                                ),
+                                            )
+                                            fig.for_each_annotation(lambda a: a.update(
+                                                text=a.text.split("=")[-1].strip(),
+                                                font=dict(size=12, color="black"),
+                                            ))
+                                            fig.update_xaxes(
+                                                matches=None,
+                                                showticklabels=True,
+                                                tickfont=dict(size=8),
+                                                automargin=True,
+                                                tickangle=45,
+                                                showline=True,
+                                                linewidth=1,
+                                                linecolor="lightgray",
+                                                mirror=True,
+                                            )
+                                            fig.update_yaxes(
+                                                range=[0, 110],
+                                                tickfont=dict(size=8),
+                                                automargin=True,
+                                                showline=True,
+                                                linewidth=1,
+                                                linecolor="lightgray",
+                                                mirror=True,
+                                            )
+                                            st.plotly_chart(fig, use_container_width=True, key="mentorship_cis_care_delivered")
+
+                                        with st.expander("How this is computed", expanded=False):
+                                            st.markdown(
+                                                f"""
+**Percentage of care delivered per patient** = (Bundle items = Yes ÷ 5) × 100
+
+For each patient (card), all 5 bundle items are evaluated. Missing values are treated as **No (0)** for consistency.
+
+**Hypothermia Prevention Bundle Variables – L&D**
+
+| Variable | Description |
+|---|---|
+| LD-ld1 | The current labour and delivery ward room temperature is between 25°C – 28°C |
+| LD-ld2 | The radiant warmer is on pre-warm mode 5–10 minutes before the delivery |
+| LD-ld3 | The baby is dried thoroughly, wet towel discarded, and baby covered by a pre-warmed towel |
+| LD-ld4 | Skin-to-skin contact is maintained |
+| LD-ld5 | The baby's body temperature is between 36.5 and 37.5°C when leaving the labour ward |
+                                                """
+                                            )
 
                     with nicu_tab:
                         st.info("NICU tab - Coming soon")
