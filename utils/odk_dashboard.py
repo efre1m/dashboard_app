@@ -1,6 +1,7 @@
-﻿# utils/odk_dashboard.py
+# utils/odk_dashboard.py
 import streamlit as st
 import pandas as pd
+import numpy as np
 import logging
 import time
 import os
@@ -51,30 +52,6 @@ QI_COACHING_INDICATORS = [
         "part5_project-q504",
         "qi_cop_session_pct",
         "QI Team Participates in Learning Session (Local Govt / SLL Supported)",
-    ),
-]
-
-CIS_BUNDLE_INDICATORS = [
-    (
-        "cpap_nicu-cpap1nicu",
-        "% CPAP within 1 hour",
-        "bCPAP initiated at L&D or Operation theatre for inborn baby or within one hour of admission for outborn baby",
-        "Started CPAP within 1 hour (Yes)",
-        "Assessed for CPAP within 1 hour (Answered)",
-    ),
-    (
-        "kmc-kmc2",
-        "% KMC within 24 hours",
-        "The baby is skin to skin more than 8hours within 24hrs",
-        "Started KMC within 24 hours (Yes)",
-        "Assessed for KMC within 24 hours (Answered)",
-    ),
-    (
-        "NICU-nicu5",
-        "% Normothermic at admission (36.5-37.5C)",
-        "Baby's body temperature is between 36.5 and 37.5 degree Celsius at admission",
-        "Normal temperature at admission (Yes)",
-        "Admission temperature recorded (Answered)",
     ),
 ]
 
@@ -382,6 +359,54 @@ def _get_region_code_to_name_mapping() -> dict[str, str]:
     return code_to_name
 
 
+def compute_all_or_none(df):
+    bundle_cols = ["LD-ld1", "LD-ld2", "LD-ld3", "LD-ld4", "LD-ld5"]
+    for col in bundle_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df[bundle_cols] = df[bundle_cols].fillna(0)
+    df["row_all_or_none"] = df[bundle_cols].eq(1).all(axis=1).astype(int)
+    entity_cols = [c for c in ["region_label", "hospital"] if c in df.columns]
+    group_cols = ["week", "card"] + entity_cols
+    results = df.groupby(group_cols, as_index=False)["row_all_or_none"].min()
+    results = results.rename(columns={"row_all_or_none": "all_or_none"})
+    return results
+
+
+def compute_weekly_percentages(df):
+    stats = df.groupby("week")["all_or_none"].agg(total_cards="count", compliant="sum")
+    stats["percentage"] = np.where(stats["total_cards"] > 0, (stats["compliant"] / stats["total_cards"]) * 100, 0.0)
+    return stats.index.tolist(), stats["percentage"].tolist()
+
+
+def plot_run_chart(weeks, values):
+    if not weeks or not values:
+        st.warning("No data to display in run chart.")
+        return
+    median_val = np.median(values)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=weeks, y=values,
+        mode="lines+markers",
+        name="% Bundle Compliance",
+        marker=dict(size=10, symbol="circle", color="#2563eb"),
+        line=dict(color="#2563eb", width=2),
+    ))
+    fig.add_hline(
+        y=median_val,
+        line=dict(color="#e91e9e", width=2, dash="solid"),
+        annotation_text=f"Median: {median_val:.1f}%",
+    )
+    fig.update_layout(
+        title="Percentage of Hypothermia prevention<br>All or None Bundle of care provided",
+        xaxis_title="Weeks",
+        yaxis_title="Percentage (%)",
+        yaxis=dict(range=[0, 100]),
+        template="plotly_white",
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def render_mentorship_analysis_dashboard():
     """Render mentorship analysis for mentorship datasets."""
     st.markdown(
@@ -405,8 +430,7 @@ def render_mentorship_analysis_dashboard():
 
     def _run_mentorship_pipeline(
         work_df, score_cols, value_label, value_title,
-        tab_key, left_col, right_col, is_qoc=False, is_cis=False, is_bmet=False,
-        cis_specs=None,
+        tab_key, left_col, right_col, is_qoc=False, is_bmet=False,
     ):
         region_code_map = _get_region_code_to_name_mapping()
         work_df["region_label"] = work_df["region_code"].map(region_code_map).fillna(
@@ -438,21 +462,6 @@ def render_mentorship_analysis_dashboard():
                     unsafe_allow_html=True,
                 )
                 st.markdown('<div class="mentorship-filter-divider"></div>', unsafe_allow_html=True)
-
-                selected_cis_indicator_col = None
-                selected_cis_numerator_label = None
-                selected_cis_denominator_label = None
-                if is_cis and cis_specs:
-                    indicator_labels = [spec[1] for spec in cis_specs]
-                    selected_cis_indicator = st.selectbox(
-                        "Indicator", options=indicator_labels,
-                        key=f"mentorship_cis_indicator_{tab_key}",
-                    )
-                    selected_spec = next(spec for spec in cis_specs if spec[1] == selected_cis_indicator)
-                    selected_cis_indicator_col = selected_spec[0]
-                    selected_cis_indicator_question = selected_spec[2]
-                    selected_cis_numerator_label = selected_spec[3]
-                    selected_cis_denominator_label = selected_spec[4]
 
                 all_rounds_label = "All Rounds"
                 round_values = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
@@ -545,17 +554,6 @@ def render_mentorship_analysis_dashboard():
                     filtered_df = filtered_df[filtered_df["unit_has_1"]]
                 elif selected_unit == "2":
                     filtered_df = filtered_df[filtered_df["unit_has_2"]]
-            if is_cis:
-                if selected_cis_indicator_col is None:
-                    st.warning("Select an indicator to continue.")
-                    return
-                filtered_df = filtered_df[filtered_df["unit"] == "2"]
-                filtered_df["cis_indicator_value"] = _to_positive_binary_indicator_value(
-                    filtered_df[selected_cis_indicator_col]
-                )
-                filtered_df = filtered_df[filtered_df["cis_indicator_value"].notna()].copy()
-                filtered_df["week_value"] = filtered_df["week"].apply(_normalize_entity_text)
-                filtered_df = filtered_df[filtered_df["week_value"] != ""].copy()
             if group_mode == "Regional" and selected_region_for_facility:
                 filtered_df = filtered_df[filtered_df["region_label"] == selected_region_for_facility]
             if selected_entities:
@@ -591,23 +589,6 @@ def render_mentorship_analysis_dashboard():
                 agg_df = agg_df.drop(
                     columns=["_record_count"] + [f"{col}__non_null_count" for col in score_cols]
                 ).sort_values(entity_col)
-            elif is_cis:
-                grouped = filtered_df.groupby([entity_col, "week_value"], as_index=False)
-                sums_df = grouped["cis_indicator_value"].sum(numeric_only=True).fillna(0).rename(
-                    columns={"cis_indicator_value": "cis_indicator_numerator"}
-                )
-                non_null_counts_df = grouped["cis_indicator_value"].count().rename(
-                    columns={"cis_indicator_value": "cis_indicator_denominator"}
-                )
-                agg_df = sums_df.merge(non_null_counts_df, on=[entity_col, "week_value"], how="left")
-                agg_df["cis_indicator_value"] = (
-                    pd.to_numeric(agg_df["cis_indicator_numerator"], errors="coerce").fillna(0)
-                    / pd.to_numeric(agg_df["cis_indicator_denominator"], errors="coerce").replace(0, pd.NA)
-                ).fillna(0) * 100
-                agg_df["week_sort"] = pd.to_numeric(agg_df["week_value"], errors="coerce")
-                agg_df["week_sort"] = agg_df["week_sort"].fillna(10**9)
-                agg_df["week_display"] = agg_df["week_value"].apply(lambda v: f"Week {v}")
-                agg_df = agg_df.sort_values([entity_col, "week_sort", "week_value"])
             elif is_bmet:
                 grouped = filtered_df.groupby(entity_col, as_index=False)
                 sums_df = grouped[score_cols].sum(numeric_only=True).fillna(0)
@@ -851,58 +832,6 @@ def render_mentorship_analysis_dashboard():
                     "`part2_qi_structure-q203`, `part5_project-q502`, "
                     "`part6_project-q604`, `part3_project-q301`, `part3_project-q309`, "
                     "`part4_project-q408`, `part5_project-q504`."
-                )
-
-            elif tab_key == "cis":
-                indicator_label = selected_cis_indicator or "CIS Indicator"
-                numerator_label = selected_cis_numerator_label or "Numerator (Yes)"
-                denominator_label = selected_cis_denominator_label or "Denominator (Answered)"
-                week_order = (
-                    agg_df[["week_display", "week_sort", "week_value"]]
-                    .drop_duplicates()
-                    .sort_values(["week_sort", "week_value"])["week_display"]
-                    .tolist()
-                )
-                fig = go.Figure()
-                import plotly.express as px
-                distinct_colors = px.colors.qualitative.Plotly + px.colors.qualitative.D3 + px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
-                unique_entities = agg_df[entity_col].dropna().unique().tolist()
-                for idx, entity_name in enumerate(unique_entities):
-                    entity_df = agg_df[agg_df[entity_col] == entity_name].copy()
-                    fig.add_trace(go.Scatter(
-                        x=entity_df["week_display"], y=entity_df["cis_indicator_value"].fillna(0),
-                        mode="lines+markers", name=str(entity_name),
-                        marker=dict(size=8), line=dict(width=3, color=distinct_colors[idx % len(distinct_colors)]),
-                        customdata=entity_df[[entity_col, "cis_indicator_numerator", "cis_indicator_denominator"]].fillna(0).values,
-                        hovertemplate=(
-                            "Week: %{x}<br>" + f"{hover_entity_label}: %{{customdata[0]}}<br>" +
-                            f"{indicator_label}: %{{y:.2f}}%<br>" +
-                            f"{numerator_label}: %{{customdata[1]:.0f}}<br>" +
-                            f"{denominator_label}: %{{customdata[2]:.0f}}<extra></extra>"
-                        ),
-                    ))
-                chart_height = max(340, min(680, 320 + len(unique_entities) * 30))
-                fig.update_layout(template="plotly_white", height=chart_height, margin=dict(l=8, r=8, t=26, b=8),
-                                  xaxis_title="Week", yaxis_title=value_title, font=dict(size=10),
-                                  hoverlabel=dict(font_size=11),
-                                  legend_title_text="Region" if group_mode == "Multi Regional" else "Facility")
-                fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True,
-                                 categoryorder="array", categoryarray=week_order)
-                fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True, rangemode="tozero")
-                st.plotly_chart(fig, use_container_width=True, key=f"mentorship_cis_lines_{tab_key}_{group_mode}_{selected_round}_{selected_cis_indicator_col}")
-                table_df = agg_df.rename(columns={
-                    entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
-                    "week_display": "Week", "cis_indicator_value": indicator_label,
-                    "cis_indicator_numerator": numerator_label, "cis_indicator_denominator": denominator_label,
-                }).round(2)
-                table_columns = [
-                    "Region" if group_mode == "Multi Regional" else "Facility",
-                    "Week", indicator_label, numerator_label, denominator_label,
-                ]
-                st.dataframe(table_df[[col for col in table_columns if col in table_df.columns]],
-                             use_container_width=True, hide_index=True)
-                st.caption(
-                    "Weekly percentage is computed as `(sum(yes=1 values) / count(non-null submissions for the indicator)) * 100`."
                 )
 
             elif tab_key == "data":
@@ -1213,26 +1142,242 @@ def render_mentorship_analysis_dashboard():
         except Exception as exc:
             st.error(f"Unable to load CIS Bundle of Care data: {exc}")
         else:
-            indicator_source_cols = [spec[0] for spec in CIS_BUNDLE_INDICATORS]
-            required_columns = ["reg-region", "reg-hospital", "reg-round", "week", "unit"] + indicator_source_cols
-            missing_cols = [c for c in required_columns if c not in df.columns]
-            if missing_cols:
-                st.error(f"Missing required columns in CIS_Bundle_of_Care.csv: {missing_cols}")
+            region_code_map = _get_region_code_to_name_mapping()
+            work_df = df.copy()
+            work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
+            work_df["hospital"] = work_df["reg-hospital"].apply(_display_mentorship_facility)
+            work_df["region_label"] = work_df["region_code"].map(region_code_map).fillna(
+                work_df["region_code"].apply(lambda x: f"Unknown ({x})" if x else "Unknown")
+            )
+            work_df["round"] = work_df["reg-round"].astype(str).str.strip()
+            work_df["unit"] = work_df["unit"].astype(str).str.strip().replace({"1.0": "1", "2.0": "2"})
+
+            work_df = work_df[work_df["unit"] == "1"].copy()
+
+            required_cols = ["week", "card", "LD-ld1", "LD-ld2", "LD-ld3", "LD-ld4", "LD-ld5"]
+            missing = [c for c in required_cols if c not in work_df.columns]
+            if missing:
+                st.error(f"Missing required columns: {missing}")
             else:
-                work_df = df.copy()
-                work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
-                work_df["hospital"] = work_df["reg-hospital"].apply(_display_mentorship_facility)
-                work_df["round"] = work_df["reg-round"].astype(str).str.strip()
-                work_df["week"] = work_df["week"].apply(_normalize_entity_text)
-                work_df["unit"] = (
-                    work_df["unit"].astype(str).str.strip().replace({"1.0": "1", "2.0": "2"})
-                )
-                left_col, right_col = st.columns([3, 1])
-                _run_mentorship_pipeline(
-                    work_df, [], "Percentage", "Percentage (%)",
-                    tab_key="cis", left_col=left_col, right_col=right_col,
-                    is_cis=True, cis_specs=CIS_BUNDLE_INDICATORS,
-                )
+                work_df["week"] = pd.to_numeric(work_df["week"], errors="coerce")
+                work_df = work_df.dropna(subset=["week", "card"])
+
+                bundle_cols = ["LD-ld1", "LD-ld2", "LD-ld3", "LD-ld4", "LD-ld5"]
+                for col in bundle_cols:
+                    work_df[col] = pd.to_numeric(work_df[col], errors="coerce")
+                work_df[bundle_cols] = work_df[bundle_cols].fillna(0)
+
+                all_or_none_df = compute_all_or_none(work_df)
+                if all_or_none_df.empty:
+                    st.warning("No data available for L&D.")
+                else:
+                    round_info = work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(subset=["week", "card", "region_label", "hospital"])
+                    all_or_none_df = all_or_none_df.merge(round_info, on=["week", "card", "region_label", "hospital"], how="left")
+
+                    ld_tab, nicu_tab = st.tabs(["L&D", "NICU"])
+
+                    with ld_tab:
+                        left_col, right_col = st.columns([3, 1])
+
+                        with right_col:
+                            with st.container(key="mentorship_filters_card_cis"):
+                                st.markdown('<div class="mentorship-filter-box">', unsafe_allow_html=True)
+                                st.markdown(
+                                    '<div class="mentorship-filter-title">Filters</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                st.markdown(
+                                    '<div class="mentorship-filter-subtitle">Refine by group and round</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                st.markdown('<div class="mentorship-filter-divider"></div>', unsafe_allow_html=True)
+
+                                round_values = sorted([r for r in work_df["round"].dropna().unique() if r != ""])
+                                all_rounds_label = "All Rounds"
+                                round_options = [all_rounds_label] + round_values if round_values else [all_rounds_label]
+
+                                selected_round = st.selectbox(
+                                    "Round", options=round_options, index=0,
+                                    key="mentorship_cis_round",
+                                )
+
+                                current_user = st.session_state.get("user", {})
+                                is_regional_user = current_user.get("role") == "regional"
+                                group_mode_options = ["Regional"] if is_regional_user else ["Multi Regional", "Regional"]
+                                group_mode = st.radio(
+                                    "Group By", options=group_mode_options,
+                                    key="mentorship_cis_group_mode",
+                                )
+
+                                if group_mode == "Multi Regional":
+                                    entity_col = "region_label"
+                                    entity_options = sorted([
+                                        v for v in all_or_none_df[entity_col].dropna().unique().tolist()
+                                        if str(v).strip()
+                                    ])
+                                    all_token = "All Regions"
+                                    selector_options = [all_token] + entity_options
+                                    entity_key = "mentorship_cis_entities_multi"
+                                    if entity_key not in st.session_state or not st.session_state.get(entity_key):
+                                        st.session_state[entity_key] = [all_token]
+                                    st.multiselect("Select Regions", options=selector_options, key=entity_key)
+                                    current_selected = st.session_state.get(entity_key, [all_token])
+                                    effective_selected = (
+                                        [all_token] if (all_token in current_selected or len(current_selected) == 0)
+                                        else current_selected
+                                    )
+                                    selected_entities = entity_options if all_token in effective_selected else effective_selected
+                                else:
+                                    region_options = sorted([
+                                        v for v in all_or_none_df["region_label"].dropna().unique().tolist()
+                                        if str(v).strip()
+                                    ])
+                                    selected_region = st.selectbox(
+                                        "Select Region", options=region_options,
+                                        key="mentorship_cis_region",
+                                    )
+                                    facilities_in_region = sorted([
+                                        v for v in all_or_none_df.loc[
+                                            all_or_none_df["region_label"] == selected_region, "hospital"
+                                        ].dropna().unique().tolist() if str(v).strip()
+                                    ])
+                                    entity_col = "hospital"
+                                    all_token = "All Facilities in Region"
+                                    selector_options = [all_token] + facilities_in_region
+                                    entity_key = "mentorship_cis_entities_facilities"
+                                    if entity_key not in st.session_state or not st.session_state.get(entity_key):
+                                        st.session_state[entity_key] = [all_token]
+                                    st.multiselect("Select Facilities", options=selector_options, key=entity_key)
+                                    current_selected = st.session_state.get(entity_key, [all_token])
+                                    effective_selected = (
+                                        [all_token] if (all_token in current_selected or len(current_selected) == 0)
+                                        else current_selected
+                                    )
+                                    selected_entities = facilities_in_region if all_token in effective_selected else effective_selected
+
+                                st.markdown("</div>", unsafe_allow_html=True)
+
+                        with left_col:
+                            filtered = all_or_none_df.copy()
+                            if selected_round != "All Rounds":
+                                filtered = filtered[filtered["round"] == selected_round]
+                            if selected_entities:
+                                filtered = filtered[filtered[entity_col].isin(selected_entities)]
+                            else:
+                                filtered = filtered.iloc[0:0]
+
+                            if filtered.empty:
+                                st.info("No data for the selected filter combination.")
+                            else:
+                                show_card_details = (group_mode == "Regional" and len(selected_entities) == 1 and entity_col == "hospital")
+
+                                if show_card_details:
+                                    card_hover = filtered.groupby("week").apply(
+                                        lambda g: "<br>".join(
+                                            f"Card {int(row['card'])}: {int(row['all_or_none'])}"
+                                            for _, row in g.iterrows()
+                                        )
+                                    ).reset_index(name="card_details")
+
+                                weekly_stats = filtered.groupby("week").agg(
+                                    total_cards=("all_or_none", "count"),
+                                    compliant=("all_or_none", "sum"),
+                                ).reset_index()
+                                weekly_stats["percentage"] = np.where(
+                                    weekly_stats["total_cards"] > 0,
+                                    (weekly_stats["compliant"] / weekly_stats["total_cards"]) * 100,
+                                    0.0,
+                                )
+                                if show_card_details:
+                                    weekly_stats = weekly_stats.merge(card_hover, on="week", how="left")
+                                weekly_stats = weekly_stats.sort_values("week")
+
+                                week_display_map = {w: f"Week {int(w)}" for w in sorted(weekly_stats["week"].unique())}
+                                weekly_stats["week_label"] = weekly_stats["week"].map(week_display_map)
+
+                                median_val = np.median(weekly_stats["percentage"]) if len(weekly_stats) > 0 else 0
+
+                                ci_total = 0
+                                ci_compliant = 1
+                                customdata_cols = ["total_cards", "compliant"]
+                                if show_card_details:
+                                    customdata_cols = ["card_details", "total_cards", "compliant"]
+                                    ci_total = 1
+                                    ci_compliant = 2
+
+                                hover_parts = [
+                                    "<b>%{x}</b><br>",
+                                    f"Patients with full bundle: %{{customdata[{ci_compliant}]:.0f}}<br>",
+                                    f"Total patients observed: %{{customdata[{ci_total}]:.0f}}<br>",
+                                    "% of Hypothermia prevention: %{y:.1f}%<br>",
+                                    f"Median: {median_val:.1f}%",
+                                ]
+
+                                if show_card_details:
+                                    hover_parts.append("<br><br><b>All-or-None</b><br>%{customdata[0]}")
+
+                                hover_parts.append("<extra></extra>")
+
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=weekly_stats["week_label"],
+                                    y=weekly_stats["percentage"],
+                                    mode="lines+markers",
+                                    name="Hypothermia Prevention All-or-None Bundle",
+                                    marker=dict(size=8, symbol="circle", color="#2563eb", line=dict(color="#2563eb", width=1)),
+                                    line=dict(color="#2563eb", width=2.5),
+                                    customdata=weekly_stats[customdata_cols].fillna("").values,
+                                    hovertemplate="".join(hover_parts),
+                                ))
+                                fig.add_hline(
+                                    y=median_val,
+                                    line=dict(color="#e91e9e", width=2.5, dash="solid"),
+                                    annotation_text=f"Median: {median_val:.1f}%",
+                                    annotation_font_size=10,
+                                    annotation_position="right",
+                                )
+                                fig.add_trace(go.Scatter(
+                                    x=[None], y=[None],
+                                    mode="lines",
+                                    name=f"Median: {median_val:.1f}%",
+                                    line=dict(color="#e91e9e", width=2.5),
+                                    showlegend=True,
+                                ))
+
+                                fig.update_layout(
+                                    template="plotly_white",
+                                    height=290,
+                                    margin=dict(l=8, r=8, t=20, b=8),
+                                    xaxis_title=dict(text="Week", font=dict(size=11)),
+                                    yaxis_title=dict(text="Percentage (%)", font=dict(size=11)),
+                                    font=dict(size=10),
+                                    hoverlabel=dict(font_size=10, namelength=-1),
+                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=9)),
+                                    yaxis=dict(range=[0, 110], tickformat=".0f", dtick=20),
+                                )
+                                sorted_week_labels = [f"Week {int(w)}" for w in sorted(weekly_stats["week"].unique())]
+                                fig.update_xaxes(tickfont=dict(size=9), automargin=True, categoryorder="array", categoryarray=sorted_week_labels)
+                                fig.update_yaxes(tickfont=dict(size=9), automargin=True, gridcolor="#f0f0f0")
+
+                                st.plotly_chart(fig, use_container_width=True, key="mentorship_cis_run_chart")
+
+                                with st.expander("How this is computed", expanded=False):
+                                    st.markdown(
+                                        """
+**Percentage** = (Patients with full bundle ÷ Total patients observed) × 100
+
+**Hypothermia Prevention Bundle of Care – L&D**
+
+- The current labour and delivery ward room temperature is between 25°C – 28°C
+- The radiant warmer is on pre-warm mode 5–10 minutes before the delivery
+- The baby is dried thoroughly, wet towel discarded, and baby covered by a pre-warmed towel
+- Skin-to-skin contact is maintained
+- The baby's body temperature is between 36.5 and 37.5°C when leaving the labour ward
+                                        """
+                                    )
+
+                    with nicu_tab:
+                        st.info("NICU tab - Coming soon")
 
 
 def display_odk_dashboard(user: dict = None):
