@@ -1180,6 +1180,13 @@ def render_mentorship_analysis_dashboard():
                     work_df[col] = pd.to_numeric(work_df[col], errors="coerce")
                 work_df[bundle_cols] = work_df[bundle_cols].fillna(0)
 
+                cpap_ld_cols = ["cpap_ld-cpap1", "cpap_ld-cpap2", "cpap_ld-cpap3", "cpap_ld-cpap4"]
+                cpap_ld_cols_present = [c for c in cpap_ld_cols if c in work_df.columns]
+                if cpap_ld_cols_present:
+                    for col in cpap_ld_cols_present:
+                        work_df[col] = pd.to_numeric(work_df[col], errors="coerce")
+                    work_df[cpap_ld_cols_present] = work_df[cpap_ld_cols_present].fillna(0)
+
                 all_or_none_df = compute_all_or_none(work_df)
                 if all_or_none_df.empty:
                     st.warning("No data available for L&D.")
@@ -1271,7 +1278,7 @@ def render_mentorship_analysis_dashboard():
                                 st.markdown("</div>", unsafe_allow_html=True)
 
                         with left_col:
-                            hypo_tab, = st.tabs(["Hypothermia Prevention"])
+                            hypo_tab, cpap_tab = st.tabs(["Hypothermia Prevention", "Early CPAP"])
 
                             with hypo_tab:
                                 all_or_none_tab, care_delivered_tab = st.tabs([
@@ -1429,7 +1436,8 @@ def render_mentorship_analysis_dashboard():
                                             if week_raw.empty:
                                                 continue
                                             card_data = week_raw.groupby(["card", care_entity_col])[bundle_cols_bar].max().reset_index()
-                                            card_data["care_pct"] = card_data[bundle_cols_bar].sum(axis=1) / 5 * 100
+                                            card_data["care_pct_actual"] = card_data[bundle_cols_bar].sum(axis=1) / 5 * 100
+                                            card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
                                             card_data["card_label"] = card_data.apply(
                                                 lambda r: f"Card {int(r['card'])}", axis=1
                                             )
@@ -1459,17 +1467,19 @@ def render_mentorship_analysis_dashboard():
                                                 facet_col="week",
                                                 facet_col_wrap=2,
                                                 color_discrete_sequence=px.colors.qualitative.Plotly + px.colors.qualitative.D3,
-                                                custom_data=["bundle_detail"],
+                                                custom_data=["bundle_detail", "care_pct_actual"],
                                                 labels={care_entity_col: "Facility", "care_pct": "%"},
                                             )
                                             fig.update_traces(
                                                 hovertemplate=(
                                                     "<b>%{x}</b><br>"
                                                     + "%{customdata[0]}<br>"
-                                                    + "Care delivered: %{y:.1f}%"
+                                                    + "Care delivered: %{customdata[1]:.1f}%"
                                                     + "<extra></extra>"
                                                 ),
+                                                marker=dict(line=dict(width=1, color="rgba(100,100,100,0.4)")),
                                             )
+
                                             fig.update_layout(
                                                 template="plotly_white",
                                                 height=max(300, len(selected_weeks) * 200),
@@ -1531,6 +1541,273 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                                 """
                                             )
 
+                            with cpap_tab:
+                                cpap_ld_cols_present = [c for c in ["cpap_ld-cpap1", "cpap_ld-cpap2", "cpap_ld-cpap3", "cpap_ld-cpap4"] if c in work_df.columns]
+                                cpap_all_or_none_tab, cpap_care_delivered_tab = st.tabs([
+                                    "Percentage of CPAP All or None Bundle of care provided",
+                                    "Percentage of care delivered",
+                                ])
+
+                                with cpap_all_or_none_tab:
+                                    if len(cpap_ld_cols_present) < 4:
+                                        st.info("CPAP columns not fully available in L&D data.")
+                                    else:
+                                        cpap_round_info = work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                            subset=["week", "card", "region_label", "hospital"]
+                                        )
+                                        cpap_all_or_none = compute_all_or_none(work_df, bundle_cols=cpap_ld_cols_present)
+                                        cpap_all_or_none = cpap_all_or_none.merge(
+                                            cpap_round_info, on=["week", "card", "region_label", "hospital"], how="left"
+                                        )
+
+                                        cpap_filtered = cpap_all_or_none.copy()
+                                        if selected_round != "All Rounds":
+                                            cpap_filtered = cpap_filtered[cpap_filtered["round"] == selected_round]
+                                        if selected_entities:
+                                            cpap_filtered = cpap_filtered[cpap_filtered[entity_col].isin(selected_entities)]
+                                        else:
+                                            cpap_filtered = cpap_filtered.iloc[0:0]
+
+                                        if cpap_filtered.empty:
+                                            st.info("No data for the selected filter combination.")
+                                        else:
+                                            cpap_show_card_details = (group_mode == "Regional" and len(selected_entities) == 1 and entity_col == "hospital")
+
+                                            if cpap_show_card_details:
+                                                cpap_card_hover = cpap_filtered.groupby("week").apply(
+                                                    lambda g: "<br>".join(
+                                                        f"Card {int(row['card'])}: {int(row['all_or_none'])}"
+                                                        for _, row in g.iterrows()
+                                                    )
+                                                ).reset_index(name="card_details")
+
+                                            cpap_weekly_stats = cpap_filtered.groupby("week").agg(
+                                                total_cards=("all_or_none", "count"),
+                                                compliant=("all_or_none", "sum"),
+                                            ).reset_index()
+                                            cpap_weekly_stats["percentage"] = np.where(
+                                                cpap_weekly_stats["total_cards"] > 0,
+                                                (cpap_weekly_stats["compliant"] / cpap_weekly_stats["total_cards"]) * 100,
+                                                0.0,
+                                            )
+                                            if cpap_show_card_details:
+                                                cpap_weekly_stats = cpap_weekly_stats.merge(cpap_card_hover, on="week", how="left")
+                                            cpap_weekly_stats = cpap_weekly_stats.sort_values("week")
+
+                                            cpap_week_display_map = {w: f"Week {int(w)}" for w in sorted(cpap_weekly_stats["week"].unique())}
+                                            cpap_weekly_stats["week_label"] = cpap_weekly_stats["week"].map(cpap_week_display_map)
+
+                                            cpap_median_val = np.median(cpap_weekly_stats["percentage"]) if len(cpap_weekly_stats) > 0 else 0
+
+                                            cpap_ci_total = 0
+                                            cpap_ci_compliant = 1
+                                            cpap_customdata_cols = ["total_cards", "compliant"]
+                                            if cpap_show_card_details:
+                                                cpap_customdata_cols = ["card_details", "total_cards", "compliant"]
+                                                cpap_ci_total = 1
+                                                cpap_ci_compliant = 2
+
+                                            cpap_hover_parts = [
+                                                "<b>%{x}</b><br>",
+                                                f"Patients with full bundle: %{{customdata[{cpap_ci_compliant}]:.0f}}<br>",
+                                                f"Total patients observed: %{{customdata[{cpap_ci_total}]:.0f}}<br>",
+                                                "% of CPAP All or None: %{y:.1f}%<br>",
+                                                f"Median: {cpap_median_val:.1f}%",
+                                            ]
+                                            if cpap_show_card_details:
+                                                cpap_hover_parts.append("<br><br><b>All-or-None</b><br>%{customdata[0]}")
+                                            cpap_hover_parts.append("<extra></extra>")
+
+                                            cpap_fig = go.Figure()
+                                            cpap_fig.add_trace(go.Scatter(
+                                                x=cpap_weekly_stats["week_label"],
+                                                y=cpap_weekly_stats["percentage"],
+                                                mode="lines+markers",
+                                                name="CPAP All-or-None Bundle",
+                                                marker=dict(size=8, symbol="circle", color="#2563eb", line=dict(color="#2563eb", width=1)),
+                                                line=dict(color="#2563eb", width=2.5),
+                                                customdata=cpap_weekly_stats[cpap_customdata_cols].fillna("").values,
+                                                hovertemplate="".join(cpap_hover_parts),
+                                            ))
+                                            cpap_fig.add_hline(
+                                                y=cpap_median_val,
+                                                line=dict(color="#e91e9e", width=2.5, dash="solid"),
+                                                annotation_text=f"Median: {cpap_median_val:.1f}%",
+                                                annotation_font_size=10,
+                                                annotation_position="right",
+                                            )
+                                            cpap_fig.add_trace(go.Scatter(
+                                                x=[None], y=[None],
+                                                mode="lines",
+                                                name=f"Median: {cpap_median_val:.1f}%",
+                                                line=dict(color="#e91e9e", width=2.5),
+                                                showlegend=True,
+                                            ))
+
+                                            cpap_fig.update_layout(
+                                                template="plotly_white",
+                                                height=290,
+                                                margin=dict(l=8, r=8, t=20, b=8),
+                                                xaxis_title=dict(text="Week", font=dict(size=11)),
+                                                yaxis_title=dict(text="Percentage (%)", font=dict(size=11)),
+                                                font=dict(size=10),
+                                                hoverlabel=dict(font_size=10, namelength=-1),
+                                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=9)),
+                                                yaxis=dict(range=[0, 110], tickformat=".0f", dtick=20),
+                                            )
+                                            cpap_sorted_week_labels = [f"Week {int(w)}" for w in sorted(cpap_weekly_stats["week"].unique())]
+                                            cpap_fig.update_xaxes(tickfont=dict(size=9), automargin=True, categoryorder="array", categoryarray=cpap_sorted_week_labels)
+                                            cpap_fig.update_yaxes(tickfont=dict(size=9), automargin=True, gridcolor="#f0f0f0")
+
+                                            st.plotly_chart(cpap_fig, use_container_width=True, key="mentorship_cis_cpap_run_chart")
+
+                                            with st.expander("How this is computed", expanded=False):
+                                                st.markdown(
+                                                    """
+**Percentage** = (Patients with full bundle ÷ Total patients observed) × 100
+
+**Early CPAP Bundle of Care – L&D**
+
+1. bCPAP is readily available at the L&D room immediately before the baby is born for indicated baby
+2. bCPAP initiated immediately after delivery with blended oxygen at 5-6cm H20 and Fio2 adjusted according to patient need
+3. Baby's airway is patent and correctly positioned
+4. CPAP used during transporting neonate to the NICU
+                                                    """
+                                                )
+
+                                with cpap_care_delivered_tab:
+                                    cpap_selected_weeks = st.multiselect(
+                                        "Select Weeks",
+                                        options=sorted([int(w) for w in work_df["week"].dropna().unique() if str(w).strip()]),
+                                        default=sorted([int(w) for w in work_df["week"].dropna().unique() if str(w).strip()]),
+                                        key="mentorship_cis_cpap_care_weeks",
+                                    )
+
+                                    if not cpap_selected_weeks:
+                                        st.info("Please select at least one week.")
+                                    else:
+                                        cpap_bundle_labels = {
+                                            "cpap_ld-cpap1": "bCPAP ready at L&D room",
+                                            "cpap_ld-cpap2": "bCPAP initiated with blended O2",
+                                            "cpap_ld-cpap3": "Airway patent & positioned",
+                                            "cpap_ld-cpap4": "CPAP during transport to NICU",
+                                        }
+                                        cpap_care_entity_col = "hospital"
+
+                                        cpap_all_weeks_data = []
+                                        for week_val in cpap_selected_weeks:
+                                            week_raw = work_df[work_df["week"] == week_val].copy()
+                                            if selected_round != "All Rounds":
+                                                week_raw = week_raw[week_raw["round"] == selected_round]
+                                            if selected_entities:
+                                                week_raw = week_raw[week_raw[entity_col].isin(selected_entities)]
+                                            if week_raw.empty:
+                                                continue
+                                            card_data = week_raw.groupby(["card", cpap_care_entity_col])[cpap_ld_cols_present].max().reset_index()
+                                            card_data["care_pct_actual"] = card_data[cpap_ld_cols_present].sum(axis=1) / 4 * 100
+                                            card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
+                                            card_data["card_label"] = card_data.apply(
+                                                lambda r: f"Card {int(r['card'])}", axis=1
+                                            )
+                                            card_data["week"] = f"Week {week_val}"
+
+                                            bundle_vals = []
+                                            for _, r in card_data.iterrows():
+                                                lines = [f"<b>Card {int(r['card'])}</b>"]
+                                                for col in cpap_ld_cols_present:
+                                                    val = int(r[col])
+                                                    lines.append(f"{cpap_bundle_labels[col]}: {'Yes' if val else 'No'}")
+                                                bundle_vals.append("<br>".join(lines))
+                                            card_data["bundle_detail"] = bundle_vals
+
+                                            cpap_all_weeks_data.append(card_data)
+
+                                        if not cpap_all_weeks_data:
+                                            st.info("No data for the selected filter combination.")
+                                        else:
+                                            cpap_plot_df = pd.concat(cpap_all_weeks_data, ignore_index=True)
+                                            cpap_fig2 = px.bar(
+                                                cpap_plot_df,
+                                                x=cpap_care_entity_col,
+                                                y="care_pct",
+                                                color="card_label",
+                                                barmode="group",
+                                                facet_col="week",
+                                                facet_col_wrap=2,
+                                                color_discrete_sequence=px.colors.qualitative.Plotly + px.colors.qualitative.D3,
+                                                custom_data=["bundle_detail", "care_pct_actual"],
+                                                labels={cpap_care_entity_col: "Facility", "care_pct": "%"},
+                                            )
+                                            cpap_fig2.update_traces(
+                                                hovertemplate=(
+                                                    "<b>%{x}</b><br>"
+                                                    + "%{customdata[0]}<br>"
+                                                    + "Care delivered: %{customdata[1]:.1f}%"
+                                                    + "<extra></extra>"
+                                                ),
+                                                marker=dict(line=dict(width=1, color="rgba(100,100,100,0.4)")),
+                                            )
+
+                                            cpap_fig2.update_layout(
+                                                template="plotly_white",
+                                                height=max(300, len(cpap_selected_weeks) * 200),
+                                                margin=dict(l=8, r=8, t=48, b=8),
+                                                font=dict(size=9),
+                                                hoverlabel=dict(font_size=9),
+                                                legend=dict(
+                                                    orientation="h",
+                                                    yanchor="bottom",
+                                                    y=1.02,
+                                                    xanchor="left",
+                                                    x=0,
+                                                    font=dict(size=8),
+                                                    title=dict(text="Card", font=dict(size=8)),
+                                                ),
+                                            )
+                                            cpap_fig2.for_each_annotation(lambda a: a.update(
+                                                text=a.text.split("=")[-1].strip(),
+                                                font=dict(size=12, color="black"),
+                                            ))
+                                            cpap_fig2.update_xaxes(
+                                                matches=None,
+                                                showticklabels=True,
+                                                tickfont=dict(size=8),
+                                                automargin=True,
+                                                tickangle=45,
+                                                showline=True,
+                                                linewidth=1,
+                                                linecolor="lightgray",
+                                                mirror=True,
+                                            )
+                                            cpap_fig2.update_yaxes(
+                                                range=[0, 110],
+                                                tickfont=dict(size=8),
+                                                automargin=True,
+                                                showline=True,
+                                                linewidth=1,
+                                                linecolor="lightgray",
+                                                mirror=True,
+                                            )
+                                            st.plotly_chart(cpap_fig2, use_container_width=True, key="mentorship_cis_cpap_care_delivered")
+
+                                        with st.expander("How this is computed", expanded=False):
+                                            st.markdown(
+                                                f"""
+**Percentage of care delivered per patient** = (Bundle items = Yes ÷ 4) × 100
+
+For each patient (card), all 4 bundle items are evaluated. Missing values are treated as **No (0)** for consistency.
+
+**Early CPAP Bundle Variables – L&D**
+
+| Variable | Description |
+|---|---|
+| cpap_ld-cpap1 | bCPAP is readily available at the L&D room immediately before the baby is born for indicated baby |
+| cpap_ld-cpap2 | bCPAP initiated immediately after delivery with blended oxygen at 5-6cm H20 and Fio2 adjusted according to patient need |
+| cpap_ld-cpap3 | Baby's airway is patent and correctly positioned |
+| cpap_ld-cpap4 | CPAP used during transporting neonate to the NICU |
+                                                """
+                                            )
+
                     with nicu_tab:
                         nicu_bundle_cols = ["NICU-nicu1", "NICU-nicu2", "NICU-nicu3", "NICU-nicu4", "NICU-nicu5"]
                         nicu_work_df = cis_raw.copy()
@@ -1564,6 +1841,13 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                             for col in nicu_bundle_cols:
                                 nicu_work_df[col] = pd.to_numeric(nicu_work_df[col], errors="coerce")
                             nicu_work_df[nicu_bundle_cols] = nicu_work_df[nicu_bundle_cols].fillna(0)
+
+                            nicu_cpap_cols = ["cpap_nicu-cpap1nicu", "cpap_nicu-cpap2nicu", "cpap_nicu-cpap3nicu", "cpap_nicu-cpap4nicu", "cpap_nicu-cpap5nicu", "cpap_nicu-cpap6nicu"]
+                            nicu_cpap_cols_present = [c for c in nicu_cpap_cols if c in nicu_work_df.columns]
+                            if nicu_cpap_cols_present:
+                                for col in nicu_cpap_cols_present:
+                                    nicu_work_df[col] = pd.to_numeric(nicu_work_df[col], errors="coerce")
+                                nicu_work_df[nicu_cpap_cols_present] = nicu_work_df[nicu_cpap_cols_present].fillna(0)
 
                             nicu_all_or_none_df = compute_all_or_none(nicu_work_df, bundle_cols=nicu_bundle_cols)
                             if nicu_all_or_none_df.empty:
@@ -1657,7 +1941,7 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                         st.markdown("</div>", unsafe_allow_html=True)
 
                                 with nicu_left_col:
-                                    nicu_hypo_tab, = st.tabs(["Hypothermia Prevention"])
+                                    nicu_hypo_tab, nicu_cpap_tab = st.tabs(["Hypothermia Prevention", "Early CPAP"])
 
                                     with nicu_hypo_tab:
                                         nicu_all_or_none_tab, nicu_care_delivered_tab = st.tabs([
@@ -1814,7 +2098,8 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                                     if week_raw.empty:
                                                         continue
                                                     card_data = week_raw.groupby(["card", nicu_care_entity_col])[nicu_bundle_cols].max().reset_index()
-                                                    card_data["care_pct"] = card_data[nicu_bundle_cols].sum(axis=1) / 5 * 100
+                                                    card_data["care_pct_actual"] = card_data[nicu_bundle_cols].sum(axis=1) / 5 * 100
+                                                    card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
                                                     card_data["card_label"] = card_data.apply(
                                                         lambda r: f"Card {int(r['card'])}", axis=1
                                                     )
@@ -1844,17 +2129,19 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                                         facet_col="week",
                                                         facet_col_wrap=2,
                                                         color_discrete_sequence=px.colors.qualitative.Plotly + px.colors.qualitative.D3,
-                                                        custom_data=["bundle_detail"],
+                                                        custom_data=["bundle_detail", "care_pct_actual"],
                                                         labels={nicu_care_entity_col: "Facility", "care_pct": "%"},
                                                     )
                                                     nicu_fig2.update_traces(
                                                         hovertemplate=(
                                                             "<b>%{x}</b><br>"
                                                             + "%{customdata[0]}<br>"
-                                                            + "Care delivered: %{y:.1f}%"
+                                                            + "Care delivered: %{customdata[1]:.1f}%"
                                                             + "<extra></extra>"
                                                         ),
+                                                        marker=dict(line=dict(width=1, color="rgba(100,100,100,0.4)")),
                                                     )
+
                                                     nicu_fig2.update_layout(
                                                         template="plotly_white",
                                                         height=max(300, len(nicu_selected_weeks) * 200),
@@ -1913,6 +2200,279 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
 | NICU-nicu3 | Baby's received for admission to the newborn unit under a prewarmed radiant warmer |
 | NICU-nicu4 | Baby's body temperature is taken and recorded at admission and every 3-6 hours in the NBU |
 | NICU-nicu5 | Baby's body temperature is between 36.5 and 37.5 degree Celsius at admission |
+                                                        """
+                                                    )
+
+                                    with nicu_cpap_tab:
+                                        nicu_cpap_cols_present = [c for c in ["cpap_nicu-cpap1nicu", "cpap_nicu-cpap2nicu", "cpap_nicu-cpap3nicu", "cpap_nicu-cpap4nicu", "cpap_nicu-cpap5nicu", "cpap_nicu-cpap6nicu"] if c in nicu_work_df.columns]
+                                        nicu_cpap_all_or_none_tab, nicu_cpap_care_delivered_tab = st.tabs([
+                                            "Percentage of CPAP All or None Bundle of care provided",
+                                            "Percentage of care delivered",
+                                        ])
+
+                                        with nicu_cpap_all_or_none_tab:
+                                            if len(nicu_cpap_cols_present) < 6:
+                                                st.info("CPAP columns not fully available in NICU data.")
+                                            else:
+                                                nicu_cpap_round_info = nicu_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                                    subset=["week", "card", "region_label", "hospital"]
+                                                )
+                                                nicu_cpap_all_or_none = compute_all_or_none(nicu_work_df, bundle_cols=nicu_cpap_cols_present)
+                                                nicu_cpap_all_or_none = nicu_cpap_all_or_none.merge(
+                                                    nicu_cpap_round_info, on=["week", "card", "region_label", "hospital"], how="left"
+                                                )
+
+                                                nicu_cpap_filtered = nicu_cpap_all_or_none.copy()
+                                                if nicu_selected_round != "All Rounds":
+                                                    nicu_cpap_filtered = nicu_cpap_filtered[nicu_cpap_filtered["round"] == nicu_selected_round]
+                                                if nicu_selected_entities:
+                                                    nicu_cpap_filtered = nicu_cpap_filtered[nicu_cpap_filtered[nicu_entity_col].isin(nicu_selected_entities)]
+                                                else:
+                                                    nicu_cpap_filtered = nicu_cpap_filtered.iloc[0:0]
+
+                                                if nicu_cpap_filtered.empty:
+                                                    st.info("No data for the selected filter combination.")
+                                                else:
+                                                    nicu_cpap_show_card_details = (nicu_group_mode == "Regional" and len(nicu_selected_entities) == 1 and nicu_entity_col == "hospital")
+
+                                                    if nicu_cpap_show_card_details:
+                                                        nicu_cpap_card_hover = nicu_cpap_filtered.groupby("week").apply(
+                                                            lambda g: "<br>".join(
+                                                                f"Card {int(row['card'])}: {int(row['all_or_none'])}"
+                                                                for _, row in g.iterrows()
+                                                            )
+                                                        ).reset_index(name="card_details")
+
+                                                    nicu_cpap_weekly_stats = nicu_cpap_filtered.groupby("week").agg(
+                                                        total_cards=("all_or_none", "count"),
+                                                        compliant=("all_or_none", "sum"),
+                                                    ).reset_index()
+                                                    nicu_cpap_weekly_stats["percentage"] = np.where(
+                                                        nicu_cpap_weekly_stats["total_cards"] > 0,
+                                                        (nicu_cpap_weekly_stats["compliant"] / nicu_cpap_weekly_stats["total_cards"]) * 100,
+                                                        0.0,
+                                                    )
+                                                    if nicu_cpap_show_card_details:
+                                                        nicu_cpap_weekly_stats = nicu_cpap_weekly_stats.merge(nicu_cpap_card_hover, on="week", how="left")
+                                                    nicu_cpap_weekly_stats = nicu_cpap_weekly_stats.sort_values("week")
+
+                                                    nicu_cpap_week_display_map = {w: f"Week {int(w)}" for w in sorted(nicu_cpap_weekly_stats["week"].unique())}
+                                                    nicu_cpap_weekly_stats["week_label"] = nicu_cpap_weekly_stats["week"].map(nicu_cpap_week_display_map)
+
+                                                    nicu_cpap_median_val = np.median(nicu_cpap_weekly_stats["percentage"]) if len(nicu_cpap_weekly_stats) > 0 else 0
+
+                                                    nicu_cpap_ci_total = 0
+                                                    nicu_cpap_ci_compliant = 1
+                                                    nicu_cpap_customdata_cols = ["total_cards", "compliant"]
+                                                    if nicu_cpap_show_card_details:
+                                                        nicu_cpap_customdata_cols = ["card_details", "total_cards", "compliant"]
+                                                        nicu_cpap_ci_total = 1
+                                                        nicu_cpap_ci_compliant = 2
+
+                                                    nicu_cpap_hover_parts = [
+                                                        "<b>%{x}</b><br>",
+                                                        f"Patients with full bundle: %{{customdata[{nicu_cpap_ci_compliant}]:.0f}}<br>",
+                                                        f"Total patients observed: %{{customdata[{nicu_cpap_ci_total}]:.0f}}<br>",
+                                                        "% of CPAP All or None: %{y:.1f}%<br>",
+                                                        f"Median: {nicu_cpap_median_val:.1f}%",
+                                                    ]
+                                                    if nicu_cpap_show_card_details:
+                                                        nicu_cpap_hover_parts.append("<br><br><b>All-or-None</b><br>%{customdata[0]}")
+                                                    nicu_cpap_hover_parts.append("<extra></extra>")
+
+                                                    nicu_cpap_fig = go.Figure()
+                                                    nicu_cpap_fig.add_trace(go.Scatter(
+                                                        x=nicu_cpap_weekly_stats["week_label"],
+                                                        y=nicu_cpap_weekly_stats["percentage"],
+                                                        mode="lines+markers",
+                                                        name="CPAP All-or-None Bundle",
+                                                        marker=dict(size=8, symbol="circle", color="#2563eb", line=dict(color="#2563eb", width=1)),
+                                                        line=dict(color="#2563eb", width=2.5),
+                                                        customdata=nicu_cpap_weekly_stats[nicu_cpap_customdata_cols].fillna("").values,
+                                                        hovertemplate="".join(nicu_cpap_hover_parts),
+                                                    ))
+                                                    nicu_cpap_fig.add_hline(
+                                                        y=nicu_cpap_median_val,
+                                                        line=dict(color="#e91e9e", width=2.5, dash="solid"),
+                                                        annotation_text=f"Median: {nicu_cpap_median_val:.1f}%",
+                                                        annotation_font_size=10,
+                                                        annotation_position="right",
+                                                    )
+                                                    nicu_cpap_fig.add_trace(go.Scatter(
+                                                        x=[None], y=[None],
+                                                        mode="lines",
+                                                        name=f"Median: {nicu_cpap_median_val:.1f}%",
+                                                        line=dict(color="#e91e9e", width=2.5),
+                                                        showlegend=True,
+                                                    ))
+
+                                                    nicu_cpap_fig.update_layout(
+                                                        template="plotly_white",
+                                                        height=290,
+                                                        margin=dict(l=8, r=8, t=20, b=8),
+                                                        xaxis_title=dict(text="Week", font=dict(size=11)),
+                                                        yaxis_title=dict(text="Percentage (%)", font=dict(size=11)),
+                                                        font=dict(size=10),
+                                                        hoverlabel=dict(font_size=10, namelength=-1),
+                                                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=9)),
+                                                        yaxis=dict(range=[0, 110], tickformat=".0f", dtick=20),
+                                                    )
+                                                    nicu_cpap_sorted_week_labels = [f"Week {int(w)}" for w in sorted(nicu_cpap_weekly_stats["week"].unique())]
+                                                    nicu_cpap_fig.update_xaxes(tickfont=dict(size=9), automargin=True, categoryorder="array", categoryarray=nicu_cpap_sorted_week_labels)
+                                                    nicu_cpap_fig.update_yaxes(tickfont=dict(size=9), automargin=True, gridcolor="#f0f0f0")
+
+                                                    st.plotly_chart(nicu_cpap_fig, use_container_width=True, key="mentorship_nicu_cpap_run_chart")
+
+                                                    with st.expander("How this is computed", expanded=False):
+                                                        st.markdown(
+                                                            """
+**Percentage** = (Patients with full bundle ÷ Total patients observed) × 100
+
+**Early CPAP Bundle of Care – NICU**
+
+1. bCPAP initiated at L&D or Operation theatre for inborn baby or within one hour of admission for outborn baby
+2. bCPAP initiated at 6cm H20 and Fio2 adjusted according to patient need
+3. Baby's vitals (RR, HR, Temp, SPO2) are monitored at 15-20mins after initiation and at every hour until stable then 3-4hourly
+4. Baby's airway is patent and correctly positioned
+5. Baby's oro-gastric tube in-situ and open (unless used for feeding)
+6. Normal saline drops instilled into nostrils at least every 4 hours and recorded
+                                                            """
+                                                        )
+
+                                        with nicu_cpap_care_delivered_tab:
+                                            nicu_cpap_selected_weeks = st.multiselect(
+                                                "Select Weeks",
+                                                options=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                default=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                key="mentorship_nicu_cpap_care_weeks",
+                                            )
+
+                                            if not nicu_cpap_selected_weeks:
+                                                st.info("Please select at least one week.")
+                                            else:
+                                                nicu_cpap_bundle_labels = {
+                                                    "cpap_nicu-cpap1nicu": "bCPAP within 1hr of admission",
+                                                    "cpap_nicu-cpap2nicu": "bCPAP at 6cm H2O, FiO2 adjusted",
+                                                    "cpap_nicu-cpap3nicu": "Vitals monitored q15min→hourly",
+                                                    "cpap_nicu-cpap4nicu": "Airway patent & positioned",
+                                                    "cpap_nicu-cpap5nicu": "OG tube in-situ & open",
+                                                    "cpap_nicu-cpap6nicu": "Normal saline drops q4h",
+                                                }
+                                                nicu_cpap_care_entity_col = "hospital"
+
+                                                nicu_cpap_all_weeks_data = []
+                                                for week_val in nicu_cpap_selected_weeks:
+                                                    week_raw = nicu_work_df[nicu_work_df["week"] == week_val].copy()
+                                                    if nicu_selected_round != "All Rounds":
+                                                        week_raw = week_raw[week_raw["round"] == nicu_selected_round]
+                                                    if nicu_selected_entities:
+                                                        week_raw = week_raw[week_raw[nicu_entity_col].isin(nicu_selected_entities)]
+                                                    if week_raw.empty:
+                                                        continue
+                                                    card_data = week_raw.groupby(["card", nicu_cpap_care_entity_col])[nicu_cpap_cols_present].max().reset_index()
+                                                    card_data["care_pct_actual"] = card_data[nicu_cpap_cols_present].sum(axis=1) / 6 * 100
+                                                    card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
+                                                    card_data["card_label"] = card_data.apply(
+                                                        lambda r: f"Card {int(r['card'])}", axis=1
+                                                    )
+                                                    card_data["week"] = f"Week {week_val}"
+
+                                                    bundle_vals = []
+                                                    for _, r in card_data.iterrows():
+                                                        lines = [f"<b>Card {int(r['card'])}</b>"]
+                                                        for col in nicu_cpap_cols_present:
+                                                            val = int(r[col])
+                                                            lines.append(f"{nicu_cpap_bundle_labels[col]}: {'Yes' if val else 'No'}")
+                                                        bundle_vals.append("<br>".join(lines))
+                                                    card_data["bundle_detail"] = bundle_vals
+
+                                                    nicu_cpap_all_weeks_data.append(card_data)
+
+                                                if not nicu_cpap_all_weeks_data:
+                                                    st.info("No data for the selected filter combination.")
+                                                else:
+                                                    nicu_cpap_plot_df = pd.concat(nicu_cpap_all_weeks_data, ignore_index=True)
+                                                    nicu_cpap_fig2 = px.bar(
+                                                        nicu_cpap_plot_df,
+                                                        x=nicu_cpap_care_entity_col,
+                                                        y="care_pct",
+                                                        color="card_label",
+                                                        barmode="group",
+                                                        facet_col="week",
+                                                        facet_col_wrap=2,
+                                                        color_discrete_sequence=px.colors.qualitative.Plotly + px.colors.qualitative.D3,
+                                                        custom_data=["bundle_detail", "care_pct_actual"],
+                                                        labels={nicu_cpap_care_entity_col: "Facility", "care_pct": "%"},
+                                                    )
+                                                    nicu_cpap_fig2.update_traces(
+                                                        hovertemplate=(
+                                                            "<b>%{x}</b><br>"
+                                                            + "%{customdata[0]}<br>"
+                                                            + "Care delivered: %{customdata[1]:.1f}%"
+                                                            + "<extra></extra>"
+                                                        ),
+                                                        marker=dict(line=dict(width=1, color="rgba(100,100,100,0.4)")),
+                                                    )
+
+                                                    nicu_cpap_fig2.update_layout(
+                                                        template="plotly_white",
+                                                        height=max(300, len(nicu_cpap_selected_weeks) * 200),
+                                                        margin=dict(l=8, r=8, t=48, b=8),
+                                                        font=dict(size=9),
+                                                        hoverlabel=dict(font_size=9),
+                                                        legend=dict(
+                                                            orientation="h",
+                                                            yanchor="bottom",
+                                                            y=1.02,
+                                                            xanchor="left",
+                                                            x=0,
+                                                            font=dict(size=8),
+                                                            title=dict(text="Card", font=dict(size=8)),
+                                                        ),
+                                                    )
+                                                    nicu_cpap_fig2.for_each_annotation(lambda a: a.update(
+                                                        text=a.text.split("=")[-1].strip(),
+                                                        font=dict(size=12, color="black"),
+                                                    ))
+                                                    nicu_cpap_fig2.update_xaxes(
+                                                        matches=None,
+                                                        showticklabels=True,
+                                                        tickfont=dict(size=8),
+                                                        automargin=True,
+                                                        tickangle=45,
+                                                        showline=True,
+                                                        linewidth=1,
+                                                        linecolor="lightgray",
+                                                        mirror=True,
+                                                    )
+                                                    nicu_cpap_fig2.update_yaxes(
+                                                        range=[0, 110],
+                                                        tickfont=dict(size=8),
+                                                        automargin=True,
+                                                        showline=True,
+                                                        linewidth=1,
+                                                        linecolor="lightgray",
+                                                        mirror=True,
+                                                    )
+                                                    st.plotly_chart(nicu_cpap_fig2, use_container_width=True, key="mentorship_nicu_cpap_care_delivered")
+
+                                                with st.expander("How this is computed", expanded=False):
+                                                    st.markdown(
+                                                        f"""
+**Percentage of care delivered per patient** = (Bundle items = Yes ÷ 6) × 100
+
+For each patient (card), all 6 bundle items are evaluated. Missing values are treated as **No (0)** for consistency.
+
+**Early CPAP Bundle Variables – NICU**
+
+| Variable | Description |
+|---|---|
+| cpap_nicu-cpap1nicu | bCPAP initiated at L&D or Operation theatre for inborn baby or within one hour of admission for outborn baby |
+| cpap_nicu-cpap2nicu | bCPAP initiated at 6cm H20 and Fio2 adjusted according to patient need |
+| cpap_nicu-cpap3nicu | Baby's vitals (RR, HR, Temp, SPO2) are monitored at 15-20mins after initiation and at every hour until stable then 3-4hourly |
+| cpap_nicu-cpap4nicu | Baby's airway is patent and correctly positioned |
+| cpap_nicu-cpap5nicu | Baby's oro-gastric tube in-situ and open (unless used for feeding) |
+| cpap_nicu-cpap6nicu | Normal saline drops instilled into nostrils at least every 4 hours and recorded |
                                                         """
                                                     )
 
