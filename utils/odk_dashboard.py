@@ -360,8 +360,9 @@ def _get_region_code_to_name_mapping() -> dict[str, str]:
     return code_to_name
 
 
-def compute_all_or_none(df):
-    bundle_cols = ["LD-ld1", "LD-ld2", "LD-ld3", "LD-ld4", "LD-ld5"]
+def compute_all_or_none(df, bundle_cols=None):
+    if bundle_cols is None:
+        bundle_cols = ["LD-ld1", "LD-ld2", "LD-ld3", "LD-ld4", "LD-ld5"]
     for col in bundle_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df[bundle_cols] = df[bundle_cols].fillna(0)
@@ -1144,7 +1145,8 @@ def render_mentorship_analysis_dashboard():
             st.error(f"Unable to load CIS Bundle of Care data: {exc}")
         else:
             region_code_map = _get_region_code_to_name_mapping()
-            work_df = df.copy()
+            cis_raw = df.copy()
+            work_df = cis_raw.copy()
             work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
             work_df["hospital"] = work_df["reg-hospital"].apply(_display_mentorship_facility)
             work_df["region_label"] = work_df["region_code"].map(region_code_map).fillna(
@@ -1152,6 +1154,16 @@ def render_mentorship_analysis_dashboard():
             )
             work_df["round"] = work_df["reg-round"].astype(str).str.strip()
             work_df["unit"] = work_df["unit"].astype(str).str.strip().replace({"1.0": "1", "2.0": "2"})
+
+            cis_current_user = st.session_state.get("user", {})
+            if cis_current_user.get("role") == "regional":
+                try:
+                    cis_region_id = int(cis_current_user.get("region_id"))
+                except (TypeError, ValueError):
+                    cis_region_id = None
+                cis_regional_codes = get_odk_region_codes(cis_region_id) if cis_region_id is not None else []
+                if cis_regional_codes:
+                    work_df = work_df[work_df["region_code"].isin([str(c) for c in cis_regional_codes])]
 
             work_df = work_df[work_df["unit"] == "1"].copy()
 
@@ -1520,7 +1532,389 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                             )
 
                     with nicu_tab:
-                        st.info("NICU tab - Coming soon")
+                        nicu_bundle_cols = ["NICU-nicu1", "NICU-nicu2", "NICU-nicu3", "NICU-nicu4", "NICU-nicu5"]
+                        nicu_work_df = cis_raw.copy()
+                        nicu_work_df["region_code"] = nicu_work_df["reg-region"].apply(_normalize_region_code)
+                        nicu_work_df["hospital"] = nicu_work_df["reg-hospital"].apply(_display_mentorship_facility)
+                        nicu_work_df["region_label"] = nicu_work_df["region_code"].map(region_code_map).fillna(
+                            nicu_work_df["region_code"].apply(lambda x: f"Unknown ({x})" if x else "Unknown")
+                        )
+                        nicu_work_df["round"] = nicu_work_df["reg-round"].astype(str).str.strip()
+                        nicu_work_df["unit"] = nicu_work_df["unit"].astype(str).str.strip().replace({"1.0": "1", "2.0": "2"})
+
+                        nicu_current_user = st.session_state.get("user", {})
+                        if nicu_current_user.get("role") == "regional":
+                            try:
+                                nicu_region_id = int(nicu_current_user.get("region_id"))
+                            except (TypeError, ValueError):
+                                nicu_region_id = None
+                            nicu_regional_codes = get_odk_region_codes(nicu_region_id) if nicu_region_id is not None else []
+                            if nicu_regional_codes:
+                                nicu_work_df = nicu_work_df[nicu_work_df["region_code"].isin([str(c) for c in nicu_regional_codes])]
+
+                        nicu_work_df = nicu_work_df[nicu_work_df["unit"] == "2"].copy()
+
+                        missing_nicu = [c for c in nicu_bundle_cols if c not in nicu_work_df.columns]
+                        if missing_nicu:
+                            st.error(f"Missing required NICU columns: {missing_nicu}")
+                        else:
+                            nicu_work_df["week"] = pd.to_numeric(nicu_work_df["week"], errors="coerce")
+                            nicu_work_df = nicu_work_df.dropna(subset=["week", "card"])
+
+                            for col in nicu_bundle_cols:
+                                nicu_work_df[col] = pd.to_numeric(nicu_work_df[col], errors="coerce")
+                            nicu_work_df[nicu_bundle_cols] = nicu_work_df[nicu_bundle_cols].fillna(0)
+
+                            nicu_all_or_none_df = compute_all_or_none(nicu_work_df, bundle_cols=nicu_bundle_cols)
+                            if nicu_all_or_none_df.empty:
+                                st.warning("No data available for NICU.")
+                            else:
+                                nicu_round_info = nicu_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                    subset=["week", "card", "region_label", "hospital"]
+                                )
+                                nicu_all_or_none_df = nicu_all_or_none_df.merge(
+                                    nicu_round_info, on=["week", "card", "region_label", "hospital"], how="left"
+                                )
+
+                                nicu_left_col, nicu_right_col = st.columns([3, 1])
+
+                                with nicu_right_col:
+                                    with st.container(key="mentorship_filters_card_nicu"):
+                                        st.markdown('<div class="mentorship-filter-box">', unsafe_allow_html=True)
+                                        st.markdown(
+                                            '<div class="mentorship-filter-title">Filters</div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown(
+                                            '<div class="mentorship-filter-subtitle">Refine by group and round</div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown('<div class="mentorship-filter-divider"></div>', unsafe_allow_html=True)
+
+                                        nicu_round_values = sorted([r for r in nicu_work_df["round"].dropna().unique() if r != ""])
+                                        nicu_all_rounds_label = "All Rounds"
+                                        nicu_round_options = [nicu_all_rounds_label] + nicu_round_values if nicu_round_values else [nicu_all_rounds_label]
+
+                                        nicu_selected_round = st.selectbox(
+                                            "Round", options=nicu_round_options, index=0,
+                                            key="mentorship_nicu_round",
+                                        )
+
+                                        current_user = st.session_state.get("user", {})
+                                        is_regional_user = current_user.get("role") == "regional"
+                                        nicu_group_mode_options = ["Regional"] if is_regional_user else ["Multi Regional", "Regional"]
+                                        nicu_group_mode = st.radio(
+                                            "Group By", options=nicu_group_mode_options,
+                                            key="mentorship_nicu_group_mode",
+                                        )
+
+                                        if nicu_group_mode == "Multi Regional":
+                                            nicu_entity_col = "region_label"
+                                            nicu_entity_options = sorted([
+                                                v for v in nicu_all_or_none_df[nicu_entity_col].dropna().unique().tolist()
+                                                if str(v).strip()
+                                            ])
+                                            nicu_all_token = "All Regions"
+                                            nicu_selector_options = [nicu_all_token] + nicu_entity_options
+                                            nicu_entity_key = "mentorship_nicu_entities_multi"
+                                            if nicu_entity_key not in st.session_state or not st.session_state.get(nicu_entity_key):
+                                                st.session_state[nicu_entity_key] = [nicu_all_token]
+                                            st.multiselect("Select Regions", options=nicu_selector_options, key=nicu_entity_key)
+                                            nicu_current_selected = st.session_state.get(nicu_entity_key, [nicu_all_token])
+                                            nicu_effective_selected = (
+                                                [nicu_all_token] if (nicu_all_token in nicu_current_selected or len(nicu_current_selected) == 0)
+                                                else nicu_current_selected
+                                            )
+                                            nicu_selected_entities = nicu_entity_options if nicu_all_token in nicu_effective_selected else nicu_effective_selected
+                                        else:
+                                            nicu_region_options = sorted([
+                                                v for v in nicu_all_or_none_df["region_label"].dropna().unique().tolist()
+                                                if str(v).strip()
+                                            ])
+                                            nicu_selected_region = st.selectbox(
+                                                "Select Region", options=nicu_region_options,
+                                                key="mentorship_nicu_region",
+                                            )
+                                            nicu_facilities_in_region = sorted([
+                                                v for v in nicu_all_or_none_df.loc[
+                                                    nicu_all_or_none_df["region_label"] == nicu_selected_region, "hospital"
+                                                ].dropna().unique().tolist() if str(v).strip()
+                                            ])
+                                            nicu_entity_col = "hospital"
+                                            nicu_all_token = "All Facilities in Region"
+                                            nicu_selector_options = [nicu_all_token] + nicu_facilities_in_region
+                                            nicu_entity_key = "mentorship_nicu_entities_facilities"
+                                            if nicu_entity_key not in st.session_state or not st.session_state.get(nicu_entity_key):
+                                                st.session_state[nicu_entity_key] = [nicu_all_token]
+                                            st.multiselect("Select Facilities", options=nicu_selector_options, key=nicu_entity_key)
+                                            nicu_current_selected = st.session_state.get(nicu_entity_key, [nicu_all_token])
+                                            nicu_effective_selected = (
+                                                [nicu_all_token] if (nicu_all_token in nicu_current_selected or len(nicu_current_selected) == 0)
+                                                else nicu_current_selected
+                                            )
+                                            nicu_selected_entities = nicu_facilities_in_region if nicu_all_token in nicu_effective_selected else nicu_effective_selected
+
+                                        st.markdown("</div>", unsafe_allow_html=True)
+
+                                with nicu_left_col:
+                                    nicu_hypo_tab, = st.tabs(["Hypothermia Prevention"])
+
+                                    with nicu_hypo_tab:
+                                        nicu_all_or_none_tab, nicu_care_delivered_tab = st.tabs([
+                                            "Percentage of Hypothermia prevention All or None",
+                                            "Percentage of care delivered",
+                                        ])
+
+                                        with nicu_all_or_none_tab:
+                                            nicu_filtered = nicu_all_or_none_df.copy()
+                                            if nicu_selected_round != "All Rounds":
+                                                nicu_filtered = nicu_filtered[nicu_filtered["round"] == nicu_selected_round]
+                                            if nicu_selected_entities:
+                                                nicu_filtered = nicu_filtered[nicu_filtered[nicu_entity_col].isin(nicu_selected_entities)]
+                                            else:
+                                                nicu_filtered = nicu_filtered.iloc[0:0]
+
+                                            if nicu_filtered.empty:
+                                                st.info("No data for the selected filter combination.")
+                                            else:
+                                                nicu_show_card_details = (nicu_group_mode == "Regional" and len(nicu_selected_entities) == 1 and nicu_entity_col == "hospital")
+
+                                                if nicu_show_card_details:
+                                                    nicu_card_hover = nicu_filtered.groupby("week").apply(
+                                                        lambda g: "<br>".join(
+                                                            f"Card {int(row['card'])}: {int(row['all_or_none'])}"
+                                                            for _, row in g.iterrows()
+                                                        )
+                                                    ).reset_index(name="card_details")
+
+                                                nicu_weekly_stats = nicu_filtered.groupby("week").agg(
+                                                    total_cards=("all_or_none", "count"),
+                                                    compliant=("all_or_none", "sum"),
+                                                ).reset_index()
+                                                nicu_weekly_stats["percentage"] = np.where(
+                                                    nicu_weekly_stats["total_cards"] > 0,
+                                                    (nicu_weekly_stats["compliant"] / nicu_weekly_stats["total_cards"]) * 100,
+                                                    0.0,
+                                                )
+                                                if nicu_show_card_details:
+                                                    nicu_weekly_stats = nicu_weekly_stats.merge(nicu_card_hover, on="week", how="left")
+                                                nicu_weekly_stats = nicu_weekly_stats.sort_values("week")
+
+                                                nicu_week_display_map = {w: f"Week {int(w)}" for w in sorted(nicu_weekly_stats["week"].unique())}
+                                                nicu_weekly_stats["week_label"] = nicu_weekly_stats["week"].map(nicu_week_display_map)
+
+                                                nicu_median_val = np.median(nicu_weekly_stats["percentage"]) if len(nicu_weekly_stats) > 0 else 0
+
+                                                nicu_ci_total = 0
+                                                nicu_ci_compliant = 1
+                                                nicu_customdata_cols = ["total_cards", "compliant"]
+                                                if nicu_show_card_details:
+                                                    nicu_customdata_cols = ["card_details", "total_cards", "compliant"]
+                                                    nicu_ci_total = 1
+                                                    nicu_ci_compliant = 2
+
+                                                nicu_hover_parts = [
+                                                    "<b>%{x}</b><br>",
+                                                    f"Patients with full bundle: %{{customdata[{nicu_ci_compliant}]:.0f}}<br>",
+                                                    f"Total patients observed: %{{customdata[{nicu_ci_total}]:.0f}}<br>",
+                                                    "% of Hypothermia prevention: %{y:.1f}%<br>",
+                                                    f"Median: {nicu_median_val:.1f}%",
+                                                ]
+
+                                                if nicu_show_card_details:
+                                                    nicu_hover_parts.append("<br><br><b>All-or-None</b><br>%{customdata[0]}")
+
+                                                nicu_hover_parts.append("<extra></extra>")
+
+                                                nicu_fig = go.Figure()
+                                                nicu_fig.add_trace(go.Scatter(
+                                                    x=nicu_weekly_stats["week_label"],
+                                                    y=nicu_weekly_stats["percentage"],
+                                                    mode="lines+markers",
+                                                    name="Hypothermia Prevention All-or-None Bundle",
+                                                    marker=dict(size=8, symbol="circle", color="#2563eb", line=dict(color="#2563eb", width=1)),
+                                                    line=dict(color="#2563eb", width=2.5),
+                                                    customdata=nicu_weekly_stats[nicu_customdata_cols].fillna("").values,
+                                                    hovertemplate="".join(nicu_hover_parts),
+                                                ))
+                                                nicu_fig.add_hline(
+                                                    y=nicu_median_val,
+                                                    line=dict(color="#e91e9e", width=2.5, dash="solid"),
+                                                    annotation_text=f"Median: {nicu_median_val:.1f}%",
+                                                    annotation_font_size=10,
+                                                    annotation_position="right",
+                                                )
+                                                nicu_fig.add_trace(go.Scatter(
+                                                    x=[None], y=[None],
+                                                    mode="lines",
+                                                    name=f"Median: {nicu_median_val:.1f}%",
+                                                    line=dict(color="#e91e9e", width=2.5),
+                                                    showlegend=True,
+                                                ))
+
+                                                nicu_fig.update_layout(
+                                                    template="plotly_white",
+                                                    height=290,
+                                                    margin=dict(l=8, r=8, t=20, b=8),
+                                                    xaxis_title=dict(text="Week", font=dict(size=11)),
+                                                    yaxis_title=dict(text="Percentage (%)", font=dict(size=11)),
+                                                    font=dict(size=10),
+                                                    hoverlabel=dict(font_size=10, namelength=-1),
+                                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=9)),
+                                                    yaxis=dict(range=[0, 110], tickformat=".0f", dtick=20),
+                                                )
+                                                nicu_sorted_week_labels = [f"Week {int(w)}" for w in sorted(nicu_weekly_stats["week"].unique())]
+                                                nicu_fig.update_xaxes(tickfont=dict(size=9), automargin=True, categoryorder="array", categoryarray=nicu_sorted_week_labels)
+                                                nicu_fig.update_yaxes(tickfont=dict(size=9), automargin=True, gridcolor="#f0f0f0")
+
+                                                st.plotly_chart(nicu_fig, use_container_width=True, key="mentorship_nicu_run_chart")
+
+                                                with st.expander("How this is computed", expanded=False):
+                                                    st.markdown(
+                                                        """
+**Percentage** = (Patients with full bundle ÷ Total patients observed) × 100
+
+**Hypothermia Prevention Bundle of Care – NICU**
+
+1. The baby is transported and arrived while on skin to skin with the mother/surrogate or using pre-warmed transport incubator or body covered in a plastic bag
+2. The room temperature of the newborn unit is maintained at 25 - 28 degree Celsius
+3. Baby's received for admission to the newborn unit under a prewarmed radiant warmer
+4. Baby's body temperature is taken and recorded at admission and every 3-6 hours in the NBU
+5. Baby's body temperature is between 36.5 and 37.5 degree Celsius at admission
+                                                        """
+                                                    )
+
+                                        with nicu_care_delivered_tab:
+                                            nicu_selected_weeks = st.multiselect(
+                                                "Select Weeks",
+                                                options=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                default=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                key="mentorship_nicu_care_weeks",
+                                            )
+
+                                            if not nicu_selected_weeks:
+                                                st.info("Please select at least one week.")
+                                            else:
+                                                nicu_bundle_labels = {
+                                                    "NICU-nicu1": "Skin-to-skin / pre-warmed incubator / plastic bag",
+                                                    "NICU-nicu2": "Newborn unit room temp 25-28°C",
+                                                    "NICU-nicu3": "Admitted under prewarmed radiant warmer",
+                                                    "NICU-nicu4": "Temp taken at admission & q3-6h",
+                                                    "NICU-nicu5": "Body temp 36.5-37.5°C at admission",
+                                                }
+                                                nicu_care_entity_col = "hospital"
+
+                                                nicu_all_weeks_data = []
+                                                for week_val in nicu_selected_weeks:
+                                                    week_raw = nicu_work_df[nicu_work_df["week"] == week_val].copy()
+                                                    if nicu_selected_round != "All Rounds":
+                                                        week_raw = week_raw[week_raw["round"] == nicu_selected_round]
+                                                    if nicu_selected_entities:
+                                                        week_raw = week_raw[week_raw[nicu_entity_col].isin(nicu_selected_entities)]
+                                                    if week_raw.empty:
+                                                        continue
+                                                    card_data = week_raw.groupby(["card", nicu_care_entity_col])[nicu_bundle_cols].max().reset_index()
+                                                    card_data["care_pct"] = card_data[nicu_bundle_cols].sum(axis=1) / 5 * 100
+                                                    card_data["card_label"] = card_data.apply(
+                                                        lambda r: f"Card {int(r['card'])}", axis=1
+                                                    )
+                                                    card_data["week"] = f"Week {week_val}"
+
+                                                    bundle_vals = []
+                                                    for _, r in card_data.iterrows():
+                                                        lines = [f"<b>Card {int(r['card'])}</b>"]
+                                                        for col in nicu_bundle_cols:
+                                                            val = int(r[col])
+                                                            lines.append(f"{nicu_bundle_labels[col]}: {'Yes' if val else 'No'}")
+                                                        bundle_vals.append("<br>".join(lines))
+                                                    card_data["bundle_detail"] = bundle_vals
+
+                                                    nicu_all_weeks_data.append(card_data)
+
+                                                if not nicu_all_weeks_data:
+                                                    st.info("No data for the selected filter combination.")
+                                                else:
+                                                    nicu_plot_df = pd.concat(nicu_all_weeks_data, ignore_index=True)
+                                                    nicu_fig2 = px.bar(
+                                                        nicu_plot_df,
+                                                        x=nicu_care_entity_col,
+                                                        y="care_pct",
+                                                        color="card_label",
+                                                        barmode="group",
+                                                        facet_col="week",
+                                                        facet_col_wrap=2,
+                                                        color_discrete_sequence=px.colors.qualitative.Plotly + px.colors.qualitative.D3,
+                                                        custom_data=["bundle_detail"],
+                                                        labels={nicu_care_entity_col: "Facility", "care_pct": "%"},
+                                                    )
+                                                    nicu_fig2.update_traces(
+                                                        hovertemplate=(
+                                                            "<b>%{x}</b><br>"
+                                                            + "%{customdata[0]}<br>"
+                                                            + "Care delivered: %{y:.1f}%"
+                                                            + "<extra></extra>"
+                                                        ),
+                                                    )
+                                                    nicu_fig2.update_layout(
+                                                        template="plotly_white",
+                                                        height=max(300, len(nicu_selected_weeks) * 200),
+                                                        margin=dict(l=8, r=8, t=48, b=8),
+                                                        font=dict(size=9),
+                                                        hoverlabel=dict(font_size=9),
+                                                        legend=dict(
+                                                            orientation="h",
+                                                            yanchor="bottom",
+                                                            y=1.02,
+                                                            xanchor="left",
+                                                            x=0,
+                                                            font=dict(size=8),
+                                                            title=dict(text="Card", font=dict(size=8)),
+                                                        ),
+                                                    )
+                                                    nicu_fig2.for_each_annotation(lambda a: a.update(
+                                                        text=a.text.split("=")[-1].strip(),
+                                                        font=dict(size=12, color="black"),
+                                                    ))
+                                                    nicu_fig2.update_xaxes(
+                                                        matches=None,
+                                                        showticklabels=True,
+                                                        tickfont=dict(size=8),
+                                                        automargin=True,
+                                                        tickangle=45,
+                                                        showline=True,
+                                                        linewidth=1,
+                                                        linecolor="lightgray",
+                                                        mirror=True,
+                                                    )
+                                                    nicu_fig2.update_yaxes(
+                                                        range=[0, 110],
+                                                        tickfont=dict(size=8),
+                                                        automargin=True,
+                                                        showline=True,
+                                                        linewidth=1,
+                                                        linecolor="lightgray",
+                                                        mirror=True,
+                                                    )
+                                                    st.plotly_chart(nicu_fig2, use_container_width=True, key="mentorship_nicu_care_delivered")
+
+                                                with st.expander("How this is computed", expanded=False):
+                                                    st.markdown(
+                                                        f"""
+**Percentage of care delivered per patient** = (Bundle items = Yes ÷ 5) × 100
+
+For each patient (card), all 5 bundle items are evaluated. Missing values are treated as **No (0)** for consistency.
+
+**Hypothermia Prevention Bundle Variables – NICU**
+
+| Variable | Description |
+|---|---|
+| NICU-nicu1 | The baby is transported and arrived while on skin to skin with the mother/surrogate or using pre-warmed transport incubator or body covered in a plastic bag |
+| NICU-nicu2 | The room temperature of the newborn unit is maintained at 25 - 28 degree Celsius |
+| NICU-nicu3 | Baby's received for admission to the newborn unit under a prewarmed radiant warmer |
+| NICU-nicu4 | Baby's body temperature is taken and recorded at admission and every 3-6 hours in the NBU |
+| NICU-nicu5 | Baby's body temperature is between 36.5 and 37.5 degree Celsius at admission |
+                                                        """
+                                                    )
 
 
 def display_odk_dashboard(user: dict = None):
