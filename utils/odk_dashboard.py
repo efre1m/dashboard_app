@@ -366,10 +366,12 @@ def compute_all_or_none(df, bundle_cols=None):
     for col in bundle_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df[bundle_cols] = df[bundle_cols].fillna(0)
+    df["_yes_count"] = df[bundle_cols].sum(axis=1)
     df["row_all_or_none"] = df[bundle_cols].eq(1).all(axis=1).astype(int)
     entity_cols = [c for c in ["region_label", "hospital"] if c in df.columns]
     group_cols = ["week", "card"] + entity_cols
-    results = df.groupby(group_cols, as_index=False)["row_all_or_none"].min()
+    idx = df.groupby(group_cols)["_yes_count"].idxmax()
+    results = df.loc[idx, group_cols + ["row_all_or_none"]].reset_index(drop=True)
     results = results.rename(columns={"row_all_or_none": "all_or_none"})
     return results
 
@@ -1278,7 +1280,7 @@ def render_mentorship_analysis_dashboard():
                                 st.markdown("</div>", unsafe_allow_html=True)
 
                         with left_col:
-                            hypo_tab, cpap_tab = st.tabs(["Hypothermia Prevention", "Early CPAP"])
+                            hypo_tab, cpap_tab = st.tabs(["Hypothermia Prevention Bundle of Care", "Early CPAP Bundle of Care"])
 
                             with hypo_tab:
                                 all_or_none_tab, care_delivered_tab = st.tabs([
@@ -1435,7 +1437,9 @@ def render_mentorship_analysis_dashboard():
                                                 week_raw = week_raw[week_raw[entity_col].isin(selected_entities)]
                                             if week_raw.empty:
                                                 continue
-                                            card_data = week_raw.groupby(["card", care_entity_col])[bundle_cols_bar].max().reset_index()
+                                            week_raw["_yes_count"] = week_raw[bundle_cols_bar].sum(axis=1)
+                                            _idx = week_raw.groupby(["card", care_entity_col])["_yes_count"].idxmax()
+                                            card_data = week_raw.loc[_idx, ["card", care_entity_col] + bundle_cols_bar].reset_index(drop=True)
                                             card_data["care_pct_actual"] = card_data[bundle_cols_bar].sum(axis=1) / 5 * 100
                                             card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
                                             card_data["card_label"] = card_data.apply(
@@ -1703,7 +1707,9 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                                 week_raw = week_raw[week_raw[entity_col].isin(selected_entities)]
                                             if week_raw.empty:
                                                 continue
-                                            card_data = week_raw.groupby(["card", cpap_care_entity_col])[cpap_ld_cols_present].max().reset_index()
+                                            week_raw["_yes_count"] = week_raw[cpap_ld_cols_present].sum(axis=1)
+                                            _idx = week_raw.groupby(["card", cpap_care_entity_col])["_yes_count"].idxmax()
+                                            card_data = week_raw.loc[_idx, ["card", cpap_care_entity_col] + cpap_ld_cols_present].reset_index(drop=True)
                                             card_data["care_pct_actual"] = card_data[cpap_ld_cols_present].sum(axis=1) / 4 * 100
                                             card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
                                             card_data["card_label"] = card_data.apply(
@@ -1849,6 +1855,20 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
                                     nicu_work_df[col] = pd.to_numeric(nicu_work_df[col], errors="coerce")
                                 nicu_work_df[nicu_cpap_cols_present] = nicu_work_df[nicu_cpap_cols_present].fillna(0)
 
+                            nicu_kmc_cols = ["kmc-kmc1", "kmc-kmc2", "kmc-kmc3", "kmc-kmc4", "kmc-kmc5", "kmc-kmc6"]
+                            nicu_kmc_cols_present = [c for c in nicu_kmc_cols if c in nicu_work_df.columns]
+                            if nicu_kmc_cols_present:
+                                for col in nicu_kmc_cols_present:
+                                    nicu_work_df[col] = pd.to_numeric(nicu_work_df[col], errors="coerce")
+                                nicu_work_df[nicu_kmc_cols_present] = nicu_work_df[nicu_kmc_cols_present].fillna(0)
+
+                            nicu_nutrition_cols = ["Referral-referral1", "Referral-referral2", "Referral-referral3", "Referral-referral4", "Referral-referral5"]
+                            nicu_nutrition_cols_present = [c for c in nicu_nutrition_cols if c in nicu_work_df.columns]
+                            if nicu_nutrition_cols_present:
+                                for col in nicu_nutrition_cols_present:
+                                    nicu_work_df[col] = pd.to_numeric(nicu_work_df[col], errors="coerce")
+                                nicu_work_df[nicu_nutrition_cols_present] = nicu_work_df[nicu_nutrition_cols_present].fillna(0)
+
                             nicu_all_or_none_df = compute_all_or_none(nicu_work_df, bundle_cols=nicu_bundle_cols)
                             if nicu_all_or_none_df.empty:
                                 st.warning("No data available for NICU.")
@@ -1941,7 +1961,7 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
                                         st.markdown("</div>", unsafe_allow_html=True)
 
                                 with nicu_left_col:
-                                    nicu_hypo_tab, nicu_cpap_tab = st.tabs(["Hypothermia Prevention", "Early CPAP"])
+                                    nicu_hypo_tab, nicu_cpap_tab, nicu_kmc_tab, nicu_nutrition_tab = st.tabs(["Hypothermia Prevention Bundle of Care", "Early CPAP Bundle of Care", "KMC Bundle of Care", "Nutrition Bundle of Care"])
 
                                     with nicu_hypo_tab:
                                         nicu_all_or_none_tab, nicu_care_delivered_tab = st.tabs([
@@ -2097,7 +2117,9 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
                                                         week_raw = week_raw[week_raw[nicu_entity_col].isin(nicu_selected_entities)]
                                                     if week_raw.empty:
                                                         continue
-                                                    card_data = week_raw.groupby(["card", nicu_care_entity_col])[nicu_bundle_cols].max().reset_index()
+                                                    week_raw["_yes_count"] = week_raw[nicu_bundle_cols].sum(axis=1)
+                                                    _idx = week_raw.groupby(["card", nicu_care_entity_col])["_yes_count"].idxmax()
+                                                    card_data = week_raw.loc[_idx, ["card", nicu_care_entity_col] + nicu_bundle_cols].reset_index(drop=True)
                                                     card_data["care_pct_actual"] = card_data[nicu_bundle_cols].sum(axis=1) / 5 * 100
                                                     card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
                                                     card_data["card_label"] = card_data.apply(
@@ -2369,7 +2391,9 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                                         week_raw = week_raw[week_raw[nicu_entity_col].isin(nicu_selected_entities)]
                                                     if week_raw.empty:
                                                         continue
-                                                    card_data = week_raw.groupby(["card", nicu_cpap_care_entity_col])[nicu_cpap_cols_present].max().reset_index()
+                                                    week_raw["_yes_count"] = week_raw[nicu_cpap_cols_present].sum(axis=1)
+                                                    _idx = week_raw.groupby(["card", nicu_cpap_care_entity_col])["_yes_count"].idxmax()
+                                                    card_data = week_raw.loc[_idx, ["card", nicu_cpap_care_entity_col] + nicu_cpap_cols_present].reset_index(drop=True)
                                                     card_data["care_pct_actual"] = card_data[nicu_cpap_cols_present].sum(axis=1) / 6 * 100
                                                     card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
                                                     card_data["card_label"] = card_data.apply(
@@ -2473,6 +2497,551 @@ For each patient (card), all 6 bundle items are evaluated. Missing values are tr
 | cpap_nicu-cpap4nicu | Baby's airway is patent and correctly positioned |
 | cpap_nicu-cpap5nicu | Baby's oro-gastric tube in-situ and open (unless used for feeding) |
 | cpap_nicu-cpap6nicu | Normal saline drops instilled into nostrils at least every 4 hours and recorded |
+                                                        """
+                                                    )
+
+                                    with nicu_kmc_tab:
+                                        nicu_kmc_tab_cols_present = [c for c in ["kmc-kmc1", "kmc-kmc2", "kmc-kmc3", "kmc-kmc4", "kmc-kmc5", "kmc-kmc6"] if c in nicu_work_df.columns]
+                                        nicu_kmc_all_or_none_tab, nicu_kmc_care_delivered_tab = st.tabs([
+                                            "Percentage of KMC All or None Bundle of care provided",
+                                            "Percentage of care delivered",
+                                        ])
+
+                                        with nicu_kmc_all_or_none_tab:
+                                            if len(nicu_kmc_tab_cols_present) < 6:
+                                                st.info("KMC columns not fully available in NICU data.")
+                                            else:
+                                                nicu_kmc_round_info = nicu_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                                    subset=["week", "card", "region_label", "hospital"]
+                                                )
+                                                nicu_kmc_all_or_none = compute_all_or_none(nicu_work_df, bundle_cols=nicu_kmc_tab_cols_present)
+                                                nicu_kmc_all_or_none = nicu_kmc_all_or_none.merge(
+                                                    nicu_kmc_round_info, on=["week", "card", "region_label", "hospital"], how="left"
+                                                )
+
+                                                nicu_kmc_filtered = nicu_kmc_all_or_none.copy()
+                                                if nicu_selected_round != "All Rounds":
+                                                    nicu_kmc_filtered = nicu_kmc_filtered[nicu_kmc_filtered["round"] == nicu_selected_round]
+                                                if nicu_selected_entities:
+                                                    nicu_kmc_filtered = nicu_kmc_filtered[nicu_kmc_filtered[nicu_entity_col].isin(nicu_selected_entities)]
+                                                else:
+                                                    nicu_kmc_filtered = nicu_kmc_filtered.iloc[0:0]
+
+                                                if nicu_kmc_filtered.empty:
+                                                    st.info("No data for the selected filter combination.")
+                                                else:
+                                                    nicu_kmc_show_card_details = (nicu_group_mode == "Regional" and len(nicu_selected_entities) == 1 and nicu_entity_col == "hospital")
+
+                                                    if nicu_kmc_show_card_details:
+                                                        nicu_kmc_card_hover = nicu_kmc_filtered.groupby("week").apply(
+                                                            lambda g: "<br>".join(
+                                                                f"Card {int(row['card'])}: {int(row['all_or_none'])}"
+                                                                for _, row in g.iterrows()
+                                                            )
+                                                        ).reset_index(name="card_details")
+
+                                                    nicu_kmc_weekly_stats = nicu_kmc_filtered.groupby("week").agg(
+                                                        total_cards=("all_or_none", "count"),
+                                                        compliant=("all_or_none", "sum"),
+                                                    ).reset_index()
+                                                    nicu_kmc_weekly_stats["percentage"] = np.where(
+                                                        nicu_kmc_weekly_stats["total_cards"] > 0,
+                                                        (nicu_kmc_weekly_stats["compliant"] / nicu_kmc_weekly_stats["total_cards"]) * 100,
+                                                        0.0,
+                                                    )
+                                                    if nicu_kmc_show_card_details:
+                                                        nicu_kmc_weekly_stats = nicu_kmc_weekly_stats.merge(nicu_kmc_card_hover, on="week", how="left")
+                                                    nicu_kmc_weekly_stats = nicu_kmc_weekly_stats.sort_values("week")
+
+                                                    nicu_kmc_week_display_map = {w: f"Week {int(w)}" for w in sorted(nicu_kmc_weekly_stats["week"].unique())}
+                                                    nicu_kmc_weekly_stats["week_label"] = nicu_kmc_weekly_stats["week"].map(nicu_kmc_week_display_map)
+
+                                                    nicu_kmc_median_val = np.median(nicu_kmc_weekly_stats["percentage"]) if len(nicu_kmc_weekly_stats) > 0 else 0
+
+                                                    nicu_kmc_ci_total = 0
+                                                    nicu_kmc_ci_compliant = 1
+                                                    nicu_kmc_customdata_cols = ["total_cards", "compliant"]
+                                                    if nicu_kmc_show_card_details:
+                                                        nicu_kmc_customdata_cols = ["card_details", "total_cards", "compliant"]
+                                                        nicu_kmc_ci_total = 1
+                                                        nicu_kmc_ci_compliant = 2
+
+                                                    nicu_kmc_hover_parts = [
+                                                        "<b>%{x}</b><br>",
+                                                        f"Patients with full bundle: %{{customdata[{nicu_kmc_ci_compliant}]:.0f}}<br>",
+                                                        f"Total patients observed: %{{customdata[{nicu_kmc_ci_total}]:.0f}}<br>",
+                                                        "% of KMC All or None: %{y:.1f}%<br>",
+                                                        f"Median: {nicu_kmc_median_val:.1f}%",
+                                                    ]
+                                                    if nicu_kmc_show_card_details:
+                                                        nicu_kmc_hover_parts.append("<br><br><b>All-or-None</b><br>%{customdata[0]}")
+                                                    nicu_kmc_hover_parts.append("<extra></extra>")
+
+                                                    nicu_kmc_fig = go.Figure()
+                                                    nicu_kmc_fig.add_trace(go.Scatter(
+                                                        x=nicu_kmc_weekly_stats["week_label"],
+                                                        y=nicu_kmc_weekly_stats["percentage"],
+                                                        mode="lines+markers",
+                                                        name="KMC All-or-None Bundle",
+                                                        marker=dict(size=8, symbol="circle", color="#2563eb", line=dict(color="#2563eb", width=1)),
+                                                        line=dict(color="#2563eb", width=2.5),
+                                                        customdata=nicu_kmc_weekly_stats[nicu_kmc_customdata_cols].fillna("").values,
+                                                        hovertemplate="".join(nicu_kmc_hover_parts),
+                                                    ))
+                                                    nicu_kmc_fig.add_hline(
+                                                        y=nicu_kmc_median_val,
+                                                        line=dict(color="#e91e9e", width=2.5, dash="solid"),
+                                                        annotation_text=f"Median: {nicu_kmc_median_val:.1f}%",
+                                                        annotation_font_size=10,
+                                                        annotation_position="right",
+                                                    )
+                                                    nicu_kmc_fig.add_trace(go.Scatter(
+                                                        x=[None], y=[None],
+                                                        mode="lines",
+                                                        name=f"Median: {nicu_kmc_median_val:.1f}%",
+                                                        line=dict(color="#e91e9e", width=2.5),
+                                                        showlegend=True,
+                                                    ))
+
+                                                    nicu_kmc_fig.update_layout(
+                                                        template="plotly_white",
+                                                        height=290,
+                                                        margin=dict(l=8, r=8, t=20, b=8),
+                                                        xaxis_title=dict(text="Week", font=dict(size=11)),
+                                                        yaxis_title=dict(text="Percentage (%)", font=dict(size=11)),
+                                                        font=dict(size=10),
+                                                        hoverlabel=dict(font_size=10, namelength=-1),
+                                                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=9)),
+                                                        yaxis=dict(range=[0, 110], tickformat=".0f", dtick=20),
+                                                    )
+                                                    nicu_kmc_sorted_week_labels = [f"Week {int(w)}" for w in sorted(nicu_kmc_weekly_stats["week"].unique())]
+                                                    nicu_kmc_fig.update_xaxes(tickfont=dict(size=9), automargin=True, categoryorder="array", categoryarray=nicu_kmc_sorted_week_labels)
+                                                    nicu_kmc_fig.update_yaxes(tickfont=dict(size=9), automargin=True, gridcolor="#f0f0f0")
+
+                                                    st.plotly_chart(nicu_kmc_fig, use_container_width=True, key="mentorship_nicu_kmc_run_chart")
+
+                                                    with st.expander("How this is computed", expanded=False):
+                                                        st.markdown(
+                                                            """
+**Percentage** = (Patients with full bundle ÷ Total patients observed) × 100
+
+**KMC Bundle of Care – NICU**
+
+1. Eligible baby has received skin-to-skin contact on same day of birth at NICU/iKMC/KMC ward.
+2. The baby is skin to skin more than 8hours with in 24hrs
+3. Baby is secured firmly to the mother's or care giver's chest with a binder that ensures a patent airway.
+4. Baby is being breast fed every 2-3hours and a record of this maintained
+5. Baby vitals are monitored and recorded at least four times per day
+6. Baby is weighed daily, and weight gain progress recorded and analyzed
+                                                            """
+                                                        )
+
+                                        with nicu_kmc_care_delivered_tab:
+                                            nicu_kmc_selected_weeks = st.multiselect(
+                                                "Select Weeks",
+                                                options=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                default=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                key="mentorship_nicu_kmc_care_weeks",
+                                            )
+
+                                            if not nicu_kmc_selected_weeks:
+                                                st.info("Please select at least one week.")
+                                            else:
+                                                nicu_kmc_bundle_labels = {
+                                                    "kmc-kmc1": "Skin-to-skin on day of birth",
+                                                    "kmc-kmc2": "Skin-to-skin >8hrs in 24hrs",
+                                                    "kmc-kmc3": "Secured w/ binder, patent airway",
+                                                    "kmc-kmc4": "Breast fed q2-3h, recorded",
+                                                    "kmc-kmc5": "Vitals monitored 4x/day",
+                                                    "kmc-kmc6": "Daily weight & gain recorded",
+                                                }
+                                                nicu_kmc_care_entity_col = "hospital"
+
+                                                nicu_kmc_all_weeks_data = []
+                                                for week_val in nicu_kmc_selected_weeks:
+                                                    week_raw = nicu_work_df[nicu_work_df["week"] == week_val].copy()
+                                                    if nicu_selected_round != "All Rounds":
+                                                        week_raw = week_raw[week_raw["round"] == nicu_selected_round]
+                                                    if nicu_selected_entities:
+                                                        week_raw = week_raw[week_raw[nicu_entity_col].isin(nicu_selected_entities)]
+                                                    if week_raw.empty:
+                                                        continue
+                                                    week_raw["_yes_count"] = week_raw[nicu_kmc_tab_cols_present].sum(axis=1)
+                                                    _idx = week_raw.groupby(["card", nicu_kmc_care_entity_col])["_yes_count"].idxmax()
+                                                    card_data = week_raw.loc[_idx, ["card", nicu_kmc_care_entity_col] + nicu_kmc_tab_cols_present].reset_index(drop=True)
+                                                    card_data["care_pct_actual"] = card_data[nicu_kmc_tab_cols_present].sum(axis=1) / 6 * 100
+                                                    card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
+                                                    card_data["card_label"] = card_data.apply(
+                                                        lambda r: f"Card {int(r['card'])}", axis=1
+                                                    )
+                                                    card_data["week"] = f"Week {week_val}"
+
+                                                    bundle_vals = []
+                                                    for _, r in card_data.iterrows():
+                                                        lines = [f"<b>Card {int(r['card'])}</b>"]
+                                                        for col in nicu_kmc_tab_cols_present:
+                                                            val = int(r[col])
+                                                            lines.append(f"{nicu_kmc_bundle_labels[col]}: {'Yes' if val else 'No'}")
+                                                        bundle_vals.append("<br>".join(lines))
+                                                    card_data["bundle_detail"] = bundle_vals
+
+                                                    nicu_kmc_all_weeks_data.append(card_data)
+
+                                                if not nicu_kmc_all_weeks_data:
+                                                    st.info("No data for the selected filter combination.")
+                                                else:
+                                                    nicu_kmc_plot_df = pd.concat(nicu_kmc_all_weeks_data, ignore_index=True)
+                                                    nicu_kmc_fig2 = px.bar(
+                                                        nicu_kmc_plot_df,
+                                                        x=nicu_kmc_care_entity_col,
+                                                        y="care_pct",
+                                                        color="card_label",
+                                                        barmode="group",
+                                                        facet_col="week",
+                                                        facet_col_wrap=2,
+                                                        color_discrete_sequence=px.colors.qualitative.Plotly + px.colors.qualitative.D3,
+                                                        custom_data=["bundle_detail", "care_pct_actual"],
+                                                        labels={nicu_kmc_care_entity_col: "Facility", "care_pct": "%"},
+                                                    )
+                                                    nicu_kmc_fig2.update_traces(
+                                                        hovertemplate=(
+                                                            "<b>%{x}</b><br>"
+                                                            + "%{customdata[0]}<br>"
+                                                            + "Care delivered: %{customdata[1]:.1f}%"
+                                                            + "<extra></extra>"
+                                                        ),
+                                                        marker=dict(line=dict(width=1, color="rgba(100,100,100,0.4)")),
+                                                    )
+                                                    nicu_kmc_fig2.update_layout(
+                                                        template="plotly_white",
+                                                        height=max(300, len(nicu_kmc_selected_weeks) * 200),
+                                                        margin=dict(l=8, r=8, t=48, b=8),
+                                                        font=dict(size=9),
+                                                        hoverlabel=dict(font_size=9),
+                                                        legend=dict(
+                                                            orientation="h",
+                                                            yanchor="bottom",
+                                                            y=1.02,
+                                                            xanchor="left",
+                                                            x=0,
+                                                            font=dict(size=8),
+                                                            title=dict(text="Card", font=dict(size=8)),
+                                                        ),
+                                                    )
+                                                    nicu_kmc_fig2.for_each_annotation(lambda a: a.update(
+                                                        text=a.text.split("=")[-1].strip(),
+                                                        font=dict(size=12, color="black"),
+                                                    ))
+                                                    nicu_kmc_fig2.update_xaxes(
+                                                        matches=None,
+                                                        showticklabels=True,
+                                                        tickfont=dict(size=8),
+                                                        automargin=True,
+                                                        tickangle=45,
+                                                        showline=True,
+                                                        linewidth=1,
+                                                        linecolor="lightgray",
+                                                        mirror=True,
+                                                    )
+                                                    nicu_kmc_fig2.update_yaxes(
+                                                        range=[0, 110],
+                                                        tickfont=dict(size=8),
+                                                        automargin=True,
+                                                        showline=True,
+                                                        linewidth=1,
+                                                        linecolor="lightgray",
+                                                        mirror=True,
+                                                    )
+                                                    st.plotly_chart(nicu_kmc_fig2, use_container_width=True, key="mentorship_nicu_kmc_care_delivered")
+
+                                                with st.expander("How this is computed", expanded=False):
+                                                    st.markdown(
+                                                        f"""
+**Percentage of care delivered per patient** = (Bundle items = Yes ÷ 6) × 100
+
+For each patient (card), all 6 bundle items are evaluated. Missing values are treated as **No (0)** for consistency.
+
+**KMC Bundle Variables – NICU**
+
+| Variable | Description |
+|---|---|
+| kmc-kmc1 | Eligible baby has received skin-to-skin contact on same day of birth at NICU/iKMC/KMC ward |
+| kmc-kmc2 | The baby is skin to skin more than 8hours with in 24hrs |
+| kmc-kmc3 | Baby is secured firmly to the mother's or care giver's chest with a binder that ensures a patent airway |
+| kmc-kmc4 | Baby is being breast fed every 2-3hours and a record of this maintained |
+| kmc-kmc5 | Baby vitals are monitored and recorded at least four times per day |
+| kmc-kmc6 | Baby is weighed daily, and weight gain progress recorded and analyzed |
+                                                        """
+                                                    )
+
+                                    with nicu_nutrition_tab:
+                                        nicu_nutrition_tab_cols_present = [c for c in ["Referral-referral1", "Referral-referral2", "Referral-referral3", "Referral-referral4", "Referral-referral5"] if c in nicu_work_df.columns]
+                                        nicu_nutrition_all_or_none_tab, nicu_nutrition_care_delivered_tab = st.tabs([
+                                            "Percentage of Nutrition All or None Bundle of care provided",
+                                            "Percentage of care delivered",
+                                        ])
+
+                                        with nicu_nutrition_all_or_none_tab:
+                                            if len(nicu_nutrition_tab_cols_present) < 5:
+                                                st.info("Nutrition columns not fully available in NICU data.")
+                                            else:
+                                                nicu_nutrition_round_info = nicu_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                                    subset=["week", "card", "region_label", "hospital"]
+                                                )
+                                                nicu_nutrition_all_or_none = compute_all_or_none(nicu_work_df, bundle_cols=nicu_nutrition_tab_cols_present)
+                                                nicu_nutrition_all_or_none = nicu_nutrition_all_or_none.merge(
+                                                    nicu_nutrition_round_info, on=["week", "card", "region_label", "hospital"], how="left"
+                                                )
+
+                                                nicu_nutrition_filtered = nicu_nutrition_all_or_none.copy()
+                                                if nicu_selected_round != "All Rounds":
+                                                    nicu_nutrition_filtered = nicu_nutrition_filtered[nicu_nutrition_filtered["round"] == nicu_selected_round]
+                                                if nicu_selected_entities:
+                                                    nicu_nutrition_filtered = nicu_nutrition_filtered[nicu_nutrition_filtered[nicu_entity_col].isin(nicu_selected_entities)]
+                                                else:
+                                                    nicu_nutrition_filtered = nicu_nutrition_filtered.iloc[0:0]
+
+                                                if nicu_nutrition_filtered.empty:
+                                                    st.info("No data for the selected filter combination.")
+                                                else:
+                                                    nicu_nutrition_show_card_details = (nicu_group_mode == "Regional" and len(nicu_selected_entities) == 1 and nicu_entity_col == "hospital")
+
+                                                    if nicu_nutrition_show_card_details:
+                                                        nicu_nutrition_card_hover = nicu_nutrition_filtered.groupby("week").apply(
+                                                            lambda g: "<br>".join(
+                                                                f"Card {int(row['card'])}: {int(row['all_or_none'])}"
+                                                                for _, row in g.iterrows()
+                                                            )
+                                                        ).reset_index(name="card_details")
+
+                                                    nicu_nutrition_weekly_stats = nicu_nutrition_filtered.groupby("week").agg(
+                                                        total_cards=("all_or_none", "count"),
+                                                        compliant=("all_or_none", "sum"),
+                                                    ).reset_index()
+                                                    nicu_nutrition_weekly_stats["percentage"] = np.where(
+                                                        nicu_nutrition_weekly_stats["total_cards"] > 0,
+                                                        (nicu_nutrition_weekly_stats["compliant"] / nicu_nutrition_weekly_stats["total_cards"]) * 100,
+                                                        0.0,
+                                                    )
+                                                    if nicu_nutrition_show_card_details:
+                                                        nicu_nutrition_weekly_stats = nicu_nutrition_weekly_stats.merge(nicu_nutrition_card_hover, on="week", how="left")
+                                                    nicu_nutrition_weekly_stats = nicu_nutrition_weekly_stats.sort_values("week")
+
+                                                    nicu_nutrition_week_display_map = {w: f"Week {int(w)}" for w in sorted(nicu_nutrition_weekly_stats["week"].unique())}
+                                                    nicu_nutrition_weekly_stats["week_label"] = nicu_nutrition_weekly_stats["week"].map(nicu_nutrition_week_display_map)
+
+                                                    nicu_nutrition_median_val = np.median(nicu_nutrition_weekly_stats["percentage"]) if len(nicu_nutrition_weekly_stats) > 0 else 0
+
+                                                    nicu_nutrition_ci_total = 0
+                                                    nicu_nutrition_ci_compliant = 1
+                                                    nicu_nutrition_customdata_cols = ["total_cards", "compliant"]
+                                                    if nicu_nutrition_show_card_details:
+                                                        nicu_nutrition_customdata_cols = ["card_details", "total_cards", "compliant"]
+                                                        nicu_nutrition_ci_total = 1
+                                                        nicu_nutrition_ci_compliant = 2
+
+                                                    nicu_nutrition_hover_parts = [
+                                                        "<b>%{x}</b><br>",
+                                                        f"Patients with full bundle: %{{customdata[{nicu_nutrition_ci_compliant}]:.0f}}<br>",
+                                                        f"Total patients observed: %{{customdata[{nicu_nutrition_ci_total}]:.0f}}<br>",
+                                                        "% of Nutrition All or None: %{y:.1f}%<br>",
+                                                        f"Median: {nicu_nutrition_median_val:.1f}%",
+                                                    ]
+                                                    if nicu_nutrition_show_card_details:
+                                                        nicu_nutrition_hover_parts.append("<br><br><b>All-or-None</b><br>%{customdata[0]}")
+                                                    nicu_nutrition_hover_parts.append("<extra></extra>")
+
+                                                    nicu_nutrition_fig = go.Figure()
+                                                    nicu_nutrition_fig.add_trace(go.Scatter(
+                                                        x=nicu_nutrition_weekly_stats["week_label"],
+                                                        y=nicu_nutrition_weekly_stats["percentage"],
+                                                        mode="lines+markers",
+                                                        name="Nutrition All-or-None Bundle",
+                                                        marker=dict(size=8, symbol="circle", color="#2563eb", line=dict(color="#2563eb", width=1)),
+                                                        line=dict(color="#2563eb", width=2.5),
+                                                        customdata=nicu_nutrition_weekly_stats[nicu_nutrition_customdata_cols].fillna("").values,
+                                                        hovertemplate="".join(nicu_nutrition_hover_parts),
+                                                    ))
+                                                    nicu_nutrition_fig.add_hline(
+                                                        y=nicu_nutrition_median_val,
+                                                        line=dict(color="#e91e9e", width=2.5, dash="solid"),
+                                                        annotation_text=f"Median: {nicu_nutrition_median_val:.1f}%",
+                                                        annotation_font_size=10,
+                                                        annotation_position="right",
+                                                    )
+                                                    nicu_nutrition_fig.add_trace(go.Scatter(
+                                                        x=[None], y=[None],
+                                                        mode="lines",
+                                                        name=f"Median: {nicu_nutrition_median_val:.1f}%",
+                                                        line=dict(color="#e91e9e", width=2.5),
+                                                        showlegend=True,
+                                                    ))
+
+                                                    nicu_nutrition_fig.update_layout(
+                                                        template="plotly_white",
+                                                        height=290,
+                                                        margin=dict(l=8, r=8, t=20, b=8),
+                                                        xaxis_title=dict(text="Week", font=dict(size=11)),
+                                                        yaxis_title=dict(text="Percentage (%)", font=dict(size=11)),
+                                                        font=dict(size=10),
+                                                        hoverlabel=dict(font_size=10, namelength=-1),
+                                                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=9)),
+                                                        yaxis=dict(range=[0, 110], tickformat=".0f", dtick=20),
+                                                    )
+                                                    nicu_nutrition_sorted_week_labels = [f"Week {int(w)}" for w in sorted(nicu_nutrition_weekly_stats["week"].unique())]
+                                                    nicu_nutrition_fig.update_xaxes(tickfont=dict(size=9), automargin=True, categoryorder="array", categoryarray=nicu_nutrition_sorted_week_labels)
+                                                    nicu_nutrition_fig.update_yaxes(tickfont=dict(size=9), automargin=True, gridcolor="#f0f0f0")
+
+                                                    st.plotly_chart(nicu_nutrition_fig, use_container_width=True, key="mentorship_nicu_nutrition_run_chart")
+
+                                                    with st.expander("How this is computed", expanded=False):
+                                                        st.markdown(
+                                                            """
+**Percentage** = (Patients with full bundle ÷ Total patients observed) × 100
+
+**Nutrition Bundle of Care – NICU**
+
+1. Feeding initiated as early as clinically appropriate (preferably within the first hour for stable newborns).
+2. Appropriate Feeding type and methods used based on baby age and condition (Exclusive or Expressed breast milk, cup feeding, gavage/NG feeding).
+3. The Baby is breast fed every 2-3hours
+4. Feeding plan is prescribed and administered accordingly
+5. Feeding volume, frequency and tolerance monitored and recorded after every feeding
+                                                            """
+                                                        )
+
+                                        with nicu_nutrition_care_delivered_tab:
+                                            nicu_nutrition_selected_weeks = st.multiselect(
+                                                "Select Weeks",
+                                                options=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                default=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                key="mentorship_nicu_nutrition_care_weeks",
+                                            )
+
+                                            if not nicu_nutrition_selected_weeks:
+                                                st.info("Please select at least one week.")
+                                            else:
+                                                nicu_nutrition_bundle_labels = {
+                                                    "Referral-referral1": "Feeding within 1hr",
+                                                    "Referral-referral2": "Appropriate type & method",
+                                                    "Referral-referral3": "Breast fed q2-3h",
+                                                    "Referral-referral4": "Feeding plan prescribed",
+                                                    "Referral-referral5": "Volume, freq, tolerance rec",
+                                                }
+                                                nicu_nutrition_care_entity_col = "hospital"
+
+                                                nicu_nutrition_all_weeks_data = []
+                                                for week_val in nicu_nutrition_selected_weeks:
+                                                    week_raw = nicu_work_df[nicu_work_df["week"] == week_val].copy()
+                                                    if nicu_selected_round != "All Rounds":
+                                                        week_raw = week_raw[week_raw["round"] == nicu_selected_round]
+                                                    if nicu_selected_entities:
+                                                        week_raw = week_raw[week_raw[nicu_entity_col].isin(nicu_selected_entities)]
+                                                    if week_raw.empty:
+                                                        continue
+                                                    week_raw["_yes_count"] = week_raw[nicu_nutrition_tab_cols_present].sum(axis=1)
+                                                    _idx = week_raw.groupby(["card", nicu_nutrition_care_entity_col])["_yes_count"].idxmax()
+                                                    card_data = week_raw.loc[_idx, ["card", nicu_nutrition_care_entity_col] + nicu_nutrition_tab_cols_present].reset_index(drop=True)
+                                                    card_data["care_pct_actual"] = card_data[nicu_nutrition_tab_cols_present].sum(axis=1) / 5 * 100
+                                                    card_data["care_pct"] = card_data["care_pct_actual"].clip(lower=0.5)
+                                                    card_data["card_label"] = card_data.apply(
+                                                        lambda r: f"Card {int(r['card'])}", axis=1
+                                                    )
+                                                    card_data["week"] = f"Week {week_val}"
+
+                                                    bundle_vals = []
+                                                    for _, r in card_data.iterrows():
+                                                        lines = [f"<b>Card {int(r['card'])}</b>"]
+                                                        for col in nicu_nutrition_tab_cols_present:
+                                                            val = int(r[col])
+                                                            lines.append(f"{nicu_nutrition_bundle_labels[col]}: {'Yes' if val else 'No'}")
+                                                        bundle_vals.append("<br>".join(lines))
+                                                    card_data["bundle_detail"] = bundle_vals
+
+                                                    nicu_nutrition_all_weeks_data.append(card_data)
+
+                                                if not nicu_nutrition_all_weeks_data:
+                                                    st.info("No data for the selected filter combination.")
+                                                else:
+                                                    nicu_nutrition_plot_df = pd.concat(nicu_nutrition_all_weeks_data, ignore_index=True)
+                                                    nicu_nutrition_fig2 = px.bar(
+                                                        nicu_nutrition_plot_df,
+                                                        x=nicu_nutrition_care_entity_col,
+                                                        y="care_pct",
+                                                        color="card_label",
+                                                        barmode="group",
+                                                        facet_col="week",
+                                                        facet_col_wrap=2,
+                                                        color_discrete_sequence=px.colors.qualitative.Plotly + px.colors.qualitative.D3,
+                                                        custom_data=["bundle_detail", "care_pct_actual"],
+                                                        labels={nicu_nutrition_care_entity_col: "Facility", "care_pct": "%"},
+                                                    )
+                                                    nicu_nutrition_fig2.update_traces(
+                                                        hovertemplate=(
+                                                            "<b>%{x}</b><br>"
+                                                            + "%{customdata[0]}<br>"
+                                                            + "Care delivered: %{customdata[1]:.1f}%"
+                                                            + "<extra></extra>"
+                                                        ),
+                                                        marker=dict(line=dict(width=1, color="rgba(100,100,100,0.4)")),
+                                                    )
+                                                    nicu_nutrition_fig2.update_layout(
+                                                        template="plotly_white",
+                                                        height=max(300, len(nicu_nutrition_selected_weeks) * 200),
+                                                        margin=dict(l=8, r=8, t=48, b=8),
+                                                        font=dict(size=9),
+                                                        hoverlabel=dict(font_size=9),
+                                                        legend=dict(
+                                                            orientation="h",
+                                                            yanchor="bottom",
+                                                            y=1.02,
+                                                            xanchor="left",
+                                                            x=0,
+                                                            font=dict(size=8),
+                                                            title=dict(text="Card", font=dict(size=8)),
+                                                        ),
+                                                    )
+                                                    nicu_nutrition_fig2.for_each_annotation(lambda a: a.update(
+                                                        text=a.text.split("=")[-1].strip(),
+                                                        font=dict(size=12, color="black"),
+                                                    ))
+                                                    nicu_nutrition_fig2.update_xaxes(
+                                                        matches=None,
+                                                        showticklabels=True,
+                                                        tickfont=dict(size=8),
+                                                        automargin=True,
+                                                        tickangle=45,
+                                                        showline=True,
+                                                        linewidth=1,
+                                                        linecolor="lightgray",
+                                                        mirror=True,
+                                                    )
+                                                    nicu_nutrition_fig2.update_yaxes(
+                                                        range=[0, 110],
+                                                        tickfont=dict(size=8),
+                                                        automargin=True,
+                                                        showline=True,
+                                                        linewidth=1,
+                                                        linecolor="lightgray",
+                                                        mirror=True,
+                                                    )
+                                                    st.plotly_chart(nicu_nutrition_fig2, use_container_width=True, key="mentorship_nicu_nutrition_care_delivered")
+
+                                                with st.expander("How this is computed", expanded=False):
+                                                    st.markdown(
+                                                        f"""
+**Percentage of care delivered per patient** = (Bundle items = Yes ÷ 5) × 100
+
+For each patient (card), all 5 bundle items are evaluated. Missing values are treated as **No (0)** for consistency.
+
+**Nutrition Bundle Variables – NICU**
+
+| Variable | Description |
+|---|---|
+| Referral-referral1 | Feeding initiated as early as clinically appropriate (preferably within the first hour for stable newborns) |
+| Referral-referral2 | Appropriate Feeding type and methods used based on baby age and condition (Exclusive or Expressed breast milk, cup feeding, gavage/NG feeding) |
+| Referral-referral3 | The Baby is breast fed every 2-3hours |
+| Referral-referral4 | Feeding plan is prescribed and administered accordingly |
+| Referral-referral5 | Feeding volume, frequency and tolerance monitored and recorded after every feeding |
                                                         """
                                                     )
 
