@@ -823,7 +823,7 @@ def render_newborn_kpi_tab_navigation():
                          type=("primary" if selected_kpi == "Neonatal Mortality Rate (%)" else "secondary")):
                 selected_kpi = "Neonatal Mortality Rate (%)"
         with cols[1]:
-            if st.button("Quality of Care", key="mortality_qoc_btn", use_container_width=True,
+            if st.button("Cause of Death", key="mortality_qoc_btn", use_container_width=True,
                          type=("primary" if selected_kpi == MORTALITY_QOC_MARKER else "secondary")):
                 selected_kpi = MORTALITY_QOC_MARKER
 
