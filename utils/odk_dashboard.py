@@ -434,7 +434,7 @@ def render_mentorship_analysis_dashboard():
 
     def _run_mentorship_pipeline(
         work_df, score_cols, value_label, value_title,
-        tab_key, left_col, right_col, is_qoc=False, is_bmet=False,
+        tab_key, left_col, right_col, is_qoc=False, is_bmet=False, filter_by_unit=False,
     ):
         region_code_map = _get_region_code_to_name_mapping()
         work_df["region_label"] = work_df["region_code"].map(region_code_map).fillna(
@@ -535,16 +535,16 @@ def render_mentorship_analysis_dashboard():
                 )
 
                 selected_unit = None
-                if is_qoc:
+                if is_qoc or filter_by_unit:
                     if work_df.empty:
                         st.warning("No unit values found in data.")
                         return
-                    unit_display_options = ["1 - Labor and Delivery", "2 - NICU/KMC"]
+                    unit_display_options = ["1 - Labor and Delivery", "2 - NICU"]
                     selected_unit_display = st.selectbox(
                         "Unit", options=unit_display_options,
-                        key=f"mentorship_qoc_unit_{tab_key}",
+                        key=f"mentorship_unit_{tab_key}",
                     )
-                    reverse_map = {"1 - Labor and Delivery": "1", "2 - NICU/KMC": "2"}
+                    reverse_map = {"1 - Labor and Delivery": "1", "2 - NICU": "2"}
                     selected_unit = reverse_map.get(selected_unit_display, selected_unit_display)
 
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -553,7 +553,7 @@ def render_mentorship_analysis_dashboard():
             filtered_df = work_df.copy()
             if selected_round != "All Rounds":
                 filtered_df = filtered_df[filtered_df["round"] == selected_round]
-            if is_qoc and selected_unit is not None:
+            if (is_qoc or filter_by_unit) and selected_unit is not None:
                 if selected_unit == "1":
                     filtered_df = filtered_df[filtered_df["unit_has_1"]]
                 elif selected_unit == "2":
@@ -1001,7 +1001,7 @@ def render_mentorship_analysis_dashboard():
                 "POC4-POC4_perc", "POC5-POC5_perc", "POC6-POC6_perc",
                 "POC7-POC7_perc", "POC8-POC8_perc", "POC_perc",
             ]
-            required_columns = ["reg-region", "reg-hospital", "reg-round"] + score_cols
+            required_columns = ["reg-region", "reg-hospital", "reg-round", "unit"] + score_cols
             missing_cols = [c for c in required_columns if c not in df.columns]
             if missing_cols:
                 st.error(f"Missing required columns in merged_skill.csv: {missing_cols}")
@@ -1010,12 +1010,18 @@ def render_mentorship_analysis_dashboard():
                 work_df["region_code"] = work_df["reg-region"].apply(_normalize_region_code)
                 work_df["hospital"] = work_df["reg-hospital"].apply(_display_mentorship_facility)
                 work_df["round"] = work_df["reg-round"].astype(str).str.strip()
+                work_df["unit"] = (
+                    work_df["unit"].astype(str).str.strip().replace({"1.0": "1", "2.0": "2"})
+                )
+                work_df["unit_has_1"] = work_df["unit"].astype(str).str.contains("1", regex=False)
+                work_df["unit_has_2"] = work_df["unit"].astype(str).str.contains("2", regex=False)
                 for score_col in score_cols:
                     work_df[score_col] = pd.to_numeric(work_df[score_col], errors="coerce")
                 left_col, right_col = st.columns([3, 1])
                 _run_mentorship_pipeline(
                     work_df, score_cols, "Average %", "Average Score (%)",
                     tab_key="skill", left_col=left_col, right_col=right_col,
+                    filter_by_unit=True,
                 )
 
     with tab_qoc:
