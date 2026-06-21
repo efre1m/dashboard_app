@@ -334,9 +334,52 @@ MENTORSHIP_FACILITY_CODE_TO_NAME = {
 }
 
 
+LEARNING_FACILITY_REGION_BY_NAME = {
+    "Adama RH": "Oromia",
+    "Olenchiti PH": "Oromia",
+    "Meki PH": "Oromia",
+    "Batu GH": "Oromia",
+    "Hagereselam PH": "Tigray",
+    "Adigudom PH": "Tigray",
+    "Mekelle GH": "Tigray",
+    "Ayder CSH": "Tigray",
+    "Adare GH": "SNNP",
+    "Tula PH": "SNNP",
+    "Hawassa University CSH": "SNNP",
+    "Dorebafano PH": "SNNP",
+    "Enjibara GH": "Amhara",
+    "Felegehiwot CSH": "Amhara",
+    "Dangla PH": "Amhara",
+    "Merawi PH": "Amhara",
+}
+
+
+LEARNING_FACILITY_NAMES = set(LEARNING_FACILITY_REGION_BY_NAME)
+
+
 def _display_mentorship_facility(value) -> str:
     code_or_name = _normalize_entity_text(value)
-    return MENTORSHIP_FACILITY_CODE_TO_NAME.get(code_or_name, code_or_name)
+    if not code_or_name:
+        return "Other"
+    if code_or_name in MENTORSHIP_FACILITY_CODE_TO_NAME:
+        return MENTORSHIP_FACILITY_CODE_TO_NAME[code_or_name]
+    if code_or_name.isdigit():
+        return "Other"
+    return code_or_name
+
+
+def _filter_learning_facilities(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only configured learning facilities, matched by facility name and region."""
+    if df.empty or "hospital" not in df.columns:
+        return df.iloc[0:0].copy()
+    filtered = df[df["hospital"].isin(LEARNING_FACILITY_NAMES)].copy()
+    if "region_label" in filtered.columns:
+        expected_region = filtered["hospital"].map(LEARNING_FACILITY_REGION_BY_NAME)
+        filtered = filtered[
+            filtered["region_label"].astype(str).str.casefold()
+            == expected_region.astype(str).str.casefold()
+        ]
+    return filtered
 
 
 def _get_region_code_to_name_mapping() -> dict[str, str]:
@@ -474,17 +517,30 @@ def render_mentorship_analysis_dashboard():
                     return
                 round_options = [all_rounds_label] + round_values
 
-                group_mode_options = ["Regional"] if is_regional_user else ["Multi Regional", "Regional"]
+                group_mode_options = (
+                    ["Regional", "Learning Facilities"]
+                    if is_regional_user
+                    else ["Multi Regional", "Regional", "Learning Facilities"]
+                )
                 group_mode = st.radio(
                     "Group By", options=group_mode_options,
                     key=f"mentorship_group_mode_{tab_key}",
                 )
 
+                scoped_work_df = (
+                    _filter_learning_facilities(work_df)
+                    if group_mode == "Learning Facilities"
+                    else work_df.copy()
+                )
+                if scoped_work_df.empty:
+                    st.warning("No data available for learning facilities.")
+                    return
+
                 selected_region_for_facility = None
                 if group_mode == "Multi Regional":
                     entity_col = "region_label"
                     entity_options = sorted([
-                        v for v in work_df[entity_col].dropna().unique().tolist() if str(v).strip()
+                        v for v in scoped_work_df[entity_col].dropna().unique().tolist() if str(v).strip()
                     ])
                     all_token = "All Regions"
                     selector_options = [all_token] + entity_options
@@ -498,21 +554,38 @@ def render_mentorship_analysis_dashboard():
                         else current_selected
                     )
                     selected_entities = entity_options if all_token in effective_selected else effective_selected
+                elif group_mode == "Learning Facilities":
+                    entity_col = "hospital"
+                    entity_options = sorted([
+                        v for v in scoped_work_df[entity_col].dropna().unique().tolist() if str(v).strip()
+                    ])
+                    all_token = "All Learning Facilities"
+                    selector_options = [all_token] + entity_options
+                    entity_key = f"mentorship_entities_learning_{tab_key}"
+                    if entity_key not in st.session_state or not st.session_state.get(entity_key):
+                        st.session_state[entity_key] = [all_token]
+                    st.multiselect("Select Learning Facilities", options=selector_options, key=entity_key)
+                    current_selected = st.session_state.get(entity_key, [all_token])
+                    effective_selected = (
+                        [all_token] if (all_token in current_selected or len(current_selected) == 0)
+                        else current_selected
+                    )
+                    selected_entities = entity_options if all_token in effective_selected else effective_selected
                 else:
                     if is_regional_user:
                         selected_region_for_facility = regional_locked_label
                         st.caption(f"Regional scope: {selected_region_for_facility}")
                     else:
                         region_options = sorted([
-                            v for v in work_df["region_label"].dropna().unique().tolist() if str(v).strip()
+                            v for v in scoped_work_df["region_label"].dropna().unique().tolist() if str(v).strip()
                         ])
                         selected_region_for_facility = st.selectbox(
                             "Select Region", options=region_options,
                             key=f"mentorship_regional_region_{tab_key}",
                         )
                     facilities_in_region = sorted([
-                        v for v in work_df.loc[
-                            work_df["region_label"] == selected_region_for_facility, "hospital"
+                        v for v in scoped_work_df.loc[
+                            scoped_work_df["region_label"] == selected_region_for_facility, "hospital"
                         ].dropna().unique().tolist() if str(v).strip()
                     ])
                     entity_col = "hospital"
@@ -550,7 +623,7 @@ def render_mentorship_analysis_dashboard():
                 st.markdown("</div>", unsafe_allow_html=True)
 
         with left_col:
-            filtered_df = work_df.copy()
+            filtered_df = scoped_work_df.copy()
             if selected_round != "All Rounds":
                 filtered_df = filtered_df[filtered_df["round"] == selected_round]
             if (is_qoc or filter_by_unit) and selected_unit is not None:
@@ -642,6 +715,27 @@ def render_mentorship_analysis_dashboard():
                 agg_df = filtered_df.groupby(entity_col, as_index=False)[score_cols].sum().sort_values(entity_col)
 
             metric_colors = MENTORSHIP_METRIC_COLORS
+            entity_tick_values = agg_df[entity_col].astype(str).tolist()
+            y_axis_tick_config = {
+                "tickmode": "array",
+                "tickvals": entity_tick_values,
+                "ticktext": entity_tick_values,
+            }
+
+            def _update_subplot_yaxis(fig, row, col, font_size=8, title_size=9):
+                fig.update_yaxes(
+                    tickfont=dict(size=font_size),
+                    title_font=dict(size=title_size),
+                    automargin=True,
+                    showticklabels=(col == 1),
+                    row=row,
+                    col=col,
+                    **y_axis_tick_config,
+                )
+
+            def _show_computation_info(title, rows):
+                with st.expander(title, expanded=False):
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
             if tab_key == "skill":
                 subplot_titles = [
@@ -651,7 +745,7 @@ def render_mentorship_analysis_dashboard():
                 ]
                 hover_metric_labels = subplot_titles
                 fig = make_subplots(rows=3, cols=3, subplot_titles=subplot_titles,
-                                    vertical_spacing=0.08, horizontal_spacing=0.06)
+                                    vertical_spacing=0.08, horizontal_spacing=0.18)
                 for idx, metric in enumerate(score_cols):
                     row = idx // 3 + 1
                     col = idx % 3 + 1
@@ -669,11 +763,10 @@ def render_mentorship_analysis_dashboard():
                     )
                     fig.update_xaxes(title_text=value_title, tickfont=dict(size=8), title_font=dict(size=9),
                                      automargin=True, row=row, col=col)
-                    fig.update_yaxes(tickfont=dict(size=8), title_font=dict(size=9), automargin=True,
-                                     row=row, col=col)
+                    _update_subplot_yaxis(fig, row, col)
                 skill_chart_height = max(760, min(1350, 620 + len(agg_df) * 14))
                 fig.update_layout(template="plotly_white", height=skill_chart_height,
-                                  margin=dict(l=8, r=8, t=36, b=8), font=dict(size=9),
+                                  margin=dict(l=150, r=24, t=36, b=8), font=dict(size=9),
                                   hoverlabel=dict(font_size=10), bargap=0.24, bargroupgap=0.08)
                 st.plotly_chart(fig, use_container_width=True, key=f"mentorship_skill_bars_{tab_key}_{group_mode}_{selected_round}")
                 skill_table_labels = {
@@ -692,9 +785,17 @@ def render_mentorship_analysis_dashboard():
                     **skill_table_labels,
                 }).round(2)
                 st.dataframe(table_df, use_container_width=True, hide_index=True)
-                st.caption(
-                    "Averages are computed per selected group as: "
-                    "`sum(variable values) / count(records with non-null variable)`."
+                _show_computation_info(
+                    "Skill Assessment Computation Info",
+                    [
+                        {
+                            "Indicator": label.replace(" (%)", ""),
+                            "Variable": variable,
+                            "Numerator": "Sum of score values",
+                            "Denominator": "Number of non-empty submissions for this score",
+                        }
+                        for variable, label in skill_table_labels.items()
+                    ],
                 )
 
             elif tab_key == "qoc":
@@ -704,7 +805,7 @@ def render_mentorship_analysis_dashboard():
                 ]
                 hover_metric_labels = subplot_titles
                 fig = make_subplots(rows=2, cols=3, subplot_titles=subplot_titles,
-                                    vertical_spacing=0.10, horizontal_spacing=0.07)
+                                    vertical_spacing=0.10, horizontal_spacing=0.18)
                 for idx, metric in enumerate(score_cols):
                     row = idx // 3 + 1
                     col = idx % 3 + 1
@@ -722,11 +823,10 @@ def render_mentorship_analysis_dashboard():
                     )
                     fig.update_xaxes(title_text=value_title, tickfont=dict(size=8), title_font=dict(size=9),
                                      automargin=True, row=row, col=col)
-                    fig.update_yaxes(tickfont=dict(size=8), title_font=dict(size=9), automargin=True,
-                                     row=row, col=col)
+                    _update_subplot_yaxis(fig, row, col)
                 qoc_chart_height = max(640, min(1200, 520 + len(agg_df) * 14))
                 fig.update_layout(template="plotly_white", height=qoc_chart_height,
-                                  margin=dict(l=8, r=8, t=36, b=8), font=dict(size=9),
+                                  margin=dict(l=150, r=24, t=36, b=8), font=dict(size=9),
                                   hoverlabel=dict(font_size=10), bargap=0.24, bargroupgap=0.08)
                 st.plotly_chart(fig, use_container_width=True, key=f"mentorship_qoc_bars_{tab_key}_{group_mode}_{selected_round}_{selected_unit}")
                 qoc_table_labels = {
@@ -742,13 +842,17 @@ def render_mentorship_analysis_dashboard():
                     **qoc_table_labels,
                 }).round(2)
                 st.dataframe(table_df, use_container_width=True, hide_index=True)
-                st.caption(
-                    "Averages are computed per selected group as: "
-                    "`sum(variable values) / count(records with non-null variable)`."
-                )
-                st.caption(
-                    "QoC variables: QOC1_b-QOC1_perce, QOC2_b-QOC2-QOC2_perce, "
-                    "QOC3_b-QOC3_perce, QOC4_b-QOC4_perce, QOC5_b-QOC5_gr5-QOC5_perce, QOC_perce."
+                _show_computation_info(
+                    "QoC Computation Info",
+                    [
+                        {
+                            "Indicator": label.replace(" (%)", ""),
+                            "Variable": variable,
+                            "Numerator": "Sum of score values",
+                            "Denominator": "Number of non-empty submissions for this score",
+                        }
+                        for variable, label in qoc_table_labels.items()
+                    ],
                 )
                 if (
                     qoc_records_df is not None
@@ -782,7 +886,7 @@ def render_mentorship_analysis_dashboard():
             elif tab_key == "qi":
                 subplot_titles = [spec[2] for spec in QI_COACHING_INDICATORS]
                 fig = make_subplots(rows=4, cols=2, subplot_titles=subplot_titles,
-                                    vertical_spacing=0.08, horizontal_spacing=0.08)
+                                    vertical_spacing=0.08, horizontal_spacing=0.22)
                 for idx, metric in enumerate(score_cols):
                     row = idx // 2 + 1
                     col = idx % 2 + 1
@@ -800,11 +904,10 @@ def render_mentorship_analysis_dashboard():
                     )
                     fig.update_xaxes(title_text=value_title, tickfont=dict(size=8), title_font=dict(size=9),
                                      automargin=True, row=row, col=col)
-                    fig.update_yaxes(tickfont=dict(size=8), title_font=dict(size=9), automargin=True,
-                                     row=row, col=col)
+                    _update_subplot_yaxis(fig, row, col)
                 qi_chart_height = max(860, min(1500, 720 + len(agg_df) * 16))
                 fig.update_layout(template="plotly_white", height=qi_chart_height,
-                                  margin=dict(l=8, r=8, t=36, b=8), font=dict(size=9),
+                                  margin=dict(l=150, r=24, t=36, b=8), font=dict(size=9),
                                   hoverlabel=dict(font_size=10), bargap=0.24, bargroupgap=0.08)
                 st.plotly_chart(fig, use_container_width=True, key=f"mentorship_qi_bars_{tab_key}_{group_mode}_{selected_round}")
                 qi_table_labels = {
@@ -822,21 +925,16 @@ def render_mentorship_analysis_dashboard():
                     **qi_table_labels,
                 }).round(2)
                 st.dataframe(table_df, use_container_width=True, hide_index=True)
-                st.caption(
-                    "For each QI coaching indicator, chart values are computed as "
-                    "`(sum(response values) / count(non-null submissions for that question)) * 100`."
-                )
-                st.caption(
-                    "Yes/no responses are converted to 1/0 before averaging. "
-                    "For `part5_project-q502`, any value greater than zero is treated as "
-                    "yes=1 so the indicator stays a percentage instead of exceeding 100."
-                )
-                st.caption(
-                    "Indicator source columns: `part8_project-q801`, "
-                    "`part2_qi_structure-q203`, `part5_project-q502`, "
-                    "`part6_project-q604`, `part3_project-q301`, `part3_project-q309`, "
-                    "`part4_project-q408`, `part5_project-q504`."
-                )
+                qi_audit_rows = [
+                    {
+                        "Indicator": label,
+                        "Variable": source_col,
+                        "Numerator": "Number of yes responses",
+                        "Denominator": "Number of non-empty submissions for this question",
+                    }
+                    for source_col, derived_col, label in QI_COACHING_INDICATORS
+                ]
+                _show_computation_info("QI Computation Info", qi_audit_rows)
 
             elif tab_key == "data":
                 subplot_titles = [
@@ -846,7 +944,7 @@ def render_mentorship_analysis_dashboard():
                     "Analysis & Visualization (Dashboard Use)",
                 ]
                 fig = make_subplots(rows=2, cols=2, subplot_titles=subplot_titles,
-                                    vertical_spacing=0.11, horizontal_spacing=0.08)
+                                    vertical_spacing=0.11, horizontal_spacing=0.22)
                 for idx, metric in enumerate(score_cols):
                     row = idx // 2 + 1
                     col = idx % 2 + 1
@@ -864,11 +962,10 @@ def render_mentorship_analysis_dashboard():
                     )
                     fig.update_xaxes(title_text=value_title, tickfont=dict(size=8), title_font=dict(size=9),
                                      automargin=True, row=row, col=col)
-                    fig.update_yaxes(tickfont=dict(size=8), title_font=dict(size=9), automargin=True,
-                                     row=row, col=col)
+                    _update_subplot_yaxis(fig, row, col)
                 mentorship_chart_height = max(620, min(1200, 520 + len(agg_df) * 14))
                 fig.update_layout(template="plotly_white", height=mentorship_chart_height,
-                                  margin=dict(l=8, r=8, t=36, b=8), font=dict(size=9),
+                                  margin=dict(l=150, r=24, t=36, b=8), font=dict(size=9),
                                   hoverlabel=dict(font_size=10), bargap=0.24, bargroupgap=0.08)
                 st.plotly_chart(fig, use_container_width=True, key=f"mentorship_data_form_bars_{tab_key}_{group_mode}_{selected_round}")
                 mentorship_table_labels = {
@@ -890,13 +987,34 @@ def render_mentorship_analysis_dashboard():
                 ]
                 table_df = table_df[[c for c in table_columns if c in table_df.columns]]
                 st.dataframe(table_df, use_container_width=True, hide_index=True)
-                st.caption(
-                    "For each indicator, yes=1 and no=0 for the specified question set. "
-                    "Average score is computed as `sum(binary values across filtered non-empty submissions) / total non-empty submissions`."
-                )
-                st.caption(
-                    "Indicator groups: "
-                    "`q21-q24`, `q31-q39 + q391`, `q41-q44`, `q51-q57`."
+                _show_computation_info(
+                    "Data Mentorship Computation Info",
+                    [
+                        {
+                            "Indicator": "System Access & User Management",
+                            "Variable": "q21-q24",
+                            "Numerator": "Sum of yes responses in this question group",
+                            "Denominator": "Number of non-empty submissions",
+                        },
+                        {
+                            "Indicator": "Tracker Data Entry",
+                            "Variable": "q31-q39 + q391",
+                            "Numerator": "Sum of yes responses in this question group",
+                            "Denominator": "Number of non-empty submissions",
+                        },
+                        {
+                            "Indicator": "Tracker Features & Program Functionality",
+                            "Variable": "q41-q44",
+                            "Numerator": "Sum of yes responses in this question group",
+                            "Denominator": "Number of non-empty submissions",
+                        },
+                        {
+                            "Indicator": "Analysis & Visualization",
+                            "Variable": "q51-q57",
+                            "Numerator": "Sum of yes responses in this question group",
+                            "Denominator": "Number of non-empty submissions",
+                        },
+                    ],
                 )
 
             elif tab_key == "bmet":
@@ -923,14 +1041,14 @@ def render_mentorship_analysis_dashboard():
                 bar_group_gap = 0.08 if is_regional_mode else 0.06
                 fig.update_layout(
                     barmode="group", template="plotly_white", height=chart_height,
-                    margin=dict(l=8, r=8, t=14, b=6), xaxis_title=value_title,
+                    margin=dict(l=120, r=24, t=14, b=6), xaxis_title=value_title,
                     yaxis_title="Region" if group_mode == "Multi Regional" else "Facility",
                     legend_title_text="Indicators", bargap=bar_gap, bargroupgap=bar_group_gap,
                     font=dict(size=10), hoverlabel=dict(font_size=11),
                     legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, font=dict(size=9)),
                 )
                 fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True, tickformat=".2f")
-                fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True)
+                fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10), automargin=True, **y_axis_tick_config)
                 st.plotly_chart(fig, use_container_width=True, key=f"mentorship_bmet_bars_{tab_key}_{group_mode}_{selected_round}")
                 table_df = agg_df.rename(columns={
                     entity_col: "Region" if group_mode == "Multi Regional" else "Facility",
@@ -938,23 +1056,22 @@ def render_mentorship_analysis_dashboard():
                     "facility_assessment-score_fac": "Facility Score",
                 }).round(2)
                 st.dataframe(table_df, use_container_width=True, hide_index=True)
-                competency_series = pd.to_numeric(filtered_df["competency_assessment-Score"], errors="coerce")
-                facility_series = pd.to_numeric(filtered_df["facility_assessment-score_fac"], errors="coerce")
-                competency_avg = float(competency_series.mean()) if competency_series.notna().any() else 0.0
-                facility_avg = float(facility_series.mean()) if facility_series.notna().any() else 0.0
-                round_summary_label = (
-                    "All Rounds" if selected_round == "All Rounds"
-                    else f"Round {selected_round}"
-                )
-                st.caption(
-                    f"{round_summary_label} summary: "
-                    f"Competency Average = {competency_avg:.2f}, "
-                    f"Facility Average = {facility_avg:.2f}."
-                )
-                st.caption(
-                    "Variables: `competency_assessment-Score` and "
-                    "`facility_assessment-score_fac` are averaged as "
-                    "`sum(values) / count(non-null submissions)` for each selected filter."
+                _show_computation_info(
+                    "BMET Computation Info",
+                    [
+                        {
+                            "Indicator": "Competency Score",
+                            "Variable": "competency_assessment-Score",
+                            "Numerator": "Sum of competency score values",
+                            "Denominator": "Number of non-empty competency score submissions",
+                        },
+                        {
+                            "Indicator": "Facility Score",
+                            "Variable": "facility_assessment-score_fac",
+                            "Numerator": "Sum of facility score values",
+                            "Denominator": "Number of non-empty facility score submissions",
+                        },
+                    ],
                 )
 
     tab_bmet, tab_skill, tab_qoc, tab_qi, tab_data, tab_cis = st.tabs([
@@ -1231,16 +1348,33 @@ def render_mentorship_analysis_dashboard():
 
                                 current_user = st.session_state.get("user", {})
                                 is_regional_user = current_user.get("role") == "regional"
-                                group_mode_options = ["Regional"] if is_regional_user else ["Multi Regional", "Regional"]
+                                group_mode_options = (
+                                    ["Regional", "Learning Facilities"]
+                                    if is_regional_user
+                                    else ["Multi Regional", "Regional", "Learning Facilities"]
+                                )
                                 group_mode = st.radio(
                                     "Group By", options=group_mode_options,
                                     key="mentorship_cis_group_mode",
                                 )
+                                cis_all_or_none_df = (
+                                    _filter_learning_facilities(all_or_none_df)
+                                    if group_mode == "Learning Facilities"
+                                    else all_or_none_df.copy()
+                                )
+                                cis_work_df = (
+                                    _filter_learning_facilities(work_df)
+                                    if group_mode == "Learning Facilities"
+                                    else work_df.copy()
+                                )
+                                if cis_all_or_none_df.empty or cis_work_df.empty:
+                                    st.warning("No data available for learning facilities.")
+                                    return
 
                                 if group_mode == "Multi Regional":
                                     entity_col = "region_label"
                                     entity_options = sorted([
-                                        v for v in all_or_none_df[entity_col].dropna().unique().tolist()
+                                        v for v in cis_all_or_none_df[entity_col].dropna().unique().tolist()
                                         if str(v).strip()
                                     ])
                                     all_token = "All Regions"
@@ -1255,9 +1389,27 @@ def render_mentorship_analysis_dashboard():
                                         else current_selected
                                     )
                                     selected_entities = entity_options if all_token in effective_selected else effective_selected
+                                elif group_mode == "Learning Facilities":
+                                    entity_col = "hospital"
+                                    entity_options = sorted([
+                                        v for v in cis_all_or_none_df[entity_col].dropna().unique().tolist()
+                                        if str(v).strip()
+                                    ])
+                                    all_token = "All Learning Facilities"
+                                    selector_options = [all_token] + entity_options
+                                    entity_key = "mentorship_cis_entities_learning"
+                                    if entity_key not in st.session_state or not st.session_state.get(entity_key):
+                                        st.session_state[entity_key] = [all_token]
+                                    st.multiselect("Select Learning Facilities", options=selector_options, key=entity_key)
+                                    current_selected = st.session_state.get(entity_key, [all_token])
+                                    effective_selected = (
+                                        [all_token] if (all_token in current_selected or len(current_selected) == 0)
+                                        else current_selected
+                                    )
+                                    selected_entities = entity_options if all_token in effective_selected else effective_selected
                                 else:
                                     region_options = sorted([
-                                        v for v in all_or_none_df["region_label"].dropna().unique().tolist()
+                                        v for v in cis_all_or_none_df["region_label"].dropna().unique().tolist()
                                         if str(v).strip()
                                     ])
                                     selected_region = st.selectbox(
@@ -1265,8 +1417,8 @@ def render_mentorship_analysis_dashboard():
                                         key="mentorship_cis_region",
                                     )
                                     facilities_in_region = sorted([
-                                        v for v in all_or_none_df.loc[
-                                            all_or_none_df["region_label"] == selected_region, "hospital"
+                                        v for v in cis_all_or_none_df.loc[
+                                            cis_all_or_none_df["region_label"] == selected_region, "hospital"
                                         ].dropna().unique().tolist() if str(v).strip()
                                     ])
                                     entity_col = "hospital"
@@ -1295,7 +1447,7 @@ def render_mentorship_analysis_dashboard():
                                 ])
 
                                 with all_or_none_tab:
-                                    filtered = all_or_none_df.copy()
+                                    filtered = cis_all_or_none_df.copy()
                                     if selected_round != "All Rounds":
                                         filtered = filtered[filtered["round"] == selected_round]
                                     if selected_entities:
@@ -1416,8 +1568,8 @@ def render_mentorship_analysis_dashboard():
                                 with care_delivered_tab:
                                     selected_weeks = st.multiselect(
                                         "Select Weeks",
-                                        options=sorted([int(w) for w in work_df["week"].dropna().unique() if str(w).strip()]),
-                                        default=sorted([int(w) for w in work_df["week"].dropna().unique() if str(w).strip()]),
+                                        options=sorted([int(w) for w in cis_work_df["week"].dropna().unique() if str(w).strip()]),
+                                        default=sorted([int(w) for w in cis_work_df["week"].dropna().unique() if str(w).strip()]),
                                         key="mentorship_cis_care_weeks",
                                     )
 
@@ -1436,7 +1588,7 @@ def render_mentorship_analysis_dashboard():
 
                                         all_weeks_data = []
                                         for week_val in selected_weeks:
-                                            week_raw = work_df[work_df["week"] == week_val].copy()
+                                            week_raw = cis_work_df[cis_work_df["week"] == week_val].copy()
                                             if selected_round != "All Rounds":
                                                 week_raw = week_raw[week_raw["round"] == selected_round]
                                             if selected_entities:
@@ -1562,10 +1714,10 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                     if len(cpap_ld_cols_present) < 4:
                                         st.info("CPAP columns not fully available in L&D data.")
                                     else:
-                                        cpap_round_info = work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                        cpap_round_info = cis_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
                                             subset=["week", "card", "region_label", "hospital"]
                                         )
-                                        cpap_all_or_none = compute_all_or_none(work_df, bundle_cols=cpap_ld_cols_present)
+                                        cpap_all_or_none = compute_all_or_none(cis_work_df, bundle_cols=cpap_ld_cols_present)
                                         cpap_all_or_none = cpap_all_or_none.merge(
                                             cpap_round_info, on=["week", "card", "region_label", "hospital"], how="left"
                                         )
@@ -1688,8 +1840,8 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                 with cpap_care_delivered_tab:
                                     cpap_selected_weeks = st.multiselect(
                                         "Select Weeks",
-                                        options=sorted([int(w) for w in work_df["week"].dropna().unique() if str(w).strip()]),
-                                        default=sorted([int(w) for w in work_df["week"].dropna().unique() if str(w).strip()]),
+                                        options=sorted([int(w) for w in cis_work_df["week"].dropna().unique() if str(w).strip()]),
+                                        default=sorted([int(w) for w in cis_work_df["week"].dropna().unique() if str(w).strip()]),
                                         key="mentorship_cis_cpap_care_weeks",
                                     )
 
@@ -1706,7 +1858,7 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
 
                                         cpap_all_weeks_data = []
                                         for week_val in cpap_selected_weeks:
-                                            week_raw = work_df[work_df["week"] == week_val].copy()
+                                            week_raw = cis_work_df[cis_work_df["week"] == week_val].copy()
                                             if selected_round != "All Rounds":
                                                 week_raw = week_raw[week_raw["round"] == selected_round]
                                             if selected_entities:
@@ -1912,16 +2064,33 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
 
                                         current_user = st.session_state.get("user", {})
                                         is_regional_user = current_user.get("role") == "regional"
-                                        nicu_group_mode_options = ["Regional"] if is_regional_user else ["Multi Regional", "Regional"]
+                                        nicu_group_mode_options = (
+                                            ["Regional", "Learning Facilities"]
+                                            if is_regional_user
+                                            else ["Multi Regional", "Regional", "Learning Facilities"]
+                                        )
                                         nicu_group_mode = st.radio(
                                             "Group By", options=nicu_group_mode_options,
                                             key="mentorship_nicu_group_mode",
                                         )
+                                        nicu_scoped_all_or_none_df = (
+                                            _filter_learning_facilities(nicu_all_or_none_df)
+                                            if nicu_group_mode == "Learning Facilities"
+                                            else nicu_all_or_none_df.copy()
+                                        )
+                                        nicu_scoped_work_df = (
+                                            _filter_learning_facilities(nicu_work_df)
+                                            if nicu_group_mode == "Learning Facilities"
+                                            else nicu_work_df.copy()
+                                        )
+                                        if nicu_scoped_all_or_none_df.empty or nicu_scoped_work_df.empty:
+                                            st.warning("No data available for learning facilities.")
+                                            return
 
                                         if nicu_group_mode == "Multi Regional":
                                             nicu_entity_col = "region_label"
                                             nicu_entity_options = sorted([
-                                                v for v in nicu_all_or_none_df[nicu_entity_col].dropna().unique().tolist()
+                                                v for v in nicu_scoped_all_or_none_df[nicu_entity_col].dropna().unique().tolist()
                                                 if str(v).strip()
                                             ])
                                             nicu_all_token = "All Regions"
@@ -1936,9 +2105,27 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
                                                 else nicu_current_selected
                                             )
                                             nicu_selected_entities = nicu_entity_options if nicu_all_token in nicu_effective_selected else nicu_effective_selected
+                                        elif nicu_group_mode == "Learning Facilities":
+                                            nicu_entity_col = "hospital"
+                                            nicu_entity_options = sorted([
+                                                v for v in nicu_scoped_all_or_none_df[nicu_entity_col].dropna().unique().tolist()
+                                                if str(v).strip()
+                                            ])
+                                            nicu_all_token = "All Learning Facilities"
+                                            nicu_selector_options = [nicu_all_token] + nicu_entity_options
+                                            nicu_entity_key = "mentorship_nicu_entities_learning"
+                                            if nicu_entity_key not in st.session_state or not st.session_state.get(nicu_entity_key):
+                                                st.session_state[nicu_entity_key] = [nicu_all_token]
+                                            st.multiselect("Select Learning Facilities", options=nicu_selector_options, key=nicu_entity_key)
+                                            nicu_current_selected = st.session_state.get(nicu_entity_key, [nicu_all_token])
+                                            nicu_effective_selected = (
+                                                [nicu_all_token] if (nicu_all_token in nicu_current_selected or len(nicu_current_selected) == 0)
+                                                else nicu_current_selected
+                                            )
+                                            nicu_selected_entities = nicu_entity_options if nicu_all_token in nicu_effective_selected else nicu_effective_selected
                                         else:
                                             nicu_region_options = sorted([
-                                                v for v in nicu_all_or_none_df["region_label"].dropna().unique().tolist()
+                                                v for v in nicu_scoped_all_or_none_df["region_label"].dropna().unique().tolist()
                                                 if str(v).strip()
                                             ])
                                             nicu_selected_region = st.selectbox(
@@ -1946,8 +2133,8 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
                                                 key="mentorship_nicu_region",
                                             )
                                             nicu_facilities_in_region = sorted([
-                                                v for v in nicu_all_or_none_df.loc[
-                                                    nicu_all_or_none_df["region_label"] == nicu_selected_region, "hospital"
+                                                v for v in nicu_scoped_all_or_none_df.loc[
+                                                    nicu_scoped_all_or_none_df["region_label"] == nicu_selected_region, "hospital"
                                                 ].dropna().unique().tolist() if str(v).strip()
                                             ])
                                             nicu_entity_col = "hospital"
@@ -1976,7 +2163,7 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
                                         ])
 
                                         with nicu_all_or_none_tab:
-                                            nicu_filtered = nicu_all_or_none_df.copy()
+                                            nicu_filtered = nicu_scoped_all_or_none_df.copy()
                                             if nicu_selected_round != "All Rounds":
                                                 nicu_filtered = nicu_filtered[nicu_filtered["round"] == nicu_selected_round]
                                             if nicu_selected_entities:
@@ -2097,8 +2284,8 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
                                         with nicu_care_delivered_tab:
                                             nicu_selected_weeks = st.multiselect(
                                                 "Select Weeks",
-                                                options=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
-                                                default=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                options=sorted([int(w) for w in nicu_scoped_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                default=sorted([int(w) for w in nicu_scoped_work_df["week"].dropna().unique() if str(w).strip()]),
                                                 key="mentorship_nicu_care_weeks",
                                             )
 
@@ -2116,7 +2303,7 @@ For each patient (card), all 4 bundle items are evaluated. Missing values are tr
 
                                                 nicu_all_weeks_data = []
                                                 for week_val in nicu_selected_weeks:
-                                                    week_raw = nicu_work_df[nicu_work_df["week"] == week_val].copy()
+                                                    week_raw = nicu_scoped_work_df[nicu_scoped_work_df["week"] == week_val].copy()
                                                     if nicu_selected_round != "All Rounds":
                                                         week_raw = week_raw[week_raw["round"] == nicu_selected_round]
                                                     if nicu_selected_entities:
@@ -2242,10 +2429,10 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                             if len(nicu_cpap_cols_present) < 6:
                                                 st.info("CPAP columns not fully available in NICU data.")
                                             else:
-                                                nicu_cpap_round_info = nicu_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                                nicu_cpap_round_info = nicu_scoped_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
                                                     subset=["week", "card", "region_label", "hospital"]
                                                 )
-                                                nicu_cpap_all_or_none = compute_all_or_none(nicu_work_df, bundle_cols=nicu_cpap_cols_present)
+                                                nicu_cpap_all_or_none = compute_all_or_none(nicu_scoped_work_df, bundle_cols=nicu_cpap_cols_present)
                                                 nicu_cpap_all_or_none = nicu_cpap_all_or_none.merge(
                                                     nicu_cpap_round_info, on=["week", "card", "region_label", "hospital"], how="left"
                                                 )
@@ -2370,8 +2557,8 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
                                         with nicu_cpap_care_delivered_tab:
                                             nicu_cpap_selected_weeks = st.multiselect(
                                                 "Select Weeks",
-                                                options=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
-                                                default=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                options=sorted([int(w) for w in nicu_scoped_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                default=sorted([int(w) for w in nicu_scoped_work_df["week"].dropna().unique() if str(w).strip()]),
                                                 key="mentorship_nicu_cpap_care_weeks",
                                             )
 
@@ -2390,7 +2577,7 @@ For each patient (card), all 5 bundle items are evaluated. Missing values are tr
 
                                                 nicu_cpap_all_weeks_data = []
                                                 for week_val in nicu_cpap_selected_weeks:
-                                                    week_raw = nicu_work_df[nicu_work_df["week"] == week_val].copy()
+                                                    week_raw = nicu_scoped_work_df[nicu_scoped_work_df["week"] == week_val].copy()
                                                     if nicu_selected_round != "All Rounds":
                                                         week_raw = week_raw[week_raw["round"] == nicu_selected_round]
                                                     if nicu_selected_entities:
@@ -2517,10 +2704,10 @@ For each patient (card), all 6 bundle items are evaluated. Missing values are tr
                                             if len(nicu_kmc_tab_cols_present) < 6:
                                                 st.info("KMC columns not fully available in NICU data.")
                                             else:
-                                                nicu_kmc_round_info = nicu_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                                nicu_kmc_round_info = nicu_scoped_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
                                                     subset=["week", "card", "region_label", "hospital"]
                                                 )
-                                                nicu_kmc_all_or_none = compute_all_or_none(nicu_work_df, bundle_cols=nicu_kmc_tab_cols_present)
+                                                nicu_kmc_all_or_none = compute_all_or_none(nicu_scoped_work_df, bundle_cols=nicu_kmc_tab_cols_present)
                                                 nicu_kmc_all_or_none = nicu_kmc_all_or_none.merge(
                                                     nicu_kmc_round_info, on=["week", "card", "region_label", "hospital"], how="left"
                                                 )
@@ -2645,8 +2832,8 @@ For each patient (card), all 6 bundle items are evaluated. Missing values are tr
                                         with nicu_kmc_care_delivered_tab:
                                             nicu_kmc_selected_weeks = st.multiselect(
                                                 "Select Weeks",
-                                                options=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
-                                                default=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                options=sorted([int(w) for w in nicu_scoped_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                default=sorted([int(w) for w in nicu_scoped_work_df["week"].dropna().unique() if str(w).strip()]),
                                                 key="mentorship_nicu_kmc_care_weeks",
                                             )
 
@@ -2665,7 +2852,7 @@ For each patient (card), all 6 bundle items are evaluated. Missing values are tr
 
                                                 nicu_kmc_all_weeks_data = []
                                                 for week_val in nicu_kmc_selected_weeks:
-                                                    week_raw = nicu_work_df[nicu_work_df["week"] == week_val].copy()
+                                                    week_raw = nicu_scoped_work_df[nicu_scoped_work_df["week"] == week_val].copy()
                                                     if nicu_selected_round != "All Rounds":
                                                         week_raw = week_raw[week_raw["round"] == nicu_selected_round]
                                                     if nicu_selected_entities:
@@ -2791,10 +2978,10 @@ For each patient (card), all 6 bundle items are evaluated. Missing values are tr
                                             if len(nicu_nutrition_tab_cols_present) < 5:
                                                 st.info("Nutrition columns not fully available in NICU data.")
                                             else:
-                                                nicu_nutrition_round_info = nicu_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
+                                                nicu_nutrition_round_info = nicu_scoped_work_df[["week", "card", "region_label", "hospital", "round"]].drop_duplicates(
                                                     subset=["week", "card", "region_label", "hospital"]
                                                 )
-                                                nicu_nutrition_all_or_none = compute_all_or_none(nicu_work_df, bundle_cols=nicu_nutrition_tab_cols_present)
+                                                nicu_nutrition_all_or_none = compute_all_or_none(nicu_scoped_work_df, bundle_cols=nicu_nutrition_tab_cols_present)
                                                 nicu_nutrition_all_or_none = nicu_nutrition_all_or_none.merge(
                                                     nicu_nutrition_round_info, on=["week", "card", "region_label", "hospital"], how="left"
                                                 )
@@ -2918,8 +3105,8 @@ For each patient (card), all 6 bundle items are evaluated. Missing values are tr
                                         with nicu_nutrition_care_delivered_tab:
                                             nicu_nutrition_selected_weeks = st.multiselect(
                                                 "Select Weeks",
-                                                options=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
-                                                default=sorted([int(w) for w in nicu_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                options=sorted([int(w) for w in nicu_scoped_work_df["week"].dropna().unique() if str(w).strip()]),
+                                                default=sorted([int(w) for w in nicu_scoped_work_df["week"].dropna().unique() if str(w).strip()]),
                                                 key="mentorship_nicu_nutrition_care_weeks",
                                             )
 
@@ -2937,7 +3124,7 @@ For each patient (card), all 6 bundle items are evaluated. Missing values are tr
 
                                                 nicu_nutrition_all_weeks_data = []
                                                 for week_val in nicu_nutrition_selected_weeks:
-                                                    week_raw = nicu_work_df[nicu_work_df["week"] == week_val].copy()
+                                                    week_raw = nicu_scoped_work_df[nicu_scoped_work_df["week"] == week_val].copy()
                                                     if nicu_selected_round != "All Rounds":
                                                         week_raw = week_raw[week_raw["round"] == nicu_selected_round]
                                                     if nicu_selected_entities:
