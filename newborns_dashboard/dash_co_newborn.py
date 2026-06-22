@@ -2408,8 +2408,9 @@ CPAP_MACHINE_TYPE_MAP = {
     3: "CPAP blends O2 and humidifies",
     4: "CPAP blends O2, heats and humidifies",
     5: "Mechanical ventilator nasal CPAP mode",
+    99: "Missing / Unknown machine type",
 }
-CPAP_MACHINE_TYPE_COLORS = ["#8E44AD", "#3498DB", "#2ECC71", "#F39C12", "#E74C3C"]
+CPAP_MACHINE_TYPE_COLORS = ["#8E44AD", "#3498DB", "#2ECC71", "#F39C12", "#E74C3C", "#95A5A6"]
 CPAP_MACHINE_TYPE_CATEGORIES = list(zip(CPAP_MACHINE_TYPE_MAP.values(), CPAP_MACHINE_TYPE_COLORS))
 
 KMC_TIMING_QOC_MARKER = "__kmc_timing_qoc__"
@@ -3883,7 +3884,6 @@ def _render_cpap_timing_qoc_trend_chart(
         except Exception:
             return None
 
-        # Per period: count total CPAP and each machine type
         result = []
         for period_display in cpap_df["period_display"].unique():
             period_df = cpap_df[cpap_df["period_display"] == period_display]
@@ -3893,7 +3893,10 @@ def _render_cpap_timing_qoc_trend_chart(
             sort_val = period_df["period_sort"].iloc[0] if "period_sort" in period_df.columns else pd.NaT
             row = {"period_display": period_display, "period_sort": sort_val, "total": total_cpap}
             for code, label in CPAP_MACHINE_TYPE_MAP.items():
-                count = int((period_df["machine_code"] == code).sum())
+                if code == 99:
+                    count = int(period_df["machine_code"].isna().sum())
+                else:
+                    count = int((period_df["machine_code"] == code).sum())
                 pct = (count / total_cpap * 100) if total_cpap > 0 else 0.0
                 row[f"{label}_count"] = count
                 row[f"{label}_pct"] = pct
@@ -4010,14 +4013,14 @@ def _render_cpap_timing_qoc_trend_chart(
             <h4 style="margin-top:0;">1. Time between Admission and CPAP initiation</h4>
             <ul>
               <li><b>Numerator:</b> 1000–1999g babies who received CPAP, in each timing bucket (≤1h, 1-4h, 4-12h, 12-24h, &gt;24h).</li>
-              <li><b>Denominator:</b> ALL babies who received CPAP (any birth weight) in the period.</li>
+              <li><b>Denominator:</b> Babies 1000-1999g who received CPAP in the period.</li>
               <li><b>How it is computed:</b> Time from admission to CPAP start is calculated and assigned to a timing bucket.</li>
             </ul>
 
             <h4>2. Time between Birth and CPAP initiation</h4>
             <ul>
               <li><b>Numerator:</b> 1000–1999g babies who received CPAP, in each timing bucket.</li>
-              <li><b>Denominator:</b> ALL babies who received CPAP (any birth weight) in the period.</li>
+              <li><b>Denominator:</b> Babies 1000-1999g who received CPAP in the period.</li>
               <li><b>How it is computed:</b> Time from birth (admission date used as proxy) to CPAP start is calculated and assigned to a timing bucket.</li>
             </ul>
 
@@ -4029,7 +4032,7 @@ def _render_cpap_timing_qoc_trend_chart(
 
             <h4>4. CPAP Type / Machine Used</h4>
             <ul>
-              <li><b>Numerator:</b> Babies who received CPAP, grouped by CPAP machine type.</li>
+              <li><b>Numerator:</b> Babies who received CPAP, grouped by CPAP machine type (including Missing/Unknown for blank or unlisted codes).</li>
               <li><b>Denominator:</b> All babies who received CPAP in the period.</li>
             </ul>
 
