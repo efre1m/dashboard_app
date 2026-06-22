@@ -57,6 +57,7 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     # CPAP timing computation
     compute_cpap_timing_data,
     CPAP_TIMING_BIRTH_COL,
+    BIRTH_WEIGHT_COL,
     BIRTH_WEIGHT_CATEGORIES,
     compute_kmc_timing_data,
     get_kmc_status_for_tei,
@@ -3403,9 +3404,9 @@ def _render_cpap_timing_qoc_trend_chart(
         except Exception:
             return None
 
-        # --- Denominator: ALL babies who received CPAP (any birth weight) ---
+        # --- Denominator: babies 1000-1999g who received CPAP ---
         cpap_col = _CPAP_TIMING_CPAP_COL
-        denom_raw = working_df[["tei_id", "enrollment_date", cpap_col]].drop_duplicates(subset=["tei_id"]).copy()
+        denom_raw = working_df[["tei_id", "enrollment_date", cpap_col, BIRTH_WEIGHT_COL]].drop_duplicates(subset=["tei_id"]).copy()
         denom_raw["has_cpap"] = (
             pd.to_numeric(
                 denom_raw[cpap_col].astype(str).str.split(".").str[0],
@@ -3413,7 +3414,8 @@ def _render_cpap_timing_qoc_trend_chart(
             )
             == 1.0
         )
-        denom_df = denom_raw[denom_raw["has_cpap"]].copy()
+        denom_raw["bw"] = pd.to_numeric(denom_raw[BIRTH_WEIGHT_COL], errors="coerce")
+        denom_df = denom_raw[denom_raw["has_cpap"] & denom_raw["bw"].between(1000, 1999, inclusive="both")].copy()
         if denom_df.empty:
             return None
         denom_df["event_date"] = pd.to_datetime(denom_df["enrollment_date"], errors="coerce")
