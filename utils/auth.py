@@ -2,6 +2,7 @@
 import streamlit as st
 import bcrypt
 from utils.db import get_db_connection
+from utils.jwt_auth import create_jwt_token
 
 
 def _is_bcrypt_hash(value: str) -> bool:
@@ -88,7 +89,7 @@ def authenticate_user(username: str, password: str):
     # Log the successful login
     log_user_login(user_id)
 
-    return {
+    user_dict = {
         "user_id": user_id,
         "username": uname,
         "first_name": first_name,
@@ -105,6 +106,8 @@ def authenticate_user(username: str, password: str):
         "country_dhis_uid": country_dhis_uid,
         "upgraded": upgraded,
     }
+    user_dict["jwt_token"] = create_jwt_token(user_dict)
+    return user_dict
 
 
 def logout():

@@ -1,6 +1,8 @@
+import time
 import streamlit as st
 from pathlib import Path
-from utils.auth import authenticate_user  # make sure you have this util
+from utils.auth import authenticate_user
+from utils.jwt_auth import check_rate_limit, get_client_ip
 
 def load_css():
     css_file = Path(__file__).parent.parent / "assets" / "style.css"
@@ -46,11 +48,20 @@ def login_component():
             password = st.text_input("Password", type="password", placeholder="Password", key="login_pass", label_visibility="collapsed")
 
             if st.button("Login", use_container_width=True):
-                user = authenticate_user(username, password)
-                if user:
-                    st.session_state["authenticated"] = True
-                    st.session_state["user"] = user
-                    st.success(f"Welcome back, {user['username']}")
-                    st.rerun()
+                if not check_rate_limit(get_client_ip()):
+                    st.markdown(
+                        '<div class="login-error">Too many login attempts. Try again in 60 seconds.</div>',
+                        unsafe_allow_html=True,
+                    )
                 else:
-                    st.markdown('<div class="login-error">Invalid username or password</div>', unsafe_allow_html=True)
+                    time.sleep(0.5)
+                    user = authenticate_user(username, password)
+                    if user:
+                        st.session_state["authenticated"] = True
+                        st.session_state["user"] = user
+                        st.session_state["jwt_token"] = user["jwt_token"]
+                        st.session_state["last_activity"] = time.time()
+                        st.success(f"Welcome back, {user['username']}")
+                        st.rerun()
+                    else:
+                        st.markdown('<div class="login-error">Invalid username or password</div>', unsafe_allow_html=True)

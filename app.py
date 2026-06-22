@@ -64,9 +64,11 @@ load_dotenv()
 # ====================== NOW IMPORT OTHER MODULES ======================
 # Now it's safe to import modules that might use session state
 
+import time
 from components.login import login_component
 from dashboards import facility, regional, national, admin
 from utils.auth import logout
+from utils.jwt_auth import validate_jwt_token
 from components.chatbot import render_chatbot
 from utils.db import init_db
 
@@ -203,6 +205,29 @@ with st.sidebar:
 if not st.session_state.get("authenticated", False):
     login_component()  # Render login page if not authenticated
 else:
+    # JWT validation on every page load
+    jwt_token = st.session_state.get("jwt_token")
+    if not jwt_token:
+        logout()
+        st.rerun()
+
+    payload = validate_jwt_token(jwt_token)
+    if payload is None:
+        logout()
+        st.rerun()
+
+    # Session timeout — 15 minutes idle
+    last_activity = st.session_state.get("last_activity", 0)
+    if time.time() - last_activity > 900:
+        logout()
+        st.rerun()
+    st.session_state["last_activity"] = time.time()
+
+    # Verify role matches token (prevents session tampering)
+    if payload["role"] != st.session_state["user"].get("role"):
+        logout()
+        st.rerun()
+
     role = st.session_state["user"].get("role", "")
 
     # Force dashboard content to top for authenticated pages, overriding any centering CSS.
