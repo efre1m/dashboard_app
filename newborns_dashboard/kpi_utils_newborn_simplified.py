@@ -846,7 +846,7 @@ def compute_cpap_for_rds_kpi(df, facility_uids=None):
 
 
 def compute_cpap_eligible_babies_kpi(df, facility_uids=None):
-    """CPAP eligible: RDS + BW 1000-1999 + Hypoxia"""
+    """CPAP eligible: BW 1000-1499g (any) OR BW 1500-1999g + RDS + Hypoxia"""
     cache_key = get_cache_key_simplified(df, facility_uids, "cpap_eligible_babies_kpi")
     if cache_key in st.session_state.kpi_cache_newborn_simplified:
         return st.session_state.kpi_cache_newborn_simplified[cache_key]
@@ -859,12 +859,13 @@ def compute_cpap_eligible_babies_kpi(df, facility_uids=None):
         if tei_flags is None or tei_flags.empty:
             result = {"cpap_count": 0, "total_eligible": 0}
         else:
-            eligible_mask = (
+            group_a = tei_flags["birth_weight"].between(1000, 1499, inclusive="both").fillna(False)
+            group_b = (
                 tei_flags["has_rds"]
-                & tei_flags["birth_weight"].between(1000, 1999, inclusive="both").fillna(False)
+                & tei_flags["birth_weight"].between(1500, 1999, inclusive="both").fillna(False)
                 & tei_flags["has_hypoxia"]
             )
-            eligible_teis = tei_flags.loc[eligible_mask].dropna(subset=["tei_id"])
+            eligible_teis = tei_flags.loc[group_a | group_b].dropna(subset=["tei_id"])
             total_eligible = len(eligible_teis)
             cpap_count = int(eligible_teis["has_cpap"].sum()) if total_eligible > 0 else 0
             result = {"cpap_count": cpap_count, "total_eligible": total_eligible}
@@ -2206,14 +2207,20 @@ def render_cpap_rds_trend_chart(
     indicators = [
         {
             "kpi_name": "cpap_eligible",
-            "display_name": "CPAP for eligible babies (1000-1999g + RDS + Hypoxia)",
-            "short_name": "CPAP Eligible",
+            "display_name": "CPAP coverage: babies 1000-1499g (any) or 1500-1999g with RDS + hypoxia",
+            "short_name": "CPAP 1000-1499g (any) or 1500-1999g +RDS+hypoxia",
             "color": "#1f77b4",
         },
         {
             "kpi_name": "cpap_symptomatic",
-            "display_name": "CPAP 1500-1999g (symptomatic)",
-            "short_name": "CPAP 1500-1999g",
+            "display_name": "CPAP 1500-1999g with RDS",
+            "short_name": "CPAP 1500-1999g with RDS",
+            "color": "#1f77b4",
+        },
+        {
+            "kpi_name": "cpap_symptomatic_hypoxia",
+            "display_name": "CPAP 1500-1999g with RDS + hypoxia",
+            "short_name": "CPAP 1500-1999g RDS+hypoxia",
             "color": "#1f77b4",
         },
     ]
@@ -2238,22 +2245,28 @@ def render_cpap_rds_trend_chart(
         teis_in_period = tei_period_map[tei_period_map == period].index
         pflags = tei_flags.loc[tei_flags.index.isin(teis_in_period)]
 
-        # Eligible: RDS + BW 1000-1999 + Hypoxia
-        e_mask = (
+        # Eligible: BW 1000-1499g (any) OR BW 1500-1999g + RDS + Hypoxia
+        e_group_a = pflags["birth_weight"].between(1000, 1499, inclusive="both").fillna(False)
+        e_group_b = (
             pflags["has_rds"]
-            & pflags["birth_weight"].between(1000, 1999, inclusive="both").fillna(False)
+            & pflags["birth_weight"].between(1500, 1999, inclusive="both").fillna(False)
             & pflags["has_hypoxia"]
         )
-        e_teis = pflags[e_mask]
+        e_teis = pflags[e_group_a | e_group_b]
         e_num, e_den = int(e_teis["has_cpap"].sum()), len(e_teis)
 
-        # Symptomatic: RDS + BW 1500-1999
+        # Symptomatic RDS only: RDS + BW 1500-1999
         s_mask = (
             pflags["has_rds"]
             & pflags["birth_weight"].between(1500, 1999, inclusive="both").fillna(False)
         )
         s_teis = pflags[s_mask]
         s_num, s_den = int(s_teis["has_cpap"].sum()), len(s_teis)
+
+        # Symptomatic with hypoxia: RDS + BW 1500-1999 + Hypoxia
+        h_mask = s_mask & pflags["has_hypoxia"]
+        h_teis = pflags[h_mask]
+        h_num, h_den = int(h_teis["has_cpap"].sum()), len(h_teis)
 
         trend_data.append({
             period_col: period,
@@ -2263,6 +2276,9 @@ def render_cpap_rds_trend_chart(
             "cpap_symptomatic_value": (s_num / s_den * 100) if s_den > 0 else None,
             "cpap_symptomatic_num": s_num,
             "cpap_symptomatic_den": s_den,
+            "cpap_symptomatic_hypoxia_value": (h_num / h_den * 100) if h_den > 0 else None,
+            "cpap_symptomatic_hypoxia_num": h_num,
+            "cpap_symptomatic_hypoxia_den": h_den,
         })
 
     if not trend_data:
@@ -2286,14 +2302,18 @@ def render_cpap_rds_trend_chart(
         st.warning("No indicators selected.")
     else:
         n = len(filtered_indicators)
+        ncols = min(n, 2)
+        nrows = (n + ncols - 1) // ncols
         fig = make_subplots(
-            rows=1, cols=n,
+            rows=nrows, cols=ncols,
             subplot_titles=[ind["short_name"] for ind in filtered_indicators],
-            horizontal_spacing=0.08,
+            horizontal_spacing=0.15,
+            vertical_spacing=0.12,
         )
 
         for idx, ind in enumerate(filtered_indicators):
-            col = idx + 1
+            row = idx // ncols + 1
+            col = idx % ncols + 1
             value_col = f"{ind['kpi_name']}_value"
             num_col = f"{ind['kpi_name']}_num"
             den_col = f"{ind['kpi_name']}_den"
@@ -2318,14 +2338,14 @@ def render_cpap_rds_trend_chart(
                         (trend_df[num_col].values, trend_df[den_col].values)
                     ),
                 ),
-                row=1, col=col,
+                row=row, col=col,
             )
 
-            fig.add_hline(y=100, line_dash="dash", line_color="green", line_width=1.5, row=1, col=col)
+            fig.add_hline(y=100, line_dash="dash", line_color="green", line_width=1.5, row=row, col=col)
 
         fig.update_layout(
             title="CPAP Coverage",
-            height=400,
+            height=350 * nrows,
             showlegend=False,
             paper_bgcolor=bg_color,
             plot_bgcolor=bg_color,
@@ -2413,13 +2433,18 @@ def render_cpap_rds_trend_chart(
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>CPAP Eligible</b></td>
-                <td style="padding:8px;">Babies with Respiratory Distress Syndrome, birth weight 1000-1999g, and hypoxia who received CPAP</td>
-                <td style="padding:8px;">Babies with Respiratory Distress Syndrome, birth weight 1000-1999g, and hypoxia</td>
+                <td style="padding:8px;">Babies who received CPAP: weighed 1000-1499g (any) OR weighed 1500-1999g with RDS and hypoxia (O2 &lt; 90%)</td>
+                <td style="padding:8px;">All babies admitted: weighed 1000-1499g (any) OR weighed 1500-1999g with RDS and hypoxia (O2 &lt; 90%)</td>
             </tr>
             <tr>
-                <td style="padding:8px;"><b>CPAP Symptomatic 1500-1999g</b></td>
-                <td style="padding:8px;">Babies with Respiratory Distress Syndrome and birth weight 1500-1999g who received CPAP</td>
-                <td style="padding:8px;">Babies with Respiratory Distress Syndrome and birth weight 1500-1999g</td>
+                <td style="padding:8px;"><b>CPAP 1500-1999g with RDS</b></td>
+                <td style="padding:8px;">Babies with RDS and birth weight 1500-1999g who received CPAP</td>
+                <td style="padding:8px;">Babies with RDS and birth weight 1500-1999g</td>
+            </tr>
+            <tr style="background-color:#f0f8ff;">
+                <td style="padding:8px;"><b>CPAP 1500-1999g with RDS + hypoxia</b></td>
+                <td style="padding:8px;">Babies with RDS, birth weight 1500-1999g, and hypoxia (O2 &lt; 90%) who received CPAP</td>
+                <td style="padding:8px;">Babies with RDS, birth weight 1500-1999g, and hypoxia (O2 &lt; 90%)</td>
             </tr>
             </table>
             </div>
@@ -5121,19 +5146,21 @@ def render_cpap_rds_comparison_line_chart(
         return
 
     # Compute both KPI types in one pass (single _aggregate_tei_flags per entity)
-    eligible_data, symptomatic_data = {}, {}
+    eligible_data, symptomatic_data, symptomatic_hypoxia_data = {}, {}, {}
     for entity in entities:
-        ed, sd = _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_region, periods, period_col)
+        ed, sd, shd = _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_region, periods, period_col)
         if ed is not None:
             eligible_data[entity] = ed
         if sd is not None:
             symptomatic_data[entity] = sd
+        if shd is not None:
+            symptomatic_hypoxia_data[entity] = shd
 
     sorted_entities = sorted(entities, key=lambda e: str(get_label(e)).lower())
     color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set2
     entity_colors = {
         e: color_palette[i % len(color_palette)]
-        for i, e in enumerate(sorted_entities) if e in eligible_data or e in symptomatic_data
+        for i, e in enumerate(sorted_entities) if e in eligible_data or e in symptomatic_data or e in symptomatic_hypoxia_data
     }
 
     def make_chart(comparison_data, kpi_title, num_label, den_label):
@@ -5159,8 +5186,8 @@ def render_cpap_rds_comparison_line_chart(
             ))
 
         fig.update_layout(
-            title=dict(text=kpi_title, font=dict(size=13)),
-            height=400, showlegend=True,
+            title=dict(text=kpi_title, font=dict(size=11)),
+            height=350, showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
             paper_bgcolor=bg_color, plot_bgcolor=bg_color,
             font_color=text_color, margin=dict(l=50, r=50, t=60, b=60),
@@ -5198,11 +5225,13 @@ def render_cpap_rds_comparison_line_chart(
             rows.append({entity_label_text: "**OVERALL**", "Rate": f"{ov:.1f}% ({oc}/{ot})" if ov is not None else "-", num_label: oc, den_label: ot})
             st.dataframe(pd.DataFrame(rows), use_container_width=True, height=(len(rows) + 1) * 35 + 3)
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        make_chart(eligible_data, "CPAP Eligible (1000-1999g + RDS + Hypoxia)", "CPAP Given", "Total Eligible")
+        make_chart(eligible_data, "CPAP: 1000-1499g (any) / 1500-1999g +RDS+hypoxia", "CPAP Given", "Total Eligible")
     with col2:
-        make_chart(symptomatic_data, "CPAP 1500-1999g (Symptomatic)", "CPAP Given", "Total Symptomatic")
+        make_chart(symptomatic_data, "CPAP 1500-1999g with RDS", "CPAP Given", "Total with RDS")
+    with col3:
+        make_chart(symptomatic_hypoxia_data, "CPAP 1500-1999g with RDS + hypoxia", "CPAP Given", "Total RDS+hypoxia")
 
 
 def _get_entity_df(df, entity, comparison_mode, facilities_by_region):
@@ -5220,16 +5249,16 @@ def _get_entity_df(df, entity, comparison_mode, facilities_by_region):
 
 
 def _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_region, periods, period_col):
-    """Compute both eligible and symptomatic KPI per-period data for one entity.
+    """Compute eligible, symptomatic, and symptomatic+hypoxia KPI per-period data for one entity.
     Optimized: calls _aggregate_tei_flags only once per entity instead of per-period.
     """
     entity_df = _get_entity_df(df, entity, comparison_mode, facilities_by_region)
     if entity_df is None or entity_df.empty:
-        return None, None
+        return None, None, None
 
     tei_flags = _aggregate_tei_flags(entity_df)
     if tei_flags is None or tei_flags.empty:
-        return None, None
+        return None, None, None
 
     period_src = entity_df
     if "event_date" in period_src.columns:
@@ -5237,23 +5266,25 @@ def _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_reg
     tei_periods = period_src[["tei_id", period_col]].drop_duplicates(subset=["tei_id"])
     tei_period_map = tei_periods.set_index("tei_id")[period_col]
 
-    eligible_rows, symptomatic_rows = [], []
+    eligible_rows, symptomatic_rows, symptomatic_hypoxia_rows = [], [], []
     for period in periods:
         teis_in_period = tei_period_map[tei_period_map == period].index
         pflags = tei_flags.loc[tei_flags.index.isin(teis_in_period)]
 
-        # Eligible: RDS + BW 1000-1999 + Hypoxia
-        e_mask = (
+        # Eligible: BW 1000-1499g (any) OR BW 1500-1999g + RDS + Hypoxia
+        e_group_a = pflags["birth_weight"].between(1000, 1499, inclusive="both").fillna(False)
+        e_group_b = (
             pflags["has_rds"]
-            & pflags["birth_weight"].between(1000, 1999, inclusive="both").fillna(False)
+            & pflags["birth_weight"].between(1500, 1999, inclusive="both").fillna(False)
             & pflags["has_hypoxia"]
         )
+        e_mask = e_group_a | e_group_b
         e_teis = pflags[e_mask]
         e_total, e_cpap = len(e_teis), int(e_teis["has_cpap"].sum())
         e_rate = (e_cpap / e_total * 100) if e_total > 0 else None
         eligible_rows.append({period_col: period, "rate": e_rate, "cpap_count": e_cpap, "total": e_total})
 
-        # Symptomatic: RDS + BW 1500-1999
+        # Symptomatic RDS only: RDS + BW 1500-1999
         s_mask = (
             pflags["has_rds"]
             & pflags["birth_weight"].between(1500, 1999, inclusive="both").fillna(False)
@@ -5263,9 +5294,17 @@ def _compute_comparison_both_kpis(df, entity, comparison_mode, facilities_by_reg
         s_rate = (s_cpap / s_total * 100) if s_total > 0 else None
         symptomatic_rows.append({period_col: period, "rate": s_rate, "cpap_count": s_cpap, "total": s_total})
 
+        # Symptomatic with hypoxia: RDS + BW 1500-1999 + Hypoxia
+        h_mask = s_mask & pflags["has_hypoxia"]
+        h_teis = pflags[h_mask]
+        h_total, h_cpap = len(h_teis), int(h_teis["has_cpap"].sum())
+        h_rate = (h_cpap / h_total * 100) if h_total > 0 else None
+        symptomatic_hypoxia_rows.append({period_col: period, "rate": h_rate, "cpap_count": h_cpap, "total": h_total})
+
     edf = pd.DataFrame(eligible_rows) if eligible_rows else None
     sdf = pd.DataFrame(symptomatic_rows) if symptomatic_rows else None
-    return edf, sdf
+    shdf = pd.DataFrame(symptomatic_hypoxia_rows) if symptomatic_hypoxia_rows else None
+    return edf, sdf, shdf
 
 
 def compute_cpap_timing_data(df, timing_type="admission"):
