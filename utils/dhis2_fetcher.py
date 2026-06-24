@@ -272,6 +272,7 @@ DATA_ELEMENT_NAMES = {
     "ZiI6RUqXLUl": "Birth Weight n",
     "s9OrsTEv34G": "Maternal medication during pregnancy and labor",
     "U3oBuzSBbWX": "Kmc done",
+    "tXePphrdJDX": "Bilirubin tested?",
     "y2YwnCXkw77": "Baby placed on CPAP",
     "ZkeSH8X8MKK": "Weight on discharge",
     "XITh8vyfqaR": "Newborn status at discharge n",
@@ -281,6 +282,10 @@ DATA_ELEMENT_NAMES = {
     "Zq5pooW1Osg": "Sub-Categories of Congenital Malformations n",
     "kXx9ea03Eb3": "Sub-Categories of Intrapartum-Related n",
     "ANU3lt2Bt3O": "Sub-Categories of Jaundice (Pathological) n",
+    # Medication sheet (new NCF stage, added 2026)
+    "hCb06Jbjqk3": "Are antibiotics administered?",
+    "Hwe1gdn1UZ4": "Phototherapy Administered?",
+    "xEyz81PI8Qt": "Transfusion given?",
 }
 
 # MATERNAL PROGRAM STAGE MAPPING FROM FIRST CODE
@@ -344,6 +349,7 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
     "eCyte3bTjHS": {  # Nurse followup Sheet
         "data_elements": [
             "U3oBuzSBbWX",  # Kmc done
+            "tXePphrdJDX",  # Bilirubin tested?
         ],
         "program_stage_name": "Nurse followup Sheet",
         "is_repeatable": True,  # Can have multiple nurse followups
@@ -368,6 +374,15 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
         ],
         "program_stage_name": "Discharge care form",
         "is_repeatable": False,  # One discharge per admission
+    },
+    "YUfRatwZpLn": {  # Medication sheet
+        "data_elements": [
+            "hCb06Jbjqk3",  # Are antibiotics administered?
+            "Hwe1gdn1UZ4",  # Phototherapy Administered?
+            "xEyz81PI8Qt",  # Transfusion given?
+        ],
+        "program_stage_name": "Medication sheet",
+        "is_repeatable": True,  # Can have multiple medication entries
     },
 }
 

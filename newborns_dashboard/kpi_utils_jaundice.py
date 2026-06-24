@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 # --- Column name constants (merged newborn+NID dataset) ---
 JAUNDICE_DIAGNOSIS_COL = "sub_categories_of_jaundice_pathological_n_discharge_care_form"
-PHOTOTHERAPY_COL = "was_phototherapy_administered?_interventions"
-BILIRUBIN_COL = "was_bilirubin_tested?_observations_and_nursing_care_2"
-TRANSFUSION_COL = "was_a_transfusion_given?_interventions"
+PHOTOTHERAPY_COL = "phototherapy_administered?_medication_sheet"
+BILIRUBIN_COL = "bilirubin_tested?_nurse_followup_sheet"
+TRANSFUSION_COL = "transfusion_given?_medication_sheet"
 
 LINE_COLOR = "#1f77b4"
 

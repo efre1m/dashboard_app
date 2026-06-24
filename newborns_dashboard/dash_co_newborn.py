@@ -70,9 +70,15 @@ from newborns_dashboard.kpi_utils_jaundice import (
     render_jaundice_facility_comparison,
 )
 
+from newborns_dashboard.kpi_utils_infection import (
+    render_infection_coverage_trend_chart,
+    render_infection_facility_comparison,
+)
+
 # Jaundice & Phototherapy marker constants (defined early for use in KPI groups)
 JAUNDICE_COVERAGE_MARKER = "__jaundice_coverage__"
 JAUNDICE_QOC_MARKER = "__jaundice_qoc__"
+INFECTION_COVERAGE_MARKER = "__infection_coverage__"
 
 # KPI mapping for newborn comparison charts
 NEWBORN_KPI_MAPPING = {
@@ -692,7 +698,7 @@ def render_newborn_kpi_tab_navigation():
 
     # Create main KPI group tabs - UPDATED TO 7 TABS & REORDERED
     # Enrollment -> Birth -> Hypothermia -> Vital Monitoring -> Intervention -> Mortality -> Data Quality
-    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_jaundice, tab_mortality, tab_dq = st.tabs(
+    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_jaundice, tab_infection, tab_mortality, tab_dq = st.tabs(
         [
             "Enrollment",
             "Birth",
@@ -701,6 +707,7 @@ def render_newborn_kpi_tab_navigation():
             "CPAP",
             "KMC",
             "Jaundice & Phototherapy",
+            "Infection",
             "Mortality",
             "Data Quality",
         ]
@@ -841,6 +848,13 @@ def render_newborn_kpi_tab_navigation():
             if st.button("Quality of Care", key="jaundice_qoc_btn", use_container_width=True,
                          type=("primary" if selected_kpi == JAUNDICE_QOC_MARKER else "secondary")):
                 selected_kpi = JAUNDICE_QOC_MARKER
+
+    with tab_infection:
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("Indicator Coverage Run Chart", key="infection_cov_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == INFECTION_COVERAGE_MARKER else "secondary")):
+                selected_kpi = INFECTION_COVERAGE_MARKER
 
     with tab_mortality:
         # Mortality - 2 buttons
@@ -1031,6 +1045,16 @@ def render_newborn_trend_chart_section(
         render_jaundice_qoc_trend_chart(
             working_df, "period_display",
             "Quality of Care",
+            bg_color, text_color, facility_uids,
+            date_range_filters=date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Infection
+    if kpi_selection == INFECTION_COVERAGE_MARKER:
+        render_infection_coverage_trend_chart(
+            working_df, "period_display",
+            "Antibiotics for Clinical Sepsis",
             bg_color, text_color, facility_uids,
             date_range_filters=date_range_filters,
         )
@@ -1465,6 +1489,22 @@ def render_newborn_comparison_chart(
             region_names=region_names,
             period_col="period_display",
             title="Jaundice & Phototherapy Comparison",
+            bg_color=bg_color,
+            text_color=text_color,
+        )
+        return
+
+    # SPECIAL HANDLING: Infection
+    if kpi_selection == INFECTION_COVERAGE_MARKER:
+        render_infection_facility_comparison(
+            df_to_use,
+            comparison_mode=comparison_mode,
+            display_names=display_names,
+            facility_uids=facility_uids,
+            facilities_by_region=facilities_by_region,
+            region_names=region_names,
+            period_col="period_display",
+            title="Antibiotics for Clinical Sepsis Comparison",
             bg_color=bg_color,
             text_color=text_color,
         )
@@ -5476,4 +5516,6 @@ __all__ = [
     # Jaundice & Phototherapy
     "JAUNDICE_COVERAGE_MARKER",
     "JAUNDICE_QOC_MARKER",
+    # Infection
+    "INFECTION_COVERAGE_MARKER",
 ]

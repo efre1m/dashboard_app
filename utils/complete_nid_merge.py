@@ -52,7 +52,7 @@ MAPPING = {
     "temperature_on_admission_degc_observations_and_nursing_care_1": "temp_at_admission_nicu_admission_careform",
     "birth_weight_grams_maternal_birth_and_infant_details": "birth_weight_n_nicu_admission_careform",
     "weight_on_admission_admission_information": "weight_at_admission_n_nicu_admission_careform",
-    "were_antibiotics_administered?_interventions": "maternal_medication_during_pregnancy_and_labor_nicu_admission_careform",
+    "were_antibiotics_administered?_interventions": "are_antibiotics_administered?_medication_sheet",
     # Interventions
     "kmc_administered_interventions": "kmc_done_nurse_followup_sheet",
     "cpap_administered_interventions": "baby_placed_on_cpap_neonatal_referral_form",
@@ -78,10 +78,35 @@ MAPPING = {
     "cpap_1_start_time_interventions": "cpap_1_start_time_interventions",
     "if_yes_kmc_start_date_interventions": "if_yes_kmc_start_date_interventions",
     "lowest_recorded_temperature_celsius_observations_and_nursing_care_2": "lowest_recorded_temperature_celsius_observations_and_nursing_care_2",
+    # Reason for admission (NID only, pass-through)
+    "first_reason_for_admission_admission_information": "first_reason_for_admission_admission_information",
+    "second_reason_for_admission_admission_information": "second_reason_for_admission_admission_information",
+    "third_reason_for_admission_admission_information": "third_reason_for_admission_admission_information",
     # New jaundice / phototherapy variables
-    "was_phototherapy_administered?_interventions": "was_phototherapy_administered?_interventions",
-    "was_a_transfusion_given?_interventions": "was_a_transfusion_given?_interventions",
-    "was_bilirubin_tested?_observations_and_nursing_care_2": "was_bilirubin_tested?_observations_and_nursing_care_2",
+    "was_phototherapy_administered?_interventions": "phototherapy_administered?_medication_sheet",
+    "was_a_transfusion_given?_interventions": "transfusion_given?_medication_sheet",
+    "was_bilirubin_tested?_observations_and_nursing_care_2": "bilirubin_tested?_nurse_followup_sheet",
+}
+
+# ==================== 2B. VALUE MAPPING (NID → NCF codes) ====================
+VALUE_MAPPING = {
+    "were_antibiotics_administered?_interventions": {
+        "1": "1",
+        "0": "0",
+    },
+    "was_phototherapy_administered?_interventions": {
+        "1": "1",
+        "0": "0",
+    },
+    "was_bilirubin_tested?_observations_and_nursing_care_2": {
+        "1": "1",
+        "0": "0",
+    },
+    "was_a_transfusion_given?_interventions": {
+        "1": "1",
+        "2": "2",
+        "0": "0",
+    },
 }
 
 print(f"\n📋 Basic mapping: {len(MAPPING)} columns")
@@ -205,6 +230,10 @@ def append_nid_to_newborn(nid_path, newborn_path):
                     if "prematurity" in newborn_col.lower():
                         if value == "5":
                             value = "1"
+
+                    # Apply NID→NCF value mapping for medication-sheet columns
+                    if nid_col in VALUE_MAPPING:
+                        value = VALUE_MAPPING[nid_col].get(value, "N/A")
 
                     row_data[newborn_col] = value
 
