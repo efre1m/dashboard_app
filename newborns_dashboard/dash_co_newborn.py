@@ -64,6 +64,16 @@ from newborns_dashboard.kpi_utils_newborn_simplified import (
     KMC_COLUMNS,
 )
 
+from newborns_dashboard.kpi_utils_jaundice import (
+    render_jaundice_coverage_trend_chart,
+    render_jaundice_qoc_trend_chart,
+    render_jaundice_facility_comparison,
+)
+
+# Jaundice & Phototherapy marker constants (defined early for use in KPI groups)
+JAUNDICE_COVERAGE_MARKER = "__jaundice_coverage__"
+JAUNDICE_QOC_MARKER = "__jaundice_qoc__"
+
 # KPI mapping for newborn comparison charts
 NEWBORN_KPI_MAPPING = {
     "Inborn Rate (%)": {
@@ -280,6 +290,10 @@ NEWBORN_KPI_GROUPS = {
     ],
     "👶 KMC": [
         "KMC Coverage by Birth Weight",
+    ],
+    "🟡 Jaundice": [
+        JAUNDICE_COVERAGE_MARKER,
+        JAUNDICE_QOC_MARKER,
     ],
     "📉 Mortality": [
         "Neonatal Mortality Rate (%)",
@@ -678,7 +692,7 @@ def render_newborn_kpi_tab_navigation():
 
     # Create main KPI group tabs - UPDATED TO 7 TABS & REORDERED
     # Enrollment -> Birth -> Hypothermia -> Vital Monitoring -> Intervention -> Mortality -> Data Quality
-    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_mortality, tab_dq = st.tabs(
+    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_jaundice, tab_mortality, tab_dq = st.tabs(
         [
             "Enrollment",
             "Birth",
@@ -686,6 +700,7 @@ def render_newborn_kpi_tab_navigation():
             "Vital Monitoring",
             "CPAP",
             "KMC",
+            "Jaundice & Phototherapy",
             "Mortality",
             "Data Quality",
         ]
@@ -815,6 +830,17 @@ def render_newborn_kpi_tab_navigation():
             if st.button("Quality of Care", key="kmc_timing_qoc_btn", use_container_width=True,
                          type=("primary" if selected_kpi == KMC_TIMING_QOC_MARKER else "secondary")):
                 selected_kpi = KMC_TIMING_QOC_MARKER
+
+    with tab_jaundice:
+        cols = st.columns(5)
+        with cols[0]:
+            if st.button("Indicator Coverage Run Chart", key="jaundice_cov_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == JAUNDICE_COVERAGE_MARKER else "secondary")):
+                selected_kpi = JAUNDICE_COVERAGE_MARKER
+        with cols[1]:
+            if st.button("Quality of Care", key="jaundice_qoc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == JAUNDICE_QOC_MARKER else "secondary")):
+                selected_kpi = JAUNDICE_QOC_MARKER
 
     with tab_mortality:
         # Mortality - 2 buttons
@@ -989,6 +1015,24 @@ def render_newborn_trend_chart_section(
             text_color,
             facility_uids,
             date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Jaundice & Phototherapy
+    if kpi_selection == JAUNDICE_COVERAGE_MARKER:
+        render_jaundice_coverage_trend_chart(
+            working_df, "period_display",
+            "Phototherapy for Clinical Jaundice",
+            bg_color, text_color, facility_uids,
+            date_range_filters=date_range_filters,
+        )
+        return
+    if kpi_selection == JAUNDICE_QOC_MARKER:
+        render_jaundice_qoc_trend_chart(
+            working_df, "period_display",
+            "Quality of Care",
+            bg_color, text_color, facility_uids,
+            date_range_filters=date_range_filters,
         )
         return
 
@@ -1407,6 +1451,22 @@ def render_newborn_comparison_chart(
             text_color,
             is_national,
             show_chart=show_chart,
+        )
+        return
+
+    # SPECIAL HANDLING: Jaundice & Phototherapy
+    if kpi_selection in (JAUNDICE_COVERAGE_MARKER, JAUNDICE_QOC_MARKER):
+        render_jaundice_facility_comparison(
+            df_to_use,
+            comparison_mode=comparison_mode,
+            display_names=display_names,
+            facility_uids=facility_uids,
+            facilities_by_region=facilities_by_region,
+            region_names=region_names,
+            period_col="period_display",
+            title="Jaundice & Phototherapy Comparison",
+            bg_color=bg_color,
+            text_color=text_color,
         )
         return
 
@@ -5413,4 +5473,7 @@ __all__ = [
     "KMC_TIMING_QOC_MARKER",
     "KMC_TIMING_CATEGORIES",
     "_render_kmc_timing_qoc_trend_chart",
+    # Jaundice & Phototherapy
+    "JAUNDICE_COVERAGE_MARKER",
+    "JAUNDICE_QOC_MARKER",
 ]

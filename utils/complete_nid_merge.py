@@ -78,6 +78,10 @@ MAPPING = {
     "cpap_1_start_time_interventions": "cpap_1_start_time_interventions",
     "if_yes_kmc_start_date_interventions": "if_yes_kmc_start_date_interventions",
     "lowest_recorded_temperature_celsius_observations_and_nursing_care_2": "lowest_recorded_temperature_celsius_observations_and_nursing_care_2",
+    # New jaundice / phototherapy variables
+    "was_phototherapy_administered?_interventions": "was_phototherapy_administered?_interventions",
+    "was_a_transfusion_given?_interventions": "was_a_transfusion_given?_interventions",
+    "was_bilirubin_tested?_observations_and_nursing_care_2": "was_bilirubin_tested?_observations_and_nursing_care_2",
 }
 
 print(f"\n📋 Basic mapping: {len(MAPPING)} columns")

@@ -23,6 +23,12 @@ NID_PROGRAM_UID = "pLk3Ht2XMKl"
 
 ADDITIONAL_O2_DATAELEMENT_UID = "j4W59YyYG04"
 ADDITIONAL_O2_DATAELEMENT_NAME = "Lowest recorded oxygen saturation (%)"
+PHOTOTHERAPY_DATAELEMENT_UID = "EDwkmS1fKbG"
+PHOTOTHERAPY_DATAELEMENT_NAME = "Was Phototherapy Administered?"
+TRANSFUSION_DATAELEMENT_UID = "zRsdb6F5JpB"
+TRANSFUSION_DATAELEMENT_NAME = "Was a transfusion given?"
+BILIRUBIN_DATAELEMENT_UID = "U7ey9R5QZk1"
+BILIRUBIN_DATAELEMENT_NAME = "Was bilirubin tested?"
 OBS_STAGE_UID = "VsVlpG1V2ub"  # Observations And Nursing Care 2
 
 NID_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "nid")
@@ -52,7 +58,7 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Observations And Nursing Care 1",
     },
     "ed8ErpgTCwx": {
-        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk", "CIKlewzNAxj", "JxGlnPychB0"],
+        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk", "CIKlewzNAxj", "JxGlnPychB0", PHOTOTHERAPY_DATAELEMENT_UID, TRANSFUSION_DATAELEMENT_UID],
         "program_stage_name": "Interventions",
     },
     "TOicTEwzSGj": {
@@ -64,7 +70,7 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Discharge And Final Diagnosis",
     },
     "VsVlpG1V2ub": {
-        "data_elements": ["nIKIu6f5vbW", ADDITIONAL_O2_DATAELEMENT_UID],
+        "data_elements": ["nIKIu6f5vbW", ADDITIONAL_O2_DATAELEMENT_UID, BILIRUBIN_DATAELEMENT_UID],
         "program_stage_name": "Observations And Nursing Care 2",
     },
     "aCrttmnx7FI": {
@@ -104,6 +110,9 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     "tX82J8ZIcNr": "Was blood sugar recorded on admission?",
     "JxGlnPychB0": "If yes - KMC Start Date:",
     ADDITIONAL_O2_DATAELEMENT_UID: ADDITIONAL_O2_DATAELEMENT_NAME,
+    PHOTOTHERAPY_DATAELEMENT_UID: PHOTOTHERAPY_DATAELEMENT_NAME,
+    TRANSFUSION_DATAELEMENT_UID: TRANSFUSION_DATAELEMENT_NAME,
+    BILIRUBIN_DATAELEMENT_UID: BILIRUBIN_DATAELEMENT_NAME,
 }
 
 
