@@ -72,6 +72,7 @@ from newborns_dashboard.kpi_utils_jaundice import (
 
 from newborns_dashboard.kpi_utils_infection import (
     render_infection_coverage_trend_chart,
+    render_infection_qoc_trend_chart,
     render_infection_facility_comparison,
 )
 
@@ -79,6 +80,7 @@ from newborns_dashboard.kpi_utils_infection import (
 JAUNDICE_COVERAGE_MARKER = "__jaundice_coverage__"
 JAUNDICE_QOC_MARKER = "__jaundice_qoc__"
 INFECTION_COVERAGE_MARKER = "__infection_coverage__"
+INFECTION_QOC_MARKER = "__infection_qoc__"
 
 # KPI mapping for newborn comparison charts
 NEWBORN_KPI_MAPPING = {
@@ -855,6 +857,10 @@ def render_newborn_kpi_tab_navigation():
             if st.button("Indicator Coverage Run Chart", key="infection_cov_btn", use_container_width=True,
                          type=("primary" if selected_kpi == INFECTION_COVERAGE_MARKER else "secondary")):
                 selected_kpi = INFECTION_COVERAGE_MARKER
+        with cols[1]:
+            if st.button("Quality of Care", key="infection_qoc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == INFECTION_QOC_MARKER else "secondary")):
+                selected_kpi = INFECTION_QOC_MARKER
 
     with tab_mortality:
         # Mortality - 2 buttons
@@ -1055,6 +1061,14 @@ def render_newborn_trend_chart_section(
         render_infection_coverage_trend_chart(
             working_df, "period_display",
             "Antibiotics for Clinical Sepsis",
+            bg_color, text_color, facility_uids,
+            date_range_filters=date_range_filters,
+        )
+        return
+    if kpi_selection == INFECTION_QOC_MARKER:
+        render_infection_qoc_trend_chart(
+            working_df, "period_display",
+            "Antibiotics Classification (AWaRe)",
             bg_color, text_color, facility_uids,
             date_range_filters=date_range_filters,
         )
@@ -1495,7 +1509,7 @@ def render_newborn_comparison_chart(
         return
 
     # SPECIAL HANDLING: Infection
-    if kpi_selection == INFECTION_COVERAGE_MARKER:
+    if kpi_selection in (INFECTION_COVERAGE_MARKER, INFECTION_QOC_MARKER):
         render_infection_facility_comparison(
             df_to_use,
             comparison_mode=comparison_mode,
@@ -1504,9 +1518,10 @@ def render_newborn_comparison_chart(
             facilities_by_region=facilities_by_region,
             region_names=region_names,
             period_col="period_display",
-            title="Antibiotics for Clinical Sepsis Comparison",
+            title="Infection Comparison",
             bg_color=bg_color,
             text_color=text_color,
+            is_qoc=(kpi_selection == INFECTION_QOC_MARKER),
         )
         return
 
@@ -5518,4 +5533,5 @@ __all__ = [
     "JAUNDICE_QOC_MARKER",
     # Infection
     "INFECTION_COVERAGE_MARKER",
+    "INFECTION_QOC_MARKER",
 ]

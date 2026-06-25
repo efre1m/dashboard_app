@@ -14,11 +14,23 @@ logger = logging.getLogger(__name__)
 
 # --- Column name constants (merged newborn+NID dataset) ---
 JAUNDICE_DIAGNOSIS_COL = "sub_categories_of_jaundice_pathological_n_discharge_care_form"
-PHOTOTHERAPY_COL = "phototherapy_administered?_medication_sheet"
-BILIRUBIN_COL = "bilirubin_tested?_nurse_followup_sheet"
-TRANSFUSION_COL = "transfusion_given?_medication_sheet"
+PHOTOTHERAPY_PREFIX = "phototherapy_administered?_medication_sheet"
+BILIRUBIN_PREFIX = "bilirubin_tested?_nurse_followup_sheet"
+TRANSFUSION_PREFIX = "transfusion_given?_medication_sheet"
 
 LINE_COLOR = "#1f77b4"
+
+
+def _any_version_mask(df, col_prefix, target_value=1):
+    """Boolean mask: True where ANY column matching col_prefix equals target_value."""
+    cols = [c for c in df.columns if c.startswith(col_prefix)]
+    if not cols:
+        return pd.Series(False, index=df.index)
+    mask = pd.Series(False, index=df.index)
+    for col in cols:
+        num = pd.to_numeric(df.get(col, pd.Series(dtype=str)), errors="coerce")
+        mask = mask | (num == target_value)
+    return mask
 
 
 def _filter_by_facility(df, facility_uids):
@@ -56,11 +68,9 @@ def compute_phototherapy_coverage_data(df, facility_uids=None):
     working_df[JAUNDICE_DIAGNOSIS_COL] = pd.to_numeric(
         working_df.get(JAUNDICE_DIAGNOSIS_COL, pd.Series(dtype=str)), errors="coerce"
     )
-    working_df[PHOTOTHERAPY_COL] = pd.to_numeric(
-        working_df.get(PHOTOTHERAPY_COL, pd.Series(dtype=str)), errors="coerce"
-    )
+    phototherapy_mask = _any_version_mask(working_df, PHOTOTHERAPY_PREFIX, 1)
     denominator_mask = working_df[JAUNDICE_DIAGNOSIS_COL].isin([1, 2])
-    numerator_mask = denominator_mask & (working_df[PHOTOTHERAPY_COL] == 1)
+    numerator_mask = denominator_mask & phototherapy_mask
     denominator = int(denominator_mask.sum())
     numerator = int(numerator_mask.sum())
     rate = (numerator / denominator * 100) if denominator > 0 else 0.0
@@ -72,11 +82,9 @@ def compute_bilirubin_measurement_data(df, facility_uids=None):
     working_df[JAUNDICE_DIAGNOSIS_COL] = pd.to_numeric(
         working_df.get(JAUNDICE_DIAGNOSIS_COL, pd.Series(dtype=str)), errors="coerce"
     )
-    working_df[BILIRUBIN_COL] = pd.to_numeric(
-        working_df.get(BILIRUBIN_COL, pd.Series(dtype=str)), errors="coerce"
-    )
+    bilirubin_mask = _any_version_mask(working_df, BILIRUBIN_PREFIX, 1)
     denominator_mask = working_df[JAUNDICE_DIAGNOSIS_COL].isin([1, 2])
-    numerator_mask = denominator_mask & (working_df[BILIRUBIN_COL] == 1)
+    numerator_mask = denominator_mask & bilirubin_mask
     denominator = int(denominator_mask.sum())
     numerator = int(numerator_mask.sum())
     rate = (numerator / denominator * 100) if denominator > 0 else 0.0
@@ -88,11 +96,9 @@ def compute_exchange_transfusion_data(df, facility_uids=None):
     working_df[JAUNDICE_DIAGNOSIS_COL] = pd.to_numeric(
         working_df.get(JAUNDICE_DIAGNOSIS_COL, pd.Series(dtype=str)), errors="coerce"
     )
-    working_df[TRANSFUSION_COL] = pd.to_numeric(
-        working_df.get(TRANSFUSION_COL, pd.Series(dtype=str)), errors="coerce"
-    )
+    transfusion_mask = _any_version_mask(working_df, TRANSFUSION_PREFIX, 2)
     denominator_mask = working_df[JAUNDICE_DIAGNOSIS_COL] == 2
-    numerator_mask = denominator_mask & (working_df[TRANSFUSION_COL] == 2)
+    numerator_mask = denominator_mask & transfusion_mask
     denominator = int(denominator_mask.sum())
     numerator = int(numerator_mask.sum())
     rate = (numerator / denominator * 100) if denominator > 0 else 0.0
@@ -396,7 +402,7 @@ def render_jaundice_facility_comparison(
 
 
 __all__ = [
-    "JAUNDICE_DIAGNOSIS_COL", "PHOTOTHERAPY_COL", "BILIRUBIN_COL", "TRANSFUSION_COL",
+    "JAUNDICE_DIAGNOSIS_COL", "PHOTOTHERAPY_PREFIX", "BILIRUBIN_PREFIX", "TRANSFUSION_PREFIX",
     "compute_phototherapy_coverage_data", "compute_bilirubin_measurement_data",
     "compute_exchange_transfusion_data",
     "render_jaundice_coverage_trend_chart", "render_jaundice_qoc_trend_chart",

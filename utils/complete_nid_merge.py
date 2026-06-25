@@ -86,6 +86,9 @@ MAPPING = {
     "was_phototherapy_administered?_interventions": "phototherapy_administered?_medication_sheet",
     "was_a_transfusion_given?_interventions": "transfusion_given?_medication_sheet",
     "was_bilirubin_tested?_observations_and_nursing_care_2": "bilirubin_tested?_nurse_followup_sheet",
+    # Investigation sheet variables
+    "csf_culture_for_suspected_meningitis_microbiology_and_labs": "csf_culture_for_suspected_meningitis_investigation_sheet",
+    "blood_culture_for_suspected_sepsis_microbiology_and_labs": "blood_culture_for_suspected_sepsis_investigation_sheet",
 }
 
 # ==================== 2B. VALUE MAPPING (NID → NCF codes) ====================
@@ -107,7 +110,42 @@ VALUE_MAPPING = {
         "2": "2",
         "0": "0",
     },
+    "csf_culture_for_suspected_meningitis_microbiology_and_labs": {
+        "0": "0", "1": "1", "2": "2", "3": "3",
+    },
+    "blood_culture_for_suspected_sepsis_microbiology_and_labs": {
+        "0": "0", "1": "1", "2": "2", "3": "3",
+    },
 }
+
+# ==================== 2C. ANTIBIOTIC MULTI_TEXT MERGE ====================
+# NID has individual TRUE_ONLY checkboxes per antibiotic; NCF has one MULTI_TEXT column with codes.
+# Map each NID checkbox column → NCF MULTI_TEXT code.
+ANTIBIOTIC_CODE_MAP = {
+    "gentamicin_interventions": "2",
+    "ampicillin_interventions": "10",
+    "cloxacillin_interventions": "17",
+    "ciprofloxacin_interventions": "18",
+    "ceftriaxone_interventions": "4",
+    "amikacin_interventions": "3",
+    "amoxicillin_interventions": "11",
+    "benzathine_penicillin_interventions": "1",
+    "metronidazole_interventions": "7",
+    "cefotaxime_interventions": "15",
+    "meropenem_interventions": "13",
+    "vancomycin_interventions": "8",
+    "crystalline_penicillin_interventions": "14",
+    "cefalexin_interventions": "19",
+    "cefixime_interventions": "20",
+    "ceftazidime_interventions": "5",
+    "clindamycin_interventions": "9",
+    "flucloxacillin_interventions": "12",
+    "levofloxacin_interventions": "16",
+    "piperazine_interventions": "6",
+    "tazobactam_interventions": "21",
+}
+ANTIBIOTIC_OTHER_COL = "other_antibiotic_interventions"  # NID column → code 99
+ANTIBIOTIC_NCF_COL = "if_yes_select_antibiotics_medication_sheet"
 
 print(f"\n📋 Basic mapping: {len(MAPPING)} columns")
 
@@ -236,6 +274,22 @@ def append_nid_to_newborn(nid_path, newborn_path):
                         value = VALUE_MAPPING[nid_col].get(value, "N/A")
 
                     row_data[newborn_col] = value
+
+            # 3. Compute antibiotic MULTI_TEXT from individual NID TRUE_ONLY checkboxes
+            selected_codes = set()
+            for nid_col_abx, code in ANTIBIOTIC_CODE_MAP.items():
+                if nid_col_abx in nid_row:
+                    val = str(nid_row[nid_col_abx]).strip()
+                    if val and val.lower() not in ("", "nan", "n/a", "na"):
+                        selected_codes.add(code)
+            if ANTIBIOTIC_OTHER_COL in nid_row:
+                val = str(nid_row[ANTIBIOTIC_OTHER_COL]).strip()
+                if val and val.lower() not in ("", "nan", "n/a", "na"):
+                    selected_codes.add("99")
+            if selected_codes:
+                row_data[ANTIBIOTIC_NCF_COL] = ",".join(sorted(selected_codes))
+            elif ANTIBIOTIC_NCF_COL not in row_data:
+                row_data[ANTIBIOTIC_NCF_COL] = "N/A"
 
             new_rows.append(row_data)
 

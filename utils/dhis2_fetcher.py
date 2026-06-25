@@ -286,6 +286,11 @@ DATA_ELEMENT_NAMES = {
     "hCb06Jbjqk3": "Are antibiotics administered?",
     "Hwe1gdn1UZ4": "Phototherapy Administered?",
     "xEyz81PI8Qt": "Transfusion given?",
+    # Investigation sheet
+    "xiuakJzGNNG": "CSF culture for suspected meningitis",
+    "GwrkagnbTet": "Blood culture for suspected sepsis",
+    # Medication sheet - antibiotic MULTI_TEXT
+    "cRKvNNrQ9iX": "If yes - select antibiotic(s)",
 }
 
 # MATERNAL PROGRAM STAGE MAPPING FROM FIRST CODE
@@ -380,9 +385,18 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
             "hCb06Jbjqk3",  # Are antibiotics administered?
             "Hwe1gdn1UZ4",  # Phototherapy Administered?
             "xEyz81PI8Qt",  # Transfusion given?
+            "cRKvNNrQ9iX",  # If yes - select antibiotic(s) (MULTI_TEXT)
         ],
         "program_stage_name": "Medication sheet",
-        "is_repeatable": True,  # Can have multiple medication entries
+        "is_repeatable": True,
+    },
+    "YHiV8FUkx6I": {  # Investigation sheet
+        "data_elements": [
+            "xiuakJzGNNG",  # CSF culture for suspected meningitis
+            "GwrkagnbTet",  # Blood culture for suspected sepsis
+        ],
+        "program_stage_name": "Investigation sheet",
+        "is_repeatable": True,  # Can have multiple investigations
     },
 }
 

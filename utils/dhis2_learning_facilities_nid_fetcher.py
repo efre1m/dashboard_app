@@ -58,7 +58,11 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Observations And Nursing Care 1",
     },
     "ed8ErpgTCwx": {
-        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk", "CIKlewzNAxj", "JxGlnPychB0", PHOTOTHERAPY_DATAELEMENT_UID, TRANSFUSION_DATAELEMENT_UID],
+        "data_elements": ["QK7Fi6OwtDC", "wlHEf9FdmJM", "sxtsEDilKZd", "yVNrsnUo7AR", "Ul6aAlFy5Kk", "CIKlewzNAxj", "JxGlnPychB0", PHOTOTHERAPY_DATAELEMENT_UID, TRANSFUSION_DATAELEMENT_UID,
+            "B4HgnvxzolW", "A0ck2DqbJ3t", "Zss8Xkz5OZU", "amYVYx1lw05", "pzRnfKCqGL3", "Vi2XnTmJSea", "UT2oqCylYJ0",
+            "TBYm9sedhX4", "bSeklCXtYHZ", "LeQmAAUZWLz", "j1cEvYBhKBR", "xM1F4tdKdbS", "jLfJQrVYv89", "WLo6XUuO9N3",
+            "r4WHyct2RP6", "u6BDT4xQrbN", "cXYa2BZ6Sd7", "t6tCIarpX3B", "yPRAzya3BEr", "sWqXnZwK5GE", "ibil3m2l3nJ",
+            "QCO5yFs1pHF", "nbCZ5EA7qQ1", "fxwJDc4Zco7", "cBfFKA2mpCS"],
         "program_stage_name": "Interventions",
     },
     "TOicTEwzSGj": {
@@ -74,7 +78,7 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Observations And Nursing Care 2",
     },
     "aCrttmnx7FI": {
-        "data_elements": ["A94ibeuO9GL"],
+        "data_elements": ["A94ibeuO9GL", "a7CvTNYyLyL"],
         "program_stage_name": "Microbiology And Labs",
     },
 }
@@ -100,6 +104,7 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     "o1sbIt5YJ8b": "Sub-Categories of Intrapartum-Related",
     "t2iHoRMo5hn": "Sub-Categories of Jaundice (Pathological)",
     "A94ibeuO9GL": "Blood culture for suspected sepsis",
+    "a7CvTNYyLyL": "CSF culture for suspected meningitis:",
     "CzIgD0rsk52": "Birth weight (grams)",
     "p2GxXHvzlnC": "Time of Birth",
     "K5hp1PVB5l4": "Time of Admission",
@@ -113,6 +118,32 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     PHOTOTHERAPY_DATAELEMENT_UID: PHOTOTHERAPY_DATAELEMENT_NAME,
     TRANSFUSION_DATAELEMENT_UID: TRANSFUSION_DATAELEMENT_NAME,
     BILIRUBIN_DATAELEMENT_UID: BILIRUBIN_DATAELEMENT_NAME,
+    # Antibiotic choices (TRUE_ONLY checkboxes)
+    "B4HgnvxzolW": "Gentamicin",
+    "A0ck2DqbJ3t": "Ampicillin",
+    "Zss8Xkz5OZU": "Cloxacillin",
+    "amYVYx1lw05": "Ciprofloxacin",
+    "pzRnfKCqGL3": "Ceftriaxone",
+    "Vi2XnTmJSea": "Amikacin",
+    "UT2oqCylYJ0": "Amoxicillin",
+    "TBYm9sedhX4": "Benzathine Penicillin",
+    "bSeklCXtYHZ": "Metronidazole",
+    "LeQmAAUZWLz": "Cefotaxime",
+    "j1cEvYBhKBR": "Meropenem",
+    "xM1F4tdKdbS": "Vancomycin",
+    "jLfJQrVYv89": "Crystalline Penicillin",
+    "WLo6XUuO9N3": "Cefalexin",
+    "r4WHyct2RP6": "Cefixime",
+    "u6BDT4xQrbN": "Ceftazidime",
+    "cXYa2BZ6Sd7": "Clindamycin",
+    "t6tCIarpX3B": "Flucloxacillin",
+    "yPRAzya3BEr": "Levofloxacin",
+    "sWqXnZwK5GE": "Piperazine",
+    "ibil3m2l3nJ": "Tazobactam",
+    "QCO5yFs1pHF": "Other antibiotic",
+    "nbCZ5EA7qQ1": "Not recorded antibiotic",
+    "fxwJDc4Zco7": "Not readable antibiotic",
+    "cBfFKA2mpCS": "Other antibiotic specify",
 }
 
 
