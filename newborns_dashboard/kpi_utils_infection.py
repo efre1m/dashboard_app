@@ -556,7 +556,8 @@ def render_infection_qoc_trend_chart(
         ))
 
     fig.update_layout(
-        barmode="stack", height=450,
+        title="Antibiotics Classification (AWaRe)", height=450,
+        barmode="stack",
         yaxis=dict(range=[0, 105], dtick=25, title="Percentage (%)"),
         xaxis=dict(title=""),
         paper_bgcolor=bg_color, plot_bgcolor=bg_color,
@@ -564,7 +565,6 @@ def render_infection_qoc_trend_chart(
         margin=dict(l=50, r=30, t=60, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     )
-    st.subheader("Antibiotics Classification (AWaRe)")
     st.plotly_chart(fig, use_container_width=True)
 
     overall_access = int(trend_df["Access"].sum())

@@ -238,7 +238,8 @@ def render_jaundice_qoc_trend_chart(
                 hovertemplate="Month: %{x}<br>Rate: %{y:.1f}%<br>Num: %{customdata[0]}<br>Den: %{customdata[1]}<extra></extra>",
                 customdata=np.column_stack((trend_df["numerator"], trend_df["denominator"])),
             ))
-            fig.update_layout(height=350, yaxis=dict(range=[0, 105], dtick=25, title="Rate (%)"),
+            fig.update_layout(title="Bilirubin Measurement Rate", height=350,
+                              yaxis=dict(range=[0, 105], dtick=25, title="Rate (%)"),
                               xaxis=dict(title=""), paper_bgcolor=bg_color, plot_bgcolor=bg_color,
                               font_color=text_color, title_font_color=text_color,
                               margin=dict(l=50, r=30, t=60, b=40))
@@ -287,7 +288,8 @@ def render_jaundice_qoc_trend_chart(
                 hovertemplate="Month: %{x}<br>Rate: %{y:.1f}%<br>Num: %{customdata[0]}<br>Den: %{customdata[1]}<extra></extra>",
                 customdata=np.column_stack((trend_df["numerator"], trend_df["denominator"])),
             ))
-            fig.update_layout(height=350, yaxis=dict(range=[0, 105], dtick=25, title="Rate (%)"),
+            fig.update_layout(title="Exchange Transfusion Rate", height=350,
+                              yaxis=dict(range=[0, 105], dtick=25, title="Rate (%)"),
                               xaxis=dict(title=""), paper_bgcolor=bg_color, plot_bgcolor=bg_color,
                               font_color=text_color, title_font_color=text_color,
                               margin=dict(l=50, r=30, t=60, b=40))
