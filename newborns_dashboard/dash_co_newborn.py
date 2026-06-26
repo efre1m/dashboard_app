@@ -655,6 +655,29 @@ def render_newborn_kpi_tab_navigation():
         background-color: #FFDAB9 !important;
     }
 
+    /* Scrollable newborn tabs */
+    [data-baseweb="tab-list"] {
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        white-space: nowrap !important;
+        -webkit-overflow-scrolling: touch !important;
+        scrollbar-width: thin !important;
+        padding-bottom: 4px !important;
+    }
+    [data-baseweb="tab-list"]::-webkit-scrollbar {
+        height: 6px !important;
+    }
+    [data-baseweb="tab-list"]::-webkit-scrollbar-thumb {
+        background: #cbd5e1 !important;
+        border-radius: 3px !important;
+    }
+    [data-baseweb="tab-list"]::-webkit-scrollbar-track {
+        background: #f1f5f9 !important;
+    }
+    [data-baseweb="tab"] {
+        flex-shrink: 0 !important;
+    }
+
     /* Force peach styling for the "Newborn" (2nd) dashboard section radio option */
     .st-key-facility_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2),
     .st-key-regional_active_tab_selector [data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"] label:nth-of-type(2),

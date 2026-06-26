@@ -345,8 +345,9 @@ def _render_single_blood_culture_chart(
     overall_rate = (overall_n / overall_d * 100) if overall_d > 0 else 0
 
     fig = go.Figure()
-    fig.add_hline(y=target, line_dash="dash", line_color="green", opacity=0.6,
-                  annotation_text=f"Target: {target}%", annotation_position="top left")
+    if target is not None:
+        fig.add_hline(y=target, line_dash="dash", line_color="green", opacity=0.6,
+                      annotation_text=f"Target: {target}%", annotation_position="top left")
     fig.add_trace(go.Scatter(
         x=trend_df["period"], y=trend_df["rate"], mode="lines+markers",
         name="Rate %", line=dict(color=LINE_COLOR, width=3), marker=dict(size=8),
@@ -488,7 +489,7 @@ def render_blood_culture_trend_chart(
         with col1:
             _render_single_blood_culture_chart(
                 working_df, period_col, compute_positive_culture_rate_data,
-                "Positive Blood Culture Rate", 100,
+                "Positive Blood Culture Rate", None,
                 "positive_blood_culture_rate.csv", "",
                 bg_color, text_color, facility_uids, "ind1",
             )
@@ -496,7 +497,7 @@ def render_blood_culture_trend_chart(
         with col2:
             _render_single_blood_culture_chart(
                 working_df, period_col, compute_probable_contaminant_rate_data,
-                "Probable Contaminants Rate", 100,
+                "Probable Contaminants Rate", None,
                 "probable_contaminant_rate.csv", "",
                 bg_color, text_color, facility_uids, "ind2",
             )
@@ -509,19 +510,16 @@ def render_blood_culture_trend_chart(
                 <th style="padding:8px; text-align:left;">Indicator</th>
                 <th style="padding:8px; text-align:left;">Numerator</th>
                 <th style="padding:8px; text-align:left;">Denominator</th>
-                <th style="padding:8px; text-align:left;">Target</th>
             </tr>
             <tr style="background-color:#f0f8ff;">
                 <td style="padding:8px;"><b>Positive Blood Culture Rate</b></td>
                 <td style="padding:8px;">Babies with blood culture done AND culture positive</td>
                 <td style="padding:8px;">Babies with blood culture performed (any result)</td>
-                <td style="padding:8px;">100%</td>
             </tr>
             <tr style="background-color:#ffffff;">
                 <td style="padding:8px;"><b>Probable Contaminants Rate</b></td>
                 <td style="padding:8px;">Positive blood cultures where the organism is classified as a probable contaminant</td>
                 <td style="padding:8px;">All positive blood cultures</td>
-                <td style="padding:8px;">100%</td>
             </tr>
             </table>
             <p style="margin-top:8px;"><b>Positive Blood Culture Rate</b> measures the proportion of blood cultures performed that yielded a positive culture result.</p>
