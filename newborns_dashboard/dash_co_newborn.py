@@ -76,6 +76,10 @@ from newborns_dashboard.kpi_utils_infection import (
     render_infection_facility_comparison,
 )
 
+
+# Blood Culture marker constant
+BLOOD_CULTURE_MARKER = "__blood_culture__"
+
 # Jaundice & Phototherapy marker constants (defined early for use in KPI groups)
 JAUNDICE_COVERAGE_MARKER = "__jaundice_coverage__"
 JAUNDICE_QOC_MARKER = "__jaundice_qoc__"
@@ -698,9 +702,8 @@ def render_newborn_kpi_tab_navigation():
     if "selected_newborn_kpi" not in st.session_state:
         st.session_state.selected_newborn_kpi = "Admitted Newborns" # Default to first tab item if appropriate
 
-    # Create main KPI group tabs - UPDATED TO 7 TABS & REORDERED
-    # Enrollment -> Birth -> Hypothermia -> Vital Monitoring -> Intervention -> Mortality -> Data Quality
-    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_jaundice, tab_infection, tab_mortality, tab_dq = st.tabs(
+    # Create main KPI group tabs - UPDATED TO 11 TABS & REORDERED
+    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_jaundice, tab_infection, tab_blood_culture, tab_mortality, tab_dq = st.tabs(
         [
             "Enrollment",
             "Birth",
@@ -710,6 +713,7 @@ def render_newborn_kpi_tab_navigation():
             "KMC",
             "Jaundice & Phototherapy",
             "Infection",
+            "Blood Culture",
             "Mortality",
             "Data Quality",
         ]
@@ -852,7 +856,7 @@ def render_newborn_kpi_tab_navigation():
                 selected_kpi = JAUNDICE_QOC_MARKER
 
     with tab_infection:
-        cols = st.columns(5)
+        cols = st.columns(2)
         with cols[0]:
             if st.button("Indicator Coverage Run Chart", key="infection_cov_btn", use_container_width=True,
                          type=("primary" if selected_kpi == INFECTION_COVERAGE_MARKER else "secondary")):
@@ -862,8 +866,14 @@ def render_newborn_kpi_tab_navigation():
                          type=("primary" if selected_kpi == INFECTION_QOC_MARKER else "secondary")):
                 selected_kpi = INFECTION_QOC_MARKER
 
+    with tab_blood_culture:
+        cols = st.columns(2)
+        with cols[0]:
+            if st.button("Indicator Coverage Run Charts", key="bc_indicators_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == BLOOD_CULTURE_MARKER else "secondary")):
+                selected_kpi = BLOOD_CULTURE_MARKER
+
     with tab_mortality:
-        # Mortality - 2 buttons
         cols = st.columns(5)
         with cols[0]:
             if st.button("Neonatal Mortality", key="nmr_btn", use_container_width=True,
@@ -1069,6 +1079,17 @@ def render_newborn_trend_chart_section(
         render_infection_qoc_trend_chart(
             working_df, "period_display",
             "Antibiotics Classification (AWaRe)",
+            bg_color, text_color, facility_uids,
+            date_range_filters=date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Blood Culture
+    if kpi_selection == BLOOD_CULTURE_MARKER:
+        from newborns_dashboard.kpi_utils_blood_culture import render_blood_culture_trend_chart
+        render_blood_culture_trend_chart(
+            working_df, "period_display",
+            "Blood Culture",
             bg_color, text_color, facility_uids,
             date_range_filters=date_range_filters,
         )
@@ -1505,6 +1526,27 @@ def render_newborn_comparison_chart(
             title="Jaundice & Phototherapy Comparison",
             bg_color=bg_color,
             text_color=text_color,
+        )
+        return
+
+    # SPECIAL HANDLING: Blood Culture
+    if kpi_selection == BLOOD_CULTURE_MARKER:
+        _bc_date_range_filters = {}
+        if "filters" in st.session_state:
+            _bc_date_range_filters = {
+                "start_date": st.session_state.filters.get("start_date"),
+                "end_date": st.session_state.filters.get("end_date"),
+            }
+        # Import locally to avoid circular dependency
+        from newborns_dashboard.kpi_utils_blood_culture import render_blood_culture_trend_chart
+        render_blood_culture_trend_chart(
+            df_to_use,
+            "period_display",
+            "Blood Culture",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters=_bc_date_range_filters,
         )
         return
 

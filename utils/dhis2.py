@@ -89,6 +89,8 @@ DATA_ELEMENT_NAMES = {
     "sxtsEDilKZd": "Were antibiotics administered?",
     "wn0tHaHcceW": "Sub-Categories of Infection",
     "A94ibeuO9GL": "Blood culture for suspected sepsis",
+    "j21h93s37ZN": "Culture Positive Organism (Blood):",
+    "HvJ8H9tun4u": "If other - full species/genus of microorganism:",
 }
 
 

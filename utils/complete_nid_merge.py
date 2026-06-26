@@ -89,6 +89,9 @@ MAPPING = {
     # Investigation sheet variables
     "csf_culture_for_suspected_meningitis_microbiology_and_labs": "csf_culture_for_suspected_meningitis_investigation_sheet",
     "blood_culture_for_suspected_sepsis_microbiology_and_labs": "blood_culture_for_suspected_sepsis_investigation_sheet",
+    # Microbiology And Labs - Culture Positive Organism (Blood) and Microorganism Specification
+    "culture_positive_organism_blood_microbiology_and_labs": "culture_positive_organism_blood_investigation_sheet",
+    "if_other_full_species_genus_of_microorganism_microbiology_and_labs": "if_other_full_species_genus_of_microorganism_investigation_sheet",
 }
 
 # ==================== 2B. VALUE MAPPING (NID → NCF codes) ====================

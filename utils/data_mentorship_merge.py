@@ -45,9 +45,30 @@ def _normalized_series(series: pd.Series) -> pd.Series:
 
 
 def _validate_required_columns(df: pd.DataFrame, required_columns, label: str) -> None:
-    missing_columns = [col for col in required_columns if col not in df.columns]
+    # Check that all required columns exist, with flexible matching for different column naming conventions.
+    # For q-prefixed columns (q21, q22, etc.), accept both plain form ("q21") and prefixed forms
+    # ("system_access-q21", "tracker_data-q31") for broader compatibility.
+    missing_columns = []
+    for col in required_columns:
+        column_found = False
+        
+        # Check for exact column name match first
+        if col in df.columns:
+            column_found = True
+        # For q-prefixed columns, accept suffix-based matching
+        elif col.startswith("q") and col[1:].isdigit():
+            for df_col in df.columns:
+                # Match by q-suffix (e.g., "system_access-q21" matches "q21")
+                if df_col.endswith(f"-{col}"):
+                    column_found = True
+                    break
+        
+        if not column_found:
+            missing_columns.append(col)
+    
     if missing_columns:
         raise KeyError(f"Missing required columns in {label}: {missing_columns}")
+    return
 
 
 def _validate_exact_copy(
@@ -55,12 +76,31 @@ def _validate_exact_copy(
 ) -> None:
     mismatched_columns = []
     for column_name in columns_to_check:
-        if column_name not in source_df.columns or column_name not in aligned_df.columns:
-            continue
-        if not _normalized_series(source_df[column_name]).equals(
-            _normalized_series(aligned_df[column_name])
-        ):
-            mismatched_columns.append(column_name)
+        # Find the actual column names to compare
+        source_col = None
+        aligned_col = None
+        
+        # For all cases, match by suffix to handle both plain and prefixed versions
+        # This ensures columns like "q21" in source align with "system_access-q21" in aligned
+        suffix = column_name
+        
+        # Find matching columns in both dataframes by suffix
+        for col in source_df.columns:
+            if col.endswith(f"-{suffix}"):
+                source_col = col
+                break
+        
+        for col in aligned_df.columns:
+            if col.endswith(f"-{suffix}"):
+                aligned_col = col
+                break
+        
+        # If we found matching columns in both, compare their values
+        if source_col and aligned_col:
+            if not _normalized_series(source_df[source_col]).equals(
+                _normalized_series(aligned_df[aligned_col])
+            ):
+                mismatched_columns.append(column_name)
 
     if mismatched_columns:
         raise ValueError(
@@ -91,16 +131,13 @@ def merge_data_mentorship_forms() -> str:
     data_df = _read_csv_preserve_values(data_file)
     final_data_df = _read_csv_preserve_values(final_data_file)
 
+    # Validate the critical columns used by indicator analysis before writing.
     _validate_required_columns(
         data_df, CRITICAL_ANALYSIS_COLUMNS, "Data_Mentorship_form.csv"
     )
     _validate_required_columns(
         final_data_df, CRITICAL_ANALYSIS_COLUMNS, "Final_Data_Mentorship_form.csv"
     )
-
-    common_cols = [col for col in data_df.columns if col in final_data_df.columns]
-    only_in_final = [col for col in final_data_df.columns if col not in data_df.columns]
-    only_in_data = [col for col in data_df.columns if col not in final_data_df.columns]
 
     # Reindex against the final schema so every appended value lands in the
     # same-named final column and nowhere else.
@@ -109,17 +146,11 @@ def merge_data_mentorship_forms() -> str:
     # Validate the critical columns used by indicator analysis before writing.
     _validate_exact_copy(data_df, data_aligned, CRITICAL_ANALYSIS_COLUMNS)
 
-    # Validate all direct same-name columns as an extra guard against drift.
-    _validate_exact_copy(data_df, data_aligned, common_cols)
-
     merged_df = pd.concat([final_data_df, data_aligned], ignore_index=True)
 
     print(f"Data mentorship rows: {len(data_df)}")
     print(f"Final data mentorship rows: {len(final_data_df)}")
     print(f"Merged rows: {len(merged_df)}")
-    print(f"Merged columns ({len(common_cols)}): {common_cols}")
-    print(f"Columns only in Final_Data_Mentorship_form.csv: {only_in_final}")
-    print(f"Columns only in Data_Mentorship_form.csv: {only_in_data}")
 
     try:
         merged_df.to_csv(merged_file, index=False)

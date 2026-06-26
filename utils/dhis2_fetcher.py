@@ -289,6 +289,8 @@ DATA_ELEMENT_NAMES = {
     # Investigation sheet
     "xiuakJzGNNG": "CSF culture for suspected meningitis",
     "GwrkagnbTet": "Blood culture for suspected sepsis",
+    "aCHOclZEx6o": "Culture Positive Organism (Blood)",
+    "HvJ8H9tun4u": "If other - full species/genus of microorganism",
     # Medication sheet - antibiotic MULTI_TEXT
     "cRKvNNrQ9iX": "If yes - select antibiotic(s)",
 }
@@ -394,6 +396,8 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
         "data_elements": [
             "xiuakJzGNNG",  # CSF culture for suspected meningitis
             "GwrkagnbTet",  # Blood culture for suspected sepsis
+            "aCHOclZEx6o",  # Culture Positive Organism (Blood)
+            "HvJ8H9tun4u",  # If other - full species/genus of microorganism
         ],
         "program_stage_name": "Investigation sheet",
         "is_repeatable": True,  # Can have multiple investigations

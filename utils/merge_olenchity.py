@@ -18,6 +18,8 @@ COLUMN_MAPPING = {
     "were_antibiotics_administered?_interventions": "are_antibiotics_administered?_medication_sheet",
     "csf_culture_for_suspected_meningitis_microbiology_and_labs": "csf_culture_for_suspected_meningitis_investigation_sheet",
     "blood_culture_for_suspected_sepsis_microbiology_and_labs": "blood_culture_for_suspected_sepsis_investigation_sheet",
+    "culture_positive_organism_blood_microbiology_and_labs": "culture_positive_organism_blood_investigation_sheet",
+    "if_other_full_species_genus_of_microorganism_microbiology_and_labs": "if_other_full_species_genus_of_microorganism_investigation_sheet",
 }
 
 # Value mapping for each old source column (unrecognized → N/A)
@@ -28,6 +30,11 @@ VALUE_MAPPING = {
     "were_antibiotics_administered?_interventions": {"1": "1", "0": "0"},
     "csf_culture_for_suspected_meningitis_microbiology_and_labs": {"0": "0", "1": "1", "2": "2", "3": "3"},
     "blood_culture_for_suspected_sepsis_microbiology_and_labs": {"0": "0", "1": "1", "2": "2", "3": "3"},
+    "culture_positive_organism_blood_microbiology_and_labs": {
+        "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6",
+        "7": "7", "8": "8", "9": "9", "99": "99", "11": "11",
+    },
+    "if_other_full_species_genus_of_microorganism_microbiology_and_labs": {},
 }
 
 

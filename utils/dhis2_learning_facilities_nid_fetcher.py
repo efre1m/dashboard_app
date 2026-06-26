@@ -78,7 +78,7 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Observations And Nursing Care 2",
     },
     "aCrttmnx7FI": {
-        "data_elements": ["A94ibeuO9GL", "a7CvTNYyLyL"],
+        "data_elements": ["A94ibeuO9GL", "a7CvTNYyLyL", "j21h93s37ZN", "HvJ8H9tun4u"],
         "program_stage_name": "Microbiology And Labs",
     },
 }
@@ -118,6 +118,9 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     PHOTOTHERAPY_DATAELEMENT_UID: PHOTOTHERAPY_DATAELEMENT_NAME,
     TRANSFUSION_DATAELEMENT_UID: TRANSFUSION_DATAELEMENT_NAME,
     BILIRUBIN_DATAELEMENT_UID: BILIRUBIN_DATAELEMENT_NAME,
+    # Microbiology And Labs - Culture Positive Organism (Blood) and Microorganism Specification
+    "j21h93s37ZN": "Culture Positive Organism (Blood):",
+    "HvJ8H9tun4u": "If other - full species/genus of microorganism:",
     # Antibiotic choices (TRUE_ONLY checkboxes)
     "B4HgnvxzolW": "Gentamicin",
     "A0ck2DqbJ3t": "Ampicillin",
