@@ -134,6 +134,11 @@ def render_jaundice_coverage_trend_chart(
     if trend_df.empty:
         st.warning("No data."); return
 
+    # Remove periods with zero denominator
+    trend_df = trend_df[trend_df["denominator"] > 0].copy()
+    if trend_df.empty:
+        st.info("No data to display (no jaundice cases recorded)."); return
+
     st.subheader(f"{title} — Monthly")
     fig = go.Figure()
     fig.add_hline(y=90, line_dash="dash", line_color="green", opacity=0.6,
@@ -227,6 +232,8 @@ def render_jaundice_qoc_trend_chart(
             n, d, r = compute_bilirubin_measurement_data(pdf, facility_uids)
             trend_data.append({"period": period, "numerator": n, "denominator": d, "rate": r})
         trend_df = pd.DataFrame(trend_data)
+        # Remove periods with zero denominator
+        trend_df = trend_df[trend_df["denominator"] > 0].copy()
         if not trend_df.empty:
             st.subheader("Bilirubin Measurement Rate — 100% Target")
             fig = go.Figure()
@@ -277,6 +284,8 @@ def render_jaundice_qoc_trend_chart(
             n, d, r = compute_exchange_transfusion_data(pdf, facility_uids)
             trend_data.append({"period": period, "numerator": n, "denominator": d, "rate": r})
         trend_df = pd.DataFrame(trend_data)
+        # Remove periods with zero denominator
+        trend_df = trend_df[trend_df["denominator"] > 0].copy()
         if not trend_df.empty:
             st.subheader("Exchange Transfusion Rate — 100% Target")
             fig = go.Figure()

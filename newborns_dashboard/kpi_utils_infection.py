@@ -199,10 +199,12 @@ def _render_single_infection_chart(
     if trend_df.empty:
         st.caption(f"{title} — No data")
         return
-    has_any_denom = trend_df["denominator"].sum() > 0
-    if not has_any_denom:
-        st.caption(f"{title} — No blood culture tests done in this period")
+    # Remove periods with zero denominator
+    trend_df = trend_df[trend_df["denominator"] > 0].copy()
+    if trend_df.empty:
+        st.info(f"No data to display for **{title}** (no cases recorded).")
         return
+    has_any_denom = True
 
     fig = go.Figure()
     fig.add_hline(y=target, line_dash="dash", line_color="green", opacity=0.6,
