@@ -31,6 +31,10 @@ BILIRUBIN_DATAELEMENT_UID = "U7ey9R5QZk1"
 BILIRUBIN_DATAELEMENT_NAME = "Was bilirubin tested?"
 OBS_STAGE_UID = "VsVlpG1V2ub"  # Observations And Nursing Care 2
 
+# Tracked Entity Attributes (not in program stages)
+TEA_DATE_OF_BIRTH_UID = "eRloSIinbeT"
+TEA_DATE_OF_BIRTH_NAME = "date_of_birth"
+
 NID_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "nid")
 
 NATIONAL_OUTPUT_FILE = "national_newborn_nid.csv"
@@ -54,7 +58,7 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Maternal Birth And Infant Details",
     },
     "j0HI2eJjvbj": {
-        "data_elements": ["gZi9y12E9i7", "kvJUcoHhx7f", "tX82J8ZIcNr"],
+        "data_elements": ["gZi9y12E9i7", "kvJUcoHhx7f", "tX82J8ZIcNr", "F4NIANzeaTe", "zYFS8Cc5vqp", "mCKT9Cb00FY"],
         "program_stage_name": "Observations And Nursing Care 1",
     },
     "ed8ErpgTCwx": {
@@ -74,7 +78,7 @@ EXPECTED_NEWBORN_STAGE_MAPPING = {
         "program_stage_name": "Discharge And Final Diagnosis",
     },
     "VsVlpG1V2ub": {
-        "data_elements": ["nIKIu6f5vbW", ADDITIONAL_O2_DATAELEMENT_UID, BILIRUBIN_DATAELEMENT_UID],
+        "data_elements": ["nIKIu6f5vbW", ADDITIONAL_O2_DATAELEMENT_UID, BILIRUBIN_DATAELEMENT_UID, "LzkuvexfeMX", "K0YTHJ99oSo"],
         "program_stage_name": "Observations And Nursing Care 2",
     },
     "aCrttmnx7FI": {
@@ -121,6 +125,13 @@ EXPECTED_NEWBORN_DATAELEMENT_NAMES = {
     # Microbiology And Labs - Culture Positive Organism (Blood) and Microorganism Specification
     "j21h93s37ZN": "Culture Positive Organism (Blood):",
     "HvJ8H9tun4u": "If other - full species/genus of microorganism:",
+    # Observations And Nursing Care 1 - blood sugar
+    "F4NIANzeaTe": "Blood sugar concentration on admission (mmol/L)",
+    "zYFS8Cc5vqp": "Blood sugar concentration on admission (mg/dL)",
+    # Observations And Nursing Care 2 - feeding
+    "LzkuvexfeMX": "Feeding at discharge",
+    "K0YTHJ99oSo": "Breast milk start date",
+    "mCKT9Cb00FY": "What units is blood sugar measured in?",
     # Antibiotic choices (TRUE_ONLY checkboxes)
     "B4HgnvxzolW": "Gentamicin",
     "A0ck2DqbJ3t": "Ampicillin",
@@ -416,6 +427,29 @@ class AutomatedLearningFacilitiesNIDPipeline:
         )
         return patient_df
 
+    @staticmethod
+    def _extract_tea_attributes(tei_data: dict, patient_df: pd.DataFrame) -> pd.DataFrame:
+        """Extract tracked entity attributes (like Date of Birth) and add as columns."""
+        if patient_df.empty:
+            return patient_df
+        tea_map = {
+            TEA_DATE_OF_BIRTH_UID: TEA_DATE_OF_BIRTH_NAME,
+        }
+        tei_attrs = {}
+        for tei in tei_data.get("trackedEntityInstances", []):
+            tei_id = tei.get("trackedEntityInstance")
+            for attr in tei.get("attributes", []):
+                attr_uid = attr.get("attribute")
+                if attr_uid in tea_map:
+                    tei_attrs.setdefault(tei_id, {})[tea_map[attr_uid]] = attr.get("value", "")
+        if not tei_attrs:
+            return patient_df
+        for col_name in tea_map.values():
+            patient_df[col_name] = patient_df["tei_id"].map(
+                {tid: vals.get(col_name, "") for tid, vals in tei_attrs.items()}
+            ).fillna("")
+        return patient_df
+
     def run_pipeline(self) -> bool:
         logger.info("=" * 80)
         logger.info("STARTING LEARNING FACILITIES NID FETCH + MERGE")
@@ -474,6 +508,7 @@ class AutomatedLearningFacilitiesNIDPipeline:
                     if patient_df.empty:
                         continue
                     patient_df = self._fix_o2_data(events_df, patient_df)
+                    patient_df = self._extract_tea_attributes(tei_data, patient_df)
                     patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
                     patient_df, removed_teis = preprocess_nid_enrollment_dates(patient_df)
                     if removed_teis:
@@ -532,6 +567,7 @@ class AutomatedLearningFacilitiesNIDPipeline:
                         logger.warning(f"No patient-level rows in {region_name}")
                         continue
                     patient_df = self._fix_o2_data(events_df, patient_df)
+                    patient_df = self._extract_tea_attributes(tei_data, patient_df)
                     patient_df = CSVIntegration.clean_transformed_dataframe(patient_df)
                     patient_df, removed_teis = preprocess_nid_enrollment_dates(patient_df)
                     if removed_teis:

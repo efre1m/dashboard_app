@@ -293,6 +293,15 @@ DATA_ELEMENT_NAMES = {
     "HvJ8H9tun4u": "If other - full species/genus of microorganism",
     # Medication sheet - antibiotic MULTI_TEXT
     "cRKvNNrQ9iX": "If yes - select antibiotic(s)",
+    # NICU Admission Careform - blood sugar
+    "F4NIANzeaTe": "Blood sugar concentration on admission (mmol/L)",
+    "zYFS8Cc5vqp": "Blood sugar concentration on admission (mg/dL)",
+    "vKsjdwDyJhC": "Date of delivery",
+    "dAxrferxaLu": "What units is blood sugar measured in?",
+    # KMC ward follow up sheet
+    "RSlquOUbjiA": "If Yes, Date of initiation of breast milk feeding",
+    # Discharge care form - feeding
+    "X8lscblixAQ": "Type of feeding on discharge",
 }
 
 # MATERNAL PROGRAM STAGE MAPPING FROM FIRST CODE
@@ -349,6 +358,10 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
             "RE3wIu5acNt",  # Temp at admission
             "ZiI6RUqXLUl",  # Birth Weight n
             "s9OrsTEv34G",  # Maternal medication during pregnancy and labor
+            "F4NIANzeaTe",  # Blood sugar concentration on admission (mmol/L)
+            "zYFS8Cc5vqp",  # Blood sugar concentration on admission (mg/dL)
+            "vKsjdwDyJhC",  # Date of delivery
+            "dAxrferxaLu",  # What units is blood sugar measured in?
         ],
         "program_stage_name": "NICU Admission Careform",
         "is_repeatable": False,  # Usually one admission per newborn
@@ -360,6 +373,13 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
         ],
         "program_stage_name": "Nurse followup Sheet",
         "is_repeatable": True,  # Can have multiple nurse followups
+    },
+    "TI40LMTou2L": {  # KMC ward follow up sheet
+        "data_elements": [
+            "RSlquOUbjiA",  # If Yes, Date of initiation of breast milk feeding?
+        ],
+        "program_stage_name": "KMC ward follow up sheet",
+        "is_repeatable": True,  # Can have multiple KMC followups
     },
     "vir7ed0Qkyc": {  # Neonatal referral form
         "data_elements": [
@@ -378,6 +398,7 @@ NEWBORN_PROGRAM_STAGE_MAPPING = {
             "Zq5pooW1Osg",  # Sub-Categories of Congenital Malformations n
             "kXx9ea03Eb3",  # Sub-Categories of Intrapartum-Related n
             "ANU3lt2Bt3O",  # Sub-Categories of Jaundice (Pathological) n
+            "X8lscblixAQ",  # Type of feeding on discharge
         ],
         "program_stage_name": "Discharge care form",
         "is_repeatable": False,  # One discharge per admission

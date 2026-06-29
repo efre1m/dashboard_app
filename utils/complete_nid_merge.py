@@ -40,6 +40,8 @@ MAPPING = {
     "program_type": "program_type",
     "region_uid": "region_uid",
     "region_name": "region_name",
+    # Tracked entity attributes
+    "date_of_birth": "date_of_delivery_nicu_admission_careform",
     # Event dates
     "event_date_admission_information": "event_date_nicu_admission_careform",
     "event_date_maternal_birth_and_infant_details": "event_date_nicu_admission_careform",
@@ -92,6 +94,14 @@ MAPPING = {
     # Microbiology And Labs - Culture Positive Organism (Blood) and Microorganism Specification
     "culture_positive_organism_blood_microbiology_and_labs": "culture_positive_organism_blood_investigation_sheet",
     "if_other_full_species_genus_of_microorganism_microbiology_and_labs": "if_other_full_species_genus_of_microorganism_investigation_sheet",
+    # Blood sugar on admission
+    "blood_sugar_concentration_on_admission_mmol_l_observations_and_nursing_care_1": "blood_sugar_concentration_on_admission_mmol_l_nicu_admission_careform",
+    "blood_sugar_concentration_on_admission_mg_dl_observations_and_nursing_care_1": "blood_sugar_concentration_on_admission_mg_dl_nicu_admission_careform",
+    # Blood sugar units
+    "what_units_is_blood_sugar_measured_in?_observations_and_nursing_care_1": "what_units_is_blood_sugar_measured_in_nicu_admission_careform",
+    # Feeding
+    "feeding_at_discharge_observations_and_nursing_care_2": "type_of_feeding_on_discharge_discharge_care_form",
+    "breast_milk_start_date_observations_and_nursing_care_2": "if_yes_date_of_initiation_of_breast_milk_feeding_kmc_ward_follow_up_sheet",
 }
 
 # ==================== 2B. VALUE MAPPING (NID → NCF codes) ====================
@@ -118,6 +128,13 @@ VALUE_MAPPING = {
     },
     "blood_culture_for_suspected_sepsis_microbiology_and_labs": {
         "0": "0", "1": "1", "2": "2", "3": "3",
+    },
+    "feeding_at_discharge_observations_and_nursing_care_2": {
+        "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6",
+        "-1": "-1", "-3": "-3",
+    },
+    "what_units_is_blood_sugar_measured_in?_observations_and_nursing_care_1": {
+        "1": "1", "2": "2", "-2": "-2", "-3": "-3",
     },
 }
 

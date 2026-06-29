@@ -80,6 +80,9 @@ from newborns_dashboard.kpi_utils_infection import (
 # Blood Culture marker constant
 BLOOD_CULTURE_MARKER = "__blood_culture__"
 
+# Nutrition marker constant
+NUTRITION_MARKER = "__nutrition__"
+
 # Jaundice & Phototherapy marker constants (defined early for use in KPI groups)
 JAUNDICE_COVERAGE_MARKER = "__jaundice_coverage__"
 JAUNDICE_QOC_MARKER = "__jaundice_qoc__"
@@ -726,7 +729,7 @@ def render_newborn_kpi_tab_navigation():
         st.session_state.selected_newborn_kpi = "Admitted Newborns" # Default to first tab item if appropriate
 
     # Create main KPI group tabs - UPDATED TO 11 TABS & REORDERED
-    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_jaundice, tab_infection, tab_blood_culture, tab_mortality, tab_dq = st.tabs(
+    tab_enrollment, tab_birth, tab_thermal, tab_vital, tab_cpap, tab_kmc, tab_jaundice, tab_infection, tab_blood_culture, tab_nutrition, tab_mortality, tab_dq = st.tabs(
         [
             "Enrollment",
             "Birth",
@@ -737,6 +740,7 @@ def render_newborn_kpi_tab_navigation():
             "Jaundice & Phototherapy",
             "Infection",
             "Blood Culture",
+            "Nutrition",
             "Mortality",
             "Data Quality",
         ]
@@ -895,6 +899,13 @@ def render_newborn_kpi_tab_navigation():
             if st.button("Indicator Coverage Run Charts", key="bc_indicators_btn", use_container_width=True,
                          type=("primary" if selected_kpi == BLOOD_CULTURE_MARKER else "secondary")):
                 selected_kpi = BLOOD_CULTURE_MARKER
+
+    with tab_nutrition:
+        cols = st.columns(2)
+        with cols[0]:
+            if st.button("Indicator Coverage Run Charts", key="nutr_indicators_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == NUTRITION_MARKER else "secondary")):
+                selected_kpi = NUTRITION_MARKER
 
     with tab_mortality:
         cols = st.columns(5)
@@ -1113,6 +1124,17 @@ def render_newborn_trend_chart_section(
         render_blood_culture_trend_chart(
             working_df, "period_display",
             "Blood Culture",
+            bg_color, text_color, facility_uids,
+            date_range_filters=date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Nutrition
+    if kpi_selection == NUTRITION_MARKER:
+        from newborns_dashboard.kpi_utils_nutrition import render_nutrition_trend_chart
+        render_nutrition_trend_chart(
+            working_df, "period_display",
+            "Nutrition",
             bg_color, text_color, facility_uids,
             date_range_filters=date_range_filters,
         )
@@ -1570,6 +1592,26 @@ def render_newborn_comparison_chart(
             text_color,
             facility_uids,
             date_range_filters=_bc_date_range_filters,
+        )
+        return
+
+    # SPECIAL HANDLING: Nutrition
+    if kpi_selection == NUTRITION_MARKER:
+        _nutr_date_range_filters = {}
+        if "filters" in st.session_state:
+            _nutr_date_range_filters = {
+                "start_date": st.session_state.filters.get("start_date"),
+                "end_date": st.session_state.filters.get("end_date"),
+            }
+        from newborns_dashboard.kpi_utils_nutrition import render_nutrition_trend_chart
+        render_nutrition_trend_chart(
+            df_to_use,
+            "period_display",
+            "Nutrition",
+            bg_color,
+            text_color,
+            facility_uids,
+            date_range_filters=_nutr_date_range_filters,
         )
         return
 
