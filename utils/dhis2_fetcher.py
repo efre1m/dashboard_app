@@ -3099,7 +3099,9 @@ def run_automated_pipeline(facility_selection: Optional[str] = None, merge_mode:
     # (utils/config.py intentionally does not call load_dotenv.)
     from dotenv import load_dotenv
 
-    load_dotenv()
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _project_root = os.path.dirname(_script_dir)
+    load_dotenv(os.path.join(_project_root, ".env"))
 
     print("=" * 80)
     print("DHIS2 AUTOMATED PIPELINE - STANDALONE")

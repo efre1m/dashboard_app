@@ -31,6 +31,35 @@ FEEDING_LABELS = {
     "6": "Unknown / Absconder",
 }
 
+# Free-text aliases -> canonical label (case-insensitive matching)
+_FEEDING_ALIASES = {
+    "exclusive breastmilk": "Exclusive breastmilk",
+    "exclusive breastfeeding": "Exclusive breastmilk",
+    "exclusive breast feeding": "Exclusive breastmilk",
+    "ebf": "Exclusive breastmilk",
+    "e bf": "Exclusive breastmilk",
+    "ebm": "Exclusive breastmilk",
+    "breast": "Exclusive breastmilk",
+    "breast feeding": "Exclusive breastmilk",
+    "breastfeeding": "Exclusive breastmilk",
+    "bf": "Exclusive breastmilk",
+    "breastfeed": "Exclusive breastmilk",
+    "formula only": "Formula only",
+    "formula": "Formula only",
+    "formula millk": "Formula only",
+    "formula milk": "Formula only",
+    "fortified breastmilk": "Fortified breastmilk",
+    "fortified breastfeeding": "Fortified breastmilk",
+    "predominant breastmilk": "Predominant breastmilk",
+    "predominant breastfeeding": "Predominant breastmilk",
+    "combination": "Combination of breastmilk and formula",
+    "combination of breastmilk and formula": "Combination of breastmilk and formula",
+    "unknown": "Unknown / Absconder",
+    "absconder": "Unknown / Absconder",
+    "-----": "Unknown / Absconder",
+    "n/a": "Unknown / Absconder",
+}
+
 FEEDING_COLORS = {
     "Exclusive breastmilk": "#2ca02c",
     "Formula only": "#ff7f0e",
@@ -164,19 +193,44 @@ def compute_feeding_distribution_data(df, facility_uids=None):
     """Percentage distribution of feeding methods at discharge.
 
     Returns dict: {label: count} for each feeding category.
-    Only includes babies with a recorded feeding_on_discharge value.
+    Handles both coded values (1-6) and free-text entries.
     """
     working_df = _filter_by_facility(df, facility_uids) if facility_uids else df.copy()
 
     feeding = _any_version_value(working_df, FEEDING_DISCHARGE_PREFIX)
     has_value = feeding.ne("") & feeding.ne("N/A") & feeding.ne("nan") & feeding.notna()
 
-    filtered = feeding[has_value]
-    counts = filtered.value_counts().to_dict()
+    if not has_value.any():
+        return {label: 0 for label in FEEDING_LABELS.values()}
 
-    result = {}
-    for code, label in FEEDING_LABELS.items():
-        result[label] = int(counts.get(code, 0))
+    filtered = feeding[has_value]
+
+    # Classify each value into a canonical label
+    counts = {}
+    for val in filtered:
+        val_str = str(val).strip()
+        val_lower = val_str.lower()
+
+        # Try coded value first
+        if val_str in FEEDING_LABELS:
+            label = FEEDING_LABELS[val_str]
+        # Try alias lookup
+        elif val_lower in _FEEDING_ALIASES:
+            label = _FEEDING_ALIASES[val_lower]
+        # Try partial match
+        else:
+            label = None
+            for alias, canonical in _FEEDING_ALIASES.items():
+                if alias in val_lower or val_lower in alias:
+                    label = canonical
+                    break
+            if label is None:
+                label = "Unknown / Absconder"
+
+        counts[label] = counts.get(label, 0) + 1
+
+    # Ensure all categories present
+    result = {label: counts.get(label, 0) for label in FEEDING_LABELS.values()}
     return result
 
 
@@ -260,7 +314,7 @@ def _render_single_nutrition_chart(
             st.markdown(info_html, unsafe_allow_html=True)
 
 
-def _render_feeding_distribution_chart(working_df, period_col, bg_color, text_color, facility_uids):
+def _render_feeding_distribution_chart(working_df, bg_color, text_color, facility_uids):
     """Render horizontal bar chart showing feeding distribution at discharge."""
     distribution = compute_feeding_distribution_data(working_df, facility_uids)
 
@@ -269,22 +323,31 @@ def _render_feeding_distribution_chart(working_df, period_col, bg_color, text_co
         return
 
     total = sum(distribution.values())
-    sorted_items = sorted(distribution.items(), key=lambda x: -x[1])
+    # Only include categories with count > 0
+    sorted_items = [(k, v) for k, v in sorted(distribution.items(), key=lambda x: -x[1]) if v > 0]
+
+    if not sorted_items:
+        st.caption("Feeding Distribution — No data")
+        return
+
+    percentages = [round(v / total * 100, 1) for _, v in sorted_items]
 
     fig = go.Figure(go.Bar(
-        x=[item[1] for item in sorted_items],
+        x=percentages,
         y=[item[0] for item in sorted_items],
         orientation="h",
         marker_color=[FEEDING_COLORS.get(item[0], LINE_COLOR) for item in sorted_items],
-        hovertemplate="<b>%{y}</b><br>Count: %{x}<br>Total: %{customdata[0]}<br>Percentage: %{customdata[1]}%<extra></extra>",
-        customdata=[[total, round((item[1] / total * 100), 1)] for item in sorted_items],
+        hovertemplate="<b>%{y}</b><br>Percentage: %{x:.1f}%<br>Count: %{customdata[0]}<extra></extra>",
+        customdata=[[item[1]] for item in sorted_items],
+        text=[f"{p}%" for p in percentages],
+        textposition="outside",
     ))
 
     fig.update_layout(
-        title="Percentage Distribution of Feeding Methods at Discharge",
-        height=400,
-        xaxis=dict(title="Count", dtick=1),
-        yaxis=dict(title="Feeding Method"),
+        title="Feeding Methods at Discharge",
+        height=max(250, len(sorted_items) * 40 + 100),
+        xaxis=dict(title="Percentage (%)", range=[0, 105]),
+        yaxis=dict(title=""),
         paper_bgcolor=bg_color, plot_bgcolor=bg_color,
         font_color=text_color, title_font_color=text_color,
         margin=dict(l=40, r=20, t=50, b=30),
@@ -306,11 +369,11 @@ def _render_feeding_distribution_chart(working_df, period_col, bg_color, text_co
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def render_nutrition_trend_chart(
+def render_nutrition_coverage_trend_chart(
     df, period_col="period_display", title="Nutrition Dashboard",
     bg_color="#FFFFFF", text_color=None, facility_uids=None, date_range_filters=None, **kwargs,
 ):
-    """Main function to render the complete Nutrition dashboard."""
+    """Render the Indicator Coverage Run Charts section for Nutrition."""
     if text_color is None:
         text_color = auto_text_color(bg_color)
 
@@ -325,104 +388,114 @@ def render_nutrition_trend_chart(
 
     st.subheader("Nutrition - Indicator Coverage Run Charts")
 
-    tab_coverage, tab_qoc = st.tabs(["Indicator Coverage Run Charts", "Quality of Care"])
+    # Deduplicate: one row per baby
+    if "tei_id" in working_df.columns:
+        working_df = working_df.drop_duplicates(subset=["tei_id"], keep="first")
 
-    with tab_coverage:
-        col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
-        with col1:
-            _render_single_nutrition_chart(
-                working_df, period_col, compute_breastmilk_on_dob_data,
-                "Breastmilk on Day of Birth", None,
-                "breastmilk_on_dob.csv",
-                '<div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">'
-                '<table style="width:100%; border-collapse:collapse;">'
-                '<tr style="background-color:#1f77b4; color:white;">'
-                '<th style="padding:8px; text-align:left;">Indicator</th>'
-                '<th style="padding:8px; text-align:left;">Numerator</th>'
-                '<th style="padding:8px; text-align:left;">Denominator</th>'
-                '</tr>'
-                '<tr style="background-color:#f0f8ff;">'
-                '<td style="padding:8px;"><b>Breastmilk on Day of Birth</b></td>'
-                '<td style="padding:8px;">Babies whose breast milk start date equals date of delivery</td>'
-                '<td style="padding:8px;">Total admitted newborns</td>'
-                '</tr>'
-                '</table>'
-                '<p style="margin-top:8px;">Measures the proportion of admitted newborns who received breastmilk on the same day they were born. The <b>If Yes, Date of initiation of breast milk feeding</b> is compared to the <b>Date of delivery</b>.</p>'
-                '</div>',
-                bg_color, text_color, facility_uids, "ind1",
-            )
+    with col1:
+        _render_single_nutrition_chart(
+            working_df, period_col, compute_breastmilk_on_dob_data,
+            "Breastmilk on Day of Birth", None,
+            "breastmilk_on_dob.csv", None,
+            bg_color, text_color, facility_uids, "ind1",
+        )
 
-        with col2:
-            _render_single_nutrition_chart(
-                working_df, period_col, compute_exclusive_breastmilk_discharge_data,
-                "Exclusive Breastmilk at Discharge", None,
-                "exclusive_breastmilk_discharge.csv",
-                '<div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">'
-                '<table style="width:100%; border-collapse:collapse;">'
-                '<tr style="background-color:#1f77b4; color:white;">'
-                '<th style="padding:8px; text-align:left;">Indicator</th>'
-                '<th style="padding:8px; text-align:left;">Numerator</th>'
-                '<th style="padding:8px; text-align:left;">Denominator</th>'
-                '</tr>'
-                '<tr style="background-color:#f0f8ff;">'
-                '<td style="padding:8px;"><b>Exclusive Breastmilk at Discharge</b></td>'
-                '<td style="padding:8px;">Babies with feeding on discharge = Exclusive breastmilk (code 1)</td>'
-                '<td style="padding:8px;">Admissions with a recorded type of feeding on discharge</td>'
-                '</tr>'
-                '</table>'
-                '<p style="margin-top:8px;">Measures the proportion of discharged newborns who were exclusively on breastmilk at the time of discharge. Uses the <b>Type of feeding on discharge</b> field where code 1 = Exclusive breastmilk.</p>'
-                '</div>',
-                bg_color, text_color, facility_uids, "ind2",
-            )
+    with col2:
+        _render_single_nutrition_chart(
+            working_df, period_col, compute_exclusive_breastmilk_discharge_data,
+            "Exclusive Breastmilk at Discharge", None,
+            "exclusive_breastmilk_discharge.csv", None,
+            bg_color, text_color, facility_uids, "ind2",
+        )
 
-    with tab_qoc:
-        col3, col4 = st.columns(2)
+    with st.expander("How these indicators are computed"):
+        st.markdown("""
+        <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+        <table style="width:100%; border-collapse:collapse;">
+        <tr style="background-color:#1f77b4; color:white;">
+            <th style="padding:8px; text-align:left;">Indicator</th>
+            <th style="padding:8px; text-align:left;">Numerator</th>
+            <th style="padding:8px; text-align:left;">Denominator</th>
+        </tr>
+        <tr style="background-color:#f0f8ff;">
+            <td style="padding:8px;"><b>Breastmilk on Day of Birth</b></td>
+            <td style="padding:8px;">Babies whose breast milk start date equals date of delivery</td>
+            <td style="padding:8px;">Total admitted newborns</td>
+        </tr>
+        <tr style="background-color:#ffffff;">
+            <td style="padding:8px;"><b>Exclusive Breastmilk at Discharge</b></td>
+            <td style="padding:8px;">Babies exclusively on breastmilk at discharge</td>
+            <td style="padding:8px;">Admissions with a recorded type of feeding on discharge</td>
+        </tr>
+        </table>
+        <p style="margin-top:8px;"><b>Breastmilk on Day of Birth</b> measures the proportion of admitted newborns who received breastmilk on the same day they were born. The <b>If Yes, Date of initiation of breast milk feeding</b> is compared to the <b>Date of delivery</b>.</p>
+        <p style="margin-top:4px;"><b>Exclusive Breastmilk at Discharge</b> measures the proportion of discharged newborns who were exclusively on breastmilk.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-        with col3:
-            _render_feeding_distribution_chart(working_df, period_col, bg_color, text_color, facility_uids)
 
-        with col4:
-            _render_single_nutrition_chart(
-                working_df, period_col, compute_not_hypoglycemic_rate_data,
-                "Not Hypoglycemic Rate", None,
-                "not_hypoglycemic_rate.csv",
-                '<div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">'
-                '<table style="width:100%; border-collapse:collapse;">'
-                '<tr style="background-color:#1f77b4; color:white;">'
-                '<th style="padding:8px; text-align:left;">Indicator</th>'
-                '<th style="padding:8px; text-align:left;">Numerator</th>'
-                '<th style="padding:8px; text-align:left;">Denominator</th>'
-                '</tr>'
-                '<tr style="background-color:#f0f8ff;">'
-                '<td style="padding:8px;"><b>Not Hypoglycemic Rate</b></td>'
-                '<td style="padding:8px;">Babies with blood sugar > 2.5 mmol/L (unit=1) OR > 45 mg/dL (unit=2)</td>'
-                '<td style="padding:8px;">Babies with documented blood sugar measurement</td>'
-                '</tr>'
-                '</table>'
-                '<p style="margin-top:8px;">Measures the proportion of newborns with documented blood sugar who are NOT hypoglycemic. The indicator first checks the <b>blood sugar unit</b> field, then evaluates the blood sugar value using the correct threshold: <b>&gt; 2.5 mmol/L</b> for mmol/L or <b>&gt; 45 mg/dL</b> for mg/dL.</p>'
-                '</div>',
-                bg_color, text_color, facility_uids, "ind3",
-            )
+def render_nutrition_qoc_trend_chart(
+    df, period_col="period_display", title="Nutrition Dashboard",
+    bg_color="#FFFFFF", text_color=None, facility_uids=None, date_range_filters=None, **kwargs,
+):
+    """Render the Quality of Care section for Nutrition."""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
 
-        with st.expander("How feeding distribution is computed"):
-            st.markdown("""
-            <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
-            <table style="width:100%; border-collapse:collapse;">
-            <tr style="background-color:#1f77b4; color:white;">
-                <th style="padding:8px; text-align:left;">Indicator</th>
-                <th style="padding:8px; text-align:left;">Numerator</th>
-                <th style="padding:8px; text-align:left;">Denominator</th>
-            </tr>
-            <tr style="background-color:#f0f8ff;">
-                <td style="padding:8px;"><b>Feeding Distribution</b></td>
-                <td style="padding:8px;">Number of babies in each feeding category</td>
-                <td style="padding:8px;">Admissions with a recorded type of feeding on discharge</td>
-            </tr>
-            </table>
-            <p style="margin-top:8px;">Shows the percentage distribution of all feeding methods at discharge. Categories: <b>Exclusive breastmilk</b> (1), <b>Formula only</b> (2), <b>Fortified breastmilk</b> (3), <b>Predominant breastmilk</b> (4), <b>Combination of breastmilk and formula</b> (5), <b>Unknown / Absconder</b> (6).</p>
-            </div>
-            """, unsafe_allow_html=True)
+    working_df = _prepare_period_df(df, date_range_filters)
+    if working_df is None or working_df.empty:
+        st.warning("No data available.")
+        return
+
+    if period_col not in working_df.columns:
+        st.warning("Period column not found.")
+        return
+
+    st.subheader("Nutrition - Quality of Care")
+
+    # Deduplicate: one row per baby to avoid repeated _any_version_value calls on millions of rows
+    if "tei_id" in working_df.columns:
+        working_df = working_df.drop_duplicates(subset=["tei_id"], keep="first")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        _render_feeding_distribution_chart(working_df, bg_color, text_color, facility_uids)
+
+    with col2:
+        _render_single_nutrition_chart(
+            working_df, period_col, compute_not_hypoglycemic_rate_data,
+            "Not Hypoglycemic Rate", None,
+            "not_hypoglycemic_rate.csv", None,
+            bg_color, text_color, facility_uids, "ind3",
+        )
+
+    with st.expander("How these indicators are computed"):
+        st.markdown("""
+        <div style="background-color:#e8f4fd; padding:15px; border-radius:8px; border-left:4px solid #1f77b4;">
+        <table style="width:100%; border-collapse:collapse;">
+        <tr style="background-color:#1f77b4; color:white;">
+            <th style="padding:8px; text-align:left;">Indicator</th>
+            <th style="padding:8px; text-align:left;">Numerator</th>
+            <th style="padding:8px; text-align:left;">Denominator</th>
+        </tr>
+        <tr style="background-color:#f0f8ff;">
+            <td style="padding:8px;"><b>Feeding Distribution</b></td>
+            <td style="padding:8px;">Number of babies in each feeding category</td>
+            <td style="padding:8px;">Admissions with a recorded type of feeding on discharge</td>
+        </tr>
+        <tr style="background-color:#ffffff;">
+            <td style="padding:8px;"><b>Not Hypoglycemic Rate</b></td>
+            <td style="padding:8px;">Babies with blood sugar above normal threshold</td>
+            <td style="padding:8px;">Babies with documented blood sugar measurement</td>
+        </tr>
+        </table>
+        <p style="margin-top:8px;"><b>Feeding Distribution</b> shows the percentage distribution of all feeding methods at discharge. Categories: Exclusive breastmilk, Formula only, Fortified breastmilk, Predominant breastmilk, Combination of breastmilk and formula, Unknown / Absconder.</p>
+        <p style="margin-top:4px;"><b>Not Hypoglycemic Rate</b> measures the proportion of newborns with documented blood sugar who are NOT hypoglycemic.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 __all__ = [
@@ -430,5 +503,6 @@ __all__ = [
     "compute_exclusive_breastmilk_discharge_data",
     "compute_not_hypoglycemic_rate_data",
     "compute_feeding_distribution_data",
-    "render_nutrition_trend_chart",
+    "render_nutrition_coverage_trend_chart",
+    "render_nutrition_qoc_trend_chart",
 ]

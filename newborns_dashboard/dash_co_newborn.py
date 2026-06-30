@@ -80,8 +80,9 @@ from newborns_dashboard.kpi_utils_infection import (
 # Blood Culture marker constant
 BLOOD_CULTURE_MARKER = "__blood_culture__"
 
-# Nutrition marker constant
-NUTRITION_MARKER = "__nutrition__"
+# Nutrition marker constants
+NUTRITION_COVERAGE_MARKER = "__nutrition_coverage__"
+NUTRITION_QOC_MARKER = "__nutrition_qoc__"
 
 # Jaundice & Phototherapy marker constants (defined early for use in KPI groups)
 JAUNDICE_COVERAGE_MARKER = "__jaundice_coverage__"
@@ -903,9 +904,13 @@ def render_newborn_kpi_tab_navigation():
     with tab_nutrition:
         cols = st.columns(2)
         with cols[0]:
-            if st.button("Indicator Coverage Run Charts", key="nutr_indicators_btn", use_container_width=True,
-                         type=("primary" if selected_kpi == NUTRITION_MARKER else "secondary")):
-                selected_kpi = NUTRITION_MARKER
+            if st.button("Indicator Coverage Run Chart", key="nutr_cov_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == NUTRITION_COVERAGE_MARKER else "secondary")):
+                selected_kpi = NUTRITION_COVERAGE_MARKER
+        with cols[1]:
+            if st.button("Quality of Care", key="nutr_qoc_btn", use_container_width=True,
+                         type=("primary" if selected_kpi == NUTRITION_QOC_MARKER else "secondary")):
+                selected_kpi = NUTRITION_QOC_MARKER
 
     with tab_mortality:
         cols = st.columns(5)
@@ -1130,14 +1135,25 @@ def render_newborn_trend_chart_section(
         return
 
     # SPECIAL HANDLING: Nutrition
-    if kpi_selection == NUTRITION_MARKER:
-        from newborns_dashboard.kpi_utils_nutrition import render_nutrition_trend_chart
-        render_nutrition_trend_chart(
-            working_df, "period_display",
-            "Nutrition",
-            bg_color, text_color, facility_uids,
-            date_range_filters=date_range_filters,
+    if kpi_selection in (NUTRITION_COVERAGE_MARKER, NUTRITION_QOC_MARKER):
+        from newborns_dashboard.kpi_utils_nutrition import (
+            render_nutrition_coverage_trend_chart,
+            render_nutrition_qoc_trend_chart,
         )
+        if kpi_selection == NUTRITION_COVERAGE_MARKER:
+            render_nutrition_coverage_trend_chart(
+                working_df, "period_display",
+                "Nutrition",
+                bg_color, text_color, facility_uids,
+                date_range_filters=date_range_filters,
+            )
+        else:
+            render_nutrition_qoc_trend_chart(
+                working_df, "period_display",
+                "Nutrition",
+                bg_color, text_color, facility_uids,
+                date_range_filters=date_range_filters,
+            )
         return
 
     # FIXED: Use correct date column function
@@ -1596,23 +1612,37 @@ def render_newborn_comparison_chart(
         return
 
     # SPECIAL HANDLING: Nutrition
-    if kpi_selection == NUTRITION_MARKER:
+    if kpi_selection in (NUTRITION_COVERAGE_MARKER, NUTRITION_QOC_MARKER):
         _nutr_date_range_filters = {}
         if "filters" in st.session_state:
             _nutr_date_range_filters = {
                 "start_date": st.session_state.filters.get("start_date"),
                 "end_date": st.session_state.filters.get("end_date"),
             }
-        from newborns_dashboard.kpi_utils_nutrition import render_nutrition_trend_chart
-        render_nutrition_trend_chart(
-            df_to_use,
-            "period_display",
-            "Nutrition",
-            bg_color,
-            text_color,
-            facility_uids,
-            date_range_filters=_nutr_date_range_filters,
+        from newborns_dashboard.kpi_utils_nutrition import (
+            render_nutrition_coverage_trend_chart,
+            render_nutrition_qoc_trend_chart,
         )
+        if kpi_selection == NUTRITION_COVERAGE_MARKER:
+            render_nutrition_coverage_trend_chart(
+                df_to_use,
+                "period_display",
+                "Nutrition",
+                bg_color,
+                text_color,
+                facility_uids,
+                date_range_filters=_nutr_date_range_filters,
+            )
+        else:
+            render_nutrition_qoc_trend_chart(
+                df_to_use,
+                "period_display",
+                "Nutrition",
+                bg_color,
+                text_color,
+                facility_uids,
+                date_range_filters=_nutr_date_range_filters,
+            )
         return
 
     # SPECIAL HANDLING: Infection
