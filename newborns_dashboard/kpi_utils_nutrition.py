@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 BREAST_MILK_START_PREFIX = "if_yes_date_of_initiation_of_breast_milk_feeding_kmc_ward_follow_up_sheet"
 DATE_OF_DELIVERY_PREFIX = "date_of_delivery_nicu_admission_careform"
 FEEDING_DISCHARGE_PREFIX = "type_of_feeding_on_discharge_discharge_care_form"
-BLOOD_SUGAR_UNIT_PREFIX = "what_units_is_blood_sugar_measured_in_nicu_admission_careform"
+BLOOD_SUGAR_UNIT_PREFIX = "what_units_is_blood_sugar_measured_in"
 BLOOD_SUGAR_MMOL_PREFIX = "blood_sugar_concentration_on_admission_mmol_l_nicu_admission_careform"
 BLOOD_SUGAR_MGDL_PREFIX = "blood_sugar_concentration_on_admission_mg_dl_nicu_admission_careform"
 
@@ -28,7 +28,7 @@ FEEDING_LABELS = {
     "3": "Fortified breastmilk",
     "4": "Predominant breastmilk",
     "5": "Combination of breastmilk and formula",
-    "6": "Unknown / Absconder",
+    "6": "Unknown - Absconder",
 }
 
 # Free-text aliases -> canonical label (case-insensitive matching)
@@ -54,10 +54,11 @@ _FEEDING_ALIASES = {
     "predominant breastfeeding": "Predominant breastmilk",
     "combination": "Combination of breastmilk and formula",
     "combination of breastmilk and formula": "Combination of breastmilk and formula",
-    "unknown": "Unknown / Absconder",
-    "absconder": "Unknown / Absconder",
-    "-----": "Unknown / Absconder",
-    "n/a": "Unknown / Absconder",
+    "unknown": "Unknown - Absconder",
+    "unknown - absconder": "Unknown - Absconder",
+    "absconder": "Unknown - Absconder",
+    "-----": "Unknown - Absconder",
+    "n/a": "Unknown - Absconder",
 }
 
 FEEDING_COLORS = {
@@ -66,26 +67,35 @@ FEEDING_COLORS = {
     "Fortified breastmilk": "#1f77b4",
     "Predominant breastmilk": "#9467bd",
     "Combination of breastmilk and formula": "#8c564b",
-    "Unknown / Absconder": "#7f7f7f",
+    "Unknown - Absconder": "#7f7f7f",
 }
 
 
+_column_cache: dict = {}
+
 def _any_version_value(df, col_prefix):
     """Return the first non-empty value across versioned columns matching col_prefix."""
-    cols = [c for c in df.columns if c.startswith(col_prefix)]
+    if col_prefix not in _column_cache:
+        _column_cache[col_prefix] = [c for c in df.columns if c.startswith(col_prefix)]
+    else:
+        cached = _column_cache[col_prefix]
+        if not all(c in df.columns for c in cached):
+            _column_cache[col_prefix] = [c for c in df.columns if c.startswith(col_prefix)]
+    cols = _column_cache[col_prefix]
     if not cols:
         return pd.Series("", index=df.index)
     result = pd.Series("", index=df.index)
     for col in cols:
         mask = result == ""
-        result = result.where(~mask | (df[col] == ""), df[col])
-    return result
+        col_empty = (df[col] == "") | df[col].isna()
+        result = result.where(~mask | col_empty, df[col])
+    return result.fillna("")
 
 
 def _filter_by_facility(df, facility_uids):
     if facility_uids and "orgUnit" in df.columns:
-        return df[df["orgUnit"].isin(facility_uids)].copy()
-    return df.copy()
+        return df[df["orgUnit"].isin(facility_uids)]
+    return df
 
 
 def _prepare_period_df(df, date_range_filters):
@@ -173,12 +183,12 @@ def compute_not_hypoglycemic_rate_data(df, facility_uids=None):
     """
     working_df = _filter_by_facility(df, facility_uids) if facility_uids else df.copy()
 
-    bs_unit = _any_version_value(working_df, BLOOD_SUGAR_UNIT_PREFIX)
+    bs_unit = pd.to_numeric(_any_version_value(working_df, BLOOD_SUGAR_UNIT_PREFIX), errors="coerce")
     bs_mmol = pd.to_numeric(_any_version_value(working_df, BLOOD_SUGAR_MMOL_PREFIX), errors="coerce")
     bs_mgdl = pd.to_numeric(_any_version_value(working_df, BLOOD_SUGAR_MGDL_PREFIX), errors="coerce")
 
-    is_mmol = bs_unit == "1"
-    is_mgdl = bs_unit == "2"
+    is_mmol = bs_unit == 1
+    is_mgdl = bs_unit == 2
 
     has_mmol = is_mmol & bs_mmol.notna()
     has_mgdl = is_mgdl & bs_mgdl.notna()
@@ -187,6 +197,20 @@ def compute_not_hypoglycemic_rate_data(df, facility_uids=None):
     not_hypo = int((has_mmol & (bs_mmol > 2.5)).sum() + (has_mgdl & (bs_mgdl > 45)).sum())
     rate = (not_hypo / denominator * 100) if denominator > 0 else 0.0
     return not_hypo, denominator, rate
+
+
+def _classify_feeding_value(val):
+    """Classify a single feeding value into a canonical label."""
+    val_str = str(val).strip()
+    val_lower = val_str.lower()
+    if val_str in FEEDING_LABELS:
+        return FEEDING_LABELS[val_str]
+    if val_lower in _FEEDING_ALIASES:
+        return _FEEDING_ALIASES[val_lower]
+    for alias, canonical in _FEEDING_ALIASES.items():
+        if alias in val_lower or val_lower in alias:
+            return canonical
+    return "Unknown - Absconder"
 
 
 def compute_feeding_distribution_data(df, facility_uids=None):
@@ -205,33 +229,106 @@ def compute_feeding_distribution_data(df, facility_uids=None):
 
     filtered = feeding[has_value]
 
-    # Classify each value into a canonical label
-    counts = {}
-    for val in filtered:
-        val_str = str(val).strip()
-        val_lower = val_str.lower()
+    # Build a mapping from unique values to canonical labels
+    unique_vals = filtered.unique()
+    val_to_label = {v: _classify_feeding_value(v) for v in unique_vals}
 
-        # Try coded value first
-        if val_str in FEEDING_LABELS:
-            label = FEEDING_LABELS[val_str]
-        # Try alias lookup
-        elif val_lower in _FEEDING_ALIASES:
-            label = _FEEDING_ALIASES[val_lower]
-        # Try partial match
-        else:
-            label = None
-            for alias, canonical in _FEEDING_ALIASES.items():
-                if alias in val_lower or val_lower in alias:
-                    label = canonical
-                    break
-            if label is None:
-                label = "Unknown / Absconder"
+    # Vectorized mapping via replace
+    mapped = filtered.replace(val_to_label)
 
-        counts[label] = counts.get(label, 0) + 1
+    # Count each canonical label
+    counts = mapped.value_counts().to_dict()
 
-    # Ensure all categories present
     result = {label: counts.get(label, 0) for label in FEEDING_LABELS.values()}
     return result
+
+
+# ---------------------------------------------------------------------------
+# Trend computation helpers (groupby-based, replaces per-period loop)
+# ---------------------------------------------------------------------------
+
+def _compute_breastmilk_trend(working_df, period_col, facility_uids):
+    """Breastmilk on DOB — all periods at once via groupby."""
+    if facility_uids and "orgUnit" in working_df.columns:
+        pdf = working_df[working_df["orgUnit"].isin(facility_uids)]
+    else:
+        pdf = working_df
+
+    bm_start = _any_version_value(pdf, BREAST_MILK_START_PREFIX)
+    doDelivery = _any_version_value(pdf, DATE_OF_DELIVERY_PREFIX)
+    bm_start_dt = pd.to_datetime(bm_start, errors="coerce")
+    doDelivery_dt = pd.to_datetime(doDelivery, errors="coerce")
+
+    same_day = bm_start_dt.notna().values & doDelivery_dt.notna().values & (bm_start_dt.values == doDelivery_dt.values)
+    agg_df = pd.DataFrame({
+        period_col: pdf[period_col].values,
+        "numerator": same_day,
+        "denominator": np.ones(len(pdf), dtype=int),
+    })
+    trend = agg_df.groupby(period_col, observed=False, sort=False).agg(
+        numerator=("numerator", "sum"),
+        denominator=("denominator", "sum"),
+    )
+    trend["rate"] = (trend["numerator"] / trend["denominator"] * 100).round(1)
+    trend = trend.reset_index().rename(columns={period_col: "period"})
+    return trend
+
+
+def _compute_exclusive_breastmilk_trend(working_df, period_col, facility_uids):
+    """Exclusive breastmilk at discharge — all periods at once via groupby."""
+    if facility_uids and "orgUnit" in working_df.columns:
+        pdf = working_df[working_df["orgUnit"].isin(facility_uids)]
+    else:
+        pdf = working_df
+
+    feeding = _any_version_value(pdf, FEEDING_DISCHARGE_PREFIX)
+    has_value = feeding.ne("") & feeding.ne("N/A") & feeding.ne("nan") & feeding.notna()
+
+    agg_df = pd.DataFrame({
+        period_col: pdf[period_col].values,
+        "numerator": has_value.values & (feeding.values == "1"),
+        "denominator": has_value.values.astype(int),
+    })
+    trend = agg_df.groupby(period_col, observed=False, sort=False).agg(
+        numerator=("numerator", "sum"),
+        denominator=("denominator", "sum"),
+    )
+    trend = trend[trend["denominator"] > 0]
+    trend["rate"] = (trend["numerator"] / trend["denominator"] * 100).round(1)
+    trend = trend.reset_index().rename(columns={period_col: "period"})
+    return trend
+
+
+def _compute_not_hypoglycemic_trend(working_df, period_col, facility_uids):
+    """Not hypoglycemic rate — all periods at once via groupby."""
+    if facility_uids and "orgUnit" in working_df.columns:
+        pdf = working_df[working_df["orgUnit"].isin(facility_uids)]
+    else:
+        pdf = working_df
+
+    bs_unit = pd.to_numeric(_any_version_value(pdf, BLOOD_SUGAR_UNIT_PREFIX), errors="coerce")
+    bs_mmol = pd.to_numeric(_any_version_value(pdf, BLOOD_SUGAR_MMOL_PREFIX), errors="coerce")
+    bs_mgdl = pd.to_numeric(_any_version_value(pdf, BLOOD_SUGAR_MGDL_PREFIX), errors="coerce")
+
+    is_mmol = bs_unit.values == 1
+    is_mgdl = bs_unit.values == 2
+    mmol_ok = is_mmol & bs_mmol.notna().values & (bs_mmol.values > 2.5)
+    mgdl_ok = is_mgdl & bs_mgdl.notna().values & (bs_mgdl.values > 45)
+    has_measure = is_mmol & bs_mmol.notna().values | is_mgdl & bs_mgdl.notna().values
+
+    agg_df = pd.DataFrame({
+        period_col: pdf[period_col].values,
+        "numerator": mmol_ok | mgdl_ok,
+        "denominator": has_measure,
+    })
+    trend = agg_df.groupby(period_col, observed=False, sort=False).agg(
+        numerator=("numerator", "sum"),
+        denominator=("denominator", "sum"),
+    )
+    trend = trend[trend["denominator"] > 0]
+    trend["rate"] = (trend["numerator"] / trend["denominator"] * 100).round(1)
+    trend = trend.reset_index().rename(columns={period_col: "period"})
+    return trend
 
 
 # ---------------------------------------------------------------------------
@@ -239,31 +336,26 @@ def compute_feeding_distribution_data(df, facility_uids=None):
 # ---------------------------------------------------------------------------
 
 def _render_single_nutrition_chart(
-    working_df, period_col, compute_fn, title, target, csv_name, info_html,
-    bg_color, text_color, facility_uids, key_suffix,
+    trend_df, title, target, csv_name, info_html,
+    bg_color, text_color, key_suffix,
 ):
-    """Helper: render one indicator's trend chart + table."""
-    periods = sort_periods_chronologically(working_df[period_col].unique())
-    trend_data = []
-
-    for period in periods:
-        pdf = working_df[working_df[period_col] == period]
-        n, d, r = compute_fn(pdf, facility_uids)
-        trend_data.append({"period": period, "numerator": n, "denominator": d, "rate": r})
-
-    trend_df = pd.DataFrame(trend_data)
+    """Helper: render one indicator's trend chart + table from pre-computed trend_df."""
     if trend_df.empty:
         st.caption(f"{title} — No data")
         return
 
-    trend_df = trend_df[trend_df["denominator"] > 0].copy()
+    trend_df = trend_df[trend_df["denominator"] > 0]
     if trend_df.empty:
         st.info(f"No data to display for **{title}**.")
         return
 
+    # Sort chronologically
+    periods = sort_periods_chronologically(trend_df["period"].tolist())
+    trend_df = trend_df.set_index("period").loc[periods].reset_index()
+
     overall_n = int(trend_df["numerator"].sum())
     overall_d = int(trend_df["denominator"].sum())
-    overall_rate = (overall_n / overall_d * 100) if overall_d > 0 else 0
+    overall_rate = round(overall_n / overall_d * 100, 1) if overall_d > 0 else 0
 
     fig = go.Figure()
     if target is not None:
@@ -337,8 +429,8 @@ def _render_feeding_distribution_chart(working_df, bg_color, text_color, facilit
         y=[item[0] for item in sorted_items],
         orientation="h",
         marker_color=[FEEDING_COLORS.get(item[0], LINE_COLOR) for item in sorted_items],
-        hovertemplate="<b>%{y}</b><br>Percentage: %{x:.1f}%<br>Count: %{customdata[0]}<extra></extra>",
-        customdata=[[item[1]] for item in sorted_items],
+        hovertemplate="<b>%{y}</b><br>Percentage: %{x:.1f}%<br>Count: %{customdata[0]}<br>Total: %{customdata[1]}<extra></extra>",
+        customdata=[[item[1], total] for item in sorted_items],
         text=[f"{p}%" for p in percentages],
         textposition="outside",
     ))
@@ -395,19 +487,21 @@ def render_nutrition_coverage_trend_chart(
     col1, col2 = st.columns(2)
 
     with col1:
+        trend_df = _compute_breastmilk_trend(working_df, period_col, facility_uids)
         _render_single_nutrition_chart(
-            working_df, period_col, compute_breastmilk_on_dob_data,
+            trend_df,
             "Breastmilk on Day of Birth", None,
             "breastmilk_on_dob.csv", None,
-            bg_color, text_color, facility_uids, "ind1",
+            bg_color, text_color, "ind1",
         )
 
     with col2:
+        trend_df = _compute_exclusive_breastmilk_trend(working_df, period_col, facility_uids)
         _render_single_nutrition_chart(
-            working_df, period_col, compute_exclusive_breastmilk_discharge_data,
+            trend_df,
             "Exclusive Breastmilk at Discharge", None,
             "exclusive_breastmilk_discharge.csv", None,
-            bg_color, text_color, facility_uids, "ind2",
+            bg_color, text_color, "ind2",
         )
 
     with st.expander("How these indicators are computed"):
@@ -465,11 +559,12 @@ def render_nutrition_qoc_trend_chart(
         _render_feeding_distribution_chart(working_df, bg_color, text_color, facility_uids)
 
     with col2:
+        trend_df = _compute_not_hypoglycemic_trend(working_df, period_col, facility_uids)
         _render_single_nutrition_chart(
-            working_df, period_col, compute_not_hypoglycemic_rate_data,
+            trend_df,
             "Not Hypoglycemic Rate", None,
             "not_hypoglycemic_rate.csv", None,
-            bg_color, text_color, facility_uids, "ind3",
+            bg_color, text_color, "ind3",
         )
 
     with st.expander("How these indicators are computed"):
@@ -492,7 +587,7 @@ def render_nutrition_qoc_trend_chart(
             <td style="padding:8px;">Babies with documented blood sugar measurement</td>
         </tr>
         </table>
-        <p style="margin-top:8px;"><b>Feeding Distribution</b> shows the percentage distribution of all feeding methods at discharge. Categories: Exclusive breastmilk, Formula only, Fortified breastmilk, Predominant breastmilk, Combination of breastmilk and formula, Unknown / Absconder.</p>
+        <p style="margin-top:8px;"><b>Feeding Distribution</b> shows the percentage distribution of all feeding methods at discharge. Categories: Exclusive breastmilk, Formula only, Fortified breastmilk, Predominant breastmilk, Combination of breastmilk and formula, Unknown - Absconder.</p>
         <p style="margin-top:4px;"><b>Not Hypoglycemic Rate</b> measures the proportion of newborns with documented blood sugar who are NOT hypoglycemic.</p>
         </div>
         """, unsafe_allow_html=True)
