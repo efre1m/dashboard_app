@@ -195,12 +195,42 @@ def compute_exclusive_breastmilk_discharge_data(df, facility_uids=None):
     return numerator, denominator, rate
 
 
+def _infer_bs_unit(bs_unit, bs_mmol, bs_mgdl):
+    """Infer blood sugar unit when the unit column is empty.
+
+    Returns a Series with inferred unit (1=mmol/L, 2=mg/dL).
+    - Unit column available → use as-is.
+    - Only one value column has data → assume that unit.
+    - Both value columns have data and unit is NA → check value magnitude
+      (mmol/L values are ≤20, mg/dL values are >20).
+    """
+    out = bs_unit.copy()
+    unit_known = bs_unit.notna()
+    has_mmol = bs_mmol.notna()
+    has_mgdl = bs_mgdl.notna()
+
+    mask_1 = ~unit_known & has_mmol & ~has_mgdl
+    out[mask_1] = 1
+
+    mask_2 = ~unit_known & ~has_mmol & has_mgdl
+    out[mask_2] = 2
+
+    mask_both = ~unit_known & has_mmol & has_mgdl
+    out[mask_both] = 1
+    out[mask_both & (bs_mmol > 20)] = 2
+
+    return out
+
+
 def compute_not_hypoglycemic_rate_data(df, facility_uids=None):
     """Not Hypoglycemic Rate Among Babies with Documented Blood Sugar.
 
     Checks blood sugar unit first, then evaluates the value using the correct threshold.
     Unit 1 (mmol/L): threshold > 2.5
     Unit 2 (mg/dL): threshold > 45
+
+    When the unit column is empty, the unit is inferred from the available
+    value columns using _infer_bs_unit.
     """
     working_df = _filter_by_facility(df, facility_uids) if facility_uids else df.copy()
 
@@ -208,8 +238,10 @@ def compute_not_hypoglycemic_rate_data(df, facility_uids=None):
     bs_mmol = pd.to_numeric(_any_version_value(working_df, BLOOD_SUGAR_MMOL_PREFIX), errors="coerce")
     bs_mgdl = pd.to_numeric(_any_version_value(working_df, BLOOD_SUGAR_MGDL_PREFIX), errors="coerce")
 
-    is_mmol = bs_unit == 1
-    is_mgdl = bs_unit == 2
+    inferred = _infer_bs_unit(bs_unit, bs_mmol, bs_mgdl)
+
+    is_mmol = inferred == 1
+    is_mgdl = inferred == 2
 
     has_mmol = is_mmol & bs_mmol.notna()
     has_mgdl = is_mgdl & bs_mgdl.notna()
@@ -349,8 +381,10 @@ def _compute_not_hypoglycemic_trend(working_df, period_col, facility_uids):
     bs_mmol = pd.to_numeric(_any_version_value(pdf, BLOOD_SUGAR_MMOL_PREFIX), errors="coerce")
     bs_mgdl = pd.to_numeric(_any_version_value(pdf, BLOOD_SUGAR_MGDL_PREFIX), errors="coerce")
 
-    is_mmol = bs_unit.values == 1
-    is_mgdl = bs_unit.values == 2
+    inferred = _infer_bs_unit(bs_unit, bs_mmol, bs_mgdl)
+
+    is_mmol = inferred.values == 1
+    is_mgdl = inferred.values == 2
     mmol_ok = is_mmol & bs_mmol.notna().values & (bs_mmol.values > 2.5)
     mgdl_ok = is_mgdl & bs_mgdl.notna().values & (bs_mgdl.values > 45)
     has_measure = is_mmol & bs_mmol.notna().values | is_mgdl & bs_mgdl.notna().values
