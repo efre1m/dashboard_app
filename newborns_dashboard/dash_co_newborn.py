@@ -2656,7 +2656,7 @@ CPAP_MACHINE_TYPE_MAP = {
     3: "CPAP blends O2 and humidifies",
     4: "CPAP blends O2, heats and humidifies",
     5: "Mechanical ventilator nasal CPAP mode",
-    99: "Missing / Unknown machine type",
+    99: "Not documented / Missing",
 }
 CPAP_MACHINE_TYPE_COLORS = ["#8E44AD", "#3498DB", "#2ECC71", "#F39C12", "#E74C3C", "#95A5A6"]
 CPAP_MACHINE_TYPE_CATEGORIES = list(zip(CPAP_MACHINE_TYPE_MAP.values(), CPAP_MACHINE_TYPE_COLORS))
