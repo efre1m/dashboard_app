@@ -567,4 +567,110 @@ __all__ = [
     "compute_microorganism_distribution_data",
     "compute_microorganism_trend_data",
     "render_blood_culture_trend_chart",
+    "render_blood_culture_comparison_chart",
 ]
+
+
+def render_blood_culture_comparison_chart(
+    df, comparison_mode="facility", display_names=None, facility_uids=None,
+    facilities_by_region=None, region_names=None, period_col="period_display",
+    title="Blood Culture Comparison", bg_color="#FFFFFF", text_color=None, **kwargs
+):
+    """Comparison chart for Blood Culture — multi-entity line charts."""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+    if df is None or df.empty:
+        st.subheader(title); st.warning("No data."); return
+    if period_col not in df.columns:
+        st.warning("Period column not found."); return
+
+    if comparison_mode == "facility":
+        if not facility_uids or not display_names:
+            st.warning("No facilities selected."); return
+        entities = dict(zip(facility_uids, display_names))
+    else:
+        if not region_names:
+            st.warning("No regions selected."); return
+        entities = {r: r for r in region_names}
+
+    periods = sort_periods_chronologically(df[period_col].unique())
+
+    color_palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    sorted_entities = sorted(entities.keys(), key=lambda e: str(entities[e]).lower())
+    entity_colors = {e: color_palette[i % len(color_palette)] for i, e in enumerate(sorted_entities)}
+
+    comp_data = {}
+    for eid, ename in entities.items():
+        if comparison_mode == "facility":
+            edf = df[df["orgUnit"] == eid]
+        else:
+            if not facilities_by_region or eid not in facilities_by_region:
+                continue
+            facs = [f[1] if isinstance(f, (list, tuple)) and len(f) > 1 else f for f in facilities_by_region[eid]]
+            edf = df[df["orgUnit"].isin(facs)]
+        if edf.empty:
+            continue
+        entity_rows = []
+        for period in periods:
+            pdf = edf[edf[period_col] == period]
+            n1, d1, r1 = compute_positive_culture_rate_data(pdf)
+            n2, d2, r2 = compute_probable_contaminant_rate_data(pdf)
+            entity_rows.append({
+                "period": period,
+                "positive_rate": r1, "positive_num": n1, "positive_den": d1,
+                "contaminant_rate": r2, "contaminant_num": n2, "contaminant_den": d2,
+            })
+        comp_data[eid] = pd.DataFrame(entity_rows)
+
+    if not comp_data:
+        st.warning("No comparison data."); return
+
+    st.subheader(title)
+    tab1, tab2 = st.tabs(["Positive Blood Culture Rate", "Probable Contaminants Rate"])
+
+    with tab1:
+        fig = go.Figure()
+        for eid in sorted_entities:
+            if eid not in comp_data:
+                continue
+            edf = comp_data[eid]
+            fig.add_trace(go.Scatter(
+                x=edf["period"], y=edf["positive_rate"],
+                name=entities[eid], mode="lines+markers",
+                line=dict(color=entity_colors[eid], width=2),
+                hovertemplate="<b>%{fullData.name}</b><br>Period: %{x}<br>Rate: %{y:.1f}%<br>Num: %{customdata[0]}<br>Den: %{customdata[1]}<extra></extra>",
+                customdata=np.column_stack((edf["positive_num"].values, edf["positive_den"].values)),
+            ))
+        fig.update_layout(
+            title="Positive Blood Culture Rate", height=400,
+            yaxis=dict(range=[0, 105], dtick=25, title="Rate (%)"),
+            xaxis=dict(title=""),
+            paper_bgcolor=bg_color, plot_bgcolor=bg_color,
+            font_color=text_color, title_font_color=text_color,
+            legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5),
+        )
+        st.plotly_chart(fig, use_container_width=True, key="bc_comp_pos")
+
+    with tab2:
+        fig = go.Figure()
+        for eid in sorted_entities:
+            if eid not in comp_data:
+                continue
+            edf = comp_data[eid]
+            fig.add_trace(go.Scatter(
+                x=edf["period"], y=edf["contaminant_rate"],
+                name=entities[eid], mode="lines+markers",
+                line=dict(color=entity_colors[eid], width=2),
+                hovertemplate="<b>%{fullData.name}</b><br>Period: %{x}<br>Rate: %{y:.1f}%<br>Num: %{customdata[0]}<br>Den: %{customdata[1]}<extra></extra>",
+                customdata=np.column_stack((edf["contaminant_num"].values, edf["contaminant_den"].values)),
+            ))
+        fig.update_layout(
+            title="Probable Contaminants Rate", height=400,
+            yaxis=dict(range=[0, 105], dtick=25, title="Rate (%)"),
+            xaxis=dict(title=""),
+            paper_bgcolor=bg_color, plot_bgcolor=bg_color,
+            font_color=text_color, title_font_color=text_color,
+            legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5),
+        )
+        st.plotly_chart(fig, use_container_width=True, key="bc_comp_cont")

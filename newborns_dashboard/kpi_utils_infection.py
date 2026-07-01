@@ -657,7 +657,10 @@ def render_infection_facility_comparison(
             st.warning("No regions selected."); return
         entities = {r: r for r in region_names}
 
+    comp_trends = {}
     comparison_data = []
+    periods = None
+
     for eid, ename in entities.items():
         if comparison_mode == "facility":
             edf = df[df["orgUnit"] == eid]
@@ -699,10 +702,72 @@ def render_infection_facility_comparison(
                 "Facilities Doing Blood Culture": f"{r4:.1f}%" if d4 > 0 else "-",
                 "N/D (Facilities)": f"{n4}/{d4}" if d4 > 0 else "-",
             })
+            # Build per-period trend data for line charts (Coverage mode only)
+            if periods is None and period_col in df.columns:
+                periods = sort_periods_chronologically(df[period_col].unique())
+            if periods:
+                rows = []
+                for period in periods:
+                    pdf = edf[edf[period_col] == period]
+                    pn1, pd1, pr1 = compute_clinical_sepsis_data(pdf)
+                    pn2, pd2, pr2 = compute_culture_done_for_antibiotics_data(pdf)
+                    pn3, pd3, pr3 = compute_blood_culture_results_recorded_data(pdf)
+                    pn4, pd4, pr4 = compute_facilities_doing_blood_culture_data(pdf)
+                    rows.append({
+                        "period": period,
+                        "sepsis_rate": pr1, "sepsis_num": pn1, "sepsis_den": pd1,
+                        "culture_rate": pr2, "culture_num": pn2, "culture_den": pd2,
+                        "results_rate": pr3, "results_num": pn3, "results_den": pd3,
+                        "facilities_rate": pr4, "facilities_num": pn4, "facilities_den": pd4,
+                    })
+                comp_trends[eid] = pd.DataFrame(rows) if rows else pd.DataFrame()
+
     if not comparison_data:
         st.warning("No comparison data."); return
-    comp_df = pd.DataFrame(comparison_data)
+
     st.subheader(title)
+
+    # Show trend charts for Coverage mode
+    if not is_qoc and comp_trends and periods is not None and period_col in df.columns:
+        color_palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                         "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+        sorted_entities = sorted(entities.keys(), key=lambda e: str(entities[e]).lower())
+        entity_colors = {e: color_palette[i % len(color_palette)] for i, e in enumerate(sorted_entities)}
+
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "Antibiotics for Clinical Sepsis", "Culture Done for Antibiotics",
+            "Blood Culture Results Recorded", "Facilities Doing Blood Culture",
+        ])
+        for tab, key, nkey, dkey in [
+            (tab1, "sepsis_rate", "sepsis_num", "sepsis_den"),
+            (tab2, "culture_rate", "culture_num", "culture_den"),
+            (tab3, "results_rate", "results_num", "results_den"),
+            (tab4, "facilities_rate", "facilities_num", "facilities_den"),
+        ]:
+            with tab:
+                fig = go.Figure()
+                for eid in sorted_entities:
+                    if eid not in comp_trends or comp_trends[eid].empty:
+                        continue
+                    edf = comp_trends[eid]
+                    fig.add_trace(go.Scatter(
+                        x=edf["period"], y=edf[key],
+                        name=entities[eid], mode="lines+markers",
+                        line=dict(color=entity_colors[eid], width=2),
+                        hovertemplate="<b>%{fullData.name}</b><br>Period: %{x}<br>Rate: %{y:.1f}%<br>Num: %{customdata[0]}<br>Den: %{customdata[1]}<extra></extra>",
+                        customdata=np.column_stack((edf[nkey].values, edf[dkey].values)),
+                    ))
+                fig.update_layout(
+                    height=400,
+                    yaxis=dict(title="Rate (%)"),
+                    xaxis=dict(title=""),
+                    paper_bgcolor=bg_color, plot_bgcolor=bg_color,
+                    font_color=text_color, title_font_color=text_color,
+                    legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5),
+                )
+                st.plotly_chart(fig, use_container_width=True, key=f"inf_{key}_comp")
+
+    comp_df = pd.DataFrame(comparison_data)
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
     csv = comp_df.to_csv(index=False).encode("utf-8")
     st.download_button("Download CSV", csv, "infection_comparison.csv", "text/csv")

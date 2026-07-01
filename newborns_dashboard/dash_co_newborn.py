@@ -1592,56 +1592,52 @@ def render_newborn_comparison_chart(
 
     # SPECIAL HANDLING: Blood Culture
     if kpi_selection == BLOOD_CULTURE_MARKER:
-        _bc_date_range_filters = {}
-        if "filters" in st.session_state:
-            _bc_date_range_filters = {
-                "start_date": st.session_state.filters.get("start_date"),
-                "end_date": st.session_state.filters.get("end_date"),
-            }
-        # Import locally to avoid circular dependency
-        from newborns_dashboard.kpi_utils_blood_culture import render_blood_culture_trend_chart
-        render_blood_culture_trend_chart(
+        from newborns_dashboard.kpi_utils_blood_culture import render_blood_culture_comparison_chart
+        render_blood_culture_comparison_chart(
             df_to_use,
-            "period_display",
-            "Blood Culture",
-            bg_color,
-            text_color,
-            facility_uids,
-            date_range_filters=_bc_date_range_filters,
+            comparison_mode=comparison_mode,
+            display_names=display_names,
+            facility_uids=facility_uids,
+            facilities_by_region=facilities_by_region,
+            region_names=region_names,
+            period_col="period_display",
+            title="Blood Culture Comparison",
+            bg_color=bg_color,
+            text_color=text_color,
         )
         return
 
     # SPECIAL HANDLING: Nutrition
     if kpi_selection in (NUTRITION_COVERAGE_MARKER, NUTRITION_QOC_MARKER):
-        _nutr_date_range_filters = {}
-        if "filters" in st.session_state:
-            _nutr_date_range_filters = {
-                "start_date": st.session_state.filters.get("start_date"),
-                "end_date": st.session_state.filters.get("end_date"),
-            }
         from newborns_dashboard.kpi_utils_nutrition import (
-            render_nutrition_coverage_trend_chart,
-            render_nutrition_qoc_trend_chart,
+            render_nutrition_coverage_comparison_chart,
+            render_nutrition_qoc_comparison_chart,
         )
         if kpi_selection == NUTRITION_COVERAGE_MARKER:
-            render_nutrition_coverage_trend_chart(
+            render_nutrition_coverage_comparison_chart(
                 df_to_use,
-                "period_display",
-                "Nutrition",
-                bg_color,
-                text_color,
-                facility_uids,
-                date_range_filters=_nutr_date_range_filters,
+                comparison_mode=comparison_mode,
+                display_names=display_names,
+                facility_uids=facility_uids,
+                facilities_by_region=facilities_by_region,
+                region_names=region_names,
+                period_col="period_display",
+                title="Nutrition Coverage Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
             )
         else:
-            render_nutrition_qoc_trend_chart(
+            render_nutrition_qoc_comparison_chart(
                 df_to_use,
-                "period_display",
-                "Nutrition",
-                bg_color,
-                text_color,
-                facility_uids,
-                date_range_filters=_nutr_date_range_filters,
+                comparison_mode=comparison_mode,
+                display_names=display_names,
+                facility_uids=facility_uids,
+                facilities_by_region=facilities_by_region,
+                region_names=region_names,
+                period_col="period_display",
+                title="Nutrition QoC Comparison",
+                bg_color=bg_color,
+                text_color=text_color,
             )
         return
 

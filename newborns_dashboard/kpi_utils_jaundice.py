@@ -380,6 +380,16 @@ def render_jaundice_facility_comparison(
             st.warning("No regions selected."); return
         entities = {r: r for r in region_names}
 
+    if period_col not in df.columns:
+        st.warning("Period column not found."); return
+
+    periods = sort_periods_chronologically(df[period_col].unique())
+    color_palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    sorted_entities = sorted(entities.keys(), key=lambda e: str(entities[e]).lower())
+    entity_colors = {e: color_palette[i % len(color_palette)] for i, e in enumerate(sorted_entities)}
+
+    comp_trends = {}
     comparison_data = []
     for eid, ename in entities.items():
         if comparison_mode == "facility":
@@ -403,10 +413,57 @@ def render_jaundice_facility_comparison(
             "Exchange Transfusion": f"{er:.1f}%" if ed > 0 else "-",
             "Exchange N/D": f"{en_}/{ed}" if ed > 0 else "-",
         })
+        # Build per-period trend data for line charts
+        rows = []
+        for period in periods:
+            pdf = edf[edf[period_col] == period]
+            pn1, pd1, pr1 = compute_phototherapy_coverage_data(pdf)
+            bn1, bd1, br1 = compute_bilirubin_measurement_data(pdf)
+            en1, ed1, er1 = compute_exchange_transfusion_data(pdf)
+            rows.append({
+                "period": period,
+                "photo_rate": pr1, "photo_num": pn1, "photo_den": pd1,
+                "bili_rate": br1, "bili_num": bn1, "bili_den": bd1,
+                "exchange_rate": er1, "exchange_num": en1, "exchange_den": ed1,
+            })
+        comp_trends[eid] = pd.DataFrame(rows)
+
     if not comparison_data:
         st.warning("No comparison data."); return
-    comp_df = pd.DataFrame(comparison_data)
+
     st.subheader(title)
+
+    if comp_trends:
+        tab1, tab2, tab3 = st.tabs(["Phototherapy Coverage", "Bilirubin Measurement", "Exchange Transfusion"])
+        for tab, key, nkey, dkey, ytitle in [
+            (tab1, "photo_rate", "photo_num", "photo_den", "Rate (%)"),
+            (tab2, "bili_rate", "bili_num", "bili_den", "Rate (%)"),
+            (tab3, "exchange_rate", "exchange_num", "exchange_den", "Rate (%)"),
+        ]:
+            with tab:
+                fig = go.Figure()
+                for eid in sorted_entities:
+                    if eid not in comp_trends:
+                        continue
+                    edf = comp_trends[eid]
+                    fig.add_trace(go.Scatter(
+                        x=edf["period"], y=edf[key],
+                        name=entities[eid], mode="lines+markers",
+                        line=dict(color=entity_colors[eid], width=2),
+                        hovertemplate="<b>%{fullData.name}</b><br>Period: %{x}<br>Rate: %{y:.1f}%<br>Num: %{customdata[0]}<br>Den: %{customdata[1]}<extra></extra>",
+                        customdata=np.column_stack((edf[nkey].values, edf[dkey].values)),
+                    ))
+                fig.update_layout(
+                    height=400,
+                    yaxis=dict(title=ytitle),
+                    xaxis=dict(title=""),
+                    paper_bgcolor=bg_color, plot_bgcolor=bg_color,
+                    font_color=text_color, title_font_color=text_color,
+                    legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5),
+                )
+                st.plotly_chart(fig, use_container_width=True, key=f"jand_{key}_comp")
+
+    comp_df = pd.DataFrame(comparison_data)
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
     csv = comp_df.to_csv(index=False).encode("utf-8")
     st.download_button("Download CSV", csv, "jaundice_comparison.csv", "text/csv")

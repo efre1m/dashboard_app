@@ -2389,6 +2389,144 @@ class CSVIntegration:
             f"   💊 Processed ARV Rx for Newborn columns: {len(arv_rx_cols)} columns"
         )
 
+        # 7. Normalize feeding-related columns (free-text → option codes 1-6)
+        feeding_normalized_count = 0
+        feeding_cols = [c for c in cleaned_df.columns if "feeding" in c.lower()]
+        if feeding_cols:
+            # Exact-match map for clean values (fast path)
+            FEEDING_EXACT = {
+                "ebf": "1", "ebm": "1", "bf": "1", "e bf": "1",
+                "exclusive breastmilk": "1", "exclusive breastfeeding": "1",
+                "exclusive breast feeding": "1",
+                "breast feeding": "1", "breastfeeding": "1", "breastfeed": "1",
+                "breastmilk": "1", "breast milk": "1", "breast": "1",
+                "mothers breast": "1", "mother's breast": "1",
+                "only breast feeding": "1", "only ebf": "1", "only b.feeding": "1",
+                "full exclusive bf": "1", "full ebf": "1",
+                "only breast feeding up to 6 month": "1",
+                "until 6 months only breast feeding": "1",
+                "breast feeding unti 6 month": "1",
+                "mbf": "1",
+                "formula only": "2", "formula milk": "2", "formula": "2", "ff": "2",
+                "bottle feeding": "2", "bottle": "2",
+                "fortified": "3",
+                "predominant": "4",
+                "combination of breastmilk and formula": "5",
+                "combination": "5", "mixed": "5", "mix": "5",
+                "complementary feeding": "5", "complimentary feeding": "5",
+                "ngt": "6", "ng tube": "6", "ng tube feeding": "6",
+                "ngtub": "6", "ngtub": "6", "ngtub": "6",
+                "npo": "6", "death": "6", "died": "6", "stable": "6",
+                "started": "6", "t/f": "6", "asd": "6",
+                "not applicable": "6", "not recorded": "6", "not readable": "6",
+                "unknown": "6", "unknown - absconder": "6", "absconder": "6",
+                "-----": "6",
+                "yes": "6", "yas": "6", "no": "6",
+            }
+            VALID_CODES = {"1", "2", "3", "4", "5", "6"}
+            KEEP = {"", "n/a", "nan", "none"}
+
+            # Substring patterns checked in priority order
+            # Priority 1: Combination (check BEFORE pure breast patterns)
+            COMBO_SUB = [
+                "combination", "combin",
+                "bf + formula", "ebf +", "+ formula", "bf+", "ebf+",
+                "mf, ebm", "mf,ebm", "mf/ng",
+                "mixed", " mix",  # space-prefixed to avoid "mix" in "xxxmix"
+                "direct and bottle",
+                "bf & ebf", "bf & formula",
+                "mf, ebm", "mf,ebm",
+            ]
+            # Priority 2: Formula only
+            FORMULA_SUB = [
+                "bottle", "formula", "formal",
+            ]
+            # Priority 3: Fortified
+            FORTIFIED_SUB = ["fortified"]
+            # Priority 4: Predominant
+            PREDOMINANT_SUB = ["predominant", "predominent"]
+            # Priority 5: Exclusive breastmilk (many misspellings)
+            BREAST_SUB = [
+                "ebf", "ebm", "ebw", "emb", "efb", "epf", "eff", "exbm",
+                "ebmf", "emb", "e.b.f", "e/b/fp", "e/b/f", "eb feeding",
+                "bf /", "/ bf", " b/f", "/b/f", " bf ", "bf,", "bf -",
+                "breast", "brast", "brist", "brest", "berst", "bearst",
+                "barest", "birest", "birest", "berste", "berste",
+                "breastfeed", "breastfed",
+                "exclusiv", "exclu", "excul", "ecul", "excl", "exscul",
+                "excull", "exculliv", "exluv",
+                "expulse", "expulsion", "express", "expirss",
+                "direct", "darict", "darakt", "dirct", "diret", "drct",
+                "drict", "diorect", "driect", "druect", "darect", "diarect",
+                "dirict", "dricet", "drc", "daricte", "darakt",
+                "mother",
+                "nuris", "nursing",
+                " only",  # space-prefixed: "only bf", "only ebf"
+                "mbf", "bmf", "dfbm", "dbm", "dmb",
+                "dbm", "dmb", "dfbm",
+                "expulse", "expulsion", "express", "expirss",
+                "berte", "beerest", "beast",
+                "bm)", "bm,", "bm",  # breast milk
+                "b/m",
+                "fullfeed", "full feeding", "full fiding",
+                "fullfiding", "fuii feeding", "full",
+                "dricet", "druect", "dirt", "dioret", "diorect",
+                "dirct brest", "dirctbrest",
+                "b feed", "b/feeding", "b feeding", "bfeeding",
+                "breaste", "brestfeed", "brestfed",
+                "breast feding", "breast fedding", "breastfeedig",
+                "ebs", "ebe", "ebfd", "ebf/",
+                "comp",  # feeding -> completion feeding -> incomplete word - skip
+                "dbf", "dbfdr", "dbg",
+                "cup",  # cup feeding (expressed breastmilk method)
+            ]
+
+            def _map_feeding(val):
+                s = str(val).strip().lower()
+                # Exact match fast path
+                if s in FEEDING_EXACT:
+                    return FEEDING_EXACT[s]
+                if s in VALID_CODES:
+                    return s
+                if s in KEEP:
+                    return val
+
+                # Substring priority matching
+                # Combination first
+                for pat in COMBO_SUB:
+                    if pat in s:
+                        return "5"
+                # Formula second
+                for pat in FORMULA_SUB:
+                    if pat in s:
+                        return "2"
+                # Fortified third
+                for pat in FORTIFIED_SUB:
+                    if pat in s:
+                        return "3"
+                # Predominant fourth
+                for pat in PREDOMINANT_SUB:
+                    if pat in s:
+                        return "4"
+                # Breastmilk fifth
+                for pat in BREAST_SUB:
+                    if pat in s:
+                        return "1"
+                # Everything else is unknown
+                return "6"
+
+            for col in feeding_cols:
+                orig = cleaned_df[col].astype(str).str.strip()
+                mapped = orig.map(_map_feeding)
+                changed = (orig != mapped).sum()
+                if changed > 0:
+                    cleaned_df[col] = mapped
+                    feeding_normalized_count += changed
+            if feeding_normalized_count > 0:
+                logger.info(
+                    f"   🍼 Normalized {feeding_normalized_count} feeding values to standard codes"
+                )
+
         return cleaned_df
 
     @staticmethod

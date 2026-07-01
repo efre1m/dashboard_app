@@ -44,16 +44,30 @@ _FEEDING_ALIASES = {
     "breastfeeding": "Exclusive breastmilk",
     "bf": "Exclusive breastmilk",
     "breastfeed": "Exclusive breastmilk",
+    "breastmilk": "Exclusive breastmilk",
+    "only breast feeding": "Exclusive breastmilk",
+    "only ebf": "Exclusive breastmilk",
+    "full exclusive bf": "Exclusive breastmilk",
+    "only b.feeding": "Exclusive breastmilk",
+    "until 6 months only breast feeding": "Exclusive breastmilk",
+    "only breast feeding up to 6 month": "Exclusive breastmilk",
+    "mothers breast": "Exclusive breastmilk",
+    "mother's breast": "Exclusive breastmilk",
+    "mbf": "Exclusive breastmilk",
     "formula only": "Formula only",
     "formula": "Formula only",
     "formula millk": "Formula only",
     "formula milk": "Formula only",
+    "ff": "Formula only",
     "fortified breastmilk": "Fortified breastmilk",
     "fortified breastfeeding": "Fortified breastmilk",
+    "fortified": "Fortified breastmilk",
     "predominant breastmilk": "Predominant breastmilk",
     "predominant breastfeeding": "Predominant breastmilk",
+    "predominant": "Predominant breastmilk",
     "combination": "Combination of breastmilk and formula",
     "combination of breastmilk and formula": "Combination of breastmilk and formula",
+    "mixed": "Combination of breastmilk and formula",
     "unknown": "Unknown - Absconder",
     "unknown - absconder": "Unknown - Absconder",
     "absconder": "Unknown - Absconder",
@@ -166,9 +180,16 @@ def compute_exclusive_breastmilk_discharge_data(df, facility_uids=None):
     working_df = _filter_by_facility(df, facility_uids) if facility_uids else df.copy()
 
     feeding = _any_version_value(working_df, FEEDING_DISCHARGE_PREFIX)
-    has_value = feeding.ne("") & feeding.ne("N/A") & feeding.ne("nan") & feeding.notna()
+    not_negative = ~feeding.astype(str).str.startswith("-")
+    has_value = (feeding.ne("") & feeding.ne("N/A") & feeding.ne("nan") & feeding.notna() & not_negative)
 
-    numerator = int((has_value & (feeding == "1")).sum())
+    # Map feeding values to canonical labels (handles both codes and free text)
+    unique_vals = feeding.unique()
+    val_to_label = {v: _classify_feeding_value(v) for v in unique_vals}
+    classified = feeding.map(val_to_label)
+    is_exclusive = classified == FEEDING_LABELS["1"]
+
+    numerator = int((has_value & is_exclusive).sum())
     denominator = int(has_value.sum())
     rate = (numerator / denominator * 100) if denominator > 0 else 0.0
     return numerator, denominator, rate
@@ -205,8 +226,21 @@ def _classify_feeding_value(val):
     val_lower = val_str.lower()
     if val_str in FEEDING_LABELS:
         return FEEDING_LABELS[val_str]
+    # Handle float-to-int conversion (e.g., "1.0" -> "1")
+    if val_str:
+        try:
+            num = float(val_str)
+            if num == int(num):
+                int_s = str(int(num))
+                if int_s in FEEDING_LABELS:
+                    return FEEDING_LABELS[int_s]
+        except (ValueError, TypeError):
+            pass
     if val_lower in _FEEDING_ALIASES:
         return _FEEDING_ALIASES[val_lower]
+    # Known missing-value markers — return as Unknown immediately
+    if not val_str or val_lower in {"nan", "none", "n/a", "na", "-", "nil"}:
+        return "Unknown - Absconder"
     for alias, canonical in _FEEDING_ALIASES.items():
         if alias in val_lower or val_lower in alias:
             return canonical
@@ -222,22 +256,21 @@ def compute_feeding_distribution_data(df, facility_uids=None):
     working_df = _filter_by_facility(df, facility_uids) if facility_uids else df.copy()
 
     feeding = _any_version_value(working_df, FEEDING_DISCHARGE_PREFIX)
-    has_value = feeding.ne("") & feeding.ne("N/A") & feeding.ne("nan") & feeding.notna()
+    not_negative = ~feeding.astype(str).str.startswith("-")
+    has_value = (feeding.ne("") & feeding.ne("N/A") & feeding.ne("nan") & feeding.notna() & not_negative)
 
     if not has_value.any():
         return {label: 0 for label in FEEDING_LABELS.values()}
 
-    filtered = feeding[has_value]
-
-    # Build a mapping from unique values to canonical labels
-    unique_vals = filtered.unique()
+    # Build a mapping from unique values to canonical labels (same approach
+    # as compute_exclusive_breastmilk_discharge_data — uses .map() not .replace())
+    unique_vals = feeding.unique()
     val_to_label = {v: _classify_feeding_value(v) for v in unique_vals}
+    classified = feeding.map(val_to_label)
 
-    # Vectorized mapping via replace
-    mapped = filtered.replace(val_to_label)
-
-    # Count each canonical label
-    counts = mapped.value_counts().to_dict()
+    # Filter and count only rows with a recorded feeding value
+    valid = classified[has_value]
+    counts = valid.value_counts().to_dict()
 
     result = {label: counts.get(label, 0) for label in FEEDING_LABELS.values()}
     return result
@@ -284,9 +317,15 @@ def _compute_exclusive_breastmilk_trend(working_df, period_col, facility_uids):
     feeding = _any_version_value(pdf, FEEDING_DISCHARGE_PREFIX)
     has_value = feeding.ne("") & feeding.ne("N/A") & feeding.ne("nan") & feeding.notna()
 
+    # Map feeding values to canonical labels (handles codes "1"-"6" AND free text like "EBF", "BF")
+    unique_vals = feeding.unique()
+    val_to_label = {v: _classify_feeding_value(v) for v in unique_vals}
+    classified = feeding.map(val_to_label)
+    is_exclusive = classified == FEEDING_LABELS["1"]
+
     agg_df = pd.DataFrame({
         period_col: pdf[period_col].values,
-        "numerator": has_value.values & (feeding.values == "1"),
+        "numerator": has_value.values & is_exclusive.values,
         "denominator": has_value.values.astype(int),
     })
     trend = agg_df.groupby(period_col, observed=False, sort=False).agg(
@@ -451,10 +490,17 @@ def _render_feeding_distribution_chart(working_df, bg_color, text_color, facilit
     for label, count in sorted_items:
         display_rows.append({
             "Feeding Method": label,
-            "Count": count,
-            "Percentage": f"{count / total * 100:.1f}%",
+            "Numerator": count,
+            "Denominator": total,
+            "Rate (%)": f"{count / total * 100:.1f}%",
         })
     st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+
+    csv_dl = pd.DataFrame(display_rows).to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download CSV", csv_dl, "feeding_distribution.csv", "text/csv",
+        key="nutr_feeding_dist_dl",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +639,163 @@ def render_nutrition_qoc_trend_chart(
         """, unsafe_allow_html=True)
 
 
+def render_nutrition_coverage_comparison_chart(
+    df, comparison_mode="facility", display_names=None, facility_uids=None,
+    facilities_by_region=None, region_names=None, period_col="period_display",
+    title="Nutrition Coverage Comparison", date_range_filters=None,
+    bg_color="#FFFFFF", text_color=None, **kwargs
+):
+    """Comparison chart for Nutrition Coverage — multi-entity line charts."""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+    if df is None or df.empty:
+        st.subheader(title); st.warning("No data."); return
+    if period_col not in df.columns:
+        st.warning("Period column not found."); return
+
+    if comparison_mode == "facility":
+        if not facility_uids or not display_names:
+            st.warning("No facilities selected."); return
+        entities = dict(zip(facility_uids, display_names))
+    else:
+        if not region_names:
+            st.warning("No regions selected."); return
+        entities = {r: r for r in region_names}
+
+    periods = sort_periods_chronologically(df[period_col].unique())
+
+    color_palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    sorted_entities = sorted(entities.keys(), key=lambda e: str(entities[e]).lower())
+    entity_colors = {e: color_palette[i % len(color_palette)] for i, e in enumerate(sorted_entities)}
+
+    def _filter_entity_df(base_df, eid):
+        if comparison_mode == "facility":
+            return base_df[base_df["orgUnit"] == eid]
+        else:
+            if not facilities_by_region or eid not in facilities_by_region:
+                return None
+            facs = [f[1] if isinstance(f, (list, tuple)) and len(f) > 1 else f for f in facilities_by_region[eid]]
+            return base_df[base_df["orgUnit"].isin(facs)]
+
+    comp_data = {}
+    for eid, ename in entities.items():
+        edf = _filter_entity_df(df, eid)
+        if edf is None or edf.empty:
+            continue
+        working = edf.drop_duplicates(subset=["tei_id"], keep="first") if "tei_id" in edf.columns else edf
+        bm_trend = _compute_breastmilk_trend(working, period_col, None)
+        ebm_trend = _compute_exclusive_breastmilk_trend(working, period_col, None)
+        comp_data[eid] = {"bm": bm_trend, "ebm": ebm_trend, "name": ename}
+
+    if not comp_data:
+        st.warning("No comparison data."); return
+
+    st.subheader(title)
+    tab1, tab2 = st.tabs(["Breastmilk on Day of Birth", "Exclusive Breastmilk at Discharge"])
+
+    for tab, key, ylabel in [
+        (tab1, "bm", "Rate (%)"),
+        (tab2, "ebm", "Rate (%)"),
+    ]:
+        with tab:
+            fig = go.Figure()
+            for eid in sorted_entities:
+                if eid not in comp_data:
+                    continue
+                trend = comp_data[eid][key]
+                fig.add_trace(go.Scatter(
+                    x=trend["period"], y=trend["rate"],
+                    name=comp_data[eid]["name"], mode="lines+markers",
+                    line=dict(color=entity_colors[eid], width=2),
+                    hovertemplate="<b>%{fullData.name}</b><br>Period: %{x}<br>Rate: %{y:.1f}%<br>Num: %{customdata[0]}<br>Den: %{customdata[1]}<extra></extra>",
+                    customdata=np.column_stack((trend["numerator"].values, trend["denominator"].values)),
+                ))
+            fig.update_layout(
+                height=400,
+                yaxis=dict(title=ylabel),
+                xaxis=dict(title=""),
+                paper_bgcolor=bg_color, plot_bgcolor=bg_color,
+                font_color=text_color, title_font_color=text_color,
+                legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5),
+            )
+            st.plotly_chart(fig, use_container_width=True, key=f"nut_{key}_comp")
+
+
+def render_nutrition_qoc_comparison_chart(
+    df, comparison_mode="facility", display_names=None, facility_uids=None,
+    facilities_by_region=None, region_names=None, period_col="period_display",
+    title="Nutrition QoC Comparison", date_range_filters=None,
+    bg_color="#FFFFFF", text_color=None, **kwargs
+):
+    """Comparison chart for Nutrition QoC — multi-entity line chart for Not Hypoglycemic Rate."""
+    if text_color is None:
+        text_color = auto_text_color(bg_color)
+    if df is None or df.empty:
+        st.subheader(title); st.warning("No data."); return
+    if period_col not in df.columns:
+        st.warning("Period column not found."); return
+
+    if comparison_mode == "facility":
+        if not facility_uids or not display_names:
+            st.warning("No facilities selected."); return
+        entities = dict(zip(facility_uids, display_names))
+    else:
+        if not region_names:
+            st.warning("No regions selected."); return
+        entities = {r: r for r in region_names}
+
+    color_palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    sorted_entities = sorted(entities.keys(), key=lambda e: str(entities[e]).lower())
+    entity_colors = {e: color_palette[i % len(color_palette)] for i, e in enumerate(sorted_entities)}
+
+    def _filter_entity_df(base_df, eid):
+        if comparison_mode == "facility":
+            return base_df[base_df["orgUnit"] == eid]
+        else:
+            if not facilities_by_region or eid not in facilities_by_region:
+                return None
+            facs = [f[1] if isinstance(f, (list, tuple)) and len(f) > 1 else f for f in facilities_by_region[eid]]
+            return base_df[base_df["orgUnit"].isin(facs)]
+
+    comp_data = {}
+    for eid, ename in entities.items():
+        edf = _filter_entity_df(df, eid)
+        if edf is None or edf.empty:
+            continue
+        working = edf.drop_duplicates(subset=["tei_id"], keep="first") if "tei_id" in edf.columns else edf
+        nh_trend = _compute_not_hypoglycemic_trend(working, period_col, None)
+        comp_data[eid] = {"nh": nh_trend, "name": ename}
+
+    if not comp_data:
+        st.warning("No comparison data."); return
+
+    st.subheader(title)
+
+    fig = go.Figure()
+    for eid in sorted_entities:
+        if eid not in comp_data:
+            continue
+        trend = comp_data[eid]["nh"]
+        fig.add_trace(go.Scatter(
+            x=trend["period"], y=trend["rate"],
+            name=comp_data[eid]["name"], mode="lines+markers",
+            line=dict(color=entity_colors[eid], width=2),
+            hovertemplate="<b>%{fullData.name}</b><br>Period: %{x}<br>Rate: %{y:.1f}%<br>Num: %{customdata[0]}<br>Den: %{customdata[1]}<extra></extra>",
+            customdata=np.column_stack((trend["numerator"].values, trend["denominator"].values)),
+        ))
+    fig.update_layout(
+        title="Not Hypoglycemic Rate", height=400,
+        yaxis=dict(title="Rate (%)"),
+        xaxis=dict(title=""),
+        paper_bgcolor=bg_color, plot_bgcolor=bg_color,
+        font_color=text_color, title_font_color=text_color,
+        legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5),
+    )
+    st.plotly_chart(fig, use_container_width=True, key="nut_nh_comp")
+
+
 __all__ = [
     "compute_breastmilk_on_dob_data",
     "compute_exclusive_breastmilk_discharge_data",
@@ -600,4 +803,6 @@ __all__ = [
     "compute_feeding_distribution_data",
     "render_nutrition_coverage_trend_chart",
     "render_nutrition_qoc_trend_chart",
+    "render_nutrition_coverage_comparison_chart",
+    "render_nutrition_qoc_comparison_chart",
 ]
