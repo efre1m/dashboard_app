@@ -43,6 +43,13 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
         st.info("No login activity recorded yet.")
         return
 
+    # Format login_time for better display
+    if 'login_time' in logs.columns:
+        logs['login_time'] = pd.to_datetime(logs['login_time'])
+        logs['formatted_login_time'] = logs['login_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    else:
+        logs['formatted_login_time'] = logs['login_time']
+
     # Hierarchical Filtering Logic
     if user_role == 'admin':
         display_roles = ['national', 'regional', 'dq_officer', 'facility', 'admin']
@@ -141,10 +148,12 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
 
                 with col_tbl:
                     df.insert(0, 'No', range(1, len(df) + 1))
+                    # Add formatted login_time for better readability in tables
+                    df['formatted_login_time'] = df['login_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
                     if user_role == 'admin':
-                        cols = ['No', 'username', 'first_name', 'last_name', 'login_time']
+                        cols = ['No', 'username', 'first_name', 'last_name', 'formatted_login_time']
                     else:
-                        cols = ['No', 'username', 'login_time']
+                        cols = ['No', 'username', 'formatted_login_time']
                     render_styled_table(df, cols)
                     csv = df[cols].to_csv(index=False).encode('utf-8')
                     st.download_button(
@@ -185,10 +194,12 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
 
                 with col_tbl:
                     df.insert(0, 'No', range(1, len(df) + 1))
+                    # Add formatted login_time for better readability
+                    df['formatted_login_time'] = df['login_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
                     if user_role == 'admin':
-                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'login_time']
+                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'formatted_login_time']
                     else:
-                        cols = ['No', 'username', 'region_name', 'login_time']
+                        cols = ['No', 'username', 'region_name', 'formatted_login_time']
                     render_styled_table(df, cols)
                     csv = df[cols].to_csv(index=False).encode('utf-8')
                     st.download_button(
@@ -229,10 +240,12 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
 
                 with col_tbl:
                     df.insert(0, 'No', range(1, len(df) + 1))
+                    # Add formatted login_time for better readability
+                    df['formatted_login_time'] = df['login_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
                     if user_role == 'admin':
-                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'login_time']
+                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'formatted_login_time']
                     else:
-                        cols = ['No', 'username', 'region_name', 'login_time']
+                        cols = ['No', 'username', 'region_name', 'formatted_login_time']
                     render_styled_table(df, cols)
                     csv = df[cols].to_csv(index=False).encode('utf-8')
                     st.download_button(
@@ -273,10 +286,12 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
 
                 with col_tbl:
                     df.insert(0, 'No', range(1, len(df) + 1))
+                    # Add formatted login_time for better readability
+                    df['formatted_login_time'] = df['login_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
                     if user_role == 'admin':
-                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'facility_name', 'login_time']
+                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'facility_name', 'formatted_login_time']
                     else:
-                        cols = ['No', 'username', 'region_name', 'facility_name', 'login_time']
+                        cols = ['No', 'username', 'region_name', 'facility_name', 'formatted_login_time']
                     render_styled_table(df, cols)
                     csv = df[cols].to_csv(index=False).encode('utf-8')
                     st.download_button(
