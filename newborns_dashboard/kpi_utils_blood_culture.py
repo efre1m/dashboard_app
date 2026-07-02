@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import numpy as np
 import logging
+import re
 
 from utils.kpi_utils import auto_text_color
 from utils.time_filter import assign_period
@@ -20,7 +21,7 @@ OTHER_ORGANISM_PREFIX = "if_other_full_species_genus_of_microorganism_investigat
 LINE_COLOR = "#1f77b4"
 CONTI_COLOR = "#ff7f0e"
 
-# --- Distinct colors for each organism ---
+# --- Distinct colors for each organism (coded 1-9 and 99 baseline organisms) ---
 ORGANISM_COLORS = {
     "Staphylococcus aureus": "#e6194b",
     "Klebsiella spp.": "#3cb44b",
@@ -32,7 +33,32 @@ ORGANISM_COLORS = {
     "Other Streptococcus": "#bfef45",
     "Other Fungal spp.": "#fabed4",
     "Other": "#808080",
+    # --- Extended palette for common free-text organisms (code 99) ---
+    "Enterococcus spp.": "#9A6324",
+    "Hemolytic Streptococcus spp.": "#469990",
+    "Citrobacter spp.": "#800000",
+    "Streptococcus pneumoniae": "#aaffc3",
+    "Salmonella spp.": "#dcbeff",
+    "Serratia spp.": "#a9a9a9",
+    "Proteus spp.": "#ffd8b1",
+    "Candida spp.": "#fffac8",
+    "Listeria spp.": "#000075",
+    "Haemophilus spp.": "#008080",
+    "Moraxella spp.": "#e6beff",
+    "Stenotrophomonas spp.": "#aa6e28",
+    "Burkholderia spp.": "#ffe119",
+    "Neisseria spp.": "#46f0f0",
+    "Enterobacter spp.": "#d2f53c",
 }
+
+# --- Extra color pool for organisms not in ORGANISM_COLORS (guarantee uniqueness) ---
+_EXTRA_COLORS = [
+    "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7",
+    "#DDA0DD", "#98D8C8", "#F7DC6F", "#82E0AA", "#F1948A",
+    "#85C1E9", "#F0B27A", "#C39BD3", "#76D7C4", "#F9E79F",
+    "#AED6F1", "#A9DFBF", "#FDEBD0", "#D2B4DE", "#A3E4D7",
+    "#FAD7A0", "#A9CCE3", "#A8D5B5", "#F5CBA7", "#D7BDE2",
+]
 
 # --- Contaminant organism mapping (configurable) ---
 CONTI_ORGANISMS = {
@@ -53,6 +79,120 @@ ORGANISM_NAMES = {
     99: "Other",
 }
 ORGANISM_CODES = {v: k for k, v in ORGANISM_NAMES.items()}
+
+
+# ---------------------------------------------------------------------------
+# Organism name standardisation
+# ---------------------------------------------------------------------------
+
+# Compiled regex rules: (pattern, canonical_name)
+# Rules are applied in order; first match wins.
+_ORGANISM_NORM_RULES = [
+    # --- Enterococcus variants: catches ENTEROCOUS, ENTEROCOCCUS SPP, Entrococous, Enterococcus Species, etc.
+    #     Uses negative lookahead to avoid matching Enterobacter ---
+    (re.compile(
+        r'(?:\benteroc(?!bacter)[a-z]*\b|\bentr[oe]coc[a-z]*\b)',
+        re.IGNORECASE,
+    ), "Enterococcus spp."),
+    # --- Hemolytic / Haemolytic Streptococcus ---
+    (re.compile(r'h[ae]e?molytic\s+streptoc+oc+(?:ci|us|cus)?(?:\s+sp+\.?|\s+species?)?', re.IGNORECASE), "Hemolytic Streptococcus spp."),
+    # --- Citrobacter ---
+    (re.compile(r'citrobacter(?:\s+sp+\.?|\s+species?)?', re.IGNORECASE), "Citrobacter spp."),
+    # --- Streptococcus pneumoniae / pneumo ---
+    (re.compile(r'streptoc+oc+(?:us|cus)?\s+pneumon+(?:iae?)?', re.IGNORECASE), "Streptococcus pneumoniae"),
+    # --- Staphylococcus aureus ---
+    (re.compile(r'staphyloc+oc+(?:us|cus)?\s+aureus', re.IGNORECASE), "Staphylococcus aureus"),
+    # --- Coagulase-negative Staphylococci ---
+    (re.compile(r'(?:coagulase[-\s]*neg(?:ative)?\s+)?staph(?:yloc+oc+(?:us|ci|cus)?)?(?:\s+(?:coagulase[-\s]*neg(?:ative)?|cons|epidermidis|haemolyticus))?', re.IGNORECASE), None),  # pass-through; handle below if needed
+    # --- Klebsiella ---
+    (re.compile(r'klebsiell+a(?:\s+sp+\.?|\s+species?|\s+pneumon+(?:iae?)?)?', re.IGNORECASE), "Klebsiella spp."),
+    # --- Pseudomonas ---
+    (re.compile(r'pseudomonas(?:\s+sp+\.?|\s+species?|\s+aeruginosa)?', re.IGNORECASE), "Pseudomonas spp."),
+    # --- E. coli ---
+    (re.compile(r'(?:escherichia\s+coli|e\.\s*coli)', re.IGNORECASE), "Escherichia coli"),
+    # --- Acinetobacter ---
+    (re.compile(r'acinetobacter(?:\s+sp+\.?|\s+species?|\s+baumannii)?', re.IGNORECASE), "Acinetobacter spp."),
+    # --- Group B Streptococcus / GBS ---
+    (re.compile(r'(?:group\s+b\s+streptoc+oc+(?:us|cus)?|streptoc+oc+(?:us|cus)?\s+agalactiae|gbs)', re.IGNORECASE), "Group B Streptococcus"),
+    # --- Salmonella ---
+    (re.compile(r'salmonell+a(?:\s+sp+\.?|\s+species?|\s+typhi?)?', re.IGNORECASE), "Salmonella spp."),
+    # --- Serratia ---
+    (re.compile(r'serratia(?:\s+sp+\.?|\s+species?)?', re.IGNORECASE), "Serratia spp."),
+    # --- Proteus ---
+    (re.compile(r'proteus(?:\s+sp+\.?|\s+species?|\s+mirabilis)?', re.IGNORECASE), "Proteus spp."),
+    # --- Candida / fungal ---
+    (re.compile(r'candida(?:\s+sp+\.?|\s+species?|\s+albicans)?', re.IGNORECASE), "Candida spp."),
+    # --- Enterobacter ---
+    (re.compile(r'enterobacter(?:\s+sp+\.?|\s+species?|\s+cloacae)?', re.IGNORECASE), "Enterobacter spp."),
+    # --- Haemophilus ---
+    (re.compile(r'ha?emoph?ilus(?:\s+sp+\.?|\s+species?|\s+influenzae)?', re.IGNORECASE), "Haemophilus spp."),
+    # --- Listeria ---
+    (re.compile(r'listeria(?:\s+sp+\.?|\s+species?|\s+monocytogenes)?', re.IGNORECASE), "Listeria spp."),
+    # --- Stenotrophomonas ---
+    (re.compile(r'stenotrophomonas(?:\s+sp+\.?|\s+species?)?', re.IGNORECASE), "Stenotrophomonas spp."),
+    # --- Burkholderia ---
+    (re.compile(r'burkholderia(?:\s+sp+\.?|\s+species?)?', re.IGNORECASE), "Burkholderia spp."),
+    # --- Neisseria ---
+    (re.compile(r'neisseria(?:\s+sp+\.?|\s+species?|\s+meningitidis|\s+gonorrhoeae)?', re.IGNORECASE), "Neisseria spp."),
+    # --- Moraxella ---
+    (re.compile(r'moraxella(?:\s+sp+\.?|\s+species?)?', re.IGNORECASE), "Moraxella spp."),
+]
+
+
+def _standardize_organism_name(raw_name: str) -> str:
+    """Normalize a free-text organism name to a canonical representation.
+
+    Tries regex rules in order using re.search (partial match within the string).
+    Returns the canonical name for the first match found.  If no rule matches,
+    the original stripped text is returned so unknown organisms still appear in
+    charts rather than being silently dropped.
+    """
+    if not isinstance(raw_name, str):
+        return str(raw_name).strip()
+    text = raw_name.strip()
+    for pattern, canonical in _ORGANISM_NORM_RULES:
+        if canonical is None:
+            continue
+        if pattern.search(text):
+            return canonical
+    # No rule matched — return as-is so the organism still shows in charts
+    return text
+
+
+def get_organism_colors(organisms):
+    """Return a dict mapping every organism name to a unique color.
+
+    Colors from ORGANISM_COLORS are used for known organisms.  Any organism
+    not in ORGANISM_COLORS receives the next available color from
+    _EXTRA_COLORS (cycling if necessary), guaranteeing no two organisms
+    share a color within the same chart render.
+    """
+    color_map = {}
+    extra_iter = iter(_EXTRA_COLORS)
+    used_colors = set(ORGANISM_COLORS.values())
+    extra_pool = list(_EXTRA_COLORS)
+    extra_idx = 0
+
+    for org in organisms:
+        if org in ORGANISM_COLORS:
+            color_map[org] = ORGANISM_COLORS[org]
+        else:
+            # Find the next extra color not already used
+            assigned = False
+            while extra_idx < len(extra_pool):
+                candidate = extra_pool[extra_idx]
+                extra_idx += 1
+                if candidate not in used_colors:
+                    color_map[org] = candidate
+                    used_colors.add(candidate)
+                    assigned = True
+                    break
+            if not assigned:
+                # All extra colors exhausted — cycle with a generated shade
+                import hashlib
+                h = int(hashlib.md5(org.encode()).hexdigest()[:6], 16)
+                color_map[org] = "#{:06X}".format(h & 0xFFFFFF)
+    return color_map
 
 
 def _any_version_mask(df, col_prefix, *target_values):
@@ -100,10 +240,12 @@ def _prepare_period_df(df, date_range_filters):
 
 def _resolve_organism_code(row):
     """Resolve organism name from row data.
-    
+
     Checks both primary (ORGANISM_PREFIX) and fallback (OTHER_ORGANISM_PREFIX)
-    columns. If aCHOclZEx6o = 99, uses HvJ8H9tun4u value.
-    Excludes aCHOclZEx6o = 11 (Not indicated).
+    columns. When code == 99 the free-text field is read and normalised via
+    _standardize_organism_name before being returned, so spelling variants are
+    collapsed into one canonical label.
+    Excludes code 11 (Not indicated).
     """
     # Check primary organism column
     org_col = None
@@ -113,23 +255,22 @@ def _resolve_organism_code(row):
             break
     if org_col is None:
         return None
-    
+
     org_code = row[org_col]
-    
-    # Skip NaN or non-string values
-    if pd.isna(org_code) or not isinstance(org_code, str):
-        org_code = str(org_code).strip() if pd.notna(org_code) else None
-        if org_code is None:
-            return None
-        # Convert numeric floats like "11.0" → "11"
-        if org_code.endswith(".0"):
-            org_code = org_code[:-2]
-    
+
+    # Normalise to a plain string code
+    if pd.isna(org_code):
+        return None
+    org_code = str(org_code).strip()
+    # Convert numeric floats like "11.0" -> "11"
+    if org_code.endswith(".0"):
+        org_code = org_code[:-2]
+
     # Skip if "Not indicated"
     if org_code == "11":
         return None
-    
-    # Handle special "Other" case where we use the other organims field
+
+    # Handle special "Other" case — read and normalise the free-text field
     if org_code == "99":
         other_col = None
         for col in row.index:
@@ -137,16 +278,22 @@ def _resolve_organism_code(row):
                 other_col = col
                 break
         if other_col is not None and pd.notna(row.get(other_col)):
-            return row[other_col]
+            raw_text = str(row[other_col]).strip()
+            if raw_text:
+                return _standardize_organism_name(raw_text)
         # Fall back to "Other" label
         return "Other"
-    
+
     # Handle numeric codes (1-9)
     if org_code.isdigit():
         code = int(org_code)
         if code in ORGANISM_NAMES:
             return ORGANISM_NAMES[code]
-    
+
+    # Non-numeric, non-empty text in the primary field — normalise it too
+    if org_code and not org_code.isdigit():
+        return _standardize_organism_name(org_code)
+
     return None
 
 
@@ -241,25 +388,19 @@ def compute_microorganism_distribution_data(df, facility_uids=None):
     return distribution
 
 
-def compute_microorganism_trend_data(df, facility_uids=None, top_n=5, period_col="period_display"):
+def compute_microorganism_trend_data(df, facility_uids=None, period_col="period_display"):
     """Monthly Trend of Microorganisms Identified in Positive Blood Cultures.
-    
-    Tracks how the prevalence of specific microorganisms changes over time.
-    
+
+    Tracks how the prevalence of ALL identified microorganisms changes over time.
+    Shows every organism present in the distribution — no top-N cap.
+
     Chart Type: Multi-Series Run Chart
-    
-    Inclusion: Only include GwrkagnbTet = 2 (positive cultures)
-    
-    Organism determination:
-    - Primary: aCHOclZEx6o
-    - Fallback for code 99: HvJ8H9tun4u
-    
-    Exclusion: GwrkagnbTet = 11 (Not indicated)
-    
+
+    Inclusion: Only include blood_culture = 2 (positive cultures)
+    Exclusion: code 11 (Not indicated)
+
     Numerator: Number of positive cultures with organism in period
     Denominator: Total positive organisms identified in same period
-    
-    Default: Display top 5 most common microorganisms
     """
     working_df = _filter_by_facility(df, facility_uids) if facility_uids else df.copy()
     positive_mask = _any_version_mask(working_df, BLOOD_CULTURE_PREFIX, 2)
@@ -287,14 +428,10 @@ def compute_microorganism_trend_data(df, facility_uids=None, top_n=5, period_col
     
     periods = sorted(working_df[period_col].unique())
     periods = sort_periods_chronologically(periods)
-    
-    # Get top N organisms by frequency
-    all_organisms = working_df["_organism"].unique()
-    if len(all_organisms) > top_n:
-        organism_counts = working_df["_organism"].value_counts()
-        top_organisms = organism_counts.head(top_n).index.tolist()
-        working_df = working_df[working_df["_organism"].isin(top_organisms)]
-    
+
+    # Use ALL organisms — no top-N cap — so the trend matches the distribution chart exactly
+    all_organisms = working_df["_organism"].unique().tolist()
+
     # Build trend data
     trend_data = []
     for period in periods:
@@ -302,7 +439,7 @@ def compute_microorganism_trend_data(df, facility_uids=None, top_n=5, period_col
         if period_df.empty:
             continue
         period_total = len(period_df)
-        for org in working_df["_organism"].unique():
+        for org in all_organisms:
             org_count = len(period_df[period_df["_organism"] == org])
             trend_data.append({
                 "period": period,
@@ -391,26 +528,29 @@ def _render_single_blood_culture_chart(
 def _render_microorganism_distribution_chart(working_df, period_col, bg_color, text_color, facility_uids):
     """Render horizontal bar chart showing microorganism distribution."""
     distribution = compute_microorganism_distribution_data(working_df, facility_uids)
-    
+
     if not distribution:
         st.caption("Microorganism Distribution — No data")
         return
-    
+
     total_organisms = sum(distribution.values())
     sorted_items = sorted(distribution.items(), key=lambda x: -x[1])
-    
+
+    # Build a consistent, unique color per organism
+    color_map = get_organism_colors([item[0] for item in sorted_items])
+
     fig = go.Figure(go.Bar(
         x=[item[1] for item in sorted_items],
         y=[item[0] for item in sorted_items],
         orientation="h",
-        marker_color=[ORGANISM_COLORS.get(item[0], LINE_COLOR) for item in sorted_items],
+        marker_color=[color_map[item[0]] for item in sorted_items],
         hovertemplate="<b>%{y}</b><br>Count: %{x}<br>Total: %{customdata[0]}<br>Percentage: %{customdata[1]}%<extra></extra>",
         customdata=[[total_organisms, round((item[1] / total_organisms * 100), 1)] for item in sorted_items],
     ))
-    
+
     fig.update_layout(
         title="Microorganism Distribution in Positive Blood Cultures",
-        height=400,
+        height=max(350, 40 * len(sorted_items) + 80),
         xaxis=dict(title="Count", dtick=1),
         yaxis=dict(title="Organism"),
         paper_bgcolor=bg_color, plot_bgcolor=bg_color,
@@ -424,12 +564,15 @@ def _render_microorganism_distribution_chart(working_df, period_col, bg_color, t
 def _render_microorganism_trend_chart(working_df, period_col, bg_color, text_color, facility_uids):
     """Render multi-series run chart showing microorganism trends over time."""
     trend_df = compute_microorganism_trend_data(working_df, facility_uids, period_col=period_col)
-    
+
     if trend_df.empty:
         st.caption("Microorganism Trend — No data")
         return
-    
+
     all_organisms = sorted(trend_df["organism"].unique().tolist())
+
+    # Build a consistent, unique color per organism (same palette as distribution chart)
+    color_map = get_organism_colors(all_organisms)
 
     fig = go.Figure()
     for org in all_organisms:
@@ -439,22 +582,23 @@ def _render_microorganism_trend_chart(working_df, period_col, bg_color, text_col
         fig.add_trace(go.Scatter(
             x=org_df["period"], y=org_df["percentage"],
             name=org,
-            line=dict(color=ORGANISM_COLORS.get(org, LINE_COLOR)),
+            line=dict(color=color_map[org], width=2),
             mode="lines+markers",
+            marker=dict(size=7),
             hovertemplate="<b>" + org + "</b><br>Month: %{x}<br>Count: %{customdata[0]}<br>Total: %{customdata[1]}<br>Percentage: %{y:.1f}%<extra></extra>",
             customdata=np.column_stack((org_df["count"], org_df["total"])),
         ))
-    
+
     fig.update_layout(
         title="Microorganism Trend Over Time",
-        height=400,
+        height=420,
         yaxis=dict(range=[0, 105], dtick=25, title="Percentage (%)"),
         xaxis=dict(title=""),
         paper_bgcolor=bg_color, plot_bgcolor=bg_color,
         font_color=text_color, title_font_color=text_color,
-        margin=dict(l=40, r=20, t=50, b=80),
+        margin=dict(l=40, r=20, t=50, b=100),
         legend=dict(
-            orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5,
+            orientation="h", yanchor="top", y=-0.3, xanchor="center", x=0.5,
             tracegroupgap=0,
         ),
     )

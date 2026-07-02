@@ -153,6 +153,8 @@ def _yes_no_to_binary(series: pd.Series) -> pd.Series:
             "false": 0,
             "1": 1,
             "0": 0,
+            "1.0": 1,
+            "0.0": 0,
         }
     )
     return mapped.fillna(0).astype(float)
@@ -1223,10 +1225,11 @@ def render_mentorship_analysis_dashboard():
         except Exception as exc:
             st.error(f"Unable to load merged Data Mentorship form data: {exc}")
         else:
-            system_access_cols = ["q21", "q22", "q23", "q24"]
-            tracker_data_cols = ["q31", "q32", "q33", "q34", "q35", "q36", "q37", "q38", "q39", "q391"]
-            tracker_feature_cols = ["q41", "q42", "q43", "q44"]
-            analysis_cols = ["q51", "q52", "q53", "q54", "q55", "q56", "q57"]
+            # DataMentorship uses column names with -summary, -qXX suffixes
+            system_access_cols = ["system_access-q21", "system_access-q22", "system_access-q23", "system_access-q24"]
+            tracker_data_cols = ["tracker_data-q31", "tracker_data-q32", "tracker_data-q33", "tracker_data-q34", "tracker_data-q35", "tracker_data-q36", "tracker_data-q37", "tracker_data-q38", "tracker_data-q39", "tracker_data-q391"]
+            tracker_feature_cols = ["tracker_features-q41", "tracker_features-q42", "tracker_features-q43", "tracker_features-q44"]
+            analysis_cols = ["analysis_vis-q51", "analysis_vis-q52", "analysis_vis-q53", "analysis_vis-q54", "analysis_vis-q55", "analysis_vis-q56", "analysis_vis-q57"]
             all_indicator_cols = system_access_cols + tracker_data_cols + tracker_feature_cols + analysis_cols
             required_columns = ["region", "hospital", "round"] + all_indicator_cols
             missing_cols = [c for c in required_columns if c not in df.columns]
@@ -1245,8 +1248,10 @@ def render_mentorship_analysis_dashboard():
                 if work_df.empty:
                     st.warning("No Data Mentorship submissions contain answered indicator questions.")
                 else:
+                    # Convert all indicator values to binary (1/0)
                     for col in all_indicator_cols:
                         work_df[col] = _yes_no_to_binary(work_df[col])
+                    # Calculate average scores for each section
                     work_df["system_access_avg_score"] = work_df[system_access_cols].sum(axis=1)
                     work_df["tracker_data_entry_avg_score"] = work_df[tracker_data_cols].sum(axis=1)
                     work_df["tracker_features_avg_score"] = work_df[tracker_feature_cols].sum(axis=1)

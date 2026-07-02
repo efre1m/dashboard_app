@@ -8,25 +8,33 @@ The numeric codes (1-6) are values found in the 'region' or 'reg-region' columns
 REGION_TO_ODK_CODE_MAPPING = {
     # Database region_id: [ODK numeric codes that should map to this region]
     1: ["3"],  # Tigray (Database ID 1) -> ODK Code "3"
+    2: ["4", "6"],  # Sidama (Database ID 2) -> ODK Codes "4" AND "6"
     3: ["4", "6"],  # South Ethiopia (Database ID 3) -> ODK Codes "4" AND "6"
-    4: ["4", "6"],  # Sidama (Database ID 4) -> ODK Codes "4" AND "6"
+    4: ["4", "6"],  # Central Ethiopia (Database ID 4) -> ODK Codes "4" AND "6"
     5: ["1"],  # Oromia (Database ID 5) -> ODK Code "1"
-    6: ["4", "6"],  # Central Ethiopia (Database ID 6) -> ODK Codes "4" AND "6"
-    7: ["4", "6"],  # South West Ethiopia (Database ID 7) -> ODK Codes "4" AND "6"
-    8: ["5"],  # Afar (Database ID 8) -> ODK Code "5"
-    9: ["2"],  # Amhara (Database ID 9) -> ODK Code "2"
+    6: ["7"],  # Harar (Database ID 6) -> ODK Code "7"
+    7: ["8"],  # Dire Dawa City (Database ID 7) -> ODK Code "8"
+    8: ["4", "6"],  # South West Ethiopia (Database ID 8) -> ODK Codes "4" AND "6"
+    9: ["4", "6"],  # Afar (Database ID 9) -> ODK Codes "4" AND "6" (Actual Afar was 10 before)
+    10: ["2"],  # Amhara (Database ID 10) -> ODK Code "2" (Actual Amhara was 9 before)
+    11: ["5"],  # Somali (Database ID 11) -> ODK Code "5" (Actual Somali was 5 before)
+    12: ["7"],  # Southwest Ethiopia (Database ID 12) -> ODK Code "7" (Alternative value)
 }
 
 # Database region_id to region name mapping
 DATABASE_REGION_NAMES = {
     1: "Tigray",
+    2: "Sidama",
     3: "South Ethiopia",
-    4: "Sidama",
+    4: "Central Ethiopia",
     5: "Oromia",
-    6: "Central Ethiopia",
-    7: "South West Ethiopia",
-    8: "Afar",
-    9: "Amhara",
+    6: "Harar",
+    7: "Dire Dawa City",
+    8: "South West Ethiopia",
+    9: "Afar",
+    10: "Amhara",
+    11: "Somali",
+    12: "Southwest Ethiopia",
 }
 
 
