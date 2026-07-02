@@ -28,6 +28,7 @@ def fetch_usage_logs():
         LEFT JOIN regions r_user ON u.region_id = r_user.region_id
         LEFT JOIN regions r_fac ON f.region_id = r_fac.region_id
         LEFT JOIN countries c ON u.country_id = c.country_id
+        WHERE l.login_time >= NOW() - INTERVAL '30 days'
         ORDER BY l.login_time DESC
     """, conn)
     conn.close()
@@ -134,7 +135,7 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
                     fig.update_traces(line_color='#3b82f6')
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
-                    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
+                    fig.update_xaxes(dtick="D1", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
                     fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -178,7 +179,7 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
                                   hover_data={'Users': True})
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
-                    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
+                    fig.update_xaxes(dtick="D1", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
                     fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -222,7 +223,7 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
                                   hover_data={'Users': True})
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
-                    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
+                    fig.update_xaxes(dtick="D1", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
                     fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -266,7 +267,7 @@ def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
                                   hover_data={'Users': True})
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
-                    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
+                    fig.update_xaxes(dtick="D1", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
                     fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig, use_container_width=True)
 
