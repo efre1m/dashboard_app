@@ -87,7 +87,18 @@ ORGANISM_CODES = {v: k for k, v in ORGANISM_NAMES.items()}
 
 # Compiled regex rules: (pattern, canonical_name)
 # Rules are applied in order; first match wins.
+# A canonical_name of None means the text should be excluded (returned as None).
 _ORGANISM_NORM_RULES = [
+    # --- Exclusion rules: recognised non-organism patterns ----------
+    # Bare negative numbers: -1, -3, -1.0, -3.0
+    (re.compile(r'^-\d+(?:\.\d+)?$', re.I), None),
+    # Negative number with text: -1:Not recorded, -3:Not readable, 0:Done
+    (re.compile(r'^-?\d+:', re.I), None),
+    # General "not" + word patterns
+    (re.compile(r'not\s+recorded', re.I), None),
+    (re.compile(r'not\s+readable', re.I), None),
+    (re.compile(r'not\s+done', re.I), None),
+    (re.compile(r'no\s+growth', re.I), None),
     # --- Enterococcus variants: catches ENTEROCOUS, ENTEROCOCCUS SPP, Entrococous, Enterococcus Species, etc.
     #     Uses negative lookahead to avoid matching Enterobacter ---
     (re.compile(
@@ -139,20 +150,23 @@ _ORGANISM_NORM_RULES = [
 ]
 
 
-def _standardize_organism_name(raw_name: str) -> str:
+def _standardize_organism_name(raw_name: str) -> str | None:
     """Normalize a free-text organism name to a canonical representation.
 
     Tries regex rules in order using re.search (partial match within the string).
-    Returns the canonical name for the first match found.  If no rule matches,
-    the original stripped text is returned so unknown organisms still appear in
-    charts rather than being silently dropped.
+    Returns the canonical name for the first match found.
+    Returns *None* when a recognised non-organism pattern (e.g. "Not recorded",
+    "Not readable") is matched — callers should treat None as "exclude".
+    If no rule matches, the original stripped text is returned so unknown
+    organisms still appear in charts rather than being silently dropped.
     """
     if not isinstance(raw_name, str):
-        return str(raw_name).strip()
+        text = str(raw_name).strip()
+        return text if text else None
     text = raw_name.strip()
+    if not text:
+        return None
     for pattern, canonical in _ORGANISM_NORM_RULES:
-        if canonical is None:
-            continue
         if pattern.search(text):
             return canonical
     # No rule matched — return as-is so the organism still shows in charts
