@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from utils.db import get_db_connection
+from utils.queries import get_facility_ids_for_dq_officer
 
 
 def enrich_logs_with_facility_codes(logs_df):
     """Preserve facility and region names exactly as returned from the database."""
     if logs_df is None or logs_df.empty:
         return logs_df
-
     return logs_df.copy()
 
 
@@ -33,9 +33,10 @@ def fetch_usage_logs():
     conn.close()
     return df
 
-def render_usage_tracking_shared(user_role, user_region_id=None):
+
+def render_usage_tracking_shared(user_role, user_region_id=None, user=None):
     st.subheader("Usage Analytics & Tracking")
-    
+
     logs = enrich_logs_with_facility_codes(fetch_usage_logs())
     if logs.empty:
         st.info("No login activity recorded yet.")
@@ -43,14 +44,11 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
 
     # Hierarchical Filtering Logic
     if user_role == 'admin':
-        # Admin sees everything
         display_roles = ['national', 'regional', 'dq_officer', 'facility', 'admin']
     elif user_role == 'national':
-        # National sees Regional and Facility
         display_roles = ['regional', 'dq_officer', 'facility']
     elif user_role == 'regional':
-        # Regional sees Facility users in their region
-        display_roles = ['facility']
+        display_roles = ['regional', 'dq_officer', 'facility']
         if user_region_id is not None:
             region_series = pd.to_numeric(logs['effective_region_id'], errors='coerce')
             target_region = pd.to_numeric(pd.Series([user_region_id]), errors='coerce').iloc[0]
@@ -58,24 +56,37 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
                 logs = logs[region_series == target_region]
             else:
                 logs = logs.iloc[0:0]
+    elif user_role == 'dq_officer':
+        display_roles = ['facility']
+        if user is not None:
+            facility_ids = get_facility_ids_for_dq_officer(user)
+            if facility_ids:
+                logs = logs[logs['facility_id'].isin(facility_ids)]
+            else:
+                logs = logs.iloc[0:0]
     else:
         st.warning("Usage tracking is restricted for your role.")
         return
 
     filtered_logs = logs[logs['role'].str.lower().isin(display_roles)].copy()
-    
+
     if filtered_logs.empty:
         st.info(f"No login activity found for {', '.join(display_roles)} users.")
         return
 
     # Tabs based on available roles for the current user
     tab_list = []
-    if any(r in ['national', 'admin'] for r in display_roles): tab_list.append("Country/Admin")
-    if any(r in ['regional', 'dq_officer'] for r in display_roles): tab_list.append("Regional")
-    if 'facility' in display_roles: tab_list.append("Facility")
-    
+    if any(r in ['national', 'admin'] for r in display_roles):
+        tab_list.append("Country/Admin")
+    if 'regional' in display_roles:
+        tab_list.append("Regional")
+    if 'dq_officer' in display_roles:
+        tab_list.append("Data Quality Officer")
+    if 'facility' in display_roles:
+        tab_list.append("Facility")
+
     tabs = st.tabs(tab_list)
-    
+
     # Helper for rendering summary-style table
     def render_styled_table(df, columns):
         st.markdown("""
@@ -90,7 +101,7 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
         .usage-table th:first-child { text-align: center; width: 30px; }
         </style>
         """, unsafe_allow_html=True)
-        
+
         st.markdown('<div class="usage-table-container">', unsafe_allow_html=True)
         st.markdown(
             df[columns].style.set_table_attributes('class="usage-table"')
@@ -101,100 +112,179 @@ def render_usage_tracking_shared(user_role, user_region_id=None):
         st.markdown('</div>', unsafe_allow_html=True)
 
     tab_idx = 0
-    
+
     # 1. Country/Admin Level
     if any(r in ['national', 'admin'] for r in display_roles):
         with tabs[tab_idx]:
             df = filtered_logs[filtered_logs['role'].str.lower().isin(['admin', 'national'])].copy()
             if not df.empty:
                 col_chart, col_tbl = st.columns([3, 2])
-                
-                with col_chart:
-                    df['login_time'] = pd.to_datetime(df['login_time'])
-                    df['login_date'] = df['login_time'].dt.date
-                    chart_df = df.groupby('login_date').size().reset_index(name='Logins')
-                    fig = px.line(chart_df, x='login_date', y='Logins', title="Daily National & Admin Logins",
-                                 markers=True, line_shape="spline", template="plotly_white")
-                    fig.update_traces(line_color='#3b82f6')
-                    fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None, 
-                                     showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
-                    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
-                    fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col_tbl:
-                    df.insert(0, 'No', range(1, len(df) + 1))
-                    if user_role == 'admin':
-                        cols = ['No', 'username', 'first_name', 'last_name', 'role', 'login_time']
-                    else:
-                        cols = ['No', 'role', 'login_time']
-                    render_styled_table(df, cols)
-            else:
-                st.info("No National/Admin activity found.")
-        tab_idx += 1
 
-    # 2. Regional Level (Line Chart per Region)
-    if any(r in ['regional', 'dq_officer'] for r in display_roles):
-        with tabs[tab_idx]:
-            df = filtered_logs[filtered_logs['role'].str.lower().isin(['regional', 'dq_officer'])].copy()
-            if not df.empty:
-                col_chart, col_tbl = st.columns([3, 2])
-                
                 with col_chart:
                     df['login_time'] = pd.to_datetime(df['login_time'])
                     df['login_date'] = df['login_time'].dt.date
-                    # Group by date AND region for multi-line
-                    chart_df = df.groupby(['login_date', 'region_name']).size().reset_index(name='Logins')
-                    
-                    fig = px.line(chart_df, x='login_date', y='Logins', color='region_name', 
-                                 title="Regional / DQ Officer Login Trends",
-                                 markers=True, line_shape="spline", template="plotly_white")
+                    chart_df = df.groupby('login_date').agg(
+                        Logins=('username', 'count'),
+                        Users=('username', lambda x: ', '.join(sorted(x)))
+                    ).reset_index()
+
+                    fig = px.line(chart_df, x='login_date', y='Logins', title="Daily National & Admin Logins",
+                                  markers=True, line_shape="spline", template="plotly_white",
+                                  hover_data={'Users': True})
+                    fig.update_traces(line_color='#3b82f6')
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
                     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
                     fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig, use_container_width=True)
-                
+
                 with col_tbl:
                     df.insert(0, 'No', range(1, len(df) + 1))
                     if user_role == 'admin':
-                        cols = ['No', 'username', 'first_name', 'last_name', 'role', 'region_name', 'login_time']
+                        cols = ['No', 'username', 'first_name', 'last_name', 'login_time']
                     else:
-                        cols = ['No', 'role', 'region_name', 'login_time']
+                        cols = ['No', 'username', 'login_time']
                     render_styled_table(df, cols)
+                    csv = df[cols].to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv,
+                        file_name="national_admin_logins.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
             else:
-                st.info("No Regional or DQ Officer activity found.")
+                st.info("No National/Admin activity found.")
         tab_idx += 1
 
-    # 3. Facility Level (Line Chart per Facility)
+    # 2. Regional Level (Line Chart per Region) - Regional logins only
+    if 'regional' in display_roles:
+        with tabs[tab_idx]:
+            df = filtered_logs[filtered_logs['role'].str.lower() == 'regional'].copy()
+            if not df.empty:
+                col_chart, col_tbl = st.columns([3, 2])
+
+                with col_chart:
+                    df['login_time'] = pd.to_datetime(df['login_time'])
+                    df['login_date'] = df['login_time'].dt.date
+                    chart_df = df.groupby(['login_date', 'region_name']).agg(
+                        Logins=('username', 'count'),
+                        Users=('username', lambda x: ', '.join(sorted(x)))
+                    ).reset_index()
+
+                    fig = px.line(chart_df, x='login_date', y='Logins', color='region_name',
+                                  title="Regional Login Trends",
+                                  markers=True, line_shape="spline", template="plotly_white",
+                                  hover_data={'Users': True})
+                    fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
+                                     showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
+                    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
+                    fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with col_tbl:
+                    df.insert(0, 'No', range(1, len(df) + 1))
+                    if user_role == 'admin':
+                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'login_time']
+                    else:
+                        cols = ['No', 'username', 'region_name', 'login_time']
+                    render_styled_table(df, cols)
+                    csv = df[cols].to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv,
+                        file_name="regional_logins.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+            else:
+                st.info("No Regional activity found.")
+        tab_idx += 1
+
+    # 3. Data Quality Officer Level
+    if 'dq_officer' in display_roles:
+        with tabs[tab_idx]:
+            df = filtered_logs[filtered_logs['role'].str.lower() == 'dq_officer'].copy()
+            if not df.empty:
+                col_chart, col_tbl = st.columns([3, 2])
+
+                with col_chart:
+                    df['login_time'] = pd.to_datetime(df['login_time'])
+                    df['login_date'] = df['login_time'].dt.date
+                    chart_df = df.groupby(['login_date', 'region_name']).agg(
+                        Logins=('username', 'count'),
+                        Users=('username', lambda x: ', '.join(sorted(x)))
+                    ).reset_index()
+
+                    fig = px.line(chart_df, x='login_date', y='Logins', color='region_name',
+                                  title="Data Quality Officer Login Trends",
+                                  markers=True, line_shape="spline", template="plotly_white",
+                                  hover_data={'Users': True})
+                    fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
+                                     showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
+                    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
+                    fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with col_tbl:
+                    df.insert(0, 'No', range(1, len(df) + 1))
+                    if user_role == 'admin':
+                        cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'login_time']
+                    else:
+                        cols = ['No', 'username', 'region_name', 'login_time']
+                    render_styled_table(df, cols)
+                    csv = df[cols].to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv,
+                        file_name="dq_officer_logins.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+            else:
+                st.info("No Data Quality Officer activity found.")
+        tab_idx += 1
+
+    # 4. Facility Level (Line Chart per Facility)
     if 'facility' in display_roles:
         with tabs[tab_idx]:
             df = filtered_logs[filtered_logs['role'].str.lower() == 'facility'].copy()
             if not df.empty:
                 col_chart, col_tbl = st.columns([3, 2])
-                
+
                 with col_chart:
                     df['login_time'] = pd.to_datetime(df['login_time'])
                     df['login_date'] = df['login_time'].dt.date
-                    # Group by date AND facility for multi-line
-                    chart_df = df.groupby(['login_date', 'facility_name']).size().reset_index(name='Logins')
-                    
-                    fig = px.line(chart_df, x='login_date', y='Logins', color='facility_name', 
-                                 title="Facility Login Trends",
-                                 markers=True, line_shape="spline", template="plotly_white")
+                    chart_df = df.groupby(['login_date', 'facility_name']).agg(
+                        Logins=('username', 'count'),
+                        Users=('username', lambda x: ', '.join(sorted(x)))
+                    ).reset_index()
+
+                    fig = px.line(chart_df, x='login_date', y='Logins', color='facility_name',
+                                  title="Facility Login Trends",
+                                  markers=True, line_shape="spline", template="plotly_white",
+                                  hover_data={'Users': True})
                     fig.update_yaxes(tickmode='linear', tick0=0, dtick=1 if chart_df['Logins'].max() < 10 else None,
                                      showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)', nticks=10)
                     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.05)')
                     fig.update_layout(height=400, margin=dict(l=20, r=20, t=40, b=20))
                     st.plotly_chart(fig, use_container_width=True)
-                
+
                 with col_tbl:
                     df.insert(0, 'No', range(1, len(df) + 1))
                     if user_role == 'admin':
                         cols = ['No', 'username', 'first_name', 'last_name', 'region_name', 'facility_name', 'login_time']
                     else:
-                        cols = ['No', 'region_name', 'facility_name', 'login_time']
+                        cols = ['No', 'username', 'region_name', 'facility_name', 'login_time']
                     render_styled_table(df, cols)
+                    csv = df[cols].to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv,
+                        file_name="facility_logins.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
             else:
                 st.info("No Facility activity found.")
         tab_idx += 1

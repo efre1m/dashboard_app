@@ -468,6 +468,32 @@ def get_facilities_grouped_by_region(user: dict) -> Dict[str, List[Tuple[str, st
     return facilities_by_region
 
 
+def get_facility_ids_for_dq_officer(user: dict) -> list:
+    """Get facility IDs assigned to a DQ officer via user_facility_access."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT f.facility_id
+            FROM user_facility_access ufa
+            JOIN facilities f ON ufa.facility_id = f.facility_id
+            WHERE ufa.user_id = %s
+        """, (user.get("user_id"),))
+        return [row[0] for row in cur.fetchall()]
+    except Exception as e:
+        logging.error(f"Error fetching facility IDs for DQ officer: {e}")
+        return []
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def get_all_facilities_flat(user: dict) -> List[Tuple[str, str]]:
     """
     Get all facilities as a flat list for the current user.

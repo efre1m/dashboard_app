@@ -1599,6 +1599,6 @@ def render():
     elif selected_tab == "tracking":
         # Regional user tracks Facility users in their region
         user_region_id = user.get('region_id')
-        render_usage_tracking_shared('regional', user_region_id=user_region_id)
+        render_usage_tracking_shared(user_role, user_region_id=user_region_id, user=user)
     # Log current active tab state
     logging.info(f"Current active tab: {st.session_state.active_tab}")
